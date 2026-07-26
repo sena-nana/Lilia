@@ -18,7 +18,7 @@ abort，不共享 Core 内部 TaskPool、lease、ResourceManager 或 StateStore�
 cargo run --release --locked --features runtime-domain-reference `
   --manifest-path apps/desktop/src-tauri/Cargo.toml `
   --bin lilia-runtime-domain-bench -- `
-  --samples 30 `
+  --samples 100 `
   --min-background-ms 20 `
   --output artifacts/perf/issue43-liliacode-runtime-domains.json
 ```
@@ -31,6 +31,8 @@ cargo run --release --locked --features runtime-domain-reference `
   `git worktree list --porcelain` 检查同时运行；基准先自动校准迭代次数，使两类后台工作
   各自至少持续 20 ms；
 - 测量：生产 handoff 合约解析和 prompt 构建从 submit 到 terminal outcome 的延迟；
+- 方法：每种拓扑复用一个预热后的长生命周期 Runtime，单双域按样本交替先后顺序，
+  使用至少 100 个样本和 nearest-rank 计算 p99，避免把小样本最大值误称为 p99；
 - 门槛：三域 p99 至少降低 50%。
 
 ## 与生产迁移的边界

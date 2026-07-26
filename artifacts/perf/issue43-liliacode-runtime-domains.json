@@ -4,15 +4,18 @@
   "workload": {
     "agent_work": "build the production Node runner stdin payload without starting a provider",
     "calibrated": {
-      "agent_iterations": 32768,
+      "agent_iterations": 16384,
       "workspace_iterations": 1
     },
     "measurement": "product handoff submit to terminal outcome",
     "minimum_background_work_ms": 20,
+    "percentile_method": "nearest-rank",
     "product_work": "parse the production LiliaGithub handoff contract and build its production prompt",
+    "runtime_lifecycle": "reuse one warmed long-lived runtime per topology",
     "same_protocols_runners_payloads_and_outputs": true,
     "same_total_worker_budget": 3,
-    "samples": 30,
+    "sample_order": "alternate single-domain-first and three-domain-first paired samples",
+    "samples": 100,
     "single_domain_threads": 3,
     "three_domain_threads": {
       "agent": 1,
@@ -23,20 +26,20 @@
     "workspace_work": "run production git worktree list --porcelain inspection"
   },
   "single_domain": {
-    "samples": 30,
-    "p50_ms": 59.8635,
-    "p95_ms": 70.7516,
-    "p99_ms": 74.5156,
-    "max_ms": 74.5156
+    "samples": 100,
+    "p50_ms": 33.6502,
+    "p95_ms": 44.013200000000005,
+    "p99_ms": 57.096399999999996,
+    "max_ms": 61.0972
   },
   "three_domains": {
-    "samples": 30,
-    "p50_ms": 0.6348,
-    "p95_ms": 7.2382,
-    "p99_ms": 11.9799,
-    "max_ms": 11.9799
+    "samples": 100,
+    "p50_ms": 0.1926,
+    "p95_ms": 0.9275000000000001,
+    "p99_ms": 3.4439,
+    "max_ms": 29.0206
   },
-  "p99_improvement_percent": 83.92296378208053,
+  "p99_improvement_percent": 93.96827120448926,
   "expected_minimum_improvement_percent": 50.0,
   "passed": true
 }
