@@ -1,0 +1,42 @@
+{
+  "schema": "lilia.runtime-domain-reference.v1",
+  "business_purpose": "prepare the same product handoff while two Agent payload builds and a real Git worktree inspection are active",
+  "workload": {
+    "agent_work": "build the production Node runner stdin payload without starting a provider",
+    "calibrated": {
+      "agent_iterations": 32768,
+      "workspace_iterations": 1
+    },
+    "measurement": "product handoff submit to terminal outcome",
+    "minimum_background_work_ms": 20,
+    "product_work": "parse the production LiliaGithub handoff contract and build its production prompt",
+    "same_protocols_runners_payloads_and_outputs": true,
+    "same_total_worker_budget": 3,
+    "samples": 30,
+    "single_domain_threads": 3,
+    "three_domain_threads": {
+      "agent": 1,
+      "product": 1,
+      "workspace": 1
+    },
+    "workspace": ".",
+    "workspace_work": "run production git worktree list --porcelain inspection"
+  },
+  "single_domain": {
+    "samples": 30,
+    "p50_ms": 59.8635,
+    "p95_ms": 70.7516,
+    "p99_ms": 74.5156,
+    "max_ms": 74.5156
+  },
+  "three_domains": {
+    "samples": 30,
+    "p50_ms": 0.6348,
+    "p95_ms": 7.2382,
+    "p99_ms": 11.9799,
+    "max_ms": 11.9799
+  },
+  "p99_improvement_percent": 83.92296378208053,
+  "expected_minimum_improvement_percent": 50.0,
+  "passed": true
+}

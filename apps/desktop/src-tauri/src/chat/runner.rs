@@ -1214,6 +1214,57 @@ pub(crate) fn build_runner_stdin_payload<T: Serialize>(
     JsonValue::Object(payload)
 }
 
+#[cfg(feature = "runtime-domain-reference")]
+pub(crate) fn runtime_reference_agent_payload(payload: &JsonValue) -> Result<JsonValue, String> {
+    let task_id = payload
+        .get("taskId")
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "reference Agent payload 缺少 taskId".to_string())?;
+    let backend = payload
+        .get("backend")
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(BACKEND_CODEX);
+    let project_cwd = payload
+        .get("cwd")
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "reference Agent payload 缺少 cwd".to_string())?;
+    let prompt = payload
+        .get("prompt")
+        .and_then(JsonValue::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "reference Agent payload 缺少 prompt".to_string())?;
+    let iterations = payload
+        .get("iterations")
+        .and_then(JsonValue::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .unwrap_or(1);
+    if iterations == 0 {
+        return Err("reference Agent iterations 必须大于零".to_string());
+    }
+    let mut composer = crate::chat::state::default_composer(task_id);
+    composer.backend = backend.to_string();
+    let mut output = JsonValue::Null;
+    for _ in 0..iterations {
+        output = build_runner_stdin_payload(
+            backend,
+            project_cwd,
+            prompt,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            &composer,
+            None,
+            &serde_json::json!({}),
+        );
+    }
+    Ok(output)
+}
+
 fn runtime_state_context_json(
     project_cwd: &str,
     prompt: &str,

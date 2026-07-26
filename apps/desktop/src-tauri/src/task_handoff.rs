@@ -357,6 +357,22 @@ fn task_handoff_prompt(handoff: &LiliaCodeTaskHandoff) -> String {
     sections.join("\n\n")
 }
 
+#[cfg(feature = "runtime-domain-reference")]
+pub(crate) fn runtime_reference_prepare_handoff(
+    payload: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let encoded = serde_json::to_string(payload)
+        .map_err(|error| format!("序列化 reference handoff 失败：{error}"))?;
+    let handoff = parse_task_handoff(&encoded)?;
+    Ok(serde_json::json!({
+        "id": handoff.id,
+        "kind": handoff.kind,
+        "repository": handoff.repository.full_name,
+        "worktreePath": handoff.repository.worktree_path,
+        "prompt": task_handoff_prompt(&handoff),
+    }))
+}
+
 fn task_handoff_receipt_path(path: &Path) -> PathBuf {
     let mut value = path.as_os_str().to_os_string();
     value.push(".receipt.json");

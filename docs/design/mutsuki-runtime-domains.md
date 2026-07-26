@@ -1,0 +1,42 @@
+# LiliaCode RuntimeDomain 参考装配
+
+LiliaCode 为 MutsukiCore Issue #43 提供一个可运行、无 Tauri/Vue 依赖的三运行域参考装配：
+
+- `lilia-product-domain`：产品命令和 projection，保留独立交互线程；
+- `lilia-agent-domain`：Agent event 和脚本执行；
+- `lilia-workspace-domain`：文件、Git、扫描和索引工作。
+
+参考装配位于 `apps/desktop/src-tauri/src/runtime_domains.rs`。它使用
+`RuntimeGroupHost`、typed cross-domain request、共享 Host services 和独立 domain
+abort，不共享 Core 内部 TaskPool、lease、ResourceManager 或 StateStore。
+
+## 性能场景
+
+运行：
+
+```powershell
+cargo run --release --locked --features runtime-domain-reference `
+  --manifest-path apps/desktop/src-tauri/Cargo.toml `
+  --bin lilia-runtime-domain-bench -- `
+  --samples 30 `
+  --min-background-ms 20 `
+  --output artifacts/perf/issue43-liliacode-runtime-domains.json
+```
+
+单域和三域使用相同协议、Runner、payload、实际业务函数和总计三个 worker：
+
+- 单域：三个 worker 共享一个 RuntimeDomain；
+- 三域：product、agent、workspace 各一个 worker；
+- 压力：两个真实 Agent stdin payload 构建与一次真实
+  `git worktree list --porcelain` 检查同时运行；基准先自动校准迭代次数，使两类后台工作
+  各自至少持续 20 ms；
+- 测量：生产 handoff 合约解析和 prompt 构建从 submit 到 terminal outcome 的延迟；
+- 门槛：三域 p99 至少降低 50%。
+
+## 与生产迁移的边界
+
+该模块是可执行 reference profile 和性能门禁，不会把空 RuntimeDomain 注入桌面进程，
+也不宣称现有 Node Agent runner、桌面产品数据库或 workspace command 已迁移。生产
+Embedded/Service 共用 bootstrap、LiliaCore、AgentKit 和 workspace authority 的迁移
+分别由 LiliaCode #44、#52、#60 推进。迁移时复用这里验证过的 domain ID、路由语义和
+性能场景，不建立第二套产品或 Agent 事实源。

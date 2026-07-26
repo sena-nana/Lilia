@@ -188,6 +188,32 @@ fn list_git_worktrees(base_repo_path: &Path) -> Result<Vec<GitWorktree>, String>
     Ok(parse_worktree_porcelain(&output))
 }
 
+#[cfg(feature = "runtime-domain-reference")]
+pub(crate) fn runtime_reference_inspect_worktrees(
+    base_repo_path: &Path,
+    iterations: usize,
+) -> Result<serde_json::Value, String> {
+    if iterations == 0 {
+        return Err("reference workspace iterations 必须大于零".to_string());
+    }
+    let mut worktrees = Vec::new();
+    for _ in 0..iterations {
+        worktrees = list_git_worktrees(base_repo_path)?;
+    }
+    Ok(serde_json::json!({
+        "iterations": iterations,
+        "worktrees": worktrees.into_iter().map(|worktree| serde_json::json!({
+            "path": worktree.path,
+            "head": worktree.head,
+            "branch": worktree.branch,
+            "bare": worktree.bare,
+            "detached": worktree.detached,
+            "prunable": worktree.prunable,
+            "locked": worktree.locked,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
 fn active_bound_paths(conn: &rusqlite::Connection) -> Result<HashSet<String>, String> {
     let mut stmt = conn
         .prepare("SELECT worktree_path FROM task_worktrees WHERE status = 'active'")

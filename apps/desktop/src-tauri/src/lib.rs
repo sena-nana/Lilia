@@ -46,6 +46,8 @@ mod quota_usage;
 mod quota_usage_contract;
 mod remote_control;
 mod runner_protocol_contract;
+#[cfg(feature = "runtime-domain-reference")]
+pub mod runtime_domains;
 mod settings_store;
 mod store;
 #[cfg(test)]

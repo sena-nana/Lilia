@@ -2533,6 +2533,9 @@ dependencies = [
  "image",
  "keyring",
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
+ "mutsuki-runtime-host",
+ "mutsuki-runtime-sdk",
  "mutsuki-tauri-host",
  "r2d2",
  "r2d2_sqlite",
@@ -2728,7 +2731,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=6574acd2f266981bb8e6b48c4bcdab4adb947ad5#6574acd2f266981bb8e6b48c4bcdab4adb947ad5"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
 dependencies = [
  "serde",
  "serde_json",
@@ -2737,7 +2740,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-core"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=6574acd2f266981bb8e6b48c4bcdab4adb947ad5#6574acd2f266981bb8e6b48c4bcdab4adb947ad5"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde_json",
@@ -2747,7 +2750,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=6574acd2f266981bb8e6b48c4bcdab4adb947ad5#6574acd2f266981bb8e6b48c4bcdab4adb947ad5"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
 dependencies = [
  "crossbeam-channel",
  "futures-channel",
@@ -2764,7 +2767,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=6574acd2f266981bb8e6b48c4bcdab4adb947ad5#6574acd2f266981bb8e6b48c4bcdab4adb947ad5"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -2777,7 +2780,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=6574acd2f266981bb8e6b48c4bcdab4adb947ad5#6574acd2f266981bb8e6b48c4bcdab4adb947ad5"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2787,7 +2790,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-wire"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=6574acd2f266981bb8e6b48c4bcdab4adb947ad5#6574acd2f266981bb8e6b48c4bcdab4adb947ad5"
+source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
 dependencies = [
  "mutsuki-runtime-contracts",
  "rmp-serde",
@@ -2799,7 +2802,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-tauri-bridge"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=fc07770e4d031ff5a7cad353151046a01495eff2#fc07770e4d031ff5a7cad353151046a01495eff2"
+source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=55fe422626a20d0091f56483e787be69c6582cc9#55fe422626a20d0091f56483e787be69c6582cc9"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -2812,7 +2815,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-tauri-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=fc07770e4d031ff5a7cad353151046a01495eff2#fc07770e4d031ff5a7cad353151046a01495eff2"
+source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=55fe422626a20d0091f56483e787be69c6582cc9#55fe422626a20d0091f56483e787be69c6582cc9"
 dependencies = [
  "dirs",
  "mutsuki-link-core",
@@ -2835,7 +2838,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-tauri-resource"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=fc07770e4d031ff5a7cad353151046a01495eff2#fc07770e4d031ff5a7cad353151046a01495eff2"
+source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=55fe422626a20d0091f56483e787be69c6582cc9#55fe422626a20d0091f56483e787be69c6582cc9"
 dependencies = [
  "mime_guess",
  "mutsuki-runtime-contracts",
