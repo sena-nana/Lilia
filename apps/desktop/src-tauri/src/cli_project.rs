@@ -220,6 +220,11 @@ mod tests {
               sort_order INTEGER NOT NULL DEFAULT 0,
               pinned INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE tasks (
+              id TEXT PRIMARY KEY,
+              project_id TEXT,
+              archived INTEGER NOT NULL DEFAULT 0
+            );
             "#,
         )
         .unwrap();
