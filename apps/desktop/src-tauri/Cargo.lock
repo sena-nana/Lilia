@@ -1273,6 +1273,7 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -2472,7 +2473,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6e9ec52138abedcc58dc17a7c6c0c00a2bdb4f3427c7f63fa97fd0d859155caf"
 dependencies = [
  "gtk-sys",
- "libloading",
+ "libloading 0.7.4",
  "once_cell",
 ]
 
@@ -2499,6 +2500,16 @@ checksum = "b67380fd3b2fbe7527a606e18729d21c6f3951633d0500574c4dc22d2d638b9f"
 dependencies = [
  "cfg-if",
  "winapi",
+]
+
+[[package]]
+name = "libloading"
+version = "0.8.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link 0.2.1",
 ]
 
 [[package]]
@@ -2702,7 +2713,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-link-core"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiLink.git?rev=26c66311e0e90ddb28d37e886bdda699f8662439#26c66311e0e90ddb28d37e886bdda699f8662439"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "sha2 0.10.9",
 ]
@@ -2710,7 +2721,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-link-io"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiLink.git?rev=26c66311e0e90ddb28d37e886bdda699f8662439#26c66311e0e90ddb28d37e886bdda699f8662439"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "mutsuki-link-core",
  "tokio",
@@ -2719,7 +2730,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-link-local"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiLink.git?rev=26c66311e0e90ddb28d37e886bdda699f8662439#26c66311e0e90ddb28d37e886bdda699f8662439"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "interprocess",
  "mutsuki-link-core",
@@ -2731,7 +2742,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-contracts"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "serde",
  "serde_json",
@@ -2740,7 +2751,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-core"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde_json",
@@ -2750,11 +2761,12 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "crossbeam-channel",
  "futures-channel",
  "futures-util",
+ "libloading 0.8.9",
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
  "mutsuki-runtime-sdk",
@@ -2767,7 +2779,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "mutsuki-runtime-contracts",
  "mutsuki-runtime-core",
@@ -2780,7 +2792,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-sdk-macros"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -2790,7 +2802,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-runtime-wire"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiCore.git?rev=4a9789ac7568777d3b2668891563fe8109a6dd67#4a9789ac7568777d3b2668891563fe8109a6dd67"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "mutsuki-runtime-contracts",
  "rmp-serde",
@@ -2802,7 +2814,7 @@ dependencies = [
 [[package]]
 name = "mutsuki-tauri-bridge"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=55fe422626a20d0091f56483e787be69c6582cc9#55fe422626a20d0091f56483e787be69c6582cc9"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "mutsuki-runtime-contracts",
  "serde",
@@ -2815,9 +2827,10 @@ dependencies = [
 [[package]]
 name = "mutsuki-tauri-host"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=55fe422626a20d0091f56483e787be69c6582cc9#55fe422626a20d0091f56483e787be69c6582cc9"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "dirs",
+ "hex",
  "mutsuki-link-core",
  "mutsuki-link-local",
  "mutsuki-runtime-contracts",
@@ -2829,16 +2842,18 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
  "toml 0.9.12+spec-1.1.0",
  "uuid",
+ "zip 8.6.0",
 ]
 
 [[package]]
 name = "mutsuki-tauri-resource"
 version = "0.1.0"
-source = "git+https://github.com/sena-nana/MutsukiTauriHost.git?rev=55fe422626a20d0091f56483e787be69c6582cc9#55fe422626a20d0091f56483e787be69c6582cc9"
+source = "git+https://github.com/sena-nana/Mutsuki.git?rev=387a42735ce13f105292ddc91e5f209979c529d9#387a42735ce13f105292ddc91e5f209979c529d9"
 dependencies = [
  "mime_guess",
  "mutsuki-runtime-contracts",
@@ -5009,7 +5024,7 @@ dependencies = [
  "tokio",
  "url",
  "windows-sys 0.60.2",
- "zip",
+ "zip 4.6.1",
 ]
 
 [[package]]
@@ -5539,6 +5554,12 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "typed-path"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e28f89b80c87b8fb0cf04ab448d5dd0dd0ade2f8891bae878de66a75a28600e"
 
 [[package]]
 name = "typeid"
@@ -6775,10 +6796,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "zip"
+version = "8.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d04a6b5381502aa6087c94c669499eb1602eb9c5e8198e534de571f7154809b"
+dependencies = [
+ "crc32fast",
+ "flate2",
+ "indexmap 2.14.0",
+ "memchr",
+ "typed-path",
+ "zopfli",
+]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b142a20ec14a91d5bc708c1dc21b080c550113d8aa77afa29635673a65dd02c5"
+
+[[package]]
 name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[package]]
+name = "zopfli"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f05cd8797d63865425ff89b5c4a48804f35ba0ce8d125800027ad6017d2b5249"
+dependencies = [
+ "bumpalo",
+ "crc32fast",
+ "log",
+ "simd-adler32",
+]
 
 [[package]]
 name = "zvariant"

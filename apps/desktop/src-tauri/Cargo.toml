@@ -30,11 +30,11 @@ tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "4a9789ac7568777d3b2668891563fe8109a6dd67" }
-mutsuki-tauri-host = { git = "https://github.com/sena-nana/MutsukiTauriHost.git", rev = "55fe422626a20d0091f56483e787be69c6582cc9" }
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
+mutsuki-tauri-host = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 toml_edit = "0.25.12"
