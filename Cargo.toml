@@ -1,0 +1,84 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lilia-contracts",
+    "crates/lilia-core",
+    "crates/lilia-client",
+    "crates/lilia-storage",
+    "crates/lilia-agent-integration",
+    "crates/lilia-service",
+    "crates/lilia-editor-compat",
+    "apps/service",
+    "apps/cli",
+    "apps/desktop/src-tauri",
+]
+default-members = [
+    "crates/lilia-contracts",
+    "crates/lilia-core",
+    "crates/lilia-client",
+    "crates/lilia-storage",
+    "crates/lilia-agent-integration",
+    "crates/lilia-service",
+    "crates/lilia-editor-compat",
+    "apps/service",
+    "apps/cli",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+version = "0.1.0"
+
+[workspace.dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+thiserror = "2.0"
+lilia-contracts = { path = "crates/lilia-contracts" }
+lilia-core = { path = "crates/lilia-core" }
+lilia-client = { path = "crates/lilia-client" }
+lilia-storage = { path = "crates/lilia-storage" }
+lilia-agent-integration = { path = "crates/lilia-agent-integration" }
+lilia-service = { path = "crates/lilia-service" }
+# MutsukiCore pin mode: PATH (sibling checkout) vs GIT (release rev).
+# See docs/design/mutsuki-dependency-pin.md — switch all entries together.
+# PATH mode (default while anthropic adapter lands ahead of remote pin):
+mutsuki-runtime-contracts = { path = "../MutsukiCore/crates/mutsuki-runtime-contracts" }
+mutsuki-tauri-host = { path = "../MutsukiCore/hosts/tauri/crates/mutsuki-tauri-host" }
+mutsuki-agent-adapter-api = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-adapter-api" }
+mutsuki-agent-adapter-anthropic = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-adapter-anthropic" }
+mutsuki-agent-adapter-openai = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-adapter-openai" }
+mutsuki-agent-bundle = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-bundle" }
+mutsuki-agent-client = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-client" }
+mutsuki-agent-contracts = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-contracts" }
+mutsuki-agent-plugin-code-index = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-plugin-code-index" }
+mutsuki-agent-plugin-code-completion = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-plugin-code-completion" }
+mutsuki-agent-plugin-computer-use = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-plugin-computer-use" }
+mutsuki-agent-plugin-git = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-plugin-git" }
+mutsuki-agent-plugin-lsp = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-plugin-lsp" }
+mutsuki-agent-plugin-mcp = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-plugin-mcp" }
+mutsuki-agent-plugin-next-edit = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-plugin-next-edit" }
+mutsuki-agent-runtime = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-runtime" }
+mutsuki-agent-testkit = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-testkit" }
+mutsuki-plugin-agent-memory-router = { path = "../MutsukiCore/kits/agent/crates/mutsuki-plugin-agent-memory-router" }
+# GIT mode example (comment PATH block above, uncomment and set rev after anthropic is pushed):
+# mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "REPLACE_WITH_MUTSUKI_REV", package = "mutsuki-runtime-contracts" }
+# mutsuki-agent-adapter-anthropic = { git = "https://github.com/sena-nana/MutsukiCore.git", rev = "REPLACE_WITH_MUTSUKI_REV", package = "mutsuki-agent-adapter-anthropic" }
+# …mirror every mutsuki-* entry to the same rev…
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "time", "io-util"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls"] }
+rusqlite = { version = "0.39", features = ["bundled"] }
+
+[profile.dev]
+debug = "line-tables-only"
+incremental = true
+codegen-units = 256
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
+incremental = false

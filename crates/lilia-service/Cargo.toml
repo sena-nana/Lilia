@@ -1,0 +1,16 @@
+[package]
+name = "lilia-service"
+description = "Optional Service-mode authority for LiliaCore + AgentKit (#60)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-agent-integration = { workspace = true }
+lilia-client = { workspace = true }
+lilia-contracts = { workspace = true }
+lilia-core = { workspace = true }
+lilia-storage = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
