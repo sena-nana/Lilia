@@ -1,3 +1,4 @@
+// #47 LEGACY — Codex account quota via official app-server (source-only; not default-bundled).
 import {
   consumeCodexRateLimitResetCredit,
   readCodexAccountQuotaStatus,

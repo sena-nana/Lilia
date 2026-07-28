@@ -227,9 +227,7 @@ pub(crate) fn save_assistant_ai_config_metadata<R: Runtime>(
     )
 }
 
-pub(crate) fn load_model_feature_settings<R: Runtime>(
-    app: &AppHandle<R>,
-) -> ModelFeatureSettings {
+pub(crate) fn load_model_feature_settings<R: Runtime>(app: &AppHandle<R>) -> ModelFeatureSettings {
     normalize_model_feature_settings(load_store_value(app, MODEL_FEATURE_KEY))
 }
 
@@ -237,7 +235,11 @@ pub(crate) fn save_model_feature_settings<R: Runtime>(
     app: &AppHandle<R>,
     settings: ModelFeatureSettings,
 ) -> Result<(), String> {
-    save_store_value(app, MODEL_FEATURE_KEY, &normalize_model_feature_settings(Some(settings)))
+    save_store_value(
+        app,
+        MODEL_FEATURE_KEY,
+        &normalize_model_feature_settings(Some(settings)),
+    )
 }
 
 pub(crate) fn normalize_model_pool(

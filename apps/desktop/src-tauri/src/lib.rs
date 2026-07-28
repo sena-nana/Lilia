@@ -28,6 +28,8 @@ mod lilia_iab;
 mod memory;
 #[cfg(test)]
 mod memory_command_contract;
+mod native_agent;
+mod native_shared_services;
 #[cfg(test)]
 mod milestone_command_contract;
 mod plugins;
@@ -35,6 +37,7 @@ mod plugins;
 mod plugins_command_contract;
 mod popup_windows;
 mod process_command;
+mod product_core;
 mod project_architecture_contract;
 #[cfg(test)]
 mod project_contract;
@@ -431,6 +434,28 @@ pub fn run() {
             agent_debug::agent_debug_runtime_snapshot,
             agent_debug::agent_debug_record_action,
             agent_debug::agent_debug_reset_state,
+            product_core::product_core_status,
+            native_agent::native_agent_host_status,
+            native_agent::native_credential_providers,
+            native_agent::native_credential_login,
+            native_agent::native_credential_import,
+            native_agent::native_credential_revoke,
+            native_agent::native_credential_diagnostics,
+            native_agent::native_quota_surface,
+            native_agent::native_respond_approval,
+            native_agent::native_product_timeline,
+            native_agent::native_product_artifacts,
+            native_agent::native_product_todos,
+            native_agent::native_product_pending,
+            native_agent::native_rebuild_product_timeline,
+            native_agent::native_rebuild_ui_timeline_cache,
+            native_shared_services::native_shared_coding_services_status,
+            native_shared_services::native_shared_git_status,
+            native_shared_services::native_shared_code_index_search,
+            native_shared_services::native_shared_mcp_list_servers,
+            native_shared_services::native_shared_lsp_status,
+            native_shared_services::native_shared_memory_query,
+            native_shared_services::native_shared_memory_write,
         ])
         .run(context)
         .expect("error while running tauri application");

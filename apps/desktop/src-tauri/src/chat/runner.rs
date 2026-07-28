@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+#[cfg(feature = "legacy-runner")]
 use std::env;
 use std::io::Write;
 use std::path::PathBuf;
@@ -228,26 +229,30 @@ pub(crate) fn remove_test_process_session(process_session_id: &str) {
 
 // ---------- 子进程定位 ----------
 
-/// 找到 agent-runner.mjs 的实际路径。
+/// Locate legacy Node `agent-runner.mjs` (#47 limited-time compatibility).
 ///
-/// 开发态：cargo 编出来的二进制位于 `apps/desktop/src-tauri/target/{debug|release}/`，
-/// 而脚本位于 `apps/desktop/agent-runner.mjs`，相对路径回退 3 层。
-/// 按候选顺序找第一个存在的文件；找不到就返回最后一个候选让上层报错更直观。
+/// Only compiled with Cargo feature `legacy-runner`. Callers must only invoke
+/// this after an explicit `LILIA_AGENT_EXECUTION_BACKEND=node` selection.
+///
+/// Sources live under `apps/desktop/legacy/` (not packaged in default install).
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn locate_agent_runner<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
-    // 1) 与 binary 同目录 → 适合未来 sidecar/资源拷贝场景
+    // 1) Sidecar / resource copy next to binary
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("agent-runner.mjs"));
-            // 2) 开发态：target/debug → 回退 3 层到 apps/desktop
-            candidates.push(dir.join("../../../agent-runner.mjs"));
+            candidates.push(dir.join("legacy").join("agent-runner.mjs"));
+            // 2) Dev: target/debug → apps/desktop/legacy/agent-runner.mjs
+            candidates.push(dir.join("../../../legacy/agent-runner.mjs"));
         }
     }
 
-    // 3) Tauri resource_dir 兜底
+    // 3) Tauri resource_dir (legacy opt-in packaging only)
     if let Ok(res) = app.path().resource_dir() {
         candidates.push(res.join("agent-runner.mjs"));
+        candidates.push(res.join("legacy").join("agent-runner.mjs"));
     }
 
     for c in &candidates {
@@ -258,7 +263,7 @@ pub(crate) fn locate_agent_runner<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
     candidates
         .into_iter()
         .last()
-        .unwrap_or_else(|| PathBuf::from("agent-runner.mjs"))
+        .unwrap_or_else(|| PathBuf::from("legacy/agent-runner.mjs"))
 }
 
 pub(crate) fn spawn_agent_turn<R: Runtime>(
@@ -277,9 +282,11 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
     let backend = composer.backend.clone();
     let resume_session_id = resolve_resume_session_id(&app, &task_id, &backend);
 
-    let script_path = locate_agent_runner(&app);
+    // #47: do not locate/start Node `agent-runner` on the default Native path.
+    // `script_path` is resolved lazily only when legacy env forces Node.
     let app_handle = app.clone();
     let task_id_for_thread = task_id.clone();
+    #[cfg(feature = "legacy-runner")]
     let backend_for_thread = backend.clone();
     let invocation = RunnerInvocation {
         task_id,
@@ -294,7 +301,7 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
         turn_id,
         resume_session_id,
         queued_count: 0,
-        script_path,
+        script_path: PathBuf::new(),
     };
 
     thread::spawn(move || {
@@ -321,7 +328,53 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
 
         let turn_id_for_finish = invocation.turn_id.clone();
         let automation_run_id_for_finish = automation_run_id(invocation.workflow.as_ref());
-        let result = run_node_agent_runner(&app_handle, invocation);
+        let execution_backend = crate::native_agent::resolve_execution_backend();
+        let finish_backend = match execution_backend {
+            crate::native_agent::ExecutionBackend::NativeAgentkit => {
+                crate::native_agent::BACKEND_NATIVE_AGENTKIT.to_string()
+            }
+            #[cfg(feature = "legacy-runner")]
+            crate::native_agent::ExecutionBackend::NodeAgentRunner => backend_for_thread.clone(),
+        };
+        let result = if automation_run_id_for_finish.is_some()
+            && {
+                #[cfg(feature = "legacy-runner")]
+                {
+                    matches!(
+                        execution_backend,
+                        crate::native_agent::ExecutionBackend::NodeAgentRunner
+                    )
+                }
+                #[cfg(not(feature = "legacy-runner"))]
+                {
+                    false
+                }
+            }
+        {
+            Err(crate::native_agent::require_native_for_automation_or_multi_agent(
+                "Automation 多 Agent 路径",
+            )
+            .err()
+            .unwrap_or_else(|| {
+                "Automation 多 Agent 路径: 须走 AgentKit/Native".to_string()
+            }))
+        } else {
+            match execution_backend {
+                crate::native_agent::ExecutionBackend::NativeAgentkit => {
+                    crate::native_agent::run_native_agent_turn(&app_handle, invocation)
+                }
+                #[cfg(feature = "legacy-runner")]
+                crate::native_agent::ExecutionBackend::NodeAgentRunner => {
+                    // Limited-time compatibility only (#47). Never a silent Native fallback.
+                    eprintln!(
+                        "[legacy-agent-runner] using Node agent-runner via explicit env (compat until {})",
+                        crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL
+                    );
+                    invocation.script_path = locate_agent_runner(&app_handle);
+                    run_node_agent_runner(&app_handle, invocation)
+                }
+            }
+        };
         let mut runner_ok = true;
         let output = match result {
             Ok(output) => output,
@@ -330,7 +383,7 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
                 persist_and_emit_error_timeline_event(
                     &app_handle,
                     &task_id_for_thread,
-                    &backend_for_thread,
+                    &finish_backend,
                     Some(&turn_id_for_finish),
                     err,
                 );
@@ -351,7 +404,7 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
         finish_agent_turn(
             app_handle,
             task_id_for_thread,
-            backend_for_thread,
+            finish_backend,
             output.last_session_id,
             agent_success,
             None,
@@ -426,10 +479,12 @@ pub(crate) fn ensure_task_ready_for_agent_turn<R: Runtime>(
     ensure_task_ready_for_agent_turn_with_conn(&conn, task_id)
 }
 
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn run_node_agent_runner<R: Runtime>(
     app_handle: &AppHandle<R>,
     invocation: RunnerInvocation,
 ) -> Result<RunnerOutput, String> {
+    // #47 limited-time compatibility path. Default Desktop execution must not call this.
     let mut observer = NoopRunnerLifecycleObserver;
     run_node_agent_runner_with_observer(app_handle, invocation, &mut observer)
 }
@@ -1054,6 +1109,7 @@ fn finalize_runner_session<R: Runtime>(
     }
 }
 
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn run_node_agent_runner_with_observer<R: Runtime>(
     app_handle: &AppHandle<R>,
     invocation: RunnerInvocation,

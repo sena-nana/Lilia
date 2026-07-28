@@ -7,8 +7,10 @@ import { spawn, spawnSync } from "node:child_process";
 const repoRoot = process.cwd();
 const processName = "lilia.exe";
 const defaultTimeoutMs = 300_000;
-const bundledRuntimeFiles = [
+// #47: default NSIS install must NOT ship official Agent Server / Node agent-runner.
+const forbiddenOfficialRuntimeFiles = [
   "codex-account-quota.mjs",
+  "agent-runner.mjs",
   path.join("agent-runner", "codex", "accountQuota.mjs"),
   path.join("agent-runner", "codex", "appServer.mjs"),
 ];
@@ -304,10 +306,15 @@ function main() {
     installed = true;
     waitUntil("installed lilia.exe", () => fs.existsSync(installedExe));
     waitUntil("installed liliacode.cmd", () => fs.existsSync(cliCmd));
-    for (const filename of bundledRuntimeFiles) {
+    for (const filename of forbiddenOfficialRuntimeFiles) {
       const resourcePath = path.join(installDir, filename);
-      waitUntil(`installed runtime resource ${filename}`, () => fs.existsSync(resourcePath));
+      if (fs.existsSync(resourcePath)) {
+        fail(
+          `default install must not bundle official/legacy agent runtime (#47): ${filename}`,
+        );
+      }
     }
+    log("Default install does not bundle official Agent Server / Node agent-runner");
 
     const runtimeEnv = freshWindowsEnv({ LILIA_HOME: liliaHome });
     const installedCli = resolveLiliacode(runtimeEnv);

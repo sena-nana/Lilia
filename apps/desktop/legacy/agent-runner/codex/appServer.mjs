@@ -1,3 +1,5 @@
+// #47 LEGACY — Official Codex app-server launcher (compat until product 1.0.0).
+// Must NOT be packaged in default Desktop install resources.
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";

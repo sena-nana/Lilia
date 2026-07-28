@@ -379,12 +379,14 @@ const unlisteners: UnlistenFn[] = [];
 let unregisterDebugPanel: (() => void) | null = null;
 let unregisterArchitecturePanel: (() => void) | null = null;
 let unregisterIabPanel: (() => void) | null = null;
+let unregisterSharedServicesPanel: (() => void) | null = null;
 let runtimeListenerInstallSeq = 0;
 let contextUsageListenerInstallSeq = 0;
 let dragDropListenerInstallSeq = 0;
 let debugPanelRegistrationSeq = 0;
 let architecturePanelRegistrationSeq = 0;
 let iabPanelRegistrationSeq = 0;
+let sharedServicesPanelRegistrationSeq = 0;
 let dragDropListenerInstalled = false;
 let contextUsageListenerInstalled = false;
 
@@ -414,6 +416,13 @@ function shouldRegisterIabPanel() {
     hasContext.value &&
     !isPopup.value &&
     supportsSidebarIab(composerForView.value.backend);
+}
+
+function shouldRegisterSharedServicesPanel() {
+  return sidebarPanelsReady.value &&
+    sidebarPanelsActivated.value &&
+    hasContext.value &&
+    !isPopup.value;
 }
 
 function syncDebugPanelRegistration() {
@@ -472,6 +481,31 @@ function syncIabPanelRegistration() {
     })
     .catch((err) => {
       console.error("[task-detail] load IAB sidebar panel module failed", err);
+    });
+}
+
+function syncSharedServicesPanelRegistration() {
+  const seq = ++sharedServicesPanelRegistrationSeq;
+  if (!shouldRegisterSharedServicesPanel()) {
+    unregisterSharedServicesPanel?.();
+    unregisterSharedServicesPanel = null;
+    return;
+  }
+  if (unregisterSharedServicesPanel) return;
+  void loadTaskDetailSidebarPanelsModule()
+    .then((module) => {
+      if (
+        !taskDetailLifecycle.assertAlive() ||
+        seq !== sharedServicesPanelRegistrationSeq ||
+        unregisterSharedServicesPanel
+      ) {
+        return;
+      }
+      if (!shouldRegisterSharedServicesPanel()) return;
+      unregisterSharedServicesPanel = module.registerTaskDetailSharedServicesSidebarPanel();
+    })
+    .catch((err) => {
+      console.error("[task-detail] load shared services sidebar panel module failed", err);
     });
 }
 
@@ -623,6 +657,8 @@ onUnmounted(async () => {
   unregisterArchitecturePanel = null;
   unregisterIabPanel?.();
   unregisterIabPanel = null;
+  unregisterSharedServicesPanel?.();
+  unregisterSharedServicesPanel = null;
   for (const unlisten of unlisteners) {
     try {
       await unlisten();
@@ -777,6 +813,17 @@ watch(
     composerForView.value.backend,
   ] as const,
   syncIabPanelRegistration,
+  { immediate: true },
+);
+
+watch(
+  () => [
+    sidebarPanelsReady.value,
+    sidebarPanelsActivated.value,
+    hasContext.value,
+    isPopup.value,
+  ] as const,
+  syncSharedServicesPanelRegistration,
   { immediate: true },
 );
 

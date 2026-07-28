@@ -13,7 +13,7 @@ import {
   getClaudeBlockText,
   getClaudeBlockType,
   openClaudeBlock,
-} from "../agent-runner/claudeStream.mjs";
+} from "../legacy/agent-runner/claudeStream.mjs";
 
 type StreamEvent = Record<string, unknown>;
 

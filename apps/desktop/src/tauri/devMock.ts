@@ -703,6 +703,133 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
   if (noops.has(cmd)) return undefined as T;
   if (cmd.startsWith("plugin:updater|")) return null as T;
 
+  if (
+    cmd === "native_credential_providers" ||
+    cmd === "native_product_timeline"
+  ) {
+    return [] as T;
+  }
+  if (cmd === "native_credential_diagnostics" || cmd === "native_agent_host_status") {
+    return {
+      wired: true,
+      defaultBackend: "native-agentkit",
+      activeBackend: "native-agentkit",
+      runtimeBackend: "native-agentkit",
+      runtimeReady: true,
+      officialAgentServer: false,
+      nodeRunnerDefault: false,
+      profileId: null,
+      profileHasCredentialRefs: false,
+      credentialAndRuntimeIndependent: true,
+      liveModelAdapterDrivesTurn: false,
+      timelineIsAgentkitProjection: true,
+      credential: {
+        brokerReady: true,
+        providerCount: 0,
+        credentialCount: 0,
+        activeCount: 0,
+        unavailableCount: 0,
+        hasUsableModelCredential: false,
+        credentials: [],
+      },
+      diagnostics: {
+        credential: {
+          brokerReady: true,
+          providerCount: 0,
+          credentialCount: 0,
+          activeCount: 0,
+          unavailableCount: 0,
+          hasUsableModelCredential: false,
+          credentials: [],
+        },
+        runtimeBackend: "native-agentkit",
+        runtimeReady: true,
+        officialAgentServer: false,
+        nodeRunnerDefault: false,
+        profileId: null,
+        profileHasCredentialRefs: false,
+        credentialAndRuntimeIndependent: true,
+        liveModelAdapterDrivesTurn: false,
+      },
+    } as T;
+  }
+  if (
+    cmd === "native_credential_login" ||
+    cmd === "native_credential_import" ||
+    cmd === "native_credential_revoke" ||
+    cmd === "native_respond_approval"
+  ) {
+    return {
+      credentialId: "dev-mock",
+      revision: 1,
+      status: "active",
+      approvalApplied: true,
+    } as T;
+  }
+  if (cmd === "native_shared_coding_services_status") {
+    return {
+      gitServiceId: "mutsuki.agent.service.git",
+      codeIndexServiceId: "mutsuki.agent.service.code-index",
+      lspServiceId: "mutsuki.agent.service.lsp",
+      computerUseServiceId: "mutsuki.agent.service.computer-use",
+      mcpServiceId: "mutsuki.agent.service.mcp",
+      memoryRunnerId: "mutsuki.agent.memory_router.runner",
+      sharedIdentityOk: true,
+      gitSameInstance: true,
+      codeIndexSameInstance: true,
+      lspSameInstance: true,
+      mcpSameInstance: true,
+      memorySharedRouter: true,
+      mcpActiveServers: 0,
+      lspActiveWorkspaces: 0,
+      dataSource: "agentkit.native_coding_bundle",
+      officialAgentServer: false,
+    } as T;
+  }
+  if (cmd === "native_shared_mcp_list_servers") {
+    return [] as T;
+  }
+  if (cmd === "native_shared_lsp_status") {
+    return {
+      serviceId: "mutsuki.agent.service.lsp",
+      activeWorkspaces: 0,
+      dataSource: "agentkit.native_coding_bundle",
+      sameInstance: true,
+    } as T;
+  }
+  if (cmd === "native_shared_git_status") {
+    return {
+      kind: "status",
+      path: typeof args.path === "string" ? args.path : "",
+      dataSource: "agentkit.native_coding_bundle",
+      clean: true,
+    } as T;
+  }
+  if (cmd === "native_shared_code_index_search") {
+    return {
+      hits: [
+        {
+          path: typeof args.relativePath === "string" ? args.relativePath : "src/shared_probe.rs",
+          score: 1,
+        },
+      ],
+      dataSource: "agentkit.native_coding_bundle",
+    } as T;
+  }
+  if (cmd === "native_shared_memory_query") {
+    return {
+      records: [],
+      dataSource: "agentkit.native_coding_bundle",
+    } as T;
+  }
+  if (cmd === "native_shared_memory_write") {
+    return {
+      memory_id: "dev-memory-1",
+      text: typeof args.text === "string" ? args.text : "",
+      dataSource: "agentkit.native_coding_bundle",
+    } as T;
+  }
+
   switch (cmd) {
     case APP_RESTART_COMMAND:
       return undefined as T;

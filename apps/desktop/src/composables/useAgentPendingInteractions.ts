@@ -13,6 +13,10 @@ import {
 } from "@lilia/contracts";
 import { respondAgentInteraction } from "../services/chat";
 import {
+  productApprovalDecisionFromPermissionResult,
+  respondNativeApproval,
+} from "../services/nativeAgent";
+import {
   clearConversationRequiresAction,
   markConversationRequiresAction,
 } from "./useConversationActivity";
@@ -132,12 +136,16 @@ export async function respondPermissionApproval(
   requestId: string,
   result: PermissionApprovalResult,
 ): Promise<void> {
-  await respondAgentInteraction({
-    taskId,
-    requestId,
-    kind: PERMISSION_APPROVAL_INTERACTION_KIND,
-    result,
-  } satisfies AgentInteractionResponse);
+  const nativeDecision = productApprovalDecisionFromPermissionResult(requestId, result);
+  if (nativeDecision) {
+    await respondNativeApproval(taskId, nativeDecision);
+  } else {
+    await respondAgentInteraction({
+      taskId,
+      requestId,
+      kind: PERMISSION_APPROVAL_INTERACTION_KIND,
+      result,
+    } satisfies AgentInteractionResponse);
+  }
   clearPending(taskId, requestId);
 }
-

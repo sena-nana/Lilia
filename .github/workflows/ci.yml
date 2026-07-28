@@ -44,7 +44,7 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: apps/desktop/src-tauri -> target
+          workspaces: . -> target
 
       - name: Verify workspace
         run: corepack yarn verify

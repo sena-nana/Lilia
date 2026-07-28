@@ -10,6 +10,10 @@ name = "lilia_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
+default = []
+# #47 — compile Node agent-runner / Codex Spark Node escape hatch.
+# Default Desktop builds omit this; enable only for explicit legacy compat until 1.0.0.
+legacy-runner = []
 agent-debug-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
 runtime-domain-reference = []
 
@@ -22,6 +26,10 @@ required-features = ["runtime-domain-reference"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+lilia-contracts = { workspace = true }
+lilia-core = { workspace = true }
+lilia-agent-integration = { workspace = true }
+lilia-storage = { workspace = true }
 tauri = { version = "2.11.3", features = ["protocol-asset", "image-png", "tray-icon"] }
 tauri-plugin-opener = "2.5.4"
 tauri-plugin-store = "2.4.3"
@@ -30,11 +38,9 @@ tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
-mutsuki-tauri-host = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "387a42735ce13f105292ddc91e5f209979c529d9" }
+mutsuki-runtime-contracts = { workspace = true }
+mutsuki-tauri-host = { workspace = true }
+mutsuki-agent-contracts = { workspace = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 toml_edit = "0.25.12"
@@ -65,18 +71,3 @@ windows = { version = "0.62.2", features = [
   "Win32_System_Power",
   "Win32_UI_WindowsAndMessaging",
 ] }
-
-[profile.dev]
-debug = "line-tables-only"
-incremental = true
-codegen-units = 256
-
-[profile.dev.package."*"]
-debug = false
-opt-level = 1
-
-[profile.release]
-lto = "thin"
-codegen-units = 1
-strip = "debuginfo"
-incremental = false

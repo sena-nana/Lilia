@@ -190,6 +190,28 @@ import {
   TAURI_PLUGIN_DIALOG_OPEN_COMMAND,
   TAURI_PLUGIN_EVENT_LISTEN_COMMAND,
 } from "../src/tauri/pluginCommands";
+import {
+  NATIVE_AGENT_HOST_STATUS_COMMAND,
+  NATIVE_CREDENTIAL_DIAGNOSTICS_COMMAND,
+  NATIVE_CREDENTIAL_IMPORT_COMMAND,
+  NATIVE_CREDENTIAL_LOGIN_COMMAND,
+  NATIVE_CREDENTIAL_PROVIDERS_COMMAND,
+  NATIVE_CREDENTIAL_REVOKE_COMMAND,
+  NATIVE_PRODUCT_TIMELINE_COMMAND,
+  NATIVE_QUOTA_SURFACE_COMMAND,
+  NATIVE_RESPOND_APPROVAL_COMMAND,
+  NATIVE_SHARED_CODING_SERVICES_STATUS_COMMAND,
+  NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND,
+  NATIVE_SHARED_GIT_STATUS_COMMAND,
+  NATIVE_SHARED_LSP_STATUS_COMMAND,
+  NATIVE_SHARED_MCP_LIST_SERVERS_COMMAND,
+  NATIVE_SHARED_MEMORY_QUERY_COMMAND,
+  NATIVE_SHARED_MEMORY_WRITE_COMMAND,
+  type NativeCredentialDescriptorView,
+  type NativeIndependentDiagnostics,
+  type NativeQuotaSurface,
+  type NativeSharedCodingServicesStatus,
+} from "../src/services/nativeAgent";
 
 interface ProjectRow {
   id: string;
@@ -650,10 +672,144 @@ let nodeAvailable = true;
 const remoteControlBridgeUrl = "http://127.0.0.1:41478";
 const remoteControlRecentSeenMs = 2 * 60 * 1000;
 let remoteControlEnabled = false;
+let mockNativeCredentials: NativeCredentialDescriptorView[] = [];
+let mockNativeCredentialSeq = 0;
 let remoteControlKeepAwakeEnabled = true;
 let remoteControlPcName = "Lilia Test PC";
 let remoteControlTicket: Record<string, unknown> | null = null;
 let remoteControlDevices: Record<string, unknown>[] = [];
+
+function mockNativeProviders() {
+  return [
+    {
+      providerId: "mutsuki.credential.openai",
+      displayName: "OpenAI",
+      protocolFamilies: ["openai-compatible"],
+      supportedKinds: ["api_key", "generated_api_key"],
+      supportsBrowserLogin: false,
+      enterpriseIdentity: false,
+    },
+    {
+      providerId: "mutsuki.credential.anthropic",
+      displayName: "Anthropic",
+      protocolFamilies: ["anthropic-messages"],
+      supportedKinds: ["api_key", "generated_api_key"],
+      supportsBrowserLogin: false,
+      enterpriseIdentity: false,
+    },
+  ];
+}
+
+function mockNativeDiagnostics(): NativeIndependentDiagnostics {
+  const activeCount = mockNativeCredentials.filter((item) => item.status === "active").length;
+  return {
+    credential: {
+      brokerReady: true,
+      providerCount: mockNativeProviders().length,
+      credentialCount: mockNativeCredentials.length,
+      activeCount,
+      unavailableCount: mockNativeCredentials.length - activeCount,
+      hasUsableModelCredential: activeCount > 0,
+      credentials: mockNativeCredentials.map((item) => ({ ...item })),
+    },
+    runtimeBackend: "native-agentkit",
+    runtimeReady: true,
+    officialAgentServer: false,
+    nodeRunnerDefault: false,
+    profileId: activeCount > 0 ? "native-coding" : null,
+    profileHasCredentialRefs: activeCount > 0,
+    credentialAndRuntimeIndependent: true,
+    liveModelAdapterDrivesTurn: activeCount > 0,
+  };
+}
+
+function mockNativeQuotaSurface(): NativeQuotaSurface {
+  const diagnostics = mockNativeDiagnostics();
+  return {
+    source: "credential-broker",
+    localUsageAvailable: true,
+    localUsageNote:
+      "本地 Token/成本统计来自产品 usage 聚合（ModelUsage/ModelCost），不是 Provider 远程额度 API。",
+    remoteQuotaApi: "unavailable",
+    remoteQuotaNote:
+      "AgentKit 尚未提供 Provider rate-limit/quota status service；远程剩余额度不可用，禁止伪造数字。",
+    subscriptionNotEquatedToApiQuota: true,
+    credential: diagnostics.credential,
+    providers: [
+      {
+        providerId: "mutsuki.credential.openai",
+        displayName: "OpenAI / OpenAI-compatible",
+        adapterId: "openai-compatible",
+        quotaApi: "unavailable",
+        credentialHealth: diagnostics.credential.credentials.some(
+          (item) => item.providerId === "mutsuki.credential.openai" && item.status === "active",
+        )
+          ? "active"
+          : "none",
+        hasUsableCredential: diagnostics.credential.credentials.some(
+          (item) =>
+            item.providerId === "mutsuki.credential.openai" &&
+            item.status === "active" &&
+            item.modelInference,
+        ),
+        knownLimits: [
+          {
+            kind: "context_window",
+            label: "上下文窗口（tokens）",
+            value: 128_000,
+            note: "来自 openai-compatible Adapter ModelCapability，非远程剩余额度。",
+          },
+        ],
+        note: "远程额度 API 不可用；下列为 Adapter 能力上限，不是剩余额度。",
+      },
+      {
+        providerId: "mutsuki.credential.anthropic",
+        displayName: "Anthropic",
+        adapterId: "anthropic-messages",
+        quotaApi: "unavailable",
+        credentialHealth: diagnostics.credential.credentials.some(
+          (item) => item.providerId === "mutsuki.credential.anthropic" && item.status === "active",
+        )
+          ? "active"
+          : "none",
+        hasUsableCredential: diagnostics.credential.credentials.some(
+          (item) =>
+            item.providerId === "mutsuki.credential.anthropic" &&
+            item.status === "active" &&
+            item.modelInference,
+        ),
+        knownLimits: [
+          {
+            kind: "context_window",
+            label: "上下文窗口（tokens）",
+            value: 200_000,
+            note: "来自 anthropic-messages Adapter ModelCapability，非远程剩余额度。",
+          },
+        ],
+        note: "远程额度 API 不可用；下列为 Adapter 能力上限，不是剩余额度。",
+      },
+    ],
+  };
+}
+
+function mockNativeCredentialFromInput(args: Record<string, unknown>): NativeCredentialDescriptorView {
+  const input = (args.input && typeof args.input === "object"
+    ? args.input
+    : {}) as Record<string, unknown>;
+  mockNativeCredentialSeq += 1;
+  const view: NativeCredentialDescriptorView = {
+    credentialId: `cred-${mockNativeCredentialSeq}`,
+    revision: 1,
+    providerId: String(input.providerId ?? "mutsuki.credential.openai"),
+    kind: (input.kind as NativeCredentialDescriptorView["kind"]) || "api_key",
+    status: "active",
+    accountLabel: typeof input.accountLabel === "string" ? input.accountLabel : null,
+    source: typeof input.source === "string" ? input.source : null,
+    modelInference: true,
+  };
+  mockNativeCredentials = [view, ...mockNativeCredentials];
+  return view;
+}
 
 function mockRemoteControlState() {
   if (!remoteControlEnabled) return "disabled";
@@ -2003,6 +2159,8 @@ export function resetTauriMockData() {
   };
   nodeAvailable = true;
   remoteControlEnabled = false;
+  mockNativeCredentials = [];
+  mockNativeCredentialSeq = 0;
   remoteControlKeepAwakeEnabled = true;
   remoteControlPcName = "Lilia Test PC";
   remoteControlTicket = null;
@@ -4894,6 +5052,120 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       const handlerId = Number(args.handler);
       return handlerId || 1;
     }
+
+    case NATIVE_AGENT_HOST_STATUS_COMMAND:
+      return {
+        wired: true,
+        defaultBackend: "native-agentkit",
+        activeBackend: "native-agentkit",
+        timelineIsAgentkitProjection: true,
+        liveModelAdapterDrivesTurn: mockNativeCredentials.some((item) => item.status === "active"),
+        diagnostics: mockNativeDiagnostics(),
+      };
+
+    case NATIVE_CREDENTIAL_PROVIDERS_COMMAND:
+      return mockNativeProviders();
+
+    case NATIVE_CREDENTIAL_DIAGNOSTICS_COMMAND:
+      return mockNativeDiagnostics();
+
+    case NATIVE_QUOTA_SURFACE_COMMAND:
+      return mockNativeQuotaSurface();
+
+    case NATIVE_CREDENTIAL_LOGIN_COMMAND:
+    case NATIVE_CREDENTIAL_IMPORT_COMMAND:
+      return mockNativeCredentialFromInput(args);
+
+    case NATIVE_CREDENTIAL_REVOKE_COMMAND: {
+      const credentialId = String(args.credentialId ?? "");
+      const revision = Number(args.revision ?? 0);
+      const existing = mockNativeCredentials.find((item) => item.credentialId === credentialId);
+      if (!existing) throw new Error(`credential not found: ${credentialId}`);
+      const revoked = {
+        ...existing,
+        revision: revision || existing.revision,
+        status: "revoked" as const,
+      };
+      mockNativeCredentials = mockNativeCredentials.map((item) =>
+        item.credentialId === credentialId ? revoked : item,
+      );
+      return revoked;
+    }
+
+    case NATIVE_RESPOND_APPROVAL_COMMAND:
+      return {
+        sessionId: (args.decision as { sessionId?: string } | undefined)?.sessionId ?? null,
+        approvalApplied: true,
+        approved: (args.decision as { approved?: boolean } | undefined)?.approved === true,
+        events: [],
+      };
+
+    case NATIVE_PRODUCT_TIMELINE_COMMAND:
+      return [];
+
+    case NATIVE_SHARED_CODING_SERVICES_STATUS_COMMAND:
+      return {
+        gitServiceId: "mutsuki.agent.service.git",
+        codeIndexServiceId: "mutsuki.agent.service.code-index",
+        lspServiceId: "mutsuki.agent.service.lsp",
+        computerUseServiceId: "mutsuki.agent.service.computer-use",
+        mcpServiceId: "mutsuki.agent.service.mcp",
+        memoryRunnerId: "mutsuki.agent.memory_router.runner",
+        sharedIdentityOk: true,
+        gitSameInstance: true,
+        codeIndexSameInstance: true,
+        lspSameInstance: true,
+        mcpSameInstance: true,
+        memorySharedRouter: true,
+        mcpActiveServers: 0,
+        lspActiveWorkspaces: 0,
+        dataSource: "agentkit.native_coding_bundle",
+        officialAgentServer: false,
+      } satisfies NativeSharedCodingServicesStatus;
+
+    case NATIVE_SHARED_MCP_LIST_SERVERS_COMMAND:
+      return [];
+
+    case NATIVE_SHARED_LSP_STATUS_COMMAND:
+      return {
+        serviceId: "mutsuki.agent.service.lsp",
+        activeWorkspaces: 0,
+        dataSource: "agentkit.native_coding_bundle",
+        sameInstance: true,
+      };
+
+    case NATIVE_SHARED_GIT_STATUS_COMMAND:
+      return {
+        kind: "status",
+        path: String(args.path ?? ""),
+        dataSource: "agentkit.native_coding_bundle",
+        clean: true,
+      };
+
+    case NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND:
+      return {
+        hits: [
+          {
+            path: String(args.relativePath ?? "src/shared_probe.rs"),
+            score: 1,
+          },
+        ],
+        dataSource: "agentkit.native_coding_bundle",
+      };
+
+    case NATIVE_SHARED_MEMORY_QUERY_COMMAND:
+      return {
+        records: [],
+        dataSource: "agentkit.native_coding_bundle",
+        query: String(args.query ?? ""),
+      };
+
+    case NATIVE_SHARED_MEMORY_WRITE_COMMAND:
+      return {
+        memory_id: "mock-memory-1",
+        text: String(args.text ?? ""),
+        dataSource: "agentkit.native_coding_bundle",
+      };
 
     default:
       throw new Error(`未配置的 Tauri mock 命令：${cmd}`);

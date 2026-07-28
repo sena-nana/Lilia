@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCodexCollaborationMode,
   readCodexPlanModePreset,
-} from "../agent-runner/codex/runCodex.mjs";
+} from "../legacy/agent-runner/codex/runCodex.mjs";
 
 describe("Codex plan helpers", () => {
   it("reads plan collaboration preset and builds fallback settings", async () => {

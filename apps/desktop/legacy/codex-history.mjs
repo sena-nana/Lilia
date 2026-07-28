@@ -1,3 +1,4 @@
+// #47 LEGACY — Codex history utility (read-only provenance / migration aid).
 import { createInterface } from "node:readline";
 import {
   archiveCodexThread,

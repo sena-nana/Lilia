@@ -50,11 +50,7 @@
     "active": true,
     "targets": "nsis",
     "createUpdaterArtifacts": true,
-    "resources": {
-      "../codex-account-quota.mjs": "codex-account-quota.mjs",
-      "../agent-runner/codex/accountQuota.mjs": "agent-runner/codex/accountQuota.mjs",
-      "../agent-runner/codex/appServer.mjs": "agent-runner/codex/appServer.mjs"
-    },
+    "resources": {},
     "windows": {
       "nsis": {
         "installerHooks": "./windows/hooks.nsh"

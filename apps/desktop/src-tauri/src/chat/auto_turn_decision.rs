@@ -20,8 +20,7 @@ use crate::prompt_contract;
 use crate::provider::{
     assistant_ai_secret, codex_account_spark_enabled, load_agent_interaction_settings,
     load_assistant_ai_config, load_model_feature_settings, request_codex_account_spark,
-    AssistantAIConfig,
-    AutoTurnDecisionSettings,
+    AssistantAIConfig, AutoTurnDecisionSettings,
 };
 use crate::store::LiliaStore;
 use crate::BACKEND_CODEX;
@@ -484,10 +483,8 @@ fn request_auto_turn_decision<R: Runtime>(
         )
         .map_err(|err| format!("辅助模型决策失败：{err}"))?
     } else {
-        let model = assistant_ai_model_request(
-            app,
-            load_model_feature_settings(app).auto_turn_decision,
-        )?;
+        let model =
+            assistant_ai_model_request(app, load_model_feature_settings(app).auto_turn_decision)?;
         request_openai_compatible(&model, &prompt)?
     };
     let json_text = extract_json_object(&text)?;
@@ -674,10 +671,18 @@ fn model_for_tier_from_features(
 
 #[cfg(test)]
 fn model_for_tier(backend: &str, tier: ModelTier) -> String {
-    model_for_tier_from_features(&crate::provider::ModelFeatureSettings::default(), backend, tier)
+    model_for_tier_from_features(
+        &crate::provider::ModelFeatureSettings::default(),
+        backend,
+        tier,
+    )
 }
 
-fn model_for_tier_with_override(backend: &str, tier: ModelTier, configured: Option<&str>) -> String {
+fn model_for_tier_with_override(
+    backend: &str,
+    tier: ModelTier,
+    configured: Option<&str>,
+) -> String {
     let desired = configured.unwrap_or_else(|| {
         model_selection_contract::auto_model_for_tier(backend, tier.as_str())
             .unwrap_or_else(|| default_model_for_backend(backend))

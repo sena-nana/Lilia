@@ -1,24 +1,46 @@
+use std::env;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager, Runtime};
 
 use super::types::ClaudeHistoryUtilityOutput;
-use crate::chat::runner::locate_agent_runner;
 use crate::process_command::hide_console_window;
 
-fn locate_claude_history_utility(app: &AppHandle) -> std::path::PathBuf {
-    let runner = locate_agent_runner(app);
-    runner
-        .parent()
-        .map(|dir| dir.join("claude-history.mjs"))
-        .unwrap_or_else(|| std::path::PathBuf::from("claude-history.mjs"))
+/// #47 LEGACY — locate `claude-history.mjs` under `apps/desktop/legacy/`.
+fn locate_claude_history_utility<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("claude-history.mjs"));
+            candidates.push(dir.join("legacy").join("claude-history.mjs"));
+            candidates.push(dir.join("../../../legacy/claude-history.mjs"));
+        }
+    }
+    if let Ok(res) = app.path().resource_dir() {
+        candidates.push(res.join("claude-history.mjs"));
+        candidates.push(res.join("legacy").join("claude-history.mjs"));
+    }
+    for c in &candidates {
+        if c.exists() {
+            return c.clone();
+        }
+    }
+    candidates
+        .into_iter()
+        .last()
+        .unwrap_or_else(|| PathBuf::from("legacy/claude-history.mjs"))
 }
 
 pub(super) fn run_claude_history_utility(
     app: &AppHandle,
     payload: serde_json::Value,
 ) -> Result<ClaudeHistoryUtilityOutput, String> {
+    eprintln!(
+        "[legacy-history] Claude history utility (compat until {})",
+        crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL
+    );
     let script = locate_claude_history_utility(app);
     let node = std::env::var("LILIA_NODE_BIN").unwrap_or_else(|_| "node".to_string());
     let mut command = Command::new(node);

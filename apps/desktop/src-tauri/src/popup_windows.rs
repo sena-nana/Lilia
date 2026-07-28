@@ -175,7 +175,7 @@ pub(crate) fn open_conversation_status_window(app: &AppHandle) -> Result<(), Str
         focus_window(&existing);
         return Ok(());
     }
-    let window = WebviewWindowBuilder::new(
+    let builder = WebviewWindowBuilder::new(
         app,
         CONVERSATION_STATUS_WINDOW_LABEL,
         WebviewUrl::App("index.html".into()),
@@ -187,10 +187,13 @@ pub(crate) fn open_conversation_status_window(app: &AppHandle) -> Result<(), Str
     .center()
     .decorations(false)
     .resizable(true)
-    .transparent(true)
-    .background_color(TRANSPARENT_BG)
-    .build()
-    .map_err(|e| format!("创建对话状态悬浮窗失败：{e}"))?;
+    .background_color(TRANSPARENT_BG);
+    // macOS requires `macos-private-api` for transparent windows; Windows/Linux keep it.
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.transparent(true);
+    let window = builder
+        .build()
+        .map_err(|e| format!("创建对话状态悬浮窗失败：{e}"))?;
     let _ = window.set_background_color(Some(TRANSPARENT_BG));
     focus_window(&window);
     Ok(())

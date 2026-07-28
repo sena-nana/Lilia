@@ -3,7 +3,7 @@ import {
   buildEditedCommandAdditionalContext,
   executeEditedCodexCommand,
   normalizeEditedCommandExecResult,
-} from "../agent-runner/codex/editedCommand.mjs";
+} from "../legacy/agent-runner/codex/editedCommand.mjs";
 
 describe("Codex edited command helpers", () => {
   it("normalizes direct and nested command exec results", () => {

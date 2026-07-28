@@ -5,6 +5,7 @@
   "type": "module",
   "workspaces": [
     "apps/desktop",
+    "apps/vscode-extension",
     "packages/*"
   ],
   "engines": {
@@ -55,17 +56,22 @@
     "test": "yarn check:toolchain && yarn --cwd apps/desktop test",
     "typecheck:node-scripts": "node node_modules/typescript/bin/tsc -p tsconfig.node-scripts.json",
     "preverify": "node scripts/check-toolchain.ts",
-    "verify": "yarn check:toolchain && yarn typecheck:node-scripts && yarn verify:desktop:test && yarn verify:desktop:build && yarn verify:tauri && yarn verify:contracts",
+    "verify": "yarn check:toolchain && yarn typecheck:node-scripts && yarn verify:rust-boundaries && yarn verify:rust && yarn verify:desktop:test && yarn verify:desktop:build && yarn verify:tauri && yarn verify:contracts",
     "preverify:desktop:test": "node scripts/check-toolchain.ts",
     "verify:desktop:test": "yarn check:toolchain && yarn --cwd apps/desktop test",
     "preverify:desktop:build": "node scripts/check-toolchain.ts",
     "verify:desktop:build": "yarn check:toolchain && yarn --cwd apps/desktop build && yarn bundle:desktop:check",
     "preverify:tauri": "node scripts/check-toolchain.ts",
-    "verify:tauri": "yarn check:toolchain && node scripts/with-rust-cache.mjs cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "verify:tauri": "yarn check:toolchain && node scripts/with-rust-cache.mjs cargo check -p lilia",
     "preverify:contracts": "node scripts/check-toolchain.ts",
     "verify:contracts": "yarn check:toolchain && node node_modules/typescript/bin/tsc -p packages/contracts/tsconfig.json",
     "verify:agent-debug": "yarn check:toolchain && node scripts/with-rust-cache.mjs node apps/desktop/agent-debug/verify-agent-debug.mjs",
-    "verify:task-handoff-e2e": "yarn check:toolchain && node scripts/with-rust-cache.mjs node apps/desktop/agent-debug/verify-task-handoff-e2e.mjs"
+    "verify:task-handoff-e2e": "yarn check:toolchain && node scripts/with-rust-cache.mjs node apps/desktop/agent-debug/verify-task-handoff-e2e.mjs",
+    "verify:rust-boundaries": "bash scripts/check-rust-boundaries.sh",
+    "verify:rust": "yarn check:toolchain && cargo test -p lilia-contracts -p lilia-core -p lilia-client && cargo check -p lilia",
+    "verify:native-agentkit": "yarn check:toolchain && bash scripts/verify-native-agentkit.sh",
+    "verify:legacy-retire": "yarn check:toolchain && node scripts/check-default-bundle-no-official-server.mjs && node scripts/mark-legacy-agent-runner.mjs --check && node scripts/check-legacy-runner-reachability.mjs && node scripts/check-legacy-default-unreachable.mjs",
+    "verify:vscode-compat": "yarn check:toolchain && cargo test -p lilia-editor-compat --locked && node apps/vscode-extension/tests/hostClient.test.mjs && node apps/vscode-extension/tests/extensionBehavior.test.mjs"
   },
   "devDependencies": {
     "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=304f54706cf0a48469531e534efe7d775aaaacf4",

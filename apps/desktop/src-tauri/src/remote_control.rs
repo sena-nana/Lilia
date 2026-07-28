@@ -1698,10 +1698,7 @@ fn handle_http_request(app: AppHandle, request: HttpRequest) -> String {
             };
             http_json_response(200, response)
         }
-        _ => http_json_response(
-            404,
-            http_error_payload("unsupported", "未知路由", false),
-        ),
+        _ => http_json_response(404, http_error_payload("unsupported", "未知路由", false)),
     }
 }
 

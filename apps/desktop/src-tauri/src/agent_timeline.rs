@@ -1,5 +1,10 @@
 /*!
- * Agent 工作过程时间线：把 runner 侧解析好的事件持久化到 SQLite。
+ * Agent 工作过程时间线：把事件持久化到 Desktop SQLite。
+ *
+ * **事实源边界（#46 / #56）**
+ * - Native AgentKit 路径：产品事实在 `lilia-storage` 投影；本模块 SQLite 仅为
+ *   rebuildable UI cache（payload 含 `uiCache=true` / `notExecutionFactSource=true`）。
+ * - Legacy Node `agent-runner` 路径：仍可能直接写入本表；不得作为 Native 恢复事实源。
  *
  * 本模块只提供契约与存取命令，不负责 NDJSON 映射，也不触碰 chat runner
  * 的 stdout 事件读取循环。
@@ -30,7 +35,7 @@ CREATE TABLE agent_timeline_events (
   id                TEXT PRIMARY KEY,
   task_id           TEXT NOT NULL,
   turn_id           TEXT,
-  backend           TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+  backend           TEXT NOT NULL,
   kind              TEXT NOT NULL,
   status            TEXT NOT NULL,
   title             TEXT NOT NULL,
@@ -59,7 +64,7 @@ pub struct AgentTimelineEvent {
     pub id: String,
     pub task_id: String,
     pub turn_id: Option<String>,
-    /// "claude" | "codex"
+    /// backend：`"claude" | "codex" | "native-agentkit"`（Native 行为 UI cache）
     pub backend: String,
     /// "reasoning" | "plan" | "todo_list" | "tool" | ...
     pub kind: String,
@@ -638,6 +643,10 @@ pub fn agent_timeline_list(
     task_id: String,
     store: State<'_, LiliaStore>,
 ) -> Result<Vec<AgentTimelineEvent>, String> {
+    // #46 / #56 — Desktop default timeline reads product projection first.
+    if let Some(events) = crate::native_agent::list_default_timeline_for_task(&task_id)? {
+        return Ok(events);
+    }
     let conn = store.conn()?;
     list(&conn, &task_id)
 }

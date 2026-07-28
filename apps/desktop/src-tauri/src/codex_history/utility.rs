@@ -1,28 +1,50 @@
+use std::env;
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
 use serde_json::Value as JsonValue;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
-use crate::chat::runner::locate_agent_runner;
 use crate::process_command::hide_console_window;
 use crate::provider::{resolve_connection_for, validate_backend_ready_for_send, ConnectionMode};
 use crate::BACKEND_CODEX;
 
 use super::types::CodexHistoryUtilityOutput;
 
-fn locate_codex_history_utility<R: Runtime>(app: &AppHandle<R>) -> std::path::PathBuf {
-    let runner = locate_agent_runner(app);
-    runner
-        .parent()
-        .map(|dir| dir.join("codex-history.mjs"))
-        .unwrap_or_else(|| std::path::PathBuf::from("codex-history.mjs"))
+/// #47 LEGACY — locate `codex-history.mjs` under `apps/desktop/legacy/`.
+fn locate_codex_history_utility<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("codex-history.mjs"));
+            candidates.push(dir.join("legacy").join("codex-history.mjs"));
+            candidates.push(dir.join("../../../legacy/codex-history.mjs"));
+        }
+    }
+    if let Ok(res) = app.path().resource_dir() {
+        candidates.push(res.join("codex-history.mjs"));
+        candidates.push(res.join("legacy").join("codex-history.mjs"));
+    }
+    for c in &candidates {
+        if c.exists() {
+            return c.clone();
+        }
+    }
+    candidates
+        .into_iter()
+        .last()
+        .unwrap_or_else(|| PathBuf::from("legacy/codex-history.mjs"))
 }
 
 pub(super) fn run_codex_history_utility(
     app: &AppHandle<impl Runtime>,
     payload: JsonValue,
 ) -> Result<CodexHistoryUtilityOutput, String> {
+    eprintln!(
+        "[legacy-history] Codex history utility (compat until {})",
+        crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL
+    );
     validate_backend_ready_for_send(BACKEND_CODEX)?;
     let script = locate_codex_history_utility(app);
     let connection = resolve_connection_for(app, BACKEND_CODEX);

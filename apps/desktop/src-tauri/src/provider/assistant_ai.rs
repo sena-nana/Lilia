@@ -12,9 +12,9 @@ use super::credentials::normalize_secret;
 use super::types::{
     AssistantAIConfig, AssistantAIModelPoolItem, AssistantAIModelsResult, AssistantAITestResult,
 };
-use crate::BACKEND_CODEX;
 use crate::chat::types::{ChatAttachment, ChatConversationReference, ChatWorkflow};
 use crate::prompt_contract;
+use crate::BACKEND_CODEX;
 
 const PROMPT_OPTIMIZE_TIMEOUT: Duration = Duration::from_secs(12);
 const PROMPT_ROUTE_CONFIDENCE_THRESHOLD: f64 = 0.6;

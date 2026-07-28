@@ -316,6 +316,51 @@ describe("pending interaction resolvers", () => {
     }));
   });
 
+  it("routes native-agentkit permission approvals to native_respond_approval", async () => {
+    const resolvers = setupResolvers({
+      pendingAgentInteractions: [{
+        kind: PERMISSION_APPROVAL_INTERACTION_KIND,
+        taskId,
+        turnId: "turn-native",
+        requestId: "action-native-1",
+        payload: {
+          reason: "Allow native.coding.fix",
+          requestedAccess: { tool: "native.coding.fix" },
+          scopeSuggestion: "turn",
+          providerContext: {
+            native: {
+              sessionId: "sess-native",
+              turnId: "turn-native",
+              actionId: "action-native-1",
+              version: 1,
+              tool: "native.coding.fix",
+            },
+          },
+        },
+      }],
+    });
+
+    await resolvers.onResolvePendingAgentAction({
+      kind: PERMISSION_APPROVAL_INTERACTION_KIND,
+      requestId: "action-native-1",
+      decision: "allow",
+    });
+
+    expect(mockInvoke).toHaveBeenCalledWith("native_respond_approval", {
+      taskId,
+      decision: {
+        sessionId: "sess-native",
+        turnId: "turn-native",
+        actionId: "action-native-1",
+        version: 1,
+        approved: true,
+      },
+    }, undefined);
+    expect(
+      mockInvoke.mock.calls.some(([cmd]) => cmd === CHAT_RESPOND_AGENT_INTERACTION_COMMAND),
+    ).toBe(false);
+  });
+
   it("responds to current MCP elicitation resolutions", async () => {
     const resolvers = setupResolvers({
       pendingAgentInteractions: [mcpElicitationInteraction()],

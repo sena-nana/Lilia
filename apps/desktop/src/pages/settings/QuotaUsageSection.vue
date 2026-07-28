@@ -28,6 +28,10 @@ import {
   getQuotaUsageStats,
 } from "../../services/chat";
 import {
+  getNativeQuotaSurface,
+  type NativeQuotaSurface,
+} from "../../services/nativeAgent";
+import {
   codexQuotaUnavailableStatus,
   clampPercent,
   formatCompactNumber,
@@ -94,20 +98,36 @@ const selectedBackend = ref<QuotaUsageStatsBackendFilter>("all");
 const selectedDays = ref<QuotaUsageStatsDays>(DEFAULT_QUOTA_USAGE_STATS_DAYS);
 const stats = ref<QuotaUsageStats | null>(null);
 const officialQuota = ref<CodexAccountQuotaStatus | null>(null);
+const nativeQuota = ref<NativeQuotaSurface | null>(null);
 const loading = ref(false);
 const quotaLoading = ref(false);
+const nativeQuotaLoading = ref(false);
 const resetCreditLoading = ref(false);
 const resetCreditMessage = ref("");
 const resetCreditError = ref("");
 const error = ref("");
 let requestSeq = 0;
 let quotaRequestSeq = 0;
+let nativeQuotaRequestSeq = 0;
 let disposed = false;
 
 const totalRecords = computed(() => stats.value?.cost.totalRecordCount ?? 0);
 const hasUsage = computed(() => totalRecords.value > 0);
 const totalTokens = computed(() => stats.value?.totals.totalTokens ?? 0);
-const refreshing = computed(() => loading.value || quotaLoading.value);
+const refreshing = computed(
+  () => loading.value || quotaLoading.value || nativeQuotaLoading.value,
+);
+const remoteQuotaUnavailable = computed(
+  () => nativeQuota.value?.remoteQuotaApi === "unavailable",
+);
+const CREDENTIAL_HEALTH_LABELS: Record<string, string> = {
+  none: "无凭据",
+  active: "可用",
+  expired: "已过期",
+  revoked: "已撤销",
+  unsupported_for_custom_runtime: "不支持自定义运行时",
+  unavailable: "不可用",
+};
 const showOfficialQuota = computed(() =>
   connectionModeUsesCodexAccount(officialQuota.value?.connectionMode),
 );
@@ -646,6 +666,19 @@ async function loadOfficialQuota() {
   }
 }
 
+async function loadNativeQuotaSurface() {
+  const seq = ++nativeQuotaRequestSeq;
+  nativeQuotaLoading.value = true;
+  try {
+    const result = await getNativeQuotaSurface();
+    if (!disposed && seq === nativeQuotaRequestSeq) nativeQuota.value = result;
+  } catch {
+    if (!disposed && seq === nativeQuotaRequestSeq) nativeQuota.value = null;
+  } finally {
+    if (!disposed && seq === nativeQuotaRequestSeq) nativeQuotaLoading.value = false;
+  }
+}
+
 async function consumeResetCredit() {
   if (disposed || !canConsumeResetCredit.value) return;
   resetCreditLoading.value = true;
@@ -669,7 +702,7 @@ async function refreshAll() {
   if (disposed) return;
   resetCreditMessage.value = "";
   resetCreditError.value = "";
-  await Promise.all([loadStats(), loadOfficialQuota()]);
+  await Promise.all([loadStats(), loadOfficialQuota(), loadNativeQuotaSurface()]);
 }
 
 async function selectBackend(backend: QuotaUsageStatsBackendFilter) {
@@ -748,6 +781,77 @@ onBeforeUnmount(() => {
       <div>
         <div class="conn-banner__title">额度统计</div>
         <div class="conn-banner__hint">{{ error }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div
+    v-if="nativeQuota"
+    class="card quota-panel quota-native"
+    data-agent-id="settings.quota.native"
+  >
+    <div class="quota-official__head">
+      <div class="quota-official__title">
+        <h2>
+          <span class="card-h2__title">Credential Broker / Native</span>
+        </h2>
+        <div class="quota-official__meta">
+          <span>{{ nativeQuota.source }}</span>
+          <span v-if="nativeQuotaLoading">读取中</span>
+          <span
+            class="ui-badge"
+            :class="remoteQuotaUnavailable ? 'ui-badge--muted' : 'ui-badge--ok'"
+            data-agent-id="settings.quota.native.remote-api"
+          >
+            远程额度 API：{{ remoteQuotaUnavailable ? "不可用" : "可用" }}
+          </span>
+        </div>
+      </div>
+    </div>
+    <p class="muted" data-agent-id="settings.quota.native.note">
+      {{ nativeQuota.remoteQuotaNote }}
+    </p>
+    <p class="muted">{{ nativeQuota.localUsageNote }}</p>
+    <ul class="kv quota-native__diagnostics" data-agent-id="settings.quota.native.diagnostics">
+      <li>
+        <span>Broker</span>
+        <span>{{ nativeQuota.credential.brokerReady ? "就绪" : "未就绪" }}</span>
+      </li>
+      <li>
+        <span>可用凭据</span>
+        <span>
+          {{ nativeQuota.credential.activeCount }} / {{ nativeQuota.credential.credentialCount }}
+        </span>
+      </li>
+      <li>
+        <span>订阅 ≠ API 额度</span>
+        <span>{{ nativeQuota.subscriptionNotEquatedToApiQuota ? "已隔离" : "未隔离" }}</span>
+      </li>
+    </ul>
+    <div class="quota-native__providers">
+      <div
+        v-for="row in nativeQuota.providers"
+        :key="row.providerId"
+        class="quota-native__provider"
+        :data-agent-id="`settings.quota.native.provider.${row.providerId}`"
+      >
+        <div class="quota-native__provider-head">
+          <strong>{{ row.displayName }}</strong>
+          <span class="ui-badge ui-badge--muted">
+            {{ CREDENTIAL_HEALTH_LABELS[row.credentialHealth] ?? row.credentialHealth }}
+          </span>
+          <span class="ui-badge ui-badge--muted">额度 API 不可用</span>
+        </div>
+        <p class="muted">{{ row.note }}</p>
+        <ul class="kv">
+          <li v-for="limit in row.knownLimits" :key="limit.kind">
+            <span>{{ limit.label }}</span>
+            <span>
+              <template v-if="limit.value != null">{{ formatNumber(limit.value) }}</template>
+              <template v-else>{{ limit.note }}</template>
+            </span>
+          </li>
+        </ul>
       </div>
     </div>
   </div>
@@ -1179,6 +1283,36 @@ onBeforeUnmount(() => {
 .quota-official {
   display: grid;
   gap: 9px;
+}
+
+.quota-native {
+  display: grid;
+  gap: 10px;
+}
+
+.quota-native__diagnostics {
+  margin: 0;
+}
+
+.quota-native__providers {
+  display: grid;
+  gap: 10px;
+}
+
+.quota-native__provider {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-subtle);
+}
+
+.quota-native__provider-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
 }
 
 .quota-official__head {

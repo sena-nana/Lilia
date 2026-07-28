@@ -1,12 +1,9 @@
-use std::io::Write;
-use std::process::{Command, Stdio};
-use std::thread;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime};
 
-use crate::chat::runner::locate_agent_runner;
+#[cfg(feature = "legacy-runner")]
 use crate::process_command::hide_console_window;
 use crate::BACKEND_CODEX;
 
@@ -65,6 +62,44 @@ fn request_codex_account_spark_with_timeout<R: Runtime>(
     instruction: &str,
     timeout: Duration,
 ) -> Result<String, String> {
+    // #47 — default Native path never locates/starts Node agent-runner.
+    // Node escape hatch requires Cargo feature `legacy-runner` + explicit env.
+    match crate::native_agent::resolve_execution_backend() {
+        crate::native_agent::ExecutionBackend::NativeAgentkit => {
+            let _ = (app, prompt, instruction, timeout);
+            Err(format!(
+            "Codex Spark via Node agent-runner is retired on the default Native path \
+             (compat until {}; rebuild with `--features legacy-runner` and set \
+             LILIA_AGENT_EXECUTION_BACKEND=node for explicit legacy)",
+            crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL
+            ))
+        }
+        #[cfg(feature = "legacy-runner")]
+        crate::native_agent::ExecutionBackend::NodeAgentRunner => {
+            request_codex_account_spark_via_node_runner(app, prompt, instruction, timeout)
+        }
+    }
+}
+
+/// #47 LEGACY — Node agent-runner Codex Spark (explicit env + feature only, until 1.0.0).
+#[cfg(feature = "legacy-runner")]
+fn request_codex_account_spark_via_node_runner<R: Runtime>(
+    app: &AppHandle<R>,
+    prompt: &str,
+    instruction: &str,
+    timeout: Duration,
+) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    use std::thread;
+    use std::time::Instant;
+
+    use crate::chat::runner::locate_agent_runner;
+
+    eprintln!(
+        "[legacy-agent-runner] Codex Spark using Node agent-runner (compat until {})",
+        crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL
+    );
     let runner = locate_agent_runner(app);
     let payload = CodexSparkPromptCommand {
         kind: "codex_spark_prompt",
@@ -93,43 +128,41 @@ fn request_codex_account_spark_with_timeout<R: Runtime>(
 
     let started = Instant::now();
     loop {
+        if started.elapsed() > timeout {
+            let _ = child.kill();
+            return Err("Codex Spark runner 超时".into());
+        }
         match child.try_wait() {
-            Ok(Some(_status)) => break,
-            Ok(None) => {
-                if started.elapsed() > timeout + Duration::from_secs(5) {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err("Codex Spark runner 超时".to_string());
+            Ok(Some(status)) => {
+                let mut stdout = String::new();
+                if let Some(mut out) = child.stdout.take() {
+                    use std::io::Read;
+                    let _ = out.read_to_string(&mut stdout);
                 }
-                thread::sleep(Duration::from_millis(20));
+                let mut stderr = String::new();
+                if let Some(mut err) = child.stderr.take() {
+                    use std::io::Read;
+                    let _ = err.read_to_string(&mut stderr);
+                }
+                if !status.success() {
+                    return Err(format!(
+                        "Codex Spark runner 失败：{status}; stderr={stderr}"
+                    ));
+                }
+                let parsed: CodexSparkPromptOutput = serde_json::from_str(stdout.trim())
+                    .map_err(|err| format!("解析 Codex Spark 输出失败：{err}; stdout={stdout}"))?;
+                if !parsed.ok {
+                    return Err(parsed
+                        .error
+                        .unwrap_or_else(|| "Codex Spark 返回失败".into()));
+                }
+                return parsed
+                    .text
+                    .filter(|t| !t.trim().is_empty())
+                    .ok_or_else(|| "Codex Spark 返回空文本".into());
             }
+            Ok(None) => thread::sleep(Duration::from_millis(20)),
             Err(err) => return Err(format!("等待 Codex Spark runner 失败：{err}")),
         }
     }
-
-    let output = child
-        .wait_with_output()
-        .map_err(|err| format!("读取 Codex Spark runner 输出失败：{err}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let Some(line) = stdout.lines().rev().find(|line| !line.trim().is_empty()) else {
-        let detail = stderr.trim();
-        return if detail.is_empty() {
-            Err("Codex Spark runner 没有输出".to_string())
-        } else {
-            Err(format!("Codex Spark runner 没有输出：{detail}"))
-        };
-    };
-    let parsed: CodexSparkPromptOutput = serde_json::from_str(line.trim())
-        .map_err(|err| format!("Codex Spark runner 输出解析失败：{err}"))?;
-    if !parsed.ok {
-        return Err(parsed
-            .error
-            .unwrap_or_else(|| "Codex Spark 请求失败".to_string()));
-    }
-    parsed
-        .text
-        .map(|text| text.trim().to_string())
-        .filter(|text| !text.is_empty())
-        .ok_or_else(|| "Codex Spark 返回空文本".to_string())
 }

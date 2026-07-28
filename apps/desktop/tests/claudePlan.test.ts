@@ -14,7 +14,7 @@ import {
   isReadonlyDeniedClaudeTool,
   normalizeClaudePermissionMode,
   readPlanRevisionRequest,
-} from "../agent-runner/claudePlan.mjs";
+} from "../legacy/agent-runner/claudePlan.mjs";
 
 describe("claudePlan helpers", () => {
   it("从 ExitPlanMode input 提取计划和允许提示", () => {

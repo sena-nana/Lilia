@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -10,6 +11,7 @@ use flate2::read::GzDecoder;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
+#[cfg(windows)]
 use crate::process_command::hide_console_window;
 
 use super::codex_probe::{

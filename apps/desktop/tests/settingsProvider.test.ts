@@ -245,6 +245,24 @@ describe("Settings provider switch", () => {
     });
   });
 
+  it("额度页展示 Credential Broker 面并诚实标注远程额度不可用", async () => {
+    const view = await renderSettings("/settings?tab=quota");
+
+    await waitFor(() => {
+      expect(mockInvoke.mock.calls.some(([cmd]) => cmd === "native_quota_surface")).toBe(true);
+      expect(view.getByText("Credential Broker / Native")).toBeInTheDocument();
+      expect(view.getByText("远程额度 API：不可用")).toBeInTheDocument();
+    });
+    expect(view.getByText("订阅 ≠ API 额度")).toBeInTheDocument();
+    expect(view.getByText("已隔离")).toBeInTheDocument();
+    const nativePanel = view.container.querySelector(
+      '[data-agent-id="settings.quota.native"]',
+    ) as HTMLElement;
+    expect(nativePanel).toBeTruthy();
+    expect(nativePanel.textContent).toContain("额度 API 不可用");
+    expect(nativePanel.textContent).not.toMatch(/剩余\s+\d+%/);
+  });
+
   it("额度页显示近 7 天 Token 和成本统计", async () => {
     const view = await renderSettings("/settings?tab=quota");
 
@@ -1196,6 +1214,7 @@ describe("Settings provider switch", () => {
 
     expect(settingsModel.tabs).toEqual(expect.arrayContaining([
       expect.objectContaining({ key: "assistant", label: "Provider 配置" }),
+      expect.objectContaining({ key: "credentials", label: "凭据" }),
       expect.objectContaining({ key: "model-config", label: "模型配置" }),
       expect.objectContaining({ key: "plugin-skills", label: "技能" }),
       expect.objectContaining({ key: "plugin-packages", label: "插件" }),

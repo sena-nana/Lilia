@@ -1,6 +1,10 @@
-// Lilia · Agent runner CLI entry.
+// #47 LEGACY — Node agent-runner CLI entry (compat until product 1.0.0).
 //
-// Rust/Tauri still launches this file directly with `node agent-runner.mjs`.
+// NOT the default Desktop path. Only launched when
+// `LILIA_AGENT_EXECUTION_BACKEND=node|legacy|agent-runner` is set explicitly.
+// Default install resources do NOT package this file or Codex app-server.
+//
+// Rust/Tauri may still launch this file in legacy mode with `node agent-runner.mjs`.
 // The implementation lives under `agent-runner/` so this file only wires stdio
 // and process lifetime.
 

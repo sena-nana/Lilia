@@ -6,8 +6,6 @@ import {
   DEFAULT_AUTOMATION_LOGIC_PATH,
   DEFAULT_AUTOMATION_TRIGGER_KIND,
   DEFAULT_AUTOMATION_TOOL_ACTION,
-  DEFAULT_CHAT_BACKEND,
-  DEFAULT_MODEL_BY_BACKEND,
   normalizeAutomationLogicKind,
   normalizeAutomationScope,
   normalizePermissionMode,
@@ -57,8 +55,9 @@ export function useAutomationGraph(options: {
     const config: Record<string, unknown> = {};
     if (kind === "trigger") config.triggerKind = DEFAULT_AUTOMATION_TRIGGER_KIND;
     if (kind === "agent") {
-      config.backend = DEFAULT_CHAT_BACKEND;
-      config.model = DEFAULT_MODEL_BY_BACKEND[DEFAULT_CHAT_BACKEND];
+      // Execution is Native AgentKit (#49). Claude/Codex remain scope/filter labels only.
+      config.backend = "native-agentkit";
+      config.model = "native-default";
       config.permission = normalizePermissionMode(null);
       config.prompt = DEFAULT_AUTOMATION_AGENT_PROMPT;
     }

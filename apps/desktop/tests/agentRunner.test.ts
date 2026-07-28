@@ -29,22 +29,22 @@ import {
   RUNNER_INTERRUPT_TURN_CONTROL_TYPE,
   RUNNER_SETTINGS_UPDATE_CONTROL_TYPE,
 } from "@lilia/contracts/runnerProtocolContract.mjs";
-import { runAgentTurn } from "../agent-runner/core.mjs";
-import { createInteractionBroker } from "../agent-runner/interactions.mjs";
-import { createProtocolEmitter } from "../agent-runner/protocol.mjs";
-import { createArchitectureChangeHandler } from "../agent-runner/architecture.mjs";
-import { normalizeRuntimePermission } from "../agent-runner/runtimeSettings.mjs";
+import { runAgentTurn } from "../legacy/agent-runner/core.mjs";
+import { createInteractionBroker } from "../legacy/agent-runner/interactions.mjs";
+import { createProtocolEmitter } from "../legacy/agent-runner/protocol.mjs";
+import { createArchitectureChangeHandler } from "../legacy/agent-runner/architecture.mjs";
+import { normalizeRuntimePermission } from "../legacy/agent-runner/runtimeSettings.mjs";
 import {
   applyClaudeRuntimePermission,
   mapClaudeInitialPermission,
-} from "../agent-runner/claude/permissions.mjs";
+} from "../legacy/agent-runner/claude/permissions.mjs";
 import {
   createLiliaAskUserServer,
   runClaude,
-} from "../agent-runner/claude/runClaude.mjs";
+} from "../legacy/agent-runner/claude/runClaude.mjs";
 import {
   createConversationContextHandler,
-} from "../agent-runner/conversationContext.mjs";
+} from "../legacy/agent-runner/conversationContext.mjs";
 import {
   codexPermissionProfileIdForMode,
   codexLegacyPermissionRuntimeParams,
@@ -52,14 +52,14 @@ import {
   mapCodexApprovalPolicy,
   mapCodexSandboxMode,
   maybeHandleCodexApprovalRequest,
-} from "../agent-runner/codex/permissions.mjs";
+} from "../legacy/agent-runner/codex/permissions.mjs";
 import {
   codexHistoryTimelineEvents,
   createCodexRunContext,
   mapCodexEventToNdjson,
   normalizeCodexAppServerEvent,
   normalizeCodexPlanSteps,
-} from "../agent-runner/codex/timeline.mjs";
+} from "../legacy/agent-runner/codex/timeline.mjs";
 import {
   runCodex,
   runCodexAppServer,
@@ -72,21 +72,21 @@ import {
   handleLiliaIabResult,
   startCodexAppServerTurn,
   withCodexElicitation,
-} from "../agent-runner/codex/runCodex.mjs";
+} from "../legacy/agent-runner/codex/runCodex.mjs";
 import {
   codexAppServerSpawnCommand,
   codexAppServerBinary,
   createCodexAppServer,
   resolveWindowsCommandScript,
-} from "../agent-runner/codex/appServer.mjs";
+} from "../legacy/agent-runner/codex/appServer.mjs";
 import {
   consumeCodexRateLimitResetCredit,
   readCodexAccountQuotaStatus,
-} from "../agent-runner/codex/accountQuota.mjs";
+} from "../legacy/agent-runner/codex/accountQuota.mjs";
 import {
   runCodexSparkPromptCommand,
   updateCodexSparkPromptState,
-} from "../agent-runner/codex/sparkPrompt.mjs";
+} from "../legacy/agent-runner/codex/sparkPrompt.mjs";
 import {
   archiveCodexThread,
   cleanCodexThreadBackgroundTerminals,
@@ -97,17 +97,17 @@ import {
   renameCodexThread,
   searchCodexThreads,
   syncCodexThreadHistoryForTask,
-} from "../agent-runner/codex/history.mjs";
+} from "../legacy/agent-runner/codex/history.mjs";
 import {
   searchClaudeSessions,
   syncClaudeSessionHistoryForTask,
-} from "../agent-runner/claude/history.mjs";
+} from "../legacy/agent-runner/claude/history.mjs";
 import {
   runClaudeSessionManagementRuntimeCommand,
-} from "../agent-runner/sessionManagement.mjs";
+} from "../legacy/agent-runner/sessionManagement.mjs";
 
 const testsDir = dirname(fileURLToPath(import.meta.url));
-const codexAccountQuotaUtility = join(testsDir, "..", "codex-account-quota.mjs");
+const codexAccountQuotaUtility = join(testsDir, "..", "legacy", "codex-account-quota.mjs");
 
 function captureProtocol() {
   const lines: string[] = [];

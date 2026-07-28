@@ -333,12 +333,14 @@ fn locate_codex_account_quota_utility<R: Runtime>(app: &AppHandle<R>) -> PathBuf
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("codex-account-quota.mjs"));
-            candidates.push(dir.join("../../../codex-account-quota.mjs"));
+            candidates.push(dir.join("legacy").join("codex-account-quota.mjs"));
+            candidates.push(dir.join("../../../legacy/codex-account-quota.mjs"));
         }
     }
 
     if let Ok(res) = app.path().resource_dir() {
         candidates.push(res.join("codex-account-quota.mjs"));
+        candidates.push(res.join("legacy").join("codex-account-quota.mjs"));
     }
 
     for candidate in &candidates {
@@ -350,7 +352,7 @@ fn locate_codex_account_quota_utility<R: Runtime>(app: &AppHandle<R>) -> PathBuf
     candidates
         .into_iter()
         .last()
-        .unwrap_or_else(|| PathBuf::from("codex-account-quota.mjs"))
+        .unwrap_or_else(|| PathBuf::from("legacy/codex-account-quota.mjs"))
 }
 
 fn run_codex_account_quota_utility_output<R: Runtime>(

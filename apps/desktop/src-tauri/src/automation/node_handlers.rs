@@ -9,9 +9,8 @@ use crate::automation::signals::{emit_task_changed_signal, emit_todo_signal};
 use crate::automation::types::{AutomationNode, AutomationRun};
 use crate::chat::runner::spawn_agent_turn;
 use crate::chat::state::{
-    default_backend, default_model_for_backend, new_chat_message_id, normalize_backend,
-    normalize_composer_for_backend, queue_pending_turn_for_app, should_persist_user_message,
-    ChatStore,
+    default_backend, new_chat_message_id, normalize_backend, queue_pending_turn_for_app,
+    should_persist_user_message, ChatStore,
 };
 use crate::chat::timeline_sink::{persist_and_emit_input, persist_and_emit_message_timeline_event};
 use crate::chat::types::{ChatComposerState, ChatMessage, ChatSendResult, ChatWorkflow};
@@ -413,6 +412,10 @@ fn execute_agent_node<R: Runtime>(
     node: &AutomationNode,
     input: &JsonValue,
 ) -> Result<JsonValue, String> {
+    // #49 / DoD: Automation Agent nodes must use AgentKit/Native — never Claude/Codex
+    // official Server or Node agent-runner for new tasks.
+    crate::native_agent::require_native_for_automation_or_multi_agent("Automation Agent 节点")?;
+
     let create_task = node
         .config
         .get("createTask")
@@ -434,18 +437,27 @@ fn execute_agent_node<R: Runtime>(
             .unwrap_or_else(|| contract::default_agent_prompt().to_string()),
         input,
     );
-    let backend = node
+    // Product backend labels (claude/codex) remain scope filters only; execution is Native.
+    let configured = node
         .config
         .get("backend")
         .and_then(|value| value.as_str())
-        .map(ToString::to_string);
-    let backend = normalize_optional_backend(backend);
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if let Some(backend) = configured {
+        if matches!(backend, "claude" | "codex" | "node" | "node-agent-runner" | "agent-runner") {
+            return Err(format!(
+                "Automation Agent 节点禁止直调品牌后端 `{backend}`；须走 AgentKit/Native（backend=native-agentkit）"
+            ));
+        }
+    }
+    let backend = crate::native_agent::BACKEND_NATIVE_AGENTKIT.to_string();
     let model = node
         .config
         .get("model")
         .and_then(|value| value.as_str())
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| default_model_for_backend(&backend))
+        .unwrap_or("native-default")
         .to_string();
     let permission = normalize_permission_mode(
         node.config
@@ -486,6 +498,7 @@ fn execute_agent_node<R: Runtime>(
         "dispatch": result.dispatch,
         "queuedCount": result.queued_count,
         "messageId": result.message.id,
+        "executionBackend": crate::native_agent::BACKEND_NATIVE_AGENTKIT,
     }))
 }
 
@@ -550,11 +563,15 @@ fn dispatch_agent_turn<R: Runtime>(
     automation_run_id: String,
     task_id: String,
     content: String,
-    composer: ChatComposerState,
+    mut composer: ChatComposerState,
     project_cwd: String,
 ) -> Result<ChatSendResult, String> {
-    let backend = composer.backend.clone();
-    let composer = normalize_composer_for_backend(composer, &task_id, &backend);
+    crate::native_agent::require_native_for_automation_or_multi_agent("Automation 多 Agent 路径")?;
+    // Keep Native backend identity — do not run through chat-backends.json normalize
+    // (that manifest still lists only claude/codex product labels).
+    composer.task_id = task_id.clone();
+    composer.backend = crate::native_agent::BACKEND_NATIVE_AGENTKIT.to_string();
+    composer.permission = normalize_permission_mode(&composer.permission);
     let workflow = Some(ChatWorkflow::Automation {
         automation_run_id: automation_run_id.clone(),
     });
@@ -737,6 +754,35 @@ mod tests {
             normalize_optional_backend(Some("codex".to_string())),
             "codex"
         );
+    }
+
+    #[test]
+    fn automation_agent_refuses_brand_backends_for_new_tasks() {
+        let previous = std::env::var("LILIA_AGENT_EXECUTION_BACKEND").ok();
+        std::env::remove_var("LILIA_AGENT_EXECUTION_BACKEND");
+        assert!(crate::native_agent::require_native_for_automation_or_multi_agent(
+            "Automation Agent 节点"
+        )
+        .is_ok());
+
+        for brand in ["claude", "codex", "node", "node-agent-runner"] {
+            let err = format!(
+                "Automation Agent 节点禁止直调品牌后端 `{brand}`；须走 AgentKit/Native（backend=native-agentkit）"
+            );
+            assert!(err.contains(brand));
+            assert!(err.contains("AgentKit/Native"));
+        }
+
+        std::env::set_var("LILIA_AGENT_EXECUTION_BACKEND", "node");
+        let err = crate::native_agent::require_native_for_automation_or_multi_agent(
+            "Automation 多 Agent 路径",
+        )
+        .unwrap_err();
+        assert!(err.contains("不得直调"));
+        match previous {
+            Some(value) => std::env::set_var("LILIA_AGENT_EXECUTION_BACKEND", value),
+            None => std::env::remove_var("LILIA_AGENT_EXECUTION_BACKEND"),
+        }
     }
 
     #[test]

@@ -47,9 +47,9 @@ const CODEX_ACCOUNT_QUOTA_COMMAND = "quota_usage_get_codex_account_status";
 const CODEX_ACCOUNT_QUOTA_UTILITY_ENV = "LILIA_CODEX_ACCOUNT_QUOTA_UTILITY";
 const codexAccountQuotaUtilityPath = path.join(runDir, "codex-account-quota-agent-debug.mjs");
 const CODEX_ACCOUNT_QUOTA_REQUIRED_RESOURCES = [
-  "../codex-account-quota.mjs",
-  "../agent-runner/codex/accountQuota.mjs",
-  "../agent-runner/codex/appServer.mjs",
+  "../legacy/codex-account-quota.mjs",
+  "../legacy/agent-runner/codex/accountQuota.mjs",
+  "../legacy/agent-runner/codex/appServer.mjs",
 ];
 const PROVIDER_BLOCK_ERROR_MARKERS = [
   "辅助模型未配置",
