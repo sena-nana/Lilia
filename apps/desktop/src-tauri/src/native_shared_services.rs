@@ -27,18 +27,21 @@ pub fn native_shared_git_status(path: String) -> Result<Value, String> {
 pub fn native_shared_code_index_search(
     workspace_id: String,
     root: String,
-    relative_path: String,
-    content: String,
     query: String,
 ) -> Result<Value, String> {
     native_agent::native_runtime()?
-        .shared_code_index_search(
-            workspace_id.trim(),
-            root.trim(),
-            relative_path.trim(),
-            &content,
-            query.trim(),
-        )
+        .shared_code_index_workspace_search(workspace_id.trim(), root.trim(), query.trim())
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn native_shared_workspace_list(
+    workspace_id: String,
+    root: String,
+    path: String,
+) -> Result<Value, String> {
+    native_agent::native_runtime()?
+        .shared_workspace_list(workspace_id.trim(), root.trim(), path.trim())
         .map_err(|err| err.to_string())
 }
 
@@ -53,6 +56,16 @@ pub fn native_shared_mcp_list_servers() -> Result<Value, String> {
 pub fn native_shared_lsp_status() -> Result<Value, String> {
     native_agent::native_runtime()?
         .shared_lsp_status()
+        .map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+pub fn native_shared_lsp_open_workspace(
+    workspace_id: String,
+    root: String,
+) -> Result<Value, String> {
+    native_agent::native_runtime()?
+        .shared_lsp_open_workspace(workspace_id.trim(), root.trim())
         .map_err(|err| err.to_string())
 }
 
@@ -96,6 +109,7 @@ mod tests {
         assert!(status.code_index_same_instance);
         assert!(status.lsp_same_instance);
         assert!(status.mcp_same_instance);
+        assert!(status.computer_use_same_instance);
         assert!(status.memory_shared_router);
         assert_eq!(status.git_service_id, "mutsuki.agent.service.git");
         assert_eq!(
@@ -112,9 +126,6 @@ mod tests {
         let servers = native_shared_mcp_list_servers().unwrap();
         assert!(servers.as_array().is_some());
         let lsp = native_shared_lsp_status().unwrap();
-        assert_eq!(
-            lsp.get("activeWorkspaces").and_then(Value::as_u64),
-            Some(0)
-        );
+        assert_eq!(lsp.get("activeWorkspaces").and_then(Value::as_u64), Some(0));
     }
 }

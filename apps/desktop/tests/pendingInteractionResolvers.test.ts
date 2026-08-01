@@ -5,6 +5,7 @@ import {
   ARCHITECTURE_INTERACTION_KIND,
   CHAT_RESPOND_AGENT_INTERACTION_COMMAND,
   MCP_ELICITATION_INTERACTION_KIND,
+  NATIVE_RESPOND_APPROVAL_COMMAND,
   PERMISSION_APPROVAL_INTERACTION_KIND,
   TOOL_CONSENT_INTERACTION_KIND,
   type AskUserResult,
@@ -346,7 +347,7 @@ describe("pending interaction resolvers", () => {
       decision: "allow",
     });
 
-    expect(mockInvoke).toHaveBeenCalledWith("native_respond_approval", {
+    expect(mockInvoke).toHaveBeenCalledWith(NATIVE_RESPOND_APPROVAL_COMMAND, {
       taskId,
       decision: {
         sessionId: "sess-native",
@@ -495,4 +496,3 @@ describe("pending interaction resolvers", () => {
     expect(resolved).toEqual(result);
   });
 });
-

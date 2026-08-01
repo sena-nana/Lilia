@@ -41,4 +41,8 @@ product_id!(TaskId, "task_id");
 product_id!(ConversationId, "conversation_id");
 product_id!(MilestoneId, "milestone_id");
 product_id!(WorkflowId, "workflow_id");
+product_id!(WorkflowRunId, "workflow_run_id");
+product_id!(AssignmentId, "assignment_id");
+product_id!(ArtifactId, "artifact_id");
+product_id!(ProjectAssetId, "project_asset_id");
 product_id!(BindingId, "binding_id");

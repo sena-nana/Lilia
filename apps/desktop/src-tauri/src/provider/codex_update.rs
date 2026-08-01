@@ -469,6 +469,7 @@ fn set_codex_update_download_progress(version: &str, progress_percent: Option<u8
     }
 }
 
+#[cfg(any(target_os = "windows", test))]
 fn powershell_single_quoted(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }

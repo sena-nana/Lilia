@@ -8,6 +8,8 @@ import {
   getNativeSharedGitStatus,
   getNativeSharedLspStatus,
   listNativeSharedMcpServers,
+  listNativeSharedWorkspace,
+  openNativeSharedLspWorkspace,
   queryNativeSharedMemory,
   searchNativeSharedCodeIndex,
   writeNativeSharedMemory,
@@ -16,14 +18,16 @@ import {
 
 const props = defineProps<ChatSidebarContext>();
 
-type ServiceTab = "git" | "index" | "lsp" | "mcp" | "memory";
+type ServiceTab = "git" | "files" | "index" | "lsp" | "mcp" | "memory";
+type Row = Record<string, unknown>;
 
 const tabs: { id: ServiceTab; label: string }[] = [
   { id: "git", label: "Git" },
-  { id: "index", label: "Index" },
-  { id: "lsp", label: "LSP" },
-  { id: "mcp", label: "MCP" },
-  { id: "memory", label: "Memory" },
+  { id: "files", label: "文件" },
+  { id: "index", label: "搜索" },
+  { id: "lsp", label: "代码分析" },
+  { id: "mcp", label: "扩展工具" },
+  { id: "memory", label: "记忆" },
 ];
 
 const activeTab = ref<ServiceTab>("git");
@@ -31,44 +35,71 @@ const loading = ref(false);
 const acting = ref(false);
 const errorText = ref("");
 const status = ref<NativeSharedCodingServicesStatus | null>(null);
-const resultText = ref("");
-const gitPath = ref("");
-const indexQuery = ref("shared_marker");
+const workspaceRoot = ref("");
+const workspacePath = ref("");
+const indexQuery = ref("");
 const memoryQuery = ref("");
 const memoryText = ref("");
-const memoryNamespace = ref("lilia.product");
-const memoryScopeId = ref("");
-const mcpServers = ref<unknown[]>([]);
-const lspWorkspaces = ref(0);
+const gitStatus = ref<Row | null>(null);
+const workspaceEntries = ref<Row[]>([]);
+const indexHits = ref<Row[]>([]);
+const lspWorkspaces = ref<Row[]>([]);
+const mcpServers = ref<Row[]>([]);
+const memoryRecords = ref<Row[]>([]);
 let disposed = false;
 
-const dataSource = computed(() => status.value?.dataSource ?? "…");
-const sharedOk = computed(
+const workspaceId = computed(() => props.projectId?.trim() || props.taskId);
+const toolsReady = computed(
   () =>
     Boolean(status.value?.sharedIdentityOk) &&
-    status.value?.officialAgentServer === false &&
     Boolean(status.value?.gitSameInstance) &&
     Boolean(status.value?.codeIndexSameInstance) &&
     Boolean(status.value?.lspSameInstance) &&
-    Boolean(status.value?.mcpSameInstance) &&
-    Boolean(status.value?.memorySharedRouter),
+    Boolean(status.value?.computerUseSameInstance),
 );
+const gitBranch = computed(() => {
+  const head = asRow(gitStatus.value?.head);
+  return stringValue(head?.branch) || shortCommit(stringValue(head?.commit));
+});
+const gitChanges = computed(() => rows(gitStatus.value?.changes));
 
-function pretty(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
+function asRow(value: unknown): Row | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Row
+    : null;
+}
+
+function rows(value: unknown): Row[] {
+  return Array.isArray(value)
+    ? value.map(asRow).filter((row): row is Row => row !== null)
+    : [];
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function shortCommit(value: string): string {
+  return value ? value.slice(0, 8) : "未知分支";
+}
+
+function syncWorkspaceRoot() {
+  if (props.projectCwd?.trim()) {
+    workspaceRoot.value = props.projectCwd.trim();
   }
 }
 
-function syncDefaultsFromContext() {
-  if (!gitPath.value.trim() && props.projectCwd) {
-    gitPath.value = props.projectCwd;
+function requireWorkspace(): string | null {
+  const root = workspaceRoot.value.trim();
+  if (!root) {
+    errorText.value = "当前任务没有关联工作区";
+    return null;
   }
-  if (!memoryScopeId.value.trim()) {
-    memoryScopeId.value = props.projectId?.trim() || props.taskId || "default";
-  }
+  return root;
 }
 
 async function refreshInventory() {
@@ -83,147 +114,131 @@ async function refreshInventory() {
     ]);
     if (disposed) return;
     status.value = next;
-    mcpServers.value = Array.isArray(servers) ? servers : [];
-    lspWorkspaces.value = lsp.activeWorkspaces ?? next.lspActiveWorkspaces;
-    if (activeTab.value === "mcp") {
-      resultText.value = pretty(mcpServers.value);
-    } else if (activeTab.value === "lsp") {
-      resultText.value = pretty(lsp);
-    }
-  } catch (err) {
-    if (!disposed) errorText.value = err instanceof Error ? err.message : String(err);
+    mcpServers.value = rows(servers);
+    lspWorkspaces.value = rows(lsp.workspaces);
+  } catch (error) {
+    if (!disposed) errorText.value = error instanceof Error ? error.message : String(error);
   } finally {
     if (!disposed) loading.value = false;
   }
 }
 
-async function runGitStatus() {
+async function runAction(action: () => Promise<void>) {
   if (disposed || acting.value) return;
-  const path = gitPath.value.trim();
-  if (!path) {
-    errorText.value = "请填写仓库路径";
-    return;
-  }
   acting.value = true;
   errorText.value = "";
   try {
-    const value = await getNativeSharedGitStatus(path);
-    if (!disposed) resultText.value = pretty(value);
-  } catch (err) {
-    if (!disposed) errorText.value = err instanceof Error ? err.message : String(err);
+    await action();
+  } catch (error) {
+    if (!disposed) errorText.value = error instanceof Error ? error.message : String(error);
   } finally {
     if (!disposed) acting.value = false;
   }
 }
 
-async function runIndexSearch() {
-  if (disposed || acting.value) return;
-  const root = gitPath.value.trim() || props.projectCwd?.trim() || "/tmp/lilia-shared-index";
-  const query = indexQuery.value.trim();
-  if (!query) {
-    errorText.value = "请填写检索词";
-    return;
-  }
-  acting.value = true;
-  errorText.value = "";
-  try {
-    const value = await searchNativeSharedCodeIndex({
-      workspaceId: props.projectId?.trim() || "ws-shared",
+function runGitStatus() {
+  return runAction(async () => {
+    const root = requireWorkspace();
+    if (!root) return;
+    gitStatus.value = asRow(await getNativeSharedGitStatus(root));
+  });
+}
+
+function runWorkspaceList() {
+  return runAction(async () => {
+    const root = requireWorkspace();
+    if (!root) return;
+    const result = asRow(await listNativeSharedWorkspace({
+      workspaceId: workspaceId.value,
       root,
-      relativePath: "src/shared_probe.rs",
-      content: `pub fn ${query.replace(/\W+/g, "_") || "shared_marker"}() {}\n`,
-      query,
-    });
-    if (!disposed) resultText.value = pretty(value);
-  } catch (err) {
-    if (!disposed) errorText.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    if (!disposed) acting.value = false;
-  }
+      path: workspacePath.value.trim(),
+    }));
+    workspaceEntries.value = rows(result?.entries);
+  });
 }
 
-async function runMemoryQuery() {
-  if (disposed || acting.value) return;
-  const query = memoryQuery.value.trim();
-  if (!query) {
-    errorText.value = "请填写 Memory 查询";
-    return;
-  }
-  acting.value = true;
-  errorText.value = "";
-  try {
-    const value = await queryNativeSharedMemory({
-      query,
-      namespace: memoryNamespace.value.trim() || null,
-      scopeId: memoryScopeId.value.trim() || null,
-      limit: 16,
-    });
-    if (!disposed) resultText.value = pretty(value);
-  } catch (err) {
-    if (!disposed) errorText.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    if (!disposed) acting.value = false;
-  }
-}
-
-async function runMemoryWrite() {
-  if (disposed || acting.value) return;
-  const text = memoryText.value.trim();
-  if (!text) {
-    errorText.value = "请填写要写入的 Memory 文本";
-    return;
-  }
-  acting.value = true;
-  errorText.value = "";
-  try {
-    const value = await writeNativeSharedMemory({
-      text,
-      namespace: memoryNamespace.value.trim() || null,
-      scopeId: memoryScopeId.value.trim() || null,
-    });
-    if (!disposed) {
-      resultText.value = pretty(value);
-      memoryQuery.value = text.slice(0, 48);
+function runIndexSearch() {
+  return runAction(async () => {
+    const root = requireWorkspace();
+    if (!root) return;
+    const query = indexQuery.value.trim();
+    if (!query) {
+      errorText.value = "请输入要搜索的代码";
+      return;
     }
-  } catch (err) {
-    if (!disposed) errorText.value = err instanceof Error ? err.message : String(err);
-  } finally {
-    if (!disposed) acting.value = false;
-  }
+    const result = asRow(await searchNativeSharedCodeIndex({
+      workspaceId: workspaceId.value,
+      root,
+      query,
+    }));
+    indexHits.value = rows(result?.hits);
+  });
 }
 
-async function onTabAction() {
-  if (activeTab.value === "git") return runGitStatus();
-  if (activeTab.value === "index") return runIndexSearch();
-  if (activeTab.value === "memory") return runMemoryQuery();
-  return refreshInventory();
+function openLspWorkspace() {
+  return runAction(async () => {
+    const root = requireWorkspace();
+    if (!root) return;
+    await openNativeSharedLspWorkspace({
+      workspaceId: workspaceId.value,
+      root,
+    });
+    const result = await getNativeSharedLspStatus();
+    lspWorkspaces.value = rows(result.workspaces);
+  });
+}
+
+function runMemoryQuery() {
+  return runAction(async () => {
+    const query = memoryQuery.value.trim();
+    if (!query) {
+      errorText.value = "请输入要查找的内容";
+      return;
+    }
+    const result = asRow(await queryNativeSharedMemory({
+      query,
+      namespace: "lilia.project",
+      scopeId: workspaceId.value,
+      limit: 16,
+    }));
+    memoryRecords.value = rows(result?.records);
+  });
+}
+
+function runMemoryWrite() {
+  return runAction(async () => {
+    const text = memoryText.value.trim();
+    if (!text) {
+      errorText.value = "请输入要记住的内容";
+      return;
+    }
+    await writeNativeSharedMemory({
+      text,
+      namespace: "lilia.project",
+      scopeId: workspaceId.value,
+    });
+    memoryText.value = "";
+    memoryQuery.value = text;
+    const result = asRow(await queryNativeSharedMemory({
+      query: text,
+      namespace: "lilia.project",
+      scopeId: workspaceId.value,
+      limit: 16,
+    }));
+    memoryRecords.value = rows(result?.records);
+  });
 }
 
 watch(
-  () => [props.projectCwd, props.projectId, props.taskId] as const,
-  () => {
-    syncDefaultsFromContext();
-  },
+  () => props.projectCwd,
+  () => syncWorkspaceRoot(),
   { immediate: true },
 );
 
-watch(activeTab, (tab) => {
-  errorText.value = "";
-  if (tab === "mcp") resultText.value = pretty(mcpServers.value);
-  else if (tab === "lsp") {
-    resultText.value = pretty({
-      serviceId: status.value?.lspServiceId,
-      activeWorkspaces: lspWorkspaces.value,
-      dataSource: status.value?.dataSource,
-    });
-  } else if (!resultText.value) {
-    resultText.value = "";
-  }
-});
-
 onMounted(() => {
-  syncDefaultsFromContext();
+  syncWorkspaceRoot();
   void refreshInventory();
+  if (workspaceRoot.value) void runGitStatus();
 });
 
 onBeforeUnmount(() => {
@@ -235,10 +250,9 @@ onBeforeUnmount(() => {
   <div class="shared-panel" data-agent-id="chat.shared-services">
     <header class="shared-panel__head">
       <div>
-        <p class="shared-panel__title">共享 Services</p>
-        <p class="shared-panel__meta" data-agent-id="chat.shared-services.source">
-          {{ dataSource }}
-          <span :class="sharedOk ? 'ok' : 'warn'">{{ sharedOk ? "单实例" : "未就绪" }}</span>
+        <p class="shared-panel__title">工作区工具</p>
+        <p class="shared-panel__meta">
+          {{ toolsReady ? "已连接" : "正在连接" }}
         </p>
       </div>
       <button
@@ -246,7 +260,7 @@ onBeforeUnmount(() => {
         class="shared-panel__icon-btn"
         data-agent-id="chat.shared-services.refresh"
         :disabled="loading || acting"
-        title="刷新清单"
+        title="刷新"
         @click="refreshInventory"
       >
         <Loader2 v-if="loading" :size="14" class="spin" aria-hidden="true" />
@@ -254,7 +268,7 @@ onBeforeUnmount(() => {
       </button>
     </header>
 
-    <div class="shared-panel__tabs" role="tablist" aria-label="共享 Services">
+    <div class="shared-panel__tabs" role="tablist" aria-label="工作区工具">
       <button
         v-for="tab in tabs"
         :key="tab.id"
@@ -273,118 +287,134 @@ onBeforeUnmount(() => {
     <p v-if="errorText" class="shared-panel__error" role="alert">{{ errorText }}</p>
 
     <section v-if="activeTab === 'git'" class="shared-panel__form">
+      <p v-if="gitStatus" class="shared-panel__summary">
+        {{ gitBranch }} · {{ gitChanges.length ? `${gitChanges.length} 个改动` : "工作区干净" }}
+      </p>
+      <ul v-if="gitChanges.length" class="shared-panel__list">
+        <li v-for="change in gitChanges" :key="stringValue(change.path)">
+          <span>{{ stringValue(change.path) }}</span>
+          <small>{{ stringValue(change.status) }}{{ change.staged ? " · 已暂存" : "" }}</small>
+        </li>
+      </ul>
+      <button
+        type="button"
+        class="shared-panel__action"
+        data-agent-id="chat.shared-services.git.status"
+        :disabled="acting || !workspaceRoot"
+        @click="runGitStatus"
+      >
+        刷新状态
+      </button>
+    </section>
+
+    <section v-else-if="activeTab === 'files'" class="shared-panel__form">
       <label>
-        仓库路径
+        目录
         <input
-          v-model="gitPath"
+          v-model="workspacePath"
           type="text"
           spellcheck="false"
-          data-agent-id="chat.shared-services.git.path"
-          placeholder="/path/to/repo"
+          data-agent-id="chat.shared-services.files.path"
+          placeholder="留空查看工作区根目录"
         />
       </label>
       <button
         type="button"
         class="shared-panel__action"
-        data-agent-id="chat.shared-services.git.status"
-        :disabled="acting"
-        @click="runGitStatus"
+        data-agent-id="chat.shared-services.files.list"
+        :disabled="acting || !workspaceRoot"
+        @click="runWorkspaceList"
       >
-        读取 Git Status
+        查看文件
       </button>
+      <ul class="shared-panel__list">
+        <li v-for="entry in workspaceEntries" :key="stringValue(entry.path)">
+          <span>{{ stringValue(entry.path) }}</span>
+          <small>{{ stringValue(entry.kind) === "dir" ? "文件夹" : `${numberValue(entry.size)} B` }}</small>
+        </li>
+      </ul>
     </section>
 
     <section v-else-if="activeTab === 'index'" class="shared-panel__form">
       <label>
-        工作区根（默认项目目录）
-        <input
-          v-model="gitPath"
-          type="text"
-          spellcheck="false"
-          data-agent-id="chat.shared-services.index.root"
-        />
-      </label>
-      <label>
-        检索词
+        搜索代码
         <input
           v-model="indexQuery"
-          type="text"
-          spellcheck="false"
+          type="search"
           data-agent-id="chat.shared-services.index.query"
+          placeholder="函数、类型或文本"
+          @keyup.enter="runIndexSearch"
         />
       </label>
       <button
         type="button"
         class="shared-panel__action"
         data-agent-id="chat.shared-services.index.search"
-        :disabled="acting"
+        :disabled="acting || !workspaceRoot"
         @click="runIndexSearch"
       >
-        搜索 Code Index
+        搜索
       </button>
+      <p v-if="indexQuery && !acting && !indexHits.length" class="shared-panel__empty">
+        没有匹配结果
+      </p>
+      <ul class="shared-panel__list">
+        <li v-for="(hit, index) in indexHits" :key="`${stringValue(hit.path)}:${index}`">
+          <strong>{{ stringValue(hit.path) }}</strong>
+          <span>{{ stringValue(hit.summary) }}</span>
+        </li>
+      </ul>
     </section>
 
     <section v-else-if="activeTab === 'lsp'" class="shared-panel__form">
-      <p class="shared-panel__hint">
-        活跃 workspace：{{ lspWorkspaces }}（不启动第二个 language server）
+      <p class="shared-panel__summary">
+        {{ lspWorkspaces.length ? `${lspWorkspaces.length} 个工作区正在分析` : "尚未启动代码分析" }}
       </p>
+      <ul class="shared-panel__list">
+        <li v-for="workspace in lspWorkspaces" :key="stringValue(workspace.server_id)">
+          <span>{{ stringValue(workspace.server_id) }}</span>
+          <small>{{ stringValue(workspace.state) }}</small>
+        </li>
+      </ul>
       <button
         type="button"
         class="shared-panel__action"
-        data-agent-id="chat.shared-services.lsp.refresh"
-        :disabled="acting || loading"
-        @click="onTabAction"
+        data-agent-id="chat.shared-services.lsp.open"
+        :disabled="acting || !workspaceRoot"
+        @click="openLspWorkspace"
       >
-        刷新 LSP 状态
+        启动代码分析
       </button>
     </section>
 
     <section v-else-if="activeTab === 'mcp'" class="shared-panel__form">
-      <p class="shared-panel__hint">已注册 server：{{ mcpServers.length }}</p>
+      <p v-if="!mcpServers.length" class="shared-panel__empty">暂无已连接的扩展工具</p>
+      <ul class="shared-panel__list">
+        <li v-for="server in mcpServers" :key="stringValue(server.server_id)">
+          <span>{{ stringValue(server.server_id) }}</span>
+          <small>
+            {{ stringValue(server.state) }} · {{ numberValue(server.tool_count) }} 个工具
+          </small>
+        </li>
+      </ul>
       <button
         type="button"
         class="shared-panel__action"
-        data-agent-id="chat.shared-services.mcp.refresh"
-        :disabled="acting || loading"
-        @click="onTabAction"
+        :disabled="loading || acting"
+        @click="refreshInventory"
       >
-        刷新 MCP 列表
+        刷新
       </button>
     </section>
 
     <section v-else class="shared-panel__form">
       <label>
-        Namespace
-        <input
-          v-model="memoryNamespace"
-          type="text"
-          spellcheck="false"
-          data-agent-id="chat.shared-services.memory.namespace"
-        />
-      </label>
-      <label>
-        Scope
-        <input
-          v-model="memoryScopeId"
-          type="text"
-          spellcheck="false"
-          data-agent-id="chat.shared-services.memory.scope"
-        />
-      </label>
-      <label>
-        查询
+        查找记忆
         <input
           v-model="memoryQuery"
-          type="text"
+          type="search"
           data-agent-id="chat.shared-services.memory.query"
-        />
-      </label>
-      <label>
-        写入文本
-        <textarea
-          v-model="memoryText"
-          rows="3"
-          data-agent-id="chat.shared-services.memory.text"
+          @keyup.enter="runMemoryQuery"
         />
       </label>
       <div class="shared-panel__actions">
@@ -395,25 +425,32 @@ onBeforeUnmount(() => {
           :disabled="acting"
           @click="runMemoryQuery"
         >
-          查询
-        </button>
-        <button
-          type="button"
-          class="shared-panel__action shared-panel__action--secondary"
-          data-agent-id="chat.shared-services.memory.write-btn"
-          :disabled="acting"
-          @click="runMemoryWrite"
-        >
-          写入
+          查找
         </button>
       </div>
+      <ul class="shared-panel__list">
+        <li v-for="record in memoryRecords" :key="stringValue(record.memory_id)">
+          <span>{{ stringValue(record.text) }}</span>
+        </li>
+      </ul>
+      <label>
+        添加记忆
+        <textarea
+          v-model="memoryText"
+          rows="3"
+          data-agent-id="chat.shared-services.memory.text"
+        />
+      </label>
+      <button
+        type="button"
+        class="shared-panel__action shared-panel__action--secondary"
+        data-agent-id="chat.shared-services.memory.write-btn"
+        :disabled="acting"
+        @click="runMemoryWrite"
+      >
+        保存
+      </button>
     </section>
-
-    <pre
-      v-if="resultText"
-      class="shared-panel__result"
-      data-agent-id="chat.shared-services.result"
-    >{{ resultText }}</pre>
   </div>
 </template>
 
@@ -432,18 +469,20 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 0.5rem;
 }
-.shared-panel__title {
+.shared-panel__title,
+.shared-panel__summary,
+.shared-panel__empty {
   margin: 0;
+}
+.shared-panel__title {
   font-weight: 600;
   font-size: 0.875rem;
 }
-.shared-panel__meta {
+.shared-panel__meta,
+.shared-panel__empty {
   margin: 0.25rem 0 0;
   font-size: 0.75rem;
   color: var(--text-muted, #6b7280);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
 }
 .shared-panel__icon-btn,
 .shared-panel__tab,
@@ -459,7 +498,8 @@ onBeforeUnmount(() => {
   display: inline-flex;
   padding: 0.35rem;
 }
-.shared-panel__tabs {
+.shared-panel__tabs,
+.shared-panel__actions {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
@@ -491,16 +531,6 @@ onBeforeUnmount(() => {
   font: inherit;
   padding: 0.35rem 0.5rem;
 }
-.shared-panel__hint {
-  margin: 0;
-  font-size: 0.8125rem;
-  color: var(--text-muted, #6b7280);
-}
-.shared-panel__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-}
 .shared-panel__action {
   padding: 0.35rem 0.7rem;
   font-size: 0.8125rem;
@@ -513,23 +543,24 @@ onBeforeUnmount(() => {
   color: #b91c1c;
   font-size: 0.8125rem;
 }
-.shared-panel__result {
+.shared-panel__list {
+  display: grid;
+  gap: 0.4rem;
   margin: 0;
-  padding: 0.55rem;
+  padding: 0;
+  list-style: none;
+}
+.shared-panel__list li {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.45rem 0.5rem;
   border-radius: 0.375rem;
   background: var(--surface-2, #f3f4f6);
-  font-size: 0.7rem;
-  line-height: 1.4;
-  overflow: auto;
-  max-height: 18rem;
-  white-space: pre-wrap;
-  word-break: break-word;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
 }
-.ok {
-  color: #047857;
-}
-.warn {
-  color: #b45309;
+.shared-panel__list small {
+  color: var(--text-muted, #6b7280);
 }
 .spin {
   animation: spin 0.9s linear infinite;

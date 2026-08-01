@@ -4,14 +4,17 @@
 //! assembly, and AgentKit → product timeline projection commands.
 //! Does not store product SQLite rows or Agent Runtime private coordinator state.
 
+mod agentkit_host;
 mod anthropic_adapter;
 mod credential;
+mod host_backends;
 mod model_turn;
 mod native_runtime;
 mod profile;
 mod projection;
 mod quota;
 mod shared_services;
+mod wire_service;
 
 pub use anthropic_adapter::{
     resolve_anthropic_endpoint, AnthropicMessagesAdapter, ANTHROPIC_MESSAGES_ADAPTER_ID,
@@ -22,12 +25,12 @@ pub use credential::{
     ProductCredentialBridge, ProductCredentialImportInput, ProductCredentialLoginInput,
 };
 pub use model_turn::{
-    drive_live_model_turn_streaming, live_model_adapter_eligible, resolve_model_endpoint,
-    LiveModelDriver, DEFAULT_OPENAI_COMPATIBLE_ENDPOINT, ENV_MODEL_ENDPOINT,
+    live_model_adapter_eligible, resolve_model_endpoint, LiveModelDriver,
+    DEFAULT_OPENAI_COMPATIBLE_ENDPOINT, ENV_MODEL_ENDPOINT,
 };
 pub use native_runtime::{
     NativeAgentKitRuntime, NativeRuntimeBootstrap, NativeRuntimeError, NativeRuntimeMode,
-    NativeTurnStreamPage, SharedNativeAgentKitRuntime,
+    NativeTurnStreamPage, SharedNativeAgentKitRuntime, TurnCancellationDisposition,
 };
 pub use profile::{
     build_product_coding_profile, build_product_coding_profile_id, profile_has_credential_refs,
@@ -38,3 +41,4 @@ pub use quota::{
     KnownCapabilityLimit, NativeProviderQuotaRow, NativeQuotaSurface, QuotaApiAvailability,
 };
 pub use shared_services::SharedCodingServicesStatus;
+pub use wire_service::{NativeAgentWireService, NativeWireTurnResult};

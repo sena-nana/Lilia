@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+#[cfg(feature = "legacy-runner")]
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Runtime};
 
@@ -16,6 +17,7 @@ pub(crate) const CODEX_SPARK_BASE_URL: &str = "codex-account://spark";
 
 const DEFAULT_SPARK_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[cfg(feature = "legacy-runner")]
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexSparkPromptCommand<'a> {
@@ -25,6 +27,7 @@ struct CodexSparkPromptCommand<'a> {
     timeout_ms: u64,
 }
 
+#[cfg(feature = "legacy-runner")]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexSparkPromptOutput {
@@ -68,10 +71,10 @@ fn request_codex_account_spark_with_timeout<R: Runtime>(
         crate::native_agent::ExecutionBackend::NativeAgentkit => {
             let _ = (app, prompt, instruction, timeout);
             Err(format!(
-            "Codex Spark via Node agent-runner is retired on the default Native path \
+                "Codex Spark via Node agent-runner is retired on the default Native path \
              (compat until {}; rebuild with `--features legacy-runner` and set \
              LILIA_AGENT_EXECUTION_BACKEND=node for explicit legacy)",
-            crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL
+                crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL
             ))
         }
         #[cfg(feature = "legacy-runner")]

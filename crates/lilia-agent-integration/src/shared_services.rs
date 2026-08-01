@@ -4,12 +4,14 @@
 //! the same `NativeCodingAgentBundle` Arc handles that Agent tools use — never a
 //! second session or private product service.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_agent_contracts::{
-    AgentMemoryQueryRequest, AgentMemoryWriteRequest, CodeFileChange, CodeIndexBatch,
-    CodeSearchMode, CodeSearchQuery, CodeWorkspaceRef, GitServiceRequest, GitServiceResponse,
-    MemoryScopeRef,
+    AgentMemoryQueryRequest, AgentMemoryWriteRequest, AgentWorkspaceRef, CodeFileChange,
+    CodeIndexBatch, CodeSearchMode, CodeSearchQuery, CodeWorkspaceRef, ComputerUseServiceRequest,
+    GitServiceRequest, GitServiceResponse, LspServerDescriptor, LspWorkspaceId, MemoryScopeRef,
+    WorkspacePathRequest,
 };
 use mutsuki_agent_plugin_code_index::SERVICE_ID as CODE_INDEX_SERVICE_ID;
 use mutsuki_agent_plugin_computer_use::SERVICE_ID as COMPUTER_USE_SERVICE_ID;
@@ -40,6 +42,7 @@ pub struct SharedCodingServicesStatus {
     pub code_index_same_instance: bool,
     pub lsp_same_instance: bool,
     pub mcp_same_instance: bool,
+    pub computer_use_same_instance: bool,
     /// MemoryRouter Clone shares the same inner Arc (write+query round-trip proves it).
     pub memory_shared_router: bool,
     pub mcp_active_servers: usize,
@@ -56,48 +59,8 @@ impl NativeAgentKitRuntime {
     ) -> Result<SharedCodingServicesStatus, NativeRuntimeError> {
         let bundle = self.bootstrap().bundle();
         bundle.assert_shared_service_identity()?;
-        // MemoryRouter::Clone shares inner Arc — prove product/agent see one router.
         let memory_product = bundle.core.memory.clone();
         let memory_agent = bundle.core.memory.clone();
-        let probe_text = format!(
-            "lilia-shared-memory-probe-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        );
-        let written = memory_product.write(AgentMemoryWriteRequest {
-            text: probe_text.clone(),
-            tags: vec!["lilia.shared.probe".into()],
-            metadata: None,
-            scope: Some(MemoryScopeRef {
-                namespace: "lilia.product".into(),
-                scope_id: "shared-services".into(),
-            }),
-            priority: None,
-            confidence: None,
-            expiry_unix_ms: None,
-            provenance: None,
-            details_ref: None,
-        })?;
-        let queried = memory_agent.query(AgentMemoryQueryRequest {
-            query: probe_text,
-            limit: 4,
-            tags: vec!["lilia.shared.probe".into()],
-            scope: Some(MemoryScopeRef {
-                namespace: "lilia.product".into(),
-                scope_id: "shared-services".into(),
-            }),
-            include_disabled: false,
-            now_unix_ms: None,
-        })?;
-        let memory_shared_router = queried
-            .records
-            .iter()
-            .any(|record| record.memory_id == written.memory_id);
-        let _ = memory_product.delete(mutsuki_agent_contracts::AgentMemoryDeleteRequest {
-            memory_id: written.memory_id,
-        });
         Ok(SharedCodingServicesStatus {
             git_service_id: GIT_SERVICE_ID,
             code_index_service_id: CODE_INDEX_SERVICE_ID,
@@ -111,7 +74,8 @@ impl NativeAgentKitRuntime {
             code_index_same_instance: true,
             lsp_same_instance: true,
             mcp_same_instance: true,
-            memory_shared_router,
+            computer_use_same_instance: true,
+            memory_shared_router: memory_product.shares_state_with(&memory_agent),
             mcp_active_servers: bundle.mcp.active_server_count(),
             lsp_active_workspaces: bundle.lsp.active_workspace_count(),
             data_source: "agentkit.native_coding_bundle",
@@ -153,33 +117,18 @@ impl NativeAgentKitRuntime {
         Ok(response)
     }
 
-    /// Minimal Code Index path: open workspace → apply one file → search.
-    /// Uses the same SharedCodeIndexService Arc as Agent tools.
-    pub fn shared_code_index_search(
+    /// Synchronize text files from a real workspace and search the shared index.
+    ///
+    /// The Host supplies filesystem facts; AgentKit owns index state and search.
+    pub fn shared_code_index_workspace_search(
         &self,
-        workspace_id: &str,
+        _workspace_id: &str,
         root: &str,
-        relative_path: &str,
-        content: &str,
         query: &str,
     ) -> Result<Value, NativeRuntimeError> {
+        let root = canonical_workspace_root(root)?;
+        let workspace = self.synchronize_code_index(&root)?;
         let service = Arc::clone(&self.bootstrap().bundle().code_index);
-        let workspace = CodeWorkspaceRef {
-            workspace_id: workspace_id.to_string(),
-            root: root.to_string(),
-            tenant_id: String::new(),
-            git_revision: None,
-            worktree_id: None,
-        };
-        service.open_workspace(workspace.clone(), None, None, false)?;
-        service.apply_batch(CodeIndexBatch {
-            workspace: workspace.clone(),
-            rebuild: false,
-            changes: vec![CodeFileChange::Create {
-                path: relative_path.to_string(),
-                content: content.to_string(),
-            }],
-        })?;
         let result = service.search(CodeSearchQuery {
             workspace,
             query: query.to_string(),
@@ -189,6 +138,29 @@ impl NativeAgentKitRuntime {
             include_overlay: false,
         })?;
         Ok(serde_json::to_value(result)?)
+    }
+
+    /// List a real workspace directory through the same Computer Use service as Agent tools.
+    pub fn shared_workspace_list(
+        &self,
+        _workspace_id: &str,
+        root: &str,
+        path: &str,
+    ) -> Result<Value, NativeRuntimeError> {
+        let root = canonical_workspace_root(root)?;
+        self.bootstrap()
+            .bundle()
+            .computer_use
+            .call_value(serde_json::to_value(ComputerUseServiceRequest::List {
+                request: WorkspacePathRequest {
+                    workspace: AgentWorkspaceRef {
+                        workspace_id: canonical_workspace_id(&root),
+                        root: canonical_workspace_id(&root),
+                    },
+                    path: path.to_string(),
+                },
+            })?)
+            .map_err(Into::into)
     }
 
     /// MCP registry snapshot from the shared SharedMcpService Arc (no new session).
@@ -216,9 +188,110 @@ impl NativeAgentKitRuntime {
         else {
             return Ok(0);
         };
-        // SkillRegistry lives inside Agent Runtime internals; product Host surfaces the
-        // durable registry path + package list. Count packages for apply proof.
-        Ok(registry.packages.len().max(registry.user_skill_roots.len()))
+        let user = registry
+            .user_skill_roots
+            .iter()
+            .map(PathBuf::from)
+            .find(|path| path.is_dir())
+            .or_else(|| {
+                registry
+                    .packages
+                    .iter()
+                    .map(|package| PathBuf::from(&package.path))
+                    .filter_map(|path| path.parent().map(Path::to_path_buf))
+                    .find(|path| path.is_dir())
+            });
+        self.bootstrap()
+            .bundle()
+            .core
+            .skills
+            .set_roots(mutsuki_agent_runtime::SkillRoots {
+                user,
+                ..Default::default()
+            });
+        let reloaded = self
+            .bootstrap()
+            .bundle()
+            .core
+            .skills
+            .reload(mutsuki_agent_contracts::SkillReloadRequest {})?;
+        Ok(reloaded.discovered)
+    }
+
+    /// Start the appropriate language server for a real workspace.
+    pub fn shared_lsp_open_workspace(
+        &self,
+        _workspace_id: &str,
+        root: &str,
+    ) -> Result<Value, NativeRuntimeError> {
+        let root = canonical_workspace_root(root)?;
+        let (server_id, command, args) = language_server_for_workspace(&root)?;
+        let workspace = LspWorkspaceId(canonical_workspace_id(&root));
+        let workspace_uri = reqwest::Url::from_directory_path(&root)
+            .map_err(|_| {
+                NativeRuntimeError::Agent(format!(
+                    "cannot create workspace URI for {}",
+                    root.display()
+                ))
+            })?
+            .to_string();
+        let lsp = Arc::clone(&self.bootstrap().bundle().lsp);
+        lsp.open_workspace(
+            workspace.clone(),
+            LspServerDescriptor {
+                server_id,
+                command,
+                args,
+                workspace_uri,
+                initialization_options: None,
+            },
+        )?;
+        Ok(serde_json::to_value(lsp.workspace_status(&workspace)?)?)
+    }
+
+    /// Prepare the exact shared workspace state exposed to the model.
+    ///
+    /// Code Index is mandatory. LSP is best-effort because a workspace may not
+    /// have a matching language server installed; unavailable LSP tools are not
+    /// advertised by the Native Coding bundle.
+    pub(crate) fn prepare_native_coding_workspace(
+        &self,
+        root: &str,
+    ) -> Result<Value, NativeRuntimeError> {
+        let root = canonical_workspace_root(root)?;
+        let workspace = self.synchronize_code_index(&root)?;
+        let lsp_ready = self
+            .shared_lsp_open_workspace(&workspace.workspace_id, &workspace.root)
+            .is_ok();
+        Ok(serde_json::json!({
+            "workspaceId": workspace.workspace_id,
+            "root": workspace.root,
+            "codeIndexReady": true,
+            "lspReady": lsp_ready,
+        }))
+    }
+
+    fn synchronize_code_index(&self, root: &Path) -> Result<CodeWorkspaceRef, NativeRuntimeError> {
+        let files = collect_indexable_files(root)?;
+        let service = Arc::clone(&self.bootstrap().bundle().code_index);
+        let canonical = canonical_workspace_id(root);
+        let workspace = CodeWorkspaceRef {
+            workspace_id: canonical.clone(),
+            root: canonical,
+            tenant_id: String::new(),
+            git_revision: None,
+            worktree_id: None,
+        };
+        service.open_workspace(workspace.clone(), None, None, false)?;
+        service.apply_batch(CodeIndexBatch {
+            workspace: workspace.clone(),
+            rebuild: true,
+            changes: files
+                .into_iter()
+                .map(|(path, content)| CodeFileChange::Change { path, content })
+                .collect(),
+        })?;
+        Ok(workspace)
     }
 
     /// LSP workspace inventory from the shared SharedLspService Arc (no second LS).
@@ -227,6 +300,7 @@ impl NativeAgentKitRuntime {
         Ok(serde_json::json!({
             "serviceId": LSP_SERVICE_ID,
             "activeWorkspaces": lsp.active_workspace_count(),
+            "workspaces": lsp.list_workspaces(),
             "dataSource": "agentkit.native_coding_bundle",
             "sameInstance": true,
         }))
@@ -309,6 +383,159 @@ impl NativeAgentKitRuntime {
     }
 }
 
+const MAX_INDEX_FILES: usize = 4_096;
+const MAX_INDEX_FILE_BYTES: u64 = 512 * 1024;
+
+fn canonical_workspace_root(root: &str) -> Result<PathBuf, NativeRuntimeError> {
+    let root = std::fs::canonicalize(root.trim())
+        .map_err(|error| NativeRuntimeError::Agent(format!("workspace root: {error}")))?;
+    if !root.is_dir() {
+        return Err(NativeRuntimeError::Agent(
+            "workspace root must be a directory".into(),
+        ));
+    }
+    Ok(root)
+}
+
+fn canonical_workspace_id(root: &Path) -> String {
+    root.to_string_lossy().into_owned()
+}
+
+fn collect_indexable_files(root: &Path) -> Result<Vec<(String, String)>, NativeRuntimeError> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .map_err(|error| NativeRuntimeError::Agent(format!("read workspace: {error}")))?;
+        for entry in entries {
+            let entry = entry
+                .map_err(|error| NativeRuntimeError::Agent(format!("read workspace: {error}")))?;
+            let file_type = entry.file_type().map_err(|error| {
+                NativeRuntimeError::Agent(format!("read workspace metadata: {error}"))
+            })?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if file_type.is_dir() {
+                if !ignored_directory(&entry.file_name().to_string_lossy()) {
+                    pending.push(path);
+                }
+                continue;
+            }
+            if !file_type.is_file() || !indexable_extension(&path) {
+                continue;
+            }
+            let metadata = entry.metadata().map_err(|error| {
+                NativeRuntimeError::Agent(format!("read workspace metadata: {error}"))
+            })?;
+            if metadata.len() > MAX_INDEX_FILE_BYTES {
+                continue;
+            }
+            let Ok(content) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|error| NativeRuntimeError::Agent(error.to_string()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.push((relative, content));
+            if files.len() >= MAX_INDEX_FILES {
+                break;
+            }
+        }
+        if files.len() >= MAX_INDEX_FILES {
+            break;
+        }
+    }
+    files.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(files)
+}
+
+fn ignored_directory(name: &str) -> bool {
+    matches!(
+        name,
+        ".git"
+            | ".codegraph"
+            | ".idea"
+            | ".vscode"
+            | ".yarn"
+            | "build"
+            | "coverage"
+            | "dist"
+            | "node_modules"
+            | "target"
+            | "vendor"
+    )
+}
+
+fn indexable_extension(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some(
+            "c" | "cc"
+                | "cpp"
+                | "css"
+                | "go"
+                | "h"
+                | "hpp"
+                | "html"
+                | "java"
+                | "js"
+                | "json"
+                | "jsx"
+                | "kt"
+                | "kts"
+                | "md"
+                | "mjs"
+                | "py"
+                | "rb"
+                | "rs"
+                | "sh"
+                | "swift"
+                | "toml"
+                | "ts"
+                | "tsx"
+                | "vue"
+                | "xml"
+                | "yaml"
+                | "yml"
+        )
+    )
+}
+
+fn language_server_for_workspace(
+    root: &Path,
+) -> Result<(String, String, Vec<String>), NativeRuntimeError> {
+    if root.join("Cargo.toml").is_file() {
+        return Ok(("rust-analyzer".into(), "rust-analyzer".into(), Vec::new()));
+    }
+    if ["tsconfig.json", "jsconfig.json", "package.json"]
+        .iter()
+        .any(|name| root.join(name).is_file())
+    {
+        return Ok((
+            "typescript-language-server".into(),
+            "typescript-language-server".into(),
+            vec!["--stdio".into()],
+        ));
+    }
+    if ["pyproject.toml", "requirements.txt", "setup.py"]
+        .iter()
+        .any(|name| root.join(name).is_file())
+    {
+        return Ok((
+            "pyright".into(),
+            "pyright-langserver".into(),
+            vec!["--stdio".into()],
+        ));
+    }
+    Err(NativeRuntimeError::Agent(
+        "no supported language server was detected for this workspace".into(),
+    ))
+}
+
 impl From<serde_json::Error> for NativeRuntimeError {
     fn from(value: serde_json::Error) -> Self {
         Self::Agent(value.to_string())
@@ -335,6 +562,7 @@ mod tests {
         assert!(status.code_index_same_instance);
         assert!(status.lsp_same_instance);
         assert!(status.mcp_same_instance);
+        assert!(status.computer_use_same_instance);
         assert!(status.memory_shared_router);
         assert_eq!(status.git_service_id, GIT_SERVICE_ID);
         assert_eq!(status.code_index_service_id, CODE_INDEX_SERVICE_ID);
@@ -398,16 +626,22 @@ mod tests {
     }
 
     #[test]
-    fn shared_code_index_search_is_callable() {
+    fn shared_code_index_search_indexes_real_workspace_files() {
+        let root = std::env::temp_dir().join("lilia-shared-index-workspace");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("src/hello.rs"),
+            "pub fn shared_marker_alpha() {}\n",
+        )
+        .unwrap();
         let runtime = NativeRuntimeBootstrap::embedded_reference()
             .unwrap()
             .into_runtime();
         let value = runtime
-            .shared_code_index_search(
+            .shared_code_index_workspace_search(
                 "ws-48",
-                "/tmp/lilia-shared-index",
-                "src/hello.rs",
-                "pub fn shared_marker_alpha() {}\n",
+                &root.display().to_string(),
                 "shared_marker_alpha",
             )
             .unwrap();
@@ -420,6 +654,33 @@ mod tests {
             !hits.is_empty(),
             "code index search should return at least one hit: {value}"
         );
+        assert_eq!(
+            hits[0].get("path").and_then(Value::as_str),
+            Some("src/hello.rs")
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shared_computer_use_lists_real_workspace() {
+        let root = std::env::temp_dir().join("lilia-shared-computer-use");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("visible.txt"), "real workspace content").unwrap();
+        let runtime = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        let value = runtime
+            .shared_workspace_list("ws-48", &root.display().to_string(), "")
+            .unwrap();
+        let entries = value
+            .get("entries")
+            .and_then(Value::as_array)
+            .expect("workspace entries");
+        assert!(entries
+            .iter()
+            .any(|entry| { entry.get("path").and_then(Value::as_str) == Some("visible.txt") }));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -428,7 +689,10 @@ mod tests {
             .unwrap()
             .into_runtime();
         let servers = runtime.shared_mcp_list_servers().unwrap();
-        assert!(servers.as_array().is_some(), "expected MCP server array: {servers}");
+        assert!(
+            servers.as_array().is_some(),
+            "expected MCP server array: {servers}"
+        );
         let bundle = runtime.bootstrap().bundle();
         let product = Arc::clone(&bundle.mcp);
         assert!(Arc::ptr_eq(&bundle.mcp, &product));
@@ -449,6 +713,10 @@ mod tests {
             status.get("serviceId").and_then(Value::as_str),
             Some(LSP_SERVICE_ID)
         );
+        assert!(status
+            .get("workspaces")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty));
         let bundle = runtime.bootstrap().bundle();
         let product = Arc::clone(&bundle.lsp);
         assert!(Arc::ptr_eq(&bundle.lsp, &product));

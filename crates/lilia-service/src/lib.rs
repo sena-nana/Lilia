@@ -21,28 +21,36 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lilia_agent_integration::{
-    IndependentDiagnostics, NativeQuotaSurface, NativeRuntimeBootstrap, NativeRuntimeError,
-    NativeRuntimeMode, SharedNativeAgentKitRuntime,
+    IndependentDiagnostics, NativeAgentWireService, NativeQuotaSurface, NativeRuntimeBootstrap,
+    NativeRuntimeError, NativeRuntimeMode, SharedNativeAgentKitRuntime,
 };
 use lilia_client::LiliaClient;
 use lilia_contracts::{
     AgentSessionBinding, AgentSessionRef, ProductApprovalDecision, ProductResult, TaskId,
     TimelineProjectionCommand, TimelineProjectionEvent,
 };
-use lilia_core::{AgentKitClientPort, InMemoryProductStore, NativeAgentCapabilitySnapshot};
+use lilia_core::{
+    AgentKitClientPort, InMemoryProductStore, NativeAgentCapabilitySnapshot, ProductRepository,
+};
 use lilia_storage::{
-    InMemoryTimelineProjectionStore, LiliaDataPaths, ProjectionApplyResult, SqliteProductStore,
-    SqliteTimelineProjectionStore, TimelineProjectionRepository,
+    InMemoryTimelineProjectionStore, LiliaDataPaths, ProjectionApplyResult,
+    SqliteAgentRuntimeStateStore, SqliteProductStore, SqliteTimelineProjectionStore,
+    TimelineProjectionRepository,
+};
+use mutsuki_agent_client::dispatch_agent_request;
+use mutsuki_agent_contracts::{
+    AgentWireError, AgentWireRequestEnvelope, AgentWireResponseEnvelope,
 };
 use serde::Serialize;
 
 pub use health::{ComponentHealth, ServiceHealthReport, ServiceHealthStatus};
 pub use observe::{
-    serve_readonly_http, RemoteDiagnosticsObserve, RemoteObserveStatus, RemoteTimelineObserve,
+    read_http_request, serve_readonly_http, RemoteDiagnosticsObserve, RemoteObserveStatus,
+    RemoteTimelineObserve,
 };
 pub use writer_lease::{
-    writer_lease_health, StorageWriterGuard, StorageWriterLease, WriterLeaseError, WriterLeaseHealth,
-    WriterMode,
+    writer_lease_health, StorageWriterGuard, StorageWriterLease, WriterLeaseError,
+    WriterLeaseHealth, WriterMode,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -65,7 +73,8 @@ impl From<lilia_contracts::ProductError> for ServiceAuthorityError {
 
 struct ServiceAuthorityInner {
     runtime: SharedNativeAgentKitRuntime,
-    store: Arc<Mutex<InMemoryProductStore>>,
+    wire: Mutex<NativeAgentWireService>,
+    product_repository: Arc<dyn ProductRepository>,
     timeline: Arc<InMemoryTimelineProjectionStore>,
     writer: StorageWriterGuard,
     storage_key: String,
@@ -131,10 +140,14 @@ impl ServiceAuthority {
             StorageWriterGuard::try_acquire(storage_key.clone(), owner_id, WriterMode::Service)?;
         let bootstrap = NativeRuntimeBootstrap::service_reference()?;
         debug_assert_eq!(bootstrap.mode(), NativeRuntimeMode::Service);
+        let product_repository: Arc<dyn ProductRepository> =
+            Arc::new(Mutex::new(InMemoryProductStore::new()));
+        let runtime = SharedNativeAgentKitRuntime::new(bootstrap.into_runtime());
         Ok(Self {
             inner: Arc::new(ServiceAuthorityInner {
-                runtime: SharedNativeAgentKitRuntime::new(bootstrap.into_runtime()),
-                store: Arc::new(Mutex::new(InMemoryProductStore::new())),
+                wire: Mutex::new(NativeAgentWireService::new(runtime.clone())),
+                runtime,
+                product_repository,
                 timeline: Arc::new(InMemoryTimelineProjectionStore::new()),
                 writer,
                 storage_key,
@@ -171,21 +184,28 @@ impl ServiceAuthority {
         )?;
         let projections = SqliteTimelineProjectionStore::open(&projection_path)
             .map_err(|err| ServiceAuthorityError::Product(err.to_string()))?;
+        let runtime_state = SqliteAgentRuntimeStateStore::open(paths.agent_runtime_db())
+            .map_err(|err| ServiceAuthorityError::Product(err.to_string()))?;
         let product = Arc::new(
             SqliteProductStore::open(&product_path)
                 .map_err(|err| ServiceAuthorityError::Product(err.to_string()))?,
         );
-        let store = Arc::new(Mutex::new(InMemoryProductStore::new()));
         let timeline = Arc::new(InMemoryTimelineProjectionStore::new());
-        hydrate_from_sqlite(&store, &timeline, product.as_ref(), &projections)?;
+        hydrate_timeline_from_sqlite(&timeline, product.as_ref(), &projections)?;
         let bootstrap = NativeRuntimeBootstrap::service_reference()?;
         debug_assert_eq!(bootstrap.mode(), NativeRuntimeMode::Service);
+        let runtime = SharedNativeAgentKitRuntime::new(
+            bootstrap.into_runtime_with_stores(projections, runtime_state),
+        );
+        runtime.inner().apply_migrated_skill_roots(&paths)?;
+        let wire = NativeAgentWireService::try_new(runtime.clone()).map_err(|error| {
+            ServiceAuthorityError::Product(format!("{}: {}", error.code, error.message))
+        })?;
         Ok(Self {
             inner: Arc::new(ServiceAuthorityInner {
-                runtime: SharedNativeAgentKitRuntime::new(
-                    bootstrap.into_runtime_with_projection_store(projections),
-                ),
-                store,
+                wire: Mutex::new(wire),
+                runtime,
+                product_repository: product.clone(),
                 timeline,
                 writer,
                 storage_key,
@@ -219,6 +239,25 @@ impl ServiceAuthority {
         self.inner.runtime.clone()
     }
 
+    /// Dispatch the canonical Mutsuki Agent Wire envelope against the same
+    /// Service-owned runtime used by all product clients.
+    pub fn dispatch_agent_wire(
+        &self,
+        request: AgentWireRequestEnvelope,
+    ) -> Result<AgentWireResponseEnvelope, AgentWireError> {
+        self.ensure_running().map_err(|error| AgentWireError {
+            code: "agent.service.stopped".into(),
+            message: error.to_string(),
+            retryable: true,
+        })?;
+        let mut wire = self.inner.wire.lock().map_err(|_| AgentWireError {
+            code: "agent.service.lock_poisoned".into(),
+            message: "agent wire service lock is poisoned".into(),
+            retryable: true,
+        })?;
+        dispatch_agent_request(&mut *wire, request)
+    }
+
     pub fn shared_timeline(&self) -> Arc<InMemoryTimelineProjectionStore> {
         Arc::clone(&self.inner.timeline)
     }
@@ -234,10 +273,12 @@ impl ServiceAuthority {
     /// Each call returns a LiliaClient bound to the **same** Runtime + product + timeline Arcs.
     ///
     /// Dropping a client (Desktop disconnect) does not stop the authority or other clients.
-    pub fn client(&self) -> Result<LiliaClient<SharedNativeAgentKitRuntime>, ServiceAuthorityError> {
+    pub fn client(
+        &self,
+    ) -> Result<LiliaClient<SharedNativeAgentKitRuntime>, ServiceAuthorityError> {
         self.ensure_running()?;
-        Ok(LiliaClient::with_timeline_store(
-            Arc::clone(&self.inner.store),
+        Ok(LiliaClient::with_repository_and_timeline(
+            Arc::clone(&self.inner.product_repository),
             self.inner.runtime.clone(),
             Arc::clone(&self.inner.timeline),
         ))
@@ -291,28 +332,15 @@ impl ServiceAuthority {
                 .list_bindings_for_task(task_id)
                 .map_err(ServiceAuthorityError::from);
         }
-        Ok(self.client()?.list_bindings(task_id))
+        self.client()?
+            .list_bindings(task_id)
+            .map_err(ServiceAuthorityError::from)
     }
 
-    /// Persist in-memory Project/Task/Binding rows into SQLite (no-op without home).
+    /// Product commands are written through the authoritative repository immediately.
+    ///
+    /// Retained as a compatibility checkpoint; no delayed in-memory flush exists.
     pub fn checkpoint_durable_product(&self) -> Result<(), ServiceAuthorityError> {
-        let Some(store) = &self.inner.product_store else {
-            return Ok(());
-        };
-        let mem = self
-            .inner
-            .store
-            .lock()
-            .map_err(|_| ServiceAuthorityError::Product("product store lock poisoned".into()))?;
-        for project in mem.projects.values() {
-            store.upsert_project(project)?;
-        }
-        for task in mem.tasks.values() {
-            store.upsert_task(task)?;
-        }
-        for binding in mem.bindings.values() {
-            store.upsert_binding(binding)?;
-        }
         Ok(())
     }
 
@@ -492,11 +520,23 @@ impl ServiceAuthority {
         session: &AgentSessionRef,
         decision: &ProductApprovalDecision,
     ) -> ProductResult<()> {
-        self.client()
-            .map_err(|err| lilia_contracts::ProductError::Unavailable {
-                message: err.to_string(),
+        if session.as_str() != decision.session_id {
+            return Err(lilia_contracts::ProductError::InvalidInput {
+                field: "session_id".into(),
+                message: "approval decision belongs to a different session".into(),
+            });
+        }
+        self.inner
+            .wire
+            .lock()
+            .map_err(|_| lilia_contracts::ProductError::Unavailable {
+                message: "Agent Wire service lock is poisoned".into(),
             })?
-            .respond_approval(session, decision)
+            .respond_task_approval(decision.clone())
+            .map(|_| ())
+            .map_err(|error| lilia_contracts::ProductError::Unavailable {
+                message: format!("{}: {}", error.code, error.message),
+            })
     }
 
     fn ensure_running(&self) -> Result<(), ServiceAuthorityError> {
@@ -508,21 +548,12 @@ impl ServiceAuthority {
     }
 }
 
-fn hydrate_from_sqlite(
-    store: &Arc<Mutex<InMemoryProductStore>>,
+fn hydrate_timeline_from_sqlite(
     timeline: &Arc<InMemoryTimelineProjectionStore>,
     product: &SqliteProductStore,
     projections: &SqliteTimelineProjectionStore,
 ) -> Result<(), ServiceAuthorityError> {
-    let projects = product.list_projects()?;
     let tasks = product.list_tasks()?;
-    let bindings = product.list_all_bindings()?;
-    {
-        let mut mem = store
-            .lock()
-            .map_err(|_| ServiceAuthorityError::Product("product store lock poisoned".into()))?;
-        mem.replace_snapshot(projects, tasks.clone(), bindings);
-    }
     for task in tasks {
         for event in projections.list_for_task(&task.id) {
             let _ = timeline.apply(TimelineProjectionCommand::UpsertTimelineEvent { event });
@@ -542,9 +573,8 @@ pub fn shared_timeline_ptr_eq(left: &ServiceAuthority, right: &ServiceAuthority)
 
 /// Minimal HTTP/1.1 health responder for `apps/service` (no framework).
 pub fn health_http_response(report: &ServiceHealthReport) -> String {
-    let body = serde_json::to_string(report).unwrap_or_else(|_| {
-        r#"{"status":"degraded","error":"serialize_failed"}"#.to_string()
-    });
+    let body = serde_json::to_string(report)
+        .unwrap_or_else(|_| r#"{"status":"degraded","error":"serialize_failed"}"#.to_string());
     let code = match report.status {
         ServiceHealthStatus::Ready => "200 OK",
         ServiceHealthStatus::Degraded => "503 Service Unavailable",
@@ -652,9 +682,9 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(client_b.list_bindings(&task.id).len(), 1);
+        assert_eq!(client_b.list_bindings(&task.id).unwrap().len(), 1);
         assert_eq!(
-            client_b.list_bindings(&task.id)[0].binding_id,
+            client_b.list_bindings(&task.id).unwrap()[0].binding_id,
             binding.binding_id
         );
 
@@ -858,6 +888,54 @@ mod tests {
     }
 
     #[test]
+    fn home_bootstrap_loads_migrated_skills_into_agentkit_registry() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let home = std::env::temp_dir().join(format!("lilia-svc-skills-{nanos}"));
+        let paths = LiliaDataPaths::from_home(&home);
+        paths.ensure_layout().unwrap();
+        let skill_root = home.join("legacy-skills");
+        let skill_dir = skill_root.join("review");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nid: migrated-review\nversion: 1.0.0\ntitle: Migrated Review\nsummary: migrated skill\n---\n\nReview the workspace.\n",
+        )
+        .unwrap();
+        let registry = lilia_storage::AgentkitSkillsRegistry {
+            version: 1,
+            secret_free: true,
+            user_skill_roots: vec![skill_root.to_string_lossy().into_owned()],
+            packages: Vec::new(),
+        };
+        std::fs::write(
+            lilia_storage::skills_registry_path(&paths),
+            serde_json::to_vec_pretty(&registry).unwrap(),
+        )
+        .unwrap();
+
+        let authority = ServiceAuthority::bootstrap_with_home(&home).unwrap();
+        let discovered = authority
+            .shared_runtime()
+            .inner()
+            .bootstrap()
+            .bundle()
+            .core
+            .skills
+            .discover(Default::default())
+            .unwrap();
+        assert!(discovered
+            .catalog
+            .iter()
+            .any(|skill| skill.skill_id == "migrated-review"));
+
+        drop(authority);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
     fn crash_restart_restores_sqlite_projection_and_session_binding() {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -901,7 +979,6 @@ mod tests {
                     event: sample_event(&task.id, &session, 2, "still-running"),
                 })
                 .unwrap();
-            authority.checkpoint_durable_product().unwrap();
             task_id = task.id;
             binding_id = binding.binding_id;
             // Simulate crash: drop without graceful restart helper.
@@ -923,9 +1000,21 @@ mod tests {
         assert_eq!(bindings[0].binding_id, binding_id);
         assert_eq!(bindings[0].agent_session, session);
 
-        // In-memory client surface was hydrated from SQLite too.
+        // The same client contract reads the durable repository directly.
         let client = recovered.client().unwrap();
-        assert_eq!(client.list_bindings(&task_id).len(), 1);
+        assert_eq!(
+            client.products().get_task(&task_id).unwrap().title,
+            "recover me"
+        );
+        assert_eq!(
+            client
+                .products()
+                .get_project(&ProjectId::new("p-crash").unwrap())
+                .unwrap()
+                .name,
+            "Crash"
+        );
+        assert_eq!(client.list_bindings(&task_id).unwrap().len(), 1);
         assert_eq!(client.product_timeline_for_task(&task_id).len(), 2);
 
         drop(recovered);

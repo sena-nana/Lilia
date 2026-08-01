@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use uuid::Uuid;
@@ -232,6 +232,33 @@ pub fn automation_complete_agent_turn<R: Runtime>(
     if let Err(err) = complete_agent_turn(app, chat_store, &run_id, turn_id, success) {
         eprintln!("[automation] complete agent turn failed for run {run_id}: {err}");
     }
+}
+
+pub(crate) fn automation_run_id_for_waiting_turn<R: Runtime>(
+    app: &AppHandle<R>,
+    turn_id: &str,
+) -> Result<Option<String>, String> {
+    let conn = app.state::<LiliaStore>().conn()?;
+    automation_run_id_for_waiting_turn_with_conn(&conn, turn_id)
+}
+
+fn automation_run_id_for_waiting_turn_with_conn(
+    conn: &Connection,
+    turn_id: &str,
+) -> Result<Option<String>, String> {
+    conn.query_row(
+        r#"SELECT run_id
+           FROM automation_run_nodes
+           WHERE status = 'running'
+             AND json_extract(output_json, '$.waitingAgent') = 1
+             AND json_extract(output_json, '$.turnId') = ?1
+           ORDER BY started_at DESC
+           LIMIT 1"#,
+        params![turn_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map_err(|error| format!("查询等待 Agent Turn 的 Automation 失败：{error}"))
 }
 
 pub(crate) fn waiting_node_state(
@@ -1092,6 +1119,22 @@ mod tests {
     }
 
     #[test]
+    fn waiting_automation_run_is_recovered_by_agent_turn_id() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_run_recovery_tables(&conn);
+        insert_waiting_agent_run(&conn);
+
+        assert_eq!(
+            automation_run_id_for_waiting_turn_with_conn(&conn, "turn-1").unwrap(),
+            Some("run-1".into())
+        );
+        assert_eq!(
+            automation_run_id_for_waiting_turn_with_conn(&conn, "turn-missing").unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn graph_validation_rejects_cycles() {
         let nodes = vec![node("a", "trigger"), node("b", "tool")];
         let edges = vec![edge("a", "b"), edge("b", "a")];
@@ -1361,6 +1404,7 @@ mod tests {
             RunningTurn {
                 turn_id: "turn-1".to_string(),
                 backend: BACKEND_CODEX.to_string(),
+                native_approval_pause: None,
             },
         );
 

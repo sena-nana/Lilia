@@ -9,7 +9,9 @@
     "vscode": "^1.96.0",
     "node": ">=26.0.0 <27"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "activationEvents": [
     "onStartupFinished"
   ],
@@ -38,14 +40,16 @@
       "properties": {
         "lilia.agentkit.hostMode": {
           "type": "string",
-          "enum": ["deterministic", "process"],
-          "default": "deterministic",
-          "description": "deterministic = in-process stub mirroring host contract; process = spawn lilia-editor-compat binary"
+          "enum": [
+            "process"
+          ],
+          "default": "process",
+          "description": "Run the standalone AgentKit editor host"
         },
         "lilia.agentkit.hostBinary": {
           "type": "string",
-          "default": "",
-          "description": "Path to lilia-editor-compat binary when hostMode=process"
+          "default": "lilia-editor-compat",
+          "description": "AgentKit editor host executable name or absolute path"
         }
       }
     }

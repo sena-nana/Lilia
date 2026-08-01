@@ -5,10 +5,12 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lilia_contracts::{
-    AgentSessionBinding, AgentSessionRef, BindingId, ProductError, ProductResult, ProductRevision,
-    ProductTask, ProductTaskStatus, Project, ProjectArchiveState, ProjectId, ProjectionEventId,
-    TaskId, TimelineProjectionCommand, TimelineProjectionEvent,
+    AgentSessionBinding, AgentSessionRef, BindingId, ConversationId, ProductConversation,
+    ProductEntity, ProductError, ProductResult, ProductRevision, ProductTask, ProductTaskStatus,
+    Project, ProjectArchiveState, ProjectId, ProjectionEventId, TaskId, TimelineProjectionCommand,
+    TimelineProjectionEvent,
 };
+use lilia_core::ProductRepository;
 use rusqlite::{params, Connection};
 
 use crate::migration::compat_apply::apply_compat_assets_to_agentkit_registry;
@@ -24,6 +26,8 @@ use crate::LiliaDataPaths;
 
 /// Product version until which Legacy Claude/Codex continue remains available.
 pub const LEGACY_SESSION_COMPAT_UNTIL: &str = "1.0.0";
+/// Durable marker for the one-time Desktop product-authority cutover.
+pub const DESKTOP_PRODUCT_CORE_CUTOVER: &str = "desktop-product-core-cutover-v1";
 
 #[derive(Clone, Debug)]
 struct LegacyProjectRow {
@@ -44,6 +48,7 @@ struct LegacyTaskRow {
     sort_order: i64,
     pinned: bool,
     archived: bool,
+    created_at: i64,
 }
 
 #[derive(Clone, Debug)]
@@ -141,7 +146,7 @@ fn query_tasks(conn: &Connection) -> ProductResult<Vec<LegacyTaskRow>> {
     }
     let mut stmt = conn
         .prepare(
-            "SELECT id, project_id, title, status, parent_id, sort_order, pinned, archived FROM tasks",
+            "SELECT id, project_id, title, status, parent_id, sort_order, pinned, archived, created_at FROM tasks",
         )
         .map_err(map_sql)?;
     let rows = stmt
@@ -155,6 +160,7 @@ fn query_tasks(conn: &Connection) -> ProductResult<Vec<LegacyTaskRow>> {
                 sort_order: row.get(5)?,
                 pinned: row.get::<_, i64>(6).unwrap_or(0) != 0,
                 archived: row.get::<_, i64>(7).unwrap_or(0) != 0,
+                created_at: row.get(8).unwrap_or(0),
             })
         })
         .map_err(map_sql)?;
@@ -525,12 +531,46 @@ fn apply_snapshot(
             .transpose()?;
         mapped.pinned = task.pinned;
         mapped.sort_order = task.sort_order;
+        mapped.created_at = task.created_at;
+        mapped.updated_at = task.created_at;
         mapped.legacy_source = snapshot
             .sessions
             .iter()
             .find(|s| s.task_id == task.id && matches!(s.backend.as_str(), "claude" | "codex"))
             .map(|s| s.backend.to_ascii_lowercase());
         store.upsert_task(&mapped)?;
+
+        let mut conversation = ProductConversation::new(
+            ConversationId::new(&task.id)?,
+            mapped.project_id.clone(),
+            Some(mapped.id.clone()),
+            mapped.title.clone(),
+        )?;
+        conversation.archived = mapped.archived;
+        conversation.legacy_source = mapped.legacy_source.clone();
+        conversation.created_at = mapped.created_at;
+        conversation.updated_at = mapped.updated_at;
+        match store.create_entity(ProductEntity::Conversation(conversation.clone())) {
+            Ok(_) => {}
+            Err(ProductError::Conflict { .. }) => {
+                let current = store.get_entity(
+                    lilia_contracts::ProductEntityKind::Conversation,
+                    conversation.id.as_str(),
+                )?;
+                if let ProductEntity::Conversation(current_conversation) = current {
+                    conversation.revision = current_conversation.revision;
+                    if current_conversation != conversation {
+                        store.update_entity(
+                            ProductEntity::Conversation(conversation),
+                            lilia_contracts::ExpectedRevision::new(
+                                current_conversation.revision.get(),
+                            )?,
+                        )?;
+                    }
+                }
+            }
+            Err(err) => return Err(err),
+        }
     }
 
     for task in &snapshot.tasks {
@@ -568,7 +608,7 @@ fn apply_snapshot(
                     plan.task_id, plan.legacy_backend
                 ))?,
                 task_id: task_id.clone(),
-                conversation_id: None,
+                conversation_id: Some(ConversationId::new(&plan.task_id)?),
                 agent_session: AgentSessionRef::new(new_session.clone())?,
                 profile_id: Some("native-coding".into()),
                 revision: ProductRevision::INITIAL,
@@ -727,11 +767,7 @@ impl LegacyMigrationTool {
                 self.assets(),
             )
         } else {
-            let mut empty = empty_report(
-                MigrationMode::Report,
-                &self.legacy_db,
-                &self.product_db,
-            );
+            let mut empty = empty_report(MigrationMode::Report, &self.legacy_db, &self.product_db);
             empty.compat_assets = self.assets();
             empty
                 .notes
@@ -760,6 +796,9 @@ impl LegacyMigrationTool {
             &snapshot,
             self.assets(),
         );
+        report
+            .notes
+            .push(format!("cutover marker: {DESKTOP_PRODUCT_CORE_CUTOVER}"));
         let backup = backup_file(&self.product_db, &self.paths.migration_backup_dir())?;
         report.backup_path = Some(backup.display().to_string());
 
@@ -819,13 +858,37 @@ impl LegacyMigrationTool {
         }
     }
 
+    /// Apply the Desktop product-authority cutover exactly once.
+    ///
+    /// The legacy database remains in use for runtime compatibility caches, so
+    /// filesystem timestamps cannot be used as a migration signal: doing so
+    /// would replay stale Product rows over newer Product Core revisions.
+    pub fn apply_if_needed(&self) -> ProductResult<Option<MigrationReport>> {
+        if !self.legacy_db.is_file() {
+            return Ok(None);
+        }
+        if self.product_db.is_file() {
+            let store = SqliteProductStore::open(&self.product_db)?;
+            if let Some(run) = store.latest_migration_run()? {
+                if run.status == "completed" {
+                    if let Ok(report) = serde_json::from_str::<MigrationReport>(&run.report_json) {
+                        if report
+                            .notes
+                            .iter()
+                            .any(|note| note.contains(DESKTOP_PRODUCT_CORE_CUTOVER))
+                        {
+                            return Ok(None);
+                        }
+                    }
+                }
+            }
+        }
+        self.apply().map(Some)
+    }
+
     pub fn status(&self) -> ProductResult<MigrationReport> {
         if !self.product_db.is_file() {
-            let mut report = empty_report(
-                MigrationMode::Status,
-                &self.legacy_db,
-                &self.product_db,
-            );
+            let mut report = empty_report(MigrationMode::Status, &self.legacy_db, &self.product_db);
             report.compat_assets = self.assets();
             report.notes.push("product db not created yet".into());
             return Ok(report);
@@ -889,7 +952,8 @@ impl LegacyMigrationTool {
             compat_assets: self.assets(),
             backup_path: run.and_then(|r| r.backup_path),
             notes: vec![
-                "status from product.db migration_runs + legacy_session_provenance + bindings".into(),
+                "status from product.db migration_runs + legacy_session_provenance + bindings"
+                    .into(),
             ],
             errors: Vec::new(),
         })
@@ -1186,12 +1250,30 @@ mod tests {
             "agentkit-from-legacy:claude:claude-sess-1"
         );
         assert_eq!(
+            claude_bindings[0]
+                .conversation_id
+                .as_ref()
+                .map(|id| id.as_str()),
+            Some("task-claude")
+        );
+        assert_eq!(
             codex_bindings[0].agent_session.as_str(),
             "agentkit-from-legacy:codex:codex-thread-9"
         );
-
-        let timeline = SqliteTimelineProjectionStore::open(tool.paths.product_projections_db())
+        let conversations = store
+            .list_entities(lilia_contracts::ProductEntityKind::Conversation)
             .unwrap();
+        assert_eq!(conversations.len(), 2);
+        assert!(conversations.iter().all(|entity| matches!(
+            entity,
+            ProductEntity::Conversation(conversation)
+                if conversation.task_id.as_ref().map(|id| id.as_str())
+                    == Some(conversation.id.as_str())
+                    && conversation.created_at == 1
+        )));
+
+        let timeline =
+            SqliteTimelineProjectionStore::open(tool.paths.product_projections_db()).unwrap();
         let claude_events = timeline.list_for_task(&TaskId::new("task-claude").unwrap());
         let codex_events = timeline.list_for_task(&TaskId::new("task-codex").unwrap());
         assert_eq!(claude_events.len(), 1, "pending approval must not migrate");
@@ -1222,9 +1304,7 @@ mod tests {
         let store = SqliteProductStore::open(&product).unwrap();
         assert_eq!(store.list_projects().unwrap().len(), 1);
         assert_eq!(store.list_tasks().unwrap().len(), 2);
-        let codex = store
-            .get_task(&TaskId::new("task-codex").unwrap())
-            .unwrap();
+        let codex = store.get_task(&TaskId::new("task-codex").unwrap()).unwrap();
         assert_eq!(codex.legacy_source.as_deref(), Some("codex"));
         assert_eq!(codex.depends_on.len(), 1);
         let provenance = store.list_legacy_session_provenance().unwrap();
@@ -1246,6 +1326,16 @@ mod tests {
                 .len(),
             2
         );
+        let before_cutover_skip = SqliteProductStore::open(&product)
+            .unwrap()
+            .get_task(&TaskId::new("task-codex").unwrap())
+            .unwrap();
+        assert!(tool.apply_if_needed().unwrap().is_none());
+        let after_cutover_skip = SqliteProductStore::open(&product)
+            .unwrap()
+            .get_task(&TaskId::new("task-codex").unwrap())
+            .unwrap();
+        assert_eq!(after_cutover_skip, before_cutover_skip);
         assert_eq!(
             SqliteProductStore::open(&product)
                 .unwrap()

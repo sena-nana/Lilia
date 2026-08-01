@@ -458,23 +458,88 @@ class RemoteHttpClientTest {
     }
 
     @Test
-    fun sendMessageDispatchesChatSendRequest() = runBlocking {
-        val requestBody = AtomicReference<JSONObject>()
+    fun sendMessageNegotiatesAndSubmitsThroughTaskBoundAgentWireSession() = runBlocking {
+        val requests = mutableListOf<JSONObject>()
         val server = startBridge { exchange ->
             assertEquals("POST", exchange.requestMethod)
             assertEquals("/dispatch", exchange.requestURI.path)
-            requestBody.set(JSONObject(exchange.requestBody.reader(Charsets.UTF_8).readText()))
-            exchange.respond(
-                """
-                {
-                  "ok": true,
-                  "payload": {
-                    "type": "chat.send",
-                    "result": { "accepted": true }
-                  }
-                }
-                """.trimIndent(),
-            )
+            val request = JSONObject(exchange.requestBody.reader(Charsets.UTF_8).readText())
+                .getJSONObject("request")
+            requests.add(request)
+            val payload = when {
+                request.getString("type") == "agent.session.open" -> """
+                    {
+                      "type": "agent.session.open",
+                      "taskId": "task-1",
+                      "session": {
+                        "session_id": "native-task-1",
+                        "profile_id": "mutsuki.reference.coding-agent",
+                        "messages": [],
+                        "turn_count": 0,
+                        "resource": {
+                          "ref_id": "session-ref",
+                          "kind": "mutsuki.agent.session",
+                          "schema": "mutsuki.agent.session@1",
+                          "owner_plugin_id": "lilia.native-agent-wire",
+                          "generation": 1
+                        },
+                        "cell": {
+                          "cell_id": "session-cell",
+                          "resource_kind": "mutsuki.agent.session",
+                          "owner_plugin_id": "lilia.native-agent-wire",
+                          "schema": "mutsuki.agent.session@1",
+                          "generation": 1,
+                          "health": "ready",
+                          "reload_policy": "compatible_without_leases"
+                        }
+                      },
+                      "context": {
+                        "workspace": {
+                          "workspace_id": "lilia.task:task-1",
+                          "folders": ["/workspace"],
+                          "metadata": {}
+                        }
+                      }
+                    }
+                """.trimIndent()
+                request.getJSONObject("envelope")
+                    .getJSONObject("request")
+                    .getString("method") == "negotiate" -> """
+                    {
+                      "type": "agent.wire",
+                      "envelope": {
+                        "request_id": 1,
+                        "response": {
+                          "Ok": {
+                            "type": "negotiated",
+                            "value": {
+                              "version": 1,
+                              "enabled_features": ["monotonic-events"]
+                            }
+                          }
+                        }
+                      }
+                    }
+                """.trimIndent()
+                else -> """
+                    {
+                      "type": "agent.wire",
+                      "envelope": {
+                        "request_id": 2,
+                        "response": {
+                          "Ok": {
+                            "type": "accepted",
+                            "value": {
+                              "session_id": "native-task-1",
+                              "version": 2
+                            }
+                          }
+                        }
+                      }
+                    }
+                """.trimIndent()
+            }
+            exchange.respond("""{ "ok": true, "payload": $payload }""")
         }
 
         RemoteHttpClient(FakeDeviceStore())
@@ -487,18 +552,27 @@ class RemoteHttpClientTest {
             )
             .getOrThrow()
 
-        val request = requestBody.get().getJSONObject("request")
-        assertEquals("chat.send", request.getString("type"))
-        assertEquals("task-1", request.getString("taskId"))
-        assertEquals("Continue from Android", request.getString("content"))
-        listOf(
-            "composer",
-            "attachments",
-            "conversationReferences",
-            "workflow",
-            "runtimeCommand",
-            "runtimeOptions",
-        ).forEach { key -> assertFalse(request.has(key)) }
+        assertEquals(
+            listOf("agent.wire", "agent.session.open", "agent.wire"),
+            requests.map { it.getString("type") },
+        )
+        val submit = requests[2]
+            .getJSONObject("envelope")
+            .getJSONObject("request")
+        assertEquals("submit_turn", submit.getString("method"))
+        val params = submit.getJSONObject("params")
+        assertEquals("native-task-1", params.getString("session_id"))
+        assertEquals(1L, params.getLong("expected_version"))
+        val message = params.getJSONArray("messages").getJSONObject(0)
+        assertEquals("user", message.getString("role"))
+        assertEquals("Continue from Android", message.getString("content"))
+        assertEquals(
+            "/workspace",
+            message.getJSONObject("metadata")
+                .getJSONObject("workspace")
+                .getJSONArray("folders")
+                .getString(0),
+        )
     }
 
     @Test

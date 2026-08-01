@@ -19,10 +19,7 @@ pub trait TimelineProjectionRepository: Send + Sync {
     fn list_pending_for_task(&self, task_id: &TaskId) -> Vec<PendingProjection>;
     fn clear_session(&self, session: &AgentSessionRef) -> ProductResult<()>;
     /// Apply commands without clearing. Duplicate ids are ignored.
-    fn rebuild_from(
-        &self,
-        commands: Vec<TimelineProjectionCommand>,
-    ) -> ProductResult<usize>;
+    fn rebuild_from(&self, commands: Vec<TimelineProjectionCommand>) -> ProductResult<usize>;
     /// Clear one session projection then replay commands (idempotent rebuild path).
     fn rebuild_session(
         &self,
@@ -164,12 +161,9 @@ pub(crate) fn apply_command_to_maps(
 
 impl TimelineProjectionRepository for InMemoryTimelineProjectionStore {
     fn apply(&self, command: TimelineProjectionCommand) -> ProductResult<ProjectionApplyResult> {
-        let mut store = self
-            .inner
-            .lock()
-            .map_err(|_| ProductError::Unavailable {
-                message: "timeline projection store lock poisoned".into(),
-            })?;
+        let mut store = self.inner.lock().map_err(|_| ProductError::Unavailable {
+            message: "timeline projection store lock poisoned".into(),
+        })?;
         let store = &mut *store;
         Ok(apply_command_to_maps(
             &mut store.events,
@@ -246,12 +240,9 @@ impl TimelineProjectionRepository for InMemoryTimelineProjectionStore {
     }
 
     fn clear_session(&self, session: &AgentSessionRef) -> ProductResult<()> {
-        let mut store = self
-            .inner
-            .lock()
-            .map_err(|_| ProductError::Unavailable {
-                message: "timeline projection store lock poisoned".into(),
-            })?;
+        let mut store = self.inner.lock().map_err(|_| ProductError::Unavailable {
+            message: "timeline projection store lock poisoned".into(),
+        })?;
         let session_id = session.as_str();
         store
             .events

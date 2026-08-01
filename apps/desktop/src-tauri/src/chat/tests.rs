@@ -25,6 +25,16 @@ mod agent_event_sink_tests {
     use crate::provider::*;
     use crate::{BACKEND_CLAUDE, BACKEND_CODEX};
 
+    fn test_python_executable() -> String {
+        std::env::var("PYTHON").unwrap_or_else(|_| {
+            if cfg!(windows) {
+                "python".into()
+            } else {
+                "python3".into()
+            }
+        })
+    }
+
     fn turn_context() -> AgentTurnContext {
         AgentTurnContext {
             task_id: "task-1".to_string(),
@@ -272,6 +282,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-1".to_string(),
             backend: BACKEND_CODEX.to_string(),
+            native_approval_pause: None,
         };
         persist_runtime_state(
             &conn,
@@ -1445,6 +1456,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-running".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
+                native_approval_pause: None,
             },
         );
         store
@@ -1482,6 +1494,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-reset".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
+                native_approval_pause: None,
             },
         );
 
@@ -1513,6 +1526,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-reset".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
+                native_approval_pause: None,
             },
         );
 
@@ -1544,6 +1558,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-stop".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
+                native_approval_pause: None,
             },
         );
         store.interrupted_turns.lock().unwrap().insert(
@@ -1551,6 +1566,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-stop".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
+                native_approval_pause: None,
             },
         );
 
@@ -1574,6 +1590,75 @@ mod agent_event_sink_tests {
     }
 
     #[test]
+    fn native_turn_is_interruptible_without_creating_process_runtime_state() {
+        let store = ChatStore::default();
+        register_running_turn(
+            &store,
+            "task-native",
+            "turn-native",
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+        );
+
+        let running = store
+            .running_turns
+            .lock()
+            .unwrap()
+            .get("task-native")
+            .cloned()
+            .expect("Native turn must be visible to chat_interrupt_turn");
+        assert!(!turn_uses_legacy_process_runtime(&running));
+        assert!(store
+            .running_process_sessions
+            .lock()
+            .unwrap()
+            .get("task-native")
+            .is_none());
+
+        prepare_running_turn_stop(&store, "task-native", true, false)
+            .expect("Native turn can be interrupted through the shared product entrypoint");
+        clear_running_handles(&store, "task-native");
+        let finished = finish_running_turn_handles(
+            &store,
+            "task-native",
+            "turn-native",
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+        );
+
+        assert!(finished.interrupted);
+        assert!(!finished.reset);
+    }
+
+    #[test]
+    fn native_approval_pause_and_interrupt_have_one_lifecycle_owner() {
+        let store = ChatStore::default();
+        register_running_turn(
+            &store,
+            "task-native",
+            "turn-native",
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+        );
+        assert!(pause_native_running_turn(
+            &store,
+            "task-native",
+            "turn-native",
+            Some("automation-1".into()),
+            Some("session-native".into()),
+        ));
+
+        let prepared = prepare_running_turn_stop(&store, "task-native", true, false).unwrap();
+        let pause = prepared.running_turn.native_approval_pause.unwrap();
+        assert_eq!(pause.automation_run_id.as_deref(), Some("automation-1"));
+        assert_eq!(pause.last_session_id.as_deref(), Some("session-native"));
+        assert!(!pause_native_running_turn(
+            &store,
+            "task-native",
+            "turn-native",
+            None,
+            None,
+        ));
+    }
+
+    #[test]
     fn reset_finish_does_not_advance_pending_queue() {
         let store = ChatStore::default();
         store
@@ -1586,6 +1671,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-reset".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
+                native_approval_pause: None,
             },
         );
         store
@@ -1625,6 +1711,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-interrupt".to_string(),
                 backend: BACKEND_CODEX.to_string(),
+                native_approval_pause: None,
             },
         );
         store
@@ -1731,6 +1818,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-reset".to_string(),
             backend: BACKEND_CODEX.to_string(),
+            native_approval_pause: None,
         };
         let rollback = ChatRollbackResult {
             rolled_back: true,
@@ -1865,6 +1953,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-builtin".to_string(),
             backend: BACKEND_CLAUDE.to_string(),
+            native_approval_pause: None,
         };
         store
             .pending_turns
@@ -1915,6 +2004,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-1".to_string(),
                 backend: BACKEND_CODEX.to_string(),
+                native_approval_pause: None,
             },
         );
         store
@@ -1943,6 +2033,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-reset".to_string(),
                 backend: BACKEND_CODEX.to_string(),
+                native_approval_pause: None,
             },
         );
         mark_pending_reset_cleanup(&store, "task-1");
@@ -1972,6 +2063,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-persisted".to_string(),
             backend: BACKEND_CODEX.to_string(),
+            native_approval_pause: None,
         };
 
         persist_runtime_state(
@@ -2073,6 +2165,7 @@ mod agent_event_sink_tests {
             &RunningTurn {
                 turn_id: "turn-live".to_string(),
                 backend: BACKEND_CODEX.to_string(),
+                native_approval_pause: None,
             },
             "running",
             None,
@@ -2092,6 +2185,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-live".to_string(),
             backend: BACKEND_CODEX.to_string(),
+            native_approval_pause: None,
         };
 
         persist_runtime_state(
@@ -2195,7 +2289,7 @@ mod agent_event_sink_tests {
         let store = ChatStore::default();
         let conn = resume_conn_with_task();
 
-        let python = std::env::var("PYTHON").unwrap_or_else(|_| "python".into());
+        let python = test_python_executable();
         let child = match std::process::Command::new(python)
             .args([
                 "-c",
@@ -2247,7 +2341,7 @@ mod agent_event_sink_tests {
         let store = ChatStore::default();
         let conn = resume_conn_with_task();
 
-        let python = std::env::var("PYTHON").unwrap_or_else(|_| "python".into());
+        let python = test_python_executable();
         let child = match std::process::Command::new(python)
             .args(["-c", "import time; time.sleep(0.2)"])
             .stdin(std::process::Stdio::piped())
@@ -2315,7 +2409,7 @@ mod agent_event_sink_tests {
         let store = ChatStore::default();
         let conn = resume_conn_with_task();
 
-        let python = std::env::var("PYTHON").unwrap_or_else(|_| "python".into());
+        let python = test_python_executable();
         let child = match std::process::Command::new(python)
             .args(["-c", "pass"])
             .stdin(std::process::Stdio::piped())
@@ -2373,7 +2467,7 @@ mod agent_event_sink_tests {
         let conn = resume_conn_with_task();
         insert_task_with_id(&conn, "task-2", "session-2");
 
-        let python = std::env::var("PYTHON").unwrap_or_else(|_| "python".into());
+        let python = test_python_executable();
         let child_1 = std::process::Command::new(&python)
             .args(["-c", "import time; time.sleep(0.2)"])
             .stdin(std::process::Stdio::piped())
@@ -2429,7 +2523,7 @@ mod agent_event_sink_tests {
         let store = ChatStore::default();
         let conn = resume_conn_with_task();
 
-        let python = std::env::var("PYTHON").unwrap_or_else(|_| "python".into());
+        let python = test_python_executable();
         let child = std::process::Command::new(python)
             .args(["-c", "pass"])
             .stdin(std::process::Stdio::piped())

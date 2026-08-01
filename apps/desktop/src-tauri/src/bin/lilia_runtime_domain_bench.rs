@@ -65,7 +65,7 @@ fn main() -> Result<(), String> {
             "workspace": options.workspace,
             "calibrated": calibrated,
             "product_work": "parse the production LiliaGithub handoff contract and build its production prompt",
-            "agent_work": "build the production Node runner stdin payload without starting a provider",
+            "agent_work": "build and serialize the production AgentKit AgentRunRequest contract without starting a provider",
             "workspace_work": "run production git worktree list --porcelain inspection",
             "single_domain_threads": 3,
             "three_domain_threads": {
@@ -319,7 +319,8 @@ fn handoff_payload(workspace: &Path) -> Value {
 fn agent_payload(iterations: usize) -> Value {
     json!({
         "taskId": "issue43-agent",
-        "backend": "codex",
+        "profileId": "lilia.product.native-coding",
+        "sessionId": "issue43-performance-session",
         "cwd": ".",
         "prompt": "检查 RuntimeDomain reference profile",
         "iterations": iterations

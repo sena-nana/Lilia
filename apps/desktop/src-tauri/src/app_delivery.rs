@@ -43,7 +43,10 @@ pub fn start_app_delivery_endpoint<R: Runtime>(app: &AppHandle<R>) -> Result<(),
     Ok(())
 }
 
-fn accept_handoff_payload<R: Runtime>(app: &AppHandle<R>, payload: Value) -> Result<String, String> {
+fn accept_handoff_payload<R: Runtime>(
+    app: &AppHandle<R>,
+    payload: Value,
+) -> Result<String, String> {
     let payload_json = serde_json::to_string(&payload)
         .map_err(|error| format!("序列化交接 payload 失败：{error}"))?;
     let handoff_id = payload

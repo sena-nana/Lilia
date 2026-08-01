@@ -37,11 +37,8 @@ pub trait AgentKitClientPort: Send + Sync {
         profile_id: Option<&str>,
     ) -> Result<AgentSessionRef, AgentKitPortError>;
 
-    fn submit_turn(
-        &self,
-        session: &AgentSessionRef,
-        prompt: &str,
-    ) -> Result<(), AgentKitPortError>;
+    fn submit_turn(&self, session: &AgentSessionRef, prompt: &str)
+        -> Result<(), AgentKitPortError>;
 
     fn cancel_turn(&self, session: &AgentSessionRef) -> Result<(), AgentKitPortError>;
 

@@ -78,6 +78,8 @@ pub(crate) struct RunnerOutput {
     pub(crate) last_session_id: Option<String>,
     pub(crate) interrupted: bool,
     pub(crate) reset: bool,
+    pub(crate) waiting_approval: bool,
+    pub(crate) terminal_failed: bool,
 }
 
 pub(crate) enum RunnerSessionPoll {
@@ -336,28 +338,26 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
             #[cfg(feature = "legacy-runner")]
             crate::native_agent::ExecutionBackend::NodeAgentRunner => backend_for_thread.clone(),
         };
-        let result = if automation_run_id_for_finish.is_some()
-            && {
-                #[cfg(feature = "legacy-runner")]
-                {
-                    matches!(
-                        execution_backend,
-                        crate::native_agent::ExecutionBackend::NodeAgentRunner
-                    )
-                }
-                #[cfg(not(feature = "legacy-runner"))]
-                {
-                    false
-                }
+        let result = if automation_run_id_for_finish.is_some() && {
+            #[cfg(feature = "legacy-runner")]
+            {
+                matches!(
+                    execution_backend,
+                    crate::native_agent::ExecutionBackend::NodeAgentRunner
+                )
             }
-        {
-            Err(crate::native_agent::require_native_for_automation_or_multi_agent(
-                "Automation 多 Agent 路径",
+            #[cfg(not(feature = "legacy-runner"))]
+            {
+                false
+            }
+        } {
+            Err(
+                crate::native_agent::require_native_for_automation_or_multi_agent(
+                    "Automation 多 Agent 路径",
+                )
+                .err()
+                .unwrap_or_else(|| "Automation 多 Agent 路径: 须走 AgentKit/Native".to_string()),
             )
-            .err()
-            .unwrap_or_else(|| {
-                "Automation 多 Agent 路径: 须走 AgentKit/Native".to_string()
-            }))
         } else {
             match execution_backend {
                 crate::native_agent::ExecutionBackend::NativeAgentkit => {
@@ -376,7 +376,7 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
             }
         };
         let mut runner_ok = true;
-        let output = match result {
+        let mut output = match result {
             Ok(output) => output,
             Err(err) => {
                 runner_ok = false;
@@ -390,7 +390,27 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
                 RunnerOutput::default()
             }
         };
-        let agent_success = runner_ok && !output.interrupted && !output.reset;
+        if output.waiting_approval {
+            return;
+        }
+        if matches!(
+            execution_backend,
+            crate::native_agent::ExecutionBackend::NativeAgentkit
+        ) {
+            let finished = {
+                let store = app_handle.state::<ChatStore>();
+                finish_running_turn_handles(
+                    &store,
+                    &task_id_for_thread,
+                    &turn_id_for_finish,
+                    &finish_backend,
+                )
+            };
+            output.interrupted |= finished.interrupted;
+            output.reset |= finished.reset;
+        }
+        let agent_success =
+            runner_ok && !output.interrupted && !output.reset && !output.terminal_failed;
         {
             let store = app_handle.state::<ChatStore>();
             crate::automation::automation_complete_agent_turn(
@@ -658,6 +678,7 @@ pub(crate) fn start_runner_session<R: Runtime>(
         let running_turn = RunningTurn {
             turn_id: turn_id_for_thread.clone(),
             backend: backend_for_thread.clone(),
+            native_approval_pause: None,
         };
         store
             .running_process_sessions
@@ -771,6 +792,8 @@ pub(crate) fn poll_runner_session<R: Runtime>(
             last_session_id: session.last_session_id.clone(),
             interrupted: false,
             reset: session.reset_observed,
+            waiting_approval: false,
+            terminal_failed: false,
         }));
     }
 
@@ -1106,6 +1129,8 @@ fn finalize_runner_session<R: Runtime>(
         last_session_id: session.last_session_id.clone(),
         interrupted: finished.interrupted,
         reset: finished.reset,
+        waiting_approval: false,
+        terminal_failed: false,
     }
 }
 
@@ -1277,11 +1302,11 @@ pub(crate) fn runtime_reference_agent_payload(payload: &JsonValue) -> Result<Jso
         .and_then(JsonValue::as_str)
         .filter(|value| !value.trim().is_empty())
         .ok_or_else(|| "reference Agent payload 缺少 taskId".to_string())?;
-    let backend = payload
-        .get("backend")
+    let profile_id = payload
+        .get("profileId")
         .and_then(JsonValue::as_str)
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or(BACKEND_CODEX);
+        .ok_or_else(|| "reference Agent payload 缺少 profileId".to_string())?;
     let project_cwd = payload
         .get("cwd")
         .and_then(JsonValue::as_str)
@@ -1300,23 +1325,32 @@ pub(crate) fn runtime_reference_agent_payload(payload: &JsonValue) -> Result<Jso
     if iterations == 0 {
         return Err("reference Agent iterations 必须大于零".to_string());
     }
-    let mut composer = crate::chat::state::default_composer(task_id);
-    composer.backend = backend.to_string();
+    let mut request = mutsuki_agent_contracts::AgentRunRequest::new(
+        profile_id,
+        vec![mutsuki_agent_contracts::AgentMessage::user(prompt)],
+    );
+    request.session_id = payload
+        .get("sessionId")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    request.model = payload
+        .get("model")
+        .and_then(JsonValue::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    request.stream = true;
+    request.metadata = Some(serde_json::json!({
+        "taskId": task_id,
+        "workspace": project_cwd,
+        "source": "lilia.runtime-domain-reference",
+    }));
     let mut output = JsonValue::Null;
     for _ in 0..iterations {
-        output = build_runner_stdin_payload(
-            backend,
-            project_cwd,
-            prompt,
-            &[],
-            &[],
-            None,
-            None,
-            None,
-            &composer,
-            None,
-            &serde_json::json!({}),
-        );
+        output = serde_json::to_value(&request)
+            .map_err(|error| format!("serialize AgentKit AgentRunRequest: {error}"))?;
     }
     Ok(output)
 }
@@ -2013,7 +2047,7 @@ fn compact_context_line(text: &str) -> String {
         .join(" ")
 }
 
-fn build_runner_conversation_context<R: Runtime>(
+pub(crate) fn build_runner_conversation_context<R: Runtime>(
     app: &AppHandle<R>,
     task_id: &str,
 ) -> Option<JsonValue> {

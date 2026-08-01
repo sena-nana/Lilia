@@ -198,7 +198,12 @@ impl StorageWriterGuard {
         mode: WriterMode,
         lock_path: impl AsRef<Path>,
     ) -> Result<Self, WriterLeaseError> {
-        Self::try_acquire_inner(storage_key, owner_id, mode, Some(lock_path.as_ref().to_path_buf()))
+        Self::try_acquire_inner(
+            storage_key,
+            owner_id,
+            mode,
+            Some(lock_path.as_ref().to_path_buf()),
+        )
     }
 
     fn try_acquire_inner(

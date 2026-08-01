@@ -8,12 +8,18 @@ import java.io.BufferedReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 internal const val REMOTE_TIMELINE_PAGE_SIZE = 80
 
 class RemoteHttpClient(
     private val repository: RemoteDeviceStore,
 ) {
+    private val agentRequestIds = AtomicLong(1)
+    private val negotiatedAgentEndpoints = mutableSetOf<String>()
+    private val agentNegotiationLock = Any()
+
     suspend fun bridgeStatus(pc: SavedPc): Result<RemoteBridgeStatus> = withContext(Dispatchers.IO) {
         runCatching {
             RemotePayloadParser.parseBridgeStatus(getJson("${bridgeUrl(pc)}/status"))
@@ -136,7 +142,11 @@ class RemoteHttpClient(
         input: RemoteSendMessageInput,
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            dispatch(pc, input.toRequestJson())
+            if (input.runtimeCommand == null) {
+                submitAgentMessage(pc, input)
+            } else {
+                dispatch(pc, input.toRequestJson())
+            }
             Unit
         }
     }
@@ -197,6 +207,105 @@ class RemoteHttpClient(
             repository.markActivePcSeen(pc)
         }
         return payload
+    }
+
+    private fun submitAgentMessage(pc: SavedPc, input: RemoteSendMessageInput) {
+        ensureAgentWireNegotiated(pc)
+        val opened = dispatch(
+            pc,
+            JSONObject()
+                .put("type", "agent.session.open")
+                .put("taskId", input.taskId),
+        )
+        val session = opened.getJSONObject("session")
+        val sessionId = session.getString("session_id")
+        val expectedVersion = session.getJSONObject("cell").getLong("generation")
+        val turnId = "android-turn-${UUID.randomUUID()}"
+        val metadata = JSONObject(opened.optJSONObject("context")?.toString() ?: "{}")
+            .putIfPresent("composer", input.composer)
+            .putIfPresent("attachments", input.attachments)
+            .putIfPresent("conversationReferences", input.conversationReferences)
+            .putIfPresent("workflow", input.workflow)
+            .putIfPresent("runtimeOptions", input.runtimeOptions)
+        val response = agentWire(
+            pc,
+            "submit_turn",
+            JSONObject()
+                .put("session_id", sessionId)
+                .put("expected_version", expectedVersion)
+                .put("turn_id", turnId)
+                .put(
+                    "messages",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("role", "user")
+                            .put("content", input.content)
+                            .put("metadata", metadata)
+                            .put("parts", JSONArray()),
+                    ),
+                )
+                .put("idempotency_key", "android:${input.taskId}:$turnId"),
+        )
+        val accepted = agentWireValue(response, "accepted")
+        check(accepted.getString("session_id") == sessionId) {
+            "Agent Wire accepted a different session"
+        }
+    }
+
+    private fun ensureAgentWireNegotiated(pc: SavedPc) {
+        synchronized(agentNegotiationLock) {
+            if (negotiatedAgentEndpoints.contains(pc.endpointId)) return
+            val response = agentWire(pc, "negotiate", null)
+            val negotiated = agentWireValue(response, "negotiated")
+            check(negotiated.getInt("version") == 1) {
+                "Desktop Agent Wire version is incompatible"
+            }
+            negotiatedAgentEndpoints.add(pc.endpointId)
+        }
+    }
+
+    private fun agentWire(pc: SavedPc, method: String, params: JSONObject?): JSONObject {
+        val request = JSONObject().put("method", method)
+        if (params != null) request.put("params", params)
+        val wireEnvelope = JSONObject()
+            .put("request_id", agentRequestIds.getAndIncrement())
+            .put(
+                "hello",
+                JSONObject()
+                    .put("version", 1)
+                    .put("required_features", JSONArray().put("monotonic-events"))
+                    .put(
+                        "optional_features",
+                        JSONArray()
+                            .put("approval-binding")
+                            .put("event-resume")
+                            .put("resource-ref"),
+                    ),
+            )
+            .put("request", request)
+        return dispatch(
+            pc,
+            JSONObject()
+                .put("type", "agent.wire")
+                .put("envelope", wireEnvelope),
+        ).getJSONObject("envelope")
+    }
+
+    private fun agentWireValue(envelope: JSONObject, expectedType: String): JSONObject {
+        val response = envelope.getJSONObject("response")
+        val error = response.optJSONObject("Err")
+        if (error != null) {
+            throw RemoteBridgeException(
+                code = error.optString("code", "agent.wire"),
+                message = error.optString("message", "Agent Wire request failed"),
+                retryable = error.optBoolean("retryable", false),
+            )
+        }
+        val result = response.getJSONObject("Ok")
+        check(result.getString("type") == expectedType) {
+            "Unexpected Agent Wire response type"
+        }
+        return result.optJSONObject("value") ?: JSONObject()
     }
 
     private fun bridgeUrl(pc: SavedPc): String = pc.bridgeUrl.trim().trimEnd('/')

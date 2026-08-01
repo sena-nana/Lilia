@@ -31,6 +31,8 @@
     "./memoryCommandsContract.mjs": "./src/memoryCommandsContract.mjs",
     "./milestoneCommandsContract.mjs": "./src/milestoneCommandsContract.mjs",
     "./modelSelectionDefaults.mjs": "./src/modelSelectionDefaults.mjs",
+    "./nativeAgentContract.mjs": "./src/nativeAgentContract.mjs",
+    "./productCoreContract.mjs": "./src/productCoreContract.mjs",
     "./permissionModes.mjs": "./src/permissionModes.mjs",
     "./pluginsContract.mjs": "./src/pluginsContract.mjs",
     "./popupCommandsContract.mjs": "./src/popupCommandsContract.mjs",

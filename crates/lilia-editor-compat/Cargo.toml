@@ -10,11 +10,13 @@ name = "lilia-editor-compat"
 path = "src/main.rs"
 
 [dependencies]
+mutsuki-agent-adapter-api = { workspace = true }
+mutsuki-agent-adapter-anthropic = { workspace = true }
+mutsuki-agent-adapter-openai = { workspace = true }
 mutsuki-agent-contracts = { workspace = true }
 mutsuki-agent-plugin-code-completion = { workspace = true }
 mutsuki-agent-plugin-next-edit = { workspace = true }
 mutsuki-agent-runtime = { workspace = true }
-mutsuki-agent-testkit = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

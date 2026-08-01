@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 export CARGO_TERM_COLOR="${CARGO_TERM_COLOR:-always}"
+node scripts/check-mutsuki-pin.mjs
 cargo test -p lilia-contracts -p lilia-core -p lilia-client -p lilia-storage -p lilia-agent-integration -p lilia-service -p lilia-service-bin -p lilia-cli --locked
 cargo check -p lilia-service-bin -p lilia-cli --locked
 # #58 / #60 — Desktop/CLI same LiliaClient + Shared Runtime use case.
@@ -21,6 +22,9 @@ node scripts/check-default-bundle-no-official-server.mjs
 node scripts/mark-legacy-agent-runner.mjs --check
 node scripts/check-legacy-runner-reachability.mjs
 node scripts/check-legacy-default-unreachable.mjs
+# The source-only escape hatch remains supported until 1.0.0; keep it compiling
+# without making it part of the default Desktop feature set.
+cargo check -p lilia --features legacy-runner --locked
 # Default Desktop build (no legacy-runner feature) still typechecks.
 cargo check -p lilia --locked
 # Migration apply + first Native turn (binding → submit → projection).

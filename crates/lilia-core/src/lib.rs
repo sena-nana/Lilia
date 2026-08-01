@@ -7,6 +7,6 @@ pub mod domain;
 
 pub use application::{
     AgentKitClientPort, AgentKitPortError, InMemoryProductStore, NativeAgentCapabilitySnapshot,
-    ProductServices, SessionBindingService, UnavailableAgentKitPort,
+    ProductRepository, ProductServices, SessionBindingService, UnavailableAgentKitPort,
 };
 pub use domain::{ensure_expected_revision, promote_agent_todo_title};

@@ -8,7 +8,7 @@
 //! Bootstrap: in-memory by default, or `--home <path>` / `LILIA_HOME` for shared
 //! `LiliaDataPaths` layout with Desktop / Service.
 
-use lilia_cli::{print_json, resolve_home, CliSession};
+use lilia_cli::{print_json, resolve_home, run_remote_agent_wire_turn, CliSession};
 use lilia_contracts::TaskId;
 
 fn main() {
@@ -26,6 +26,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let command = args[0].as_str();
+    if command == "agent-run" {
+        let service = arg_value(&args, "--service")
+            .map(str::to_string)
+            .or_else(|| std::env::var("LILIA_SERVICE_URL").ok())
+            .ok_or("agent-run requires --service <url> or LILIA_SERVICE_URL")?;
+        let prompt = arg_value(&args, "--prompt").ok_or("agent-run requires --prompt <text>")?;
+        let profile = arg_value(&args, "--profile").unwrap_or("mutsuki.reference.coding-agent");
+        let report = run_remote_agent_wire_turn(&service, profile, prompt)?;
+        print_json(&report)?;
+        return Ok(());
+    }
     let session = match resolve_home(&args) {
         Some(home) => CliSession::bootstrap_with_home(home)?,
         None => {
@@ -86,11 +97,13 @@ Usage:
   lilia-cli timeline --task <id> [--home <path>]
   lilia-cli products [--home <path>]
   lilia-cli credential-login [--home <path>]
+  lilia-cli agent-run --service <url> --prompt <text> [--profile <id>]
 
 Environment:
   LILIA_HOME              Shared data home (same LiliaDataPaths as Desktop)
   LILIA_CLI_STORAGE_KEY   In-memory authority key (default cli:in-memory:default)
   LILIA_CLI_TEST_API_KEY  Optional test credential secret (never echoed)
+  LILIA_SERVICE_URL       Service URL for Agent Wire commands
 "
     );
 }

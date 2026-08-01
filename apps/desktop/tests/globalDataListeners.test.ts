@@ -1,6 +1,7 @@
 import { waitFor } from "@testing-library/vue";
 import { describe, expect, it, vi } from "vitest";
 import { TASKS_CHANGED_EVENT_NAME } from "@lilia/contracts";
+import { PRODUCT_EVENT_NAME } from "@lilia/contracts/productCoreContract.mjs";
 import {
   failNextMockListen,
   mockListen,
@@ -10,25 +11,25 @@ import {
 describe("global data listener installation", () => {
   it("keeps tasks changed listener installation idempotent and retryable", async () => {
     vi.resetModules();
-    const baseline = mockListenerCount(TASKS_CHANGED_EVENT_NAME);
+    const baseline = mockListenerCount(PRODUCT_EVENT_NAME);
     const listenAttemptCount = () =>
-      mockListen.mock.calls.filter(([event]) => event === TASKS_CHANGED_EVENT_NAME).length;
+      mockListen.mock.calls.filter(([event]) => event === PRODUCT_EVENT_NAME).length;
     const initialListenAttempts = listenAttemptCount();
-    failNextMockListen(TASKS_CHANGED_EVENT_NAME, "tasks listener failed");
+    failNextMockListen(PRODUCT_EVENT_NAME, "tasks listener failed");
     const module = await import("../src/data/tasks");
 
     await waitFor(() => {
       expect(listenAttemptCount()).toBeGreaterThan(initialListenAttempts);
     });
-    expect(mockListenerCount(TASKS_CHANGED_EVENT_NAME)).toBe(baseline);
+    expect(mockListenerCount(PRODUCT_EVENT_NAME)).toBe(baseline);
 
     module.installTasksChangedListener();
     await waitFor(() => {
-      expect(mockListenerCount(TASKS_CHANGED_EVENT_NAME)).toBe(baseline + 1);
+      expect(mockListenerCount(PRODUCT_EVENT_NAME)).toBe(baseline + 1);
     });
 
     module.installTasksChangedListener();
-    expect(mockListenerCount(TASKS_CHANGED_EVENT_NAME)).toBe(baseline + 1);
+    expect(mockListenerCount(PRODUCT_EVENT_NAME)).toBe(baseline + 1);
   });
 
   it("retries sidebar conversation listener registration after an initial failure", async () => {
@@ -73,4 +74,3 @@ describe("global data listener installation", () => {
     });
   });
 });
-

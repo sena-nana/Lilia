@@ -764,6 +764,7 @@ mod tests {
             &RunningTurn {
                 turn_id: "turn-builtin".to_string(),
                 backend: BACKEND_CODEX.to_string(),
+                native_approval_pause: None,
             },
             "running",
             None,

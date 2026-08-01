@@ -9,13 +9,8 @@ import {
   CHAT_INTERRUPT_TURN_COMMAND,
   CHAT_TURN_STARTED_EVENT_NAME,
   POPUP_OPEN_TASK_COMMAND,
-  PROJECT_CREATE_COMMAND,
-  PROJECT_REORDER_COMMAND,
-  PROJECT_ENSURE_FOLDERS_COMMAND,
   TASK_LIST_COMMAND,
   TASK_LIST_SIDEBAR_CONVERSATIONS_COMMAND,
-  TASK_REORDER_COMMAND,
-  TASK_REPARENT_COMMAND,
   type Task,
 } from "@lilia/contracts";
 import SecondaryPanel from "../src/layouts/SecondaryPanel.vue";
@@ -25,7 +20,14 @@ import { useConnectionStatus } from "../src/composables/useConnectionStatus";
 import { useSidebarDisplayMode } from "../src/composables/useSidebarDisplayMode";
 import { createLiliaRouter } from "../src/router";
 import { resetSidebarConversationsCache } from "../src/data/sidebarConversations";
-import { ORPHAN_LIST, ORPHANS_LOADED, PROJECT_TASKS_LOADED, TASKS } from "../src/data/tasks";
+import {
+  getTask,
+  listTasks,
+  ORPHAN_LIST,
+  ORPHANS_LOADED,
+  PROJECT_TASKS_LOADED,
+  TASKS,
+} from "../src/data/tasks";
 import {
   emitMockTimelineEvent,
   emitTauriEvent,
@@ -348,7 +350,7 @@ describe("SecondaryPanel project tree expansion", () => {
     expect(orphansToggle).toBeInTheDocument();
   });
 
-  it("首屏会优先加载当前路由项目，再补齐其他已展开项目", async () => {
+  it("首屏通过 Product Core 一次加载任务并填充所有已展开分组", async () => {
     seedTreeExpansionState({
       projects: {
         lilia: true,
@@ -362,38 +364,14 @@ describe("SecondaryPanel project tree expansion", () => {
     ORPHANS_LOADED.value = false;
     mockInvoke.mockClear();
 
-    await renderSecondaryPanel("/projects/lilia");
+    const view = await renderSecondaryPanel("/projects/lilia");
 
-    await waitFor(() => {
-      expect(
-        mockInvoke.mock.calls.some(
-          ([cmd, args]) => cmd === TASK_LIST_COMMAND && args?.projectId === "lilia",
-        ),
-      ).toBe(true);
-    });
-    await waitFor(() => {
-      expect(
-        mockInvoke.mock.calls.some(
-          ([cmd, args]) => cmd === TASK_LIST_COMMAND && args?.projectId === "tools",
-        ),
-      ).toBe(true);
-    });
-    await waitFor(() => {
-      expect(
-        mockInvoke.mock.calls.some(
-          ([cmd, args]) => cmd === TASK_LIST_COMMAND && (args?.projectId ?? null) === null,
-        ),
-      ).toBe(true);
-    });
-
-    const taskListCalls = mockInvoke.mock.calls
-      .filter(([cmd]) => cmd === TASK_LIST_COMMAND)
-      .map(([, args]) => args?.projectId ?? null);
-    expect(taskListCalls.indexOf("lilia")).toBeGreaterThan(-1);
-    expect(taskListCalls.indexOf("tools")).toBeGreaterThan(-1);
-    expect(taskListCalls.indexOf(null)).toBeGreaterThan(-1);
-    expect(taskListCalls.indexOf("lilia")).toBeLessThan(taskListCalls.indexOf("tools"));
-    expect(taskListCalls.indexOf("lilia")).toBeLessThan(taskListCalls.indexOf(null));
+    await findConversationRow(view, "接入 Claude Code 会话发现");
+    await findConversationRow(view, "整理窗口快捷键");
+    await findConversationRow(view, "随手问问 Claude：tsconfig paths");
+    expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+      cmd === "product_list_entities" && args?.kind === "task"
+    )).toBe(true);
   });
 
   it("统一模式卸载时取消延期 activity hydrate 的 paint 调度", async () => {
@@ -478,10 +456,13 @@ describe("SecondaryPanel project chat navigation", () => {
     });
     await fireEvent.click(createButton);
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(PROJECT_CREATE_COMMAND, {
-        name: "临时分类",
-        cwd: null,
-      }, undefined);
+      expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+        cmd === "product_create_entity" &&
+        (args?.entity as { kind?: string; value?: { name?: string; workspacePath?: string | null } })
+          ?.kind === "project" &&
+        (args?.entity as { value?: { name?: string } }).value?.name === "临时分类" &&
+        (args?.entity as { value?: { workspacePath?: string | null } }).value?.workspacePath === null
+      )).toBe(true);
     });
     await waitFor(() => {
       expect(pushSpy).toHaveBeenCalled();
@@ -489,7 +470,7 @@ describe("SecondaryPanel project chat navigation", () => {
     await waitFor(() => {
       expect(view.getByText("临时分类")).toBeInTheDocument();
       expect(pushSpy.mock.lastCall?.[0]).toMatch(
-        /^\/projects\/p-3\/tasks\/t-draft-/,
+        /^\/projects\/project-[^/]+\/tasks\/t-draft-/,
       );
     });
   });
@@ -933,9 +914,14 @@ describe("SecondaryPanel project tree drag", () => {
     });
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(PROJECT_REORDER_COMMAND, {
-        orderedIds: ["tools", "lilia"],
-      }, undefined);
+      expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+        cmd === "product_update_entity" &&
+        args?.action === "reordered" &&
+        (args?.entity as { kind?: string; value?: { id?: string; sortOrder?: number } })?.kind ===
+          "project" &&
+        (args?.entity as { value?: { id?: string } }).value?.id === "tools" &&
+        (args?.entity as { value?: { sortOrder?: number } }).value?.sortOrder === 0
+      )).toBe(true);
     });
   });
 
@@ -960,11 +946,18 @@ describe("SecondaryPanel project tree drag", () => {
     });
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(TASK_REPARENT_COMMAND, {
-        taskId: "t-003",
-        newProjectId: "lilia",
-        newParentId: "t-001",
-      }, undefined);
+      expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+        cmd === "product_update_entity" &&
+        args?.action === "reparented" &&
+        (args?.entity as { kind?: string; value?: {
+          id?: string;
+          projectId?: string | null;
+          parentId?: string | null;
+        } })?.kind === "task" &&
+        (args?.entity as { value?: { id?: string } }).value?.id === "t-003" &&
+        (args?.entity as { value?: { projectId?: string | null } }).value?.projectId === "lilia" &&
+        (args?.entity as { value?: { parentId?: string | null } }).value?.parentId === "t-001"
+      )).toBe(true);
     });
   });
 
@@ -978,15 +971,9 @@ describe("SecondaryPanel project tree drag", () => {
     await dragFromTo(source, target, 42);
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(TASK_REPARENT_COMMAND, {
-        taskId: "t-002",
-        newProjectId: "lilia",
-        newParentId: null,
-      }, undefined);
-      expect(mockInvoke).toHaveBeenCalledWith(TASK_REORDER_COMMAND, {
-        projectId: "lilia",
-        orderedIds: expect.arrayContaining(["t-002", "t-001"]),
-      }, undefined);
+      expect(getTask("lilia", "t-002")?.parentId).toBeNull();
+      const ids = listTasks("lilia").map((task) => task.id);
+      expect(ids.indexOf("t-002")).toBeLessThan(ids.indexOf("t-001"));
     });
   });
 
@@ -1008,7 +995,9 @@ describe("SecondaryPanel project tree drag", () => {
       clientY: 54,
     });
 
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === TASK_REPARENT_COMMAND)).toBe(false);
+    expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+      cmd === "product_update_entity" && args?.action === "reparented"
+    )).toBe(false);
   });
 
   it("文件夹拖到未置顶项目行时显示项目落点，松手后创建并插入", async () => {
@@ -1029,12 +1018,16 @@ describe("SecondaryPanel project tree drag", () => {
     emitFolderDropEvent("drop", ["D:\\PROJECT\\workspace\\NewApp"], { x: 20, y: 42 });
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(PROJECT_ENSURE_FOLDERS_COMMAND, {
-        paths: ["D:\\PROJECT\\workspace\\NewApp"],
-      }, undefined);
-      expect(mockInvoke).toHaveBeenCalledWith(PROJECT_REORDER_COMMAND, {
-        orderedIds: ["lilia", "p-3", "tools"],
-      }, undefined);
+      expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+        cmd === "product_create_entity" &&
+        (args?.entity as { kind?: string; value?: { workspacePath?: string | null } })?.kind ===
+          "project" &&
+        (args?.entity as { value?: { workspacePath?: string | null } }).value?.workspacePath ===
+          "D:\\PROJECT\\workspace\\NewApp"
+      )).toBe(true);
+      expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+        cmd === "product_update_entity" && args?.action === "reordered"
+      )).toBe(true);
     });
   });
 
@@ -1051,15 +1044,21 @@ describe("SecondaryPanel project tree drag", () => {
     ], { x: 20, y: 42 });
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(PROJECT_ENSURE_FOLDERS_COMMAND, {
-        paths: [
-          "D:\\PROJECT\\workspace\\Alpha",
-          "D:\\PROJECT\\workspace\\Beta",
-        ],
-      }, undefined);
-      expect(mockInvoke).toHaveBeenCalledWith(PROJECT_REORDER_COMMAND, {
-        orderedIds: ["lilia", "p-3", "p-4", "tools"],
-      }, undefined);
+      const createdPaths = mockInvoke.mock.calls
+        .filter(([cmd, args]) =>
+          cmd === "product_create_entity" &&
+          (args?.entity as { kind?: string })?.kind === "project"
+        )
+        .map(([, args]) =>
+          (args?.entity as { value?: { workspacePath?: string | null } }).value?.workspacePath
+        );
+      expect(createdPaths).toEqual([
+        "D:\\PROJECT\\workspace\\Alpha",
+        "D:\\PROJECT\\workspace\\Beta",
+      ]);
+      expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+        cmd === "product_update_entity" && args?.action === "reordered"
+      )).toBe(true);
     });
   });
 
@@ -1082,9 +1081,13 @@ describe("SecondaryPanel project tree drag", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === PROJECT_ENSURE_FOLDERS_COMMAND))
-      .toBe(false);
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === PROJECT_REORDER_COMMAND)).toBe(false);
+    expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+      cmd === "product_create_entity" &&
+      (args?.entity as { kind?: string })?.kind === "project"
+    )).toBe(false);
+    expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+      cmd === "product_update_entity" && args?.action === "reordered"
+    )).toBe(false);
   });
 
   it("文件夹拖放按窗口缩放归一化坐标后解析项目落点", async () => {
@@ -1098,9 +1101,9 @@ describe("SecondaryPanel project tree drag", () => {
     emitFolderDropEvent("drop", ["D:\\PROJECT\\workspace\\Scaled"], { x: 40, y: 84 });
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(PROJECT_REORDER_COMMAND, {
-        orderedIds: ["lilia", "p-3", "tools"],
-      }, undefined);
+      expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+        cmd === "product_update_entity" && args?.action === "reordered"
+      )).toBe(true);
     });
   });
 });

@@ -106,9 +106,11 @@ pub fn load_mcp_registry(paths: &LiliaDataPaths) -> ProductResult<Option<Agentki
     let text = fs::read_to_string(&path).map_err(|err| ProductError::Unavailable {
         message: format!("read mcp registry: {err}"),
     })?;
-    serde_json::from_str(&text).map(Some).map_err(|err| ProductError::Unavailable {
-        message: format!("parse mcp registry: {err}"),
-    })
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|err| ProductError::Unavailable {
+            message: format!("parse mcp registry: {err}"),
+        })
 }
 
 pub fn load_skills_registry(
@@ -121,9 +123,11 @@ pub fn load_skills_registry(
     let text = fs::read_to_string(&path).map_err(|err| ProductError::Unavailable {
         message: format!("read skills registry: {err}"),
     })?;
-    serde_json::from_str(&text).map(Some).map_err(|err| ProductError::Unavailable {
-        message: format!("parse skills registry: {err}"),
-    })
+    serde_json::from_str(&text)
+        .map(Some)
+        .map_err(|err| ProductError::Unavailable {
+            message: format!("parse skills registry: {err}"),
+        })
 }
 
 /// Scan legacy Claude/Codex MCP + Claude skills and write AgentKit registry files.
@@ -183,7 +187,11 @@ pub fn apply_compat_assets_to_agentkit_registry(
         kind: ObjectKind::CompatAsset,
         id: "registry:mcp".into(),
         action: "registered".into(),
-        detail: Some(format!("{} server(s) → {}", mcp.servers.len(), AGENTKIT_MCP_REGISTRY_FILE)),
+        detail: Some(format!(
+            "{} server(s) → {}",
+            mcp.servers.len(),
+            AGENTKIT_MCP_REGISTRY_FILE
+        )),
     });
 
     let skills_path = skills_registry_path(paths);
@@ -265,7 +273,10 @@ fn collect_claude_mcp(
         return;
     };
     for (name, cfg) in map {
-        let command = cfg.get("command").and_then(|v| v.as_str()).map(str::to_string);
+        let command = cfg
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
         let args = cfg
             .get("args")
             .and_then(|v| v.as_array())

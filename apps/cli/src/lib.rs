@@ -7,9 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
-use lilia_agent_integration::{
-    ProductCredentialLoginInput, SharedNativeAgentKitRuntime,
-};
+use lilia_agent_integration::{ProductCredentialLoginInput, SharedNativeAgentKitRuntime};
 use lilia_client::LiliaClient;
 use lilia_contracts::{
     BindingId, ProductApprovalDecision, ProjectId, TaskId, TimelineProjectionEvent,
@@ -18,7 +16,11 @@ use lilia_service::{
     shared_runtime_ptr_eq, shared_timeline_ptr_eq, ServiceAuthority, ServiceAuthorityError,
     ServiceAuthorityStatus,
 };
-use mutsuki_agent_contracts::{AgentEvent, CredentialKind, OPENAI_CREDENTIAL_PROVIDER_ID};
+use mutsuki_agent_client::{AgentClient, AgentClientBackend, AgentEventCursor};
+use mutsuki_agent_contracts::{
+    AgentEvent, AgentMessage, AgentSessionCreateRequest, CredentialKind, SessionVersion,
+    OPENAI_CREDENTIAL_PROVIDER_ID,
+};
 use serde::Serialize;
 
 /// Test / smoke API key — never printed by CLI output helpers.
@@ -32,6 +34,68 @@ pub enum CliError {
     Product(#[from] lilia_contracts::ProductError),
     #[error("{0}")]
     Message(String),
+}
+
+impl From<mutsuki_agent_contracts::AgentWireError> for CliError {
+    fn from(value: mutsuki_agent_contracts::AgentWireError) -> Self {
+        Self::Message(format!("{}: {}", value.code, value.message))
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWireTurnReport {
+    pub session_id: String,
+    pub version: u64,
+    pub event_count: usize,
+    pub next_sequence: u64,
+    pub official_agent_server: bool,
+    pub node_runner_default: bool,
+}
+
+pub fn run_agent_wire_turn<B: AgentClientBackend>(
+    client: &mut AgentClient<B>,
+    profile_id: &str,
+    prompt: &str,
+) -> Result<AgentWireTurnReport, CliError> {
+    let capabilities = client.runtime_capabilities()?;
+    let session = client.start_session(AgentSessionCreateRequest {
+        session_id: None,
+        profile_id: profile_id.to_string(),
+        title: Some("lilia-cli".into()),
+    })?;
+    let version = client.submit_turn(
+        &session.session_id,
+        SessionVersion(1),
+        "cli-agent-turn-1",
+        vec![AgentMessage::user(prompt)],
+        "cli-agent-turn-1",
+    )?;
+    let mut cursor = AgentEventCursor::new(&session.session_id, 0, 1000)?;
+    let events = cursor.poll(client)?;
+    Ok(AgentWireTurnReport {
+        session_id: session.session_id,
+        version: version.0,
+        event_count: events.len(),
+        next_sequence: cursor.last_seen(),
+        official_agent_server: capabilities
+            .get("official_agent_server")
+            .is_some_and(|value| value == "true"),
+        node_runner_default: capabilities
+            .get("node_runner_default")
+            .is_some_and(|value| value == "true"),
+    })
+}
+
+pub fn run_remote_agent_wire_turn(
+    service_url: &str,
+    profile_id: &str,
+    prompt: &str,
+) -> Result<AgentWireTurnReport, CliError> {
+    let backend = lilia_client::AgentWireHttpBackend::new(service_url)
+        .map_err(|error| CliError::Message(error.to_string()))?;
+    let mut client = backend.into_client();
+    run_agent_wire_turn(&mut client, profile_id, prompt)
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -105,10 +169,7 @@ pub struct CliSession {
 impl CliSession {
     pub fn bootstrap_in_memory(storage_key: impl Into<String>) -> Result<Self, CliError> {
         Ok(Self {
-            authority: ServiceAuthority::bootstrap_in_memory_named(
-                storage_key,
-                "lilia-cli",
-            )?,
+            authority: ServiceAuthority::bootstrap_in_memory_named(storage_key, "lilia-cli")?,
         })
     }
 
@@ -247,7 +308,15 @@ impl CliSession {
             .authority
             .shared_runtime()
             .inner()
-            .submit_turn_streaming(&session, "please fix via shared core", turn_id)
+            .submit_turn_with_context_streaming(
+                &session,
+                "please fix via shared core",
+                turn_id,
+                Some(serde_json::json!({
+                    "permission": "ask",
+                    "workspace": {"folders": [loopback.workspace.to_string_lossy()]},
+                })),
+            )
             .map_err(|err| CliError::Message(err.to_string()))?;
         if !page.credential_bound {
             return Err(CliError::Message(
@@ -256,17 +325,22 @@ impl CliSession {
         }
 
         let mut approval_responded = false;
-        if page.events.iter().any(|envelope| {
-            matches!(&envelope.event, AgentEvent::ApprovalRequest { .. })
-        }) {
+        if let Some(request) = page
+            .events
+            .iter()
+            .find_map(|envelope| match &envelope.event {
+                AgentEvent::ApprovalRequest { request } => Some(request),
+                _ => None,
+            })
+        {
             // Respond through LiliaClient — identical path Desktop product facade uses.
             client.respond_approval(
                 &session,
                 &ProductApprovalDecision {
-                    session_id: session.as_str().to_string(),
-                    turn_id: turn_id.into(),
-                    action_id: "call-cli-1".into(),
-                    version: 1,
+                    session_id: request.session_id.clone(),
+                    turn_id: request.turn_id.clone(),
+                    action_id: request.action_id.clone(),
+                    version: request.version,
                     approved: true,
                 },
             )?;
@@ -344,6 +418,7 @@ fn assert_shared_core(left: &ServiceAuthority, right: &ServiceAuthority) -> Resu
 struct LoopbackHandle {
     endpoint: String,
     join: Option<thread::JoinHandle<()>>,
+    workspace: PathBuf,
 }
 
 impl LoopbackHandle {
@@ -351,38 +426,66 @@ impl LoopbackHandle {
         if let Some(handle) = self.join.take() {
             let _ = handle.join();
         }
+        let _ = std::fs::remove_dir_all(&self.workspace);
     }
 }
 
-/// Fake openai-compatible loopback that emits a tool call → approval path.
+/// Test-only openai-compatible loopback that exercises tool → approval → result.
 fn spawn_tool_call_loopback() -> Result<LoopbackHandle, CliError> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| CliError::Message(err.to_string()))?
+        .as_nanos();
+    let workspace =
+        std::env::temp_dir().join(format!("lilia-cli-loopback-{}-{nonce}", std::process::id()));
+    std::fs::create_dir_all(&workspace)
+        .map_err(|err| CliError::Message(format!("create loopback workspace: {err}")))?;
+    std::fs::write(workspace.join("README.md"), "CLI Native loopback\n")
+        .map_err(|err| CliError::Message(format!("seed loopback workspace: {err}")))?;
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|err| CliError::Message(format!("bind loopback: {err}")))?;
     let address = listener
         .local_addr()
         .map_err(|err| CliError::Message(format!("loopback addr: {err}")))?;
     let join = thread::spawn(move || {
-        if let Ok((mut stream, _)) = listener.accept() {
-            let mut bytes = [0_u8; 16_384];
-            let _ = stream.read(&mut bytes);
-            let body = serde_json::json!({
-                "choices": [{
-                    "finish_reason": "tool_calls",
-                    "message": {
-                        "content": null,
-                        "tool_calls": [{
-                            "id": "call-cli-1",
-                            "type": "function",
-                            "function": {
-                                "name": "native.coding.fix",
-                                "arguments": "{\"prompt\":\"fix\"}"
-                            }
-                        }]
-                    }
-                }],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
-            })
-            .to_string();
+        for step in 0..2 {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut bytes = [0_u8; 65_536];
+            let count = stream.read(&mut bytes).unwrap_or(0);
+            let request = String::from_utf8_lossy(&bytes[..count]);
+            let body = if step == 0 {
+                serde_json::json!({
+                    "choices": [{
+                        "finish_reason": "tool_calls",
+                        "message": {
+                            "content": null,
+                            "tool_calls": [{
+                                "id": "call-cli-1",
+                                "type": "function",
+                                "function": {
+                                    "name": "computer.fs.write",
+                                    "arguments": "{\"path\":\"generated.txt\",\"content\":\"CLI Native loop\",\"create\":true,\"overwrite\":true}"
+                                }
+                            }]
+                        }
+                    }],
+                    "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
+                })
+                .to_string()
+            } else {
+                assert!(request.contains("tool_call_id"));
+                assert!(request.contains("call-cli-1"));
+                serde_json::json!({
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": "CLI tool completed"}
+                    }],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}
+                })
+                .to_string()
+            };
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                 body.len()
@@ -393,6 +496,51 @@ fn spawn_tool_call_loopback() -> Result<LoopbackHandle, CliError> {
     Ok(LoopbackHandle {
         endpoint: format!("http://{address}/v1/chat/completions"),
         join: Some(join),
+        workspace,
+    })
+}
+
+#[cfg(test)]
+fn spawn_final_response_loopback() -> Result<LoopbackHandle, CliError> {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| CliError::Message(err.to_string()))?
+        .as_nanos();
+    let workspace = std::env::temp_dir().join(format!(
+        "lilia-cli-final-loopback-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&workspace)
+        .map_err(|err| CliError::Message(format!("create loopback workspace: {err}")))?;
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|err| CliError::Message(format!("bind loopback: {err}")))?;
+    let address = listener
+        .local_addr()
+        .map_err(|err| CliError::Message(format!("loopback addr: {err}")))?;
+    let join = thread::spawn(move || {
+        let Ok((mut stream, _)) = listener.accept() else {
+            return;
+        };
+        let mut bytes = [0_u8; 16_384];
+        let _ = stream.read(&mut bytes);
+        let body = serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "CLI Wire reply"}
+            }],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 2, "total_tokens": 4}
+        })
+        .to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let _ = stream.write_all(response.as_bytes());
+    });
+    Ok(LoopbackHandle {
+        endpoint: format!("http://{address}/v1/chat/completions"),
+        join: Some(join),
+        workspace,
     })
 }
 
@@ -416,6 +564,8 @@ pub fn print_json<T: Serialize>(value: &T) -> Result<(), CliError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lilia_agent_integration::{NativeAgentWireService, NativeRuntimeBootstrap};
+    use mutsuki_agent_client::InProcessAgentClient;
 
     #[test]
     fn desktop_and_cli_clients_share_runtime_and_complete_same_use_case() {
@@ -448,6 +598,41 @@ mod tests {
     }
 
     #[test]
+    fn cli_agent_turn_uses_canonical_agent_client_and_wire() {
+        let native = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        native
+            .credentials()
+            .login(ProductCredentialLoginInput {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: TEST_OPENAI_API_KEY.into(),
+                account_label: Some("cli-wire-test".into()),
+                source: Some("user_api_key".into()),
+            })
+            .unwrap();
+        native.refresh_product_profile(None).unwrap();
+        let loopback = spawn_final_response_loopback().unwrap();
+        native.set_model_endpoint_override(Some(loopback.endpoint.clone()));
+        let runtime = lilia_agent_integration::SharedNativeAgentKitRuntime::new(native);
+        let backend = InProcessAgentClient::new(NativeAgentWireService::new(runtime));
+        let mut client = AgentClient::new(backend);
+        let report = run_agent_wire_turn(
+            &mut client,
+            "mutsuki.reference.coding-agent",
+            "inspect the repository",
+        )
+        .unwrap();
+        assert_eq!(report.version, 2);
+        assert!(report.event_count > 0);
+        assert!(report.next_sequence > 0);
+        assert!(!report.official_agent_server);
+        assert!(!report.node_runner_default);
+        loopback.join();
+    }
+
+    #[test]
     fn cli_with_home_uses_shared_lilia_data_paths_layout() {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -467,14 +652,13 @@ mod tests {
     }
 
     #[test]
-    fn client_submit_turn_goes_through_lilia_client_port() {
+    fn client_submit_turn_without_credential_fails_without_fake_timeline() {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let session =
-            CliSession::bootstrap_in_memory(format!("test:cli-submit-{nanos}")).unwrap();
-        // Reference path (no credential) still uses shared Runtime via LiliaClient.
+        let session = CliSession::bootstrap_in_memory(format!("test:cli-submit-{nanos}")).unwrap();
+        // Runtime remains available, but a product turn must not run a fake fixture.
         let client = session.client().unwrap();
         let project = client
             .create_project(ProjectId::new("p-sub").unwrap(), "Submit")
@@ -494,11 +678,11 @@ mod tests {
                 BindingId::new("bind-sub").unwrap(),
             )
             .unwrap();
-        client
+        assert!(client
             .submit_turn(&binding.agent_session, "fix the failing test")
-            .unwrap();
+            .is_err());
         let timeline = session.product_timeline(&task.id).unwrap();
-        assert!(!timeline.is_empty());
+        assert!(timeline.is_empty());
     }
 
     /// #47 — migrate apply → open bound session → submit_turn → timeline projection.
@@ -592,10 +776,13 @@ mod tests {
         let blob = std::fs::read_to_string(lilia_storage::mcp_registry_path(&paths)).unwrap();
         assert!(!blob.contains("must-not-leak"));
 
-        // Live Runtime first turn on the migrated binding (loopback / reference path).
+        // Live Runtime first turn on the migrated binding through a real Adapter loop.
         let session = CliSession::bootstrap_with_home(&home).unwrap();
+        session.login_test_openai_credential().unwrap();
+        let loopback = spawn_final_response_loopback().unwrap();
         let shared = session.authority().shared_runtime();
         let runtime = shared.inner();
+        runtime.set_model_endpoint_override(Some(loopback.endpoint.clone()));
         let bound = runtime
             .open_bound_session(
                 &task_id,
@@ -609,16 +796,17 @@ mod tests {
         runtime
             .submit_turn_streaming(&agent_session, "continue after migration", "turn-mig-1")
             .unwrap();
+        loopback.join();
 
         let timeline = session.product_timeline(&task_id).unwrap();
         assert!(
-            timeline.iter().any(|e| e.projected && e.agent_session.as_str() == expected_session),
+            timeline
+                .iter()
+                .any(|e| e.projected && e.agent_session.as_str() == expected_session),
             "expected projected events for migrated session; got {timeline:?}"
         );
 
-        let registry_status = runtime
-            .shared_agentkit_registry_status(&paths)
-            .unwrap();
+        let registry_status = runtime.shared_agentkit_registry_status(&paths).unwrap();
         assert!(
             registry_status
                 .get("mcpServerCount")
@@ -631,9 +819,9 @@ mod tests {
             .and_then(|v| v.as_array())
             .cloned()
             .unwrap_or_default();
-        assert!(servers.iter().any(|s| {
-            s.get("serverId").and_then(|v| v.as_str()) == Some("claude-docs")
-        }));
+        assert!(servers
+            .iter()
+            .any(|s| { s.get("serverId").and_then(|v| v.as_str()) == Some("claude-docs") }));
 
         let _ = std::fs::remove_dir_all(&home);
     }

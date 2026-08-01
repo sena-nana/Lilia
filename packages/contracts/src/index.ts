@@ -23,6 +23,8 @@ export * from "./architecture";
 export * from "./remote-control";
 export * from "./prompt";
 export * from "./agent-debug";
+export * from "./native-agent";
+export * from "./product-core";
 
 export {
   deriveTimelineDisplay,

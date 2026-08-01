@@ -1,34 +1,61 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use lilia_contracts::{AgentSessionRef, ProductApprovalDecision, TaskId, TimelineProjectionEvent};
+use lilia_contracts::{
+    AgentSessionRef, PendingProjectionStatus, ProductApprovalDecision, TaskId,
+    TimelineProjectionCommand, TimelineProjectionEvent,
+};
 use lilia_core::{AgentKitClientPort, AgentKitPortError, NativeAgentCapabilitySnapshot};
-use lilia_storage::{SqliteTimelineProjectionStore, TimelineProjectionRepository};
+use lilia_storage::{
+    SqliteAgentRuntimeStateStore, SqliteTimelineProjectionStore, TimelineProjectionRepository,
+};
 use mutsuki_agent_bundle::{
-    run_fix_golden_path, NativeCodingAgentBundle, NativeCodingBackends, NATIVE_CODING_BUNDLE_ID,
+    run_fix_golden_path, NativeCodingAgentBundle, NativeCodingBackends, NativeCodingRunContext,
+    SessionStore, NATIVE_CODING_BUNDLE_ID,
 };
 use mutsuki_agent_contracts::{
-    AgentError, AgentEvent, AgentEventEnvelope, AgentEventMeta, AgentRuntimeProfile,
-    CodingCommandRef,
+    AgentError, AgentEvent, AgentEventEnvelope, AgentEventMeta, AgentMessage, AgentPermissionMode,
+    AgentRole, AgentRunRequest, AgentRunResult, AgentRunStatus, AgentRuntimeProfile, AgentSession,
+    AgentSessionAppendRequest, AgentSessionCreateRequest, AgentSessionForkRequest,
+    AgentSessionGetRequest, AgentWorkspaceRef, PermissionDecision, PermissionDecisionKind,
+    AGENT_RUN_PROTOCOL, AGENT_SESSION_APPEND_PROTOCOL, AGENT_SESSION_CREATE_PROTOCOL,
+    AGENT_SESSION_FORK_PROTOCOL, AGENT_SESSION_GET_PROTOCOL,
 };
-use mutsuki_agent_plugin_git::CliGitBackend;
+use mutsuki_agent_runtime::{SessionEventSubscription, SessionPersistence};
+use mutsuki_runtime_contracts::TaskHandle;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::agentkit_host::AgentKitHost;
 use crate::credential::{IndependentDiagnostics, ProductCredentialBridge};
 use crate::model_turn::{
-    build_live_turn_plan, drive_live_model_turn, live_model_adapter_eligible,
-    resolve_model_endpoint, PendingToolApproval,
+    adapter_credential_broker, build_live_turn_plan, live_model_adapter_eligible,
+    resolve_model_endpoint, LiveModelTurnPlan,
 };
 use crate::profile::{build_product_coding_profile, profile_has_credential_refs};
 use crate::projection::project_agent_events;
 
-/// Embedded (in-process) vs future Service-connected mode. Both share Client port.
+const AGENTKIT_SESSION_PREFIX: &str = "agentkit-session/";
+const WIRE_SESSION_PREFIX: &str = "wire-session/";
+const TASK_TIMEOUT: Duration = Duration::from_secs(90);
+const STREAM_WAIT_INTERVAL: Duration = Duration::from_millis(50);
+
+type TurnEventObserver = Arc<dyn Fn(&[AgentEventEnvelope]) + Send + Sync>;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum NativeRuntimeMode {
     Embedded,
     Service,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TurnCancellationDisposition {
+    ActiveRun,
+    PausedApproval,
+    PendingRegistration,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -54,29 +81,6 @@ impl From<NativeRuntimeError> for AgentKitPortError {
     }
 }
 
-#[derive(Clone, Debug)]
-struct SessionRecord {
-    task_id: String,
-    #[allow(dead_code)]
-    profile_id: String,
-    turns: Vec<String>,
-    cancelled: bool,
-    next_sequence: u64,
-    events: Vec<AgentEventEnvelope>,
-    /// Pending tool approvals awaiting product decision (approve → execute).
-    pending_approvals: Vec<SessionPendingApproval>,
-}
-
-#[derive(Clone, Debug)]
-struct SessionPendingApproval {
-    turn_id: String,
-    call: PendingToolApproval,
-    /// Original user prompt that produced the tool call (for future multi-step continue).
-    #[allow(dead_code)]
-    prompt: String,
-}
-
-/// Host-neutral bootstrap factory. No Tauri / Vue dependency.
 #[derive(Clone)]
 pub struct NativeRuntimeBootstrap {
     mode: NativeRuntimeMode,
@@ -89,16 +93,13 @@ impl NativeRuntimeBootstrap {
         Self::reference_with_mode(NativeRuntimeMode::Embedded)
     }
 
-    /// Service-mode bootstrap: same Native Coding Agent bundle, Host-neutral authority.
     pub fn service_reference() -> Result<Self, NativeRuntimeError> {
         Self::reference_with_mode(NativeRuntimeMode::Service)
     }
 
     fn reference_with_mode(mode: NativeRuntimeMode) -> Result<Self, NativeRuntimeError> {
-        // Product Git UI and Agent tools share one CliGitBackend-backed service.
-        let mut backends = NativeCodingBackends::default();
-        backends.git = Arc::new(CliGitBackend::default());
-        let bundle = NativeCodingAgentBundle::reference(backends);
+        let bundle =
+            NativeCodingAgentBundle::reference(crate::host_backends::native_coding_backends());
         bundle.assert_shared_service_identity()?;
         bundle.assert_no_official_agent_server_dependency()?;
         Ok(Self {
@@ -131,9 +132,17 @@ impl NativeRuntimeBootstrap {
         NativeAgentKitRuntime::from_bootstrap_with_projections(self, projections)
     }
 
-    /// Reference golden path used by migration smoke (no official Agent Server).
-    pub fn run_reference_fix_smoke(&self) -> Result<serde_json::Value, NativeRuntimeError> {
-        run_fix_golden_path(&self.bundle).map_err(Into::into)
+    pub fn into_runtime_with_stores(
+        self,
+        projections: SqliteTimelineProjectionStore,
+        runtime_state: SqliteAgentRuntimeStateStore,
+    ) -> NativeAgentKitRuntime {
+        NativeAgentKitRuntime::from_bootstrap_with_stores(self, projections, runtime_state)
+    }
+
+    pub fn run_reference_fix_smoke(&self) -> Result<Value, NativeRuntimeError> {
+        let isolated = NativeCodingAgentBundle::reference(NativeCodingBackends::default());
+        run_fix_golden_path(&isolated).map_err(Into::into)
     }
 
     pub fn product_profile(
@@ -144,87 +153,156 @@ impl NativeRuntimeBootstrap {
     }
 }
 
-/// Streamable turn result: session events after submit (session/tool/stream surface).
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NativeTurnStreamPage {
     pub session_id: String,
     pub turn_id: String,
     pub events: Vec<AgentEventEnvelope>,
     pub next_sequence: u64,
-    pub tool_summary: Option<serde_json::Value>,
+    pub waiting_approval: bool,
+    pub completed: bool,
+    pub tool_summary: Option<Value>,
     pub official_agent_server: bool,
-    /// True when turn gated through Credential Broker resolve (secret not in events).
     pub credential_bound: bool,
-    /// True when this turn was driven by protocol HTTP Model Adapter (not reference-only).
     pub live_model_adapter_drives_turn: bool,
     pub profile_id: String,
 }
 
-/// In-process Native AgentKit runtime/client used by Embedded Desktop and tests.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ProductSessionBinding {
+    task_id: String,
+    profile_id: String,
+}
+
+#[derive(Clone)]
+struct ActiveRun {
+    session_id: String,
+    turn_id: Option<String>,
+    host: Arc<AgentKitHost>,
+    handle: TaskHandle,
+}
+
+struct CachedHost {
+    key: String,
+    host: Arc<AgentKitHost>,
+}
+
+struct TurnEventObserverGuard<'a> {
+    observers: &'a Mutex<BTreeMap<(String, String), TurnEventObserver>>,
+    key: (String, String),
+}
+
+impl Drop for TurnEventObserverGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut observers) = self.observers.lock() {
+            observers.remove(&self.key);
+        }
+    }
+}
+
+struct SqliteSessionPersistence {
+    store: Arc<SqliteAgentRuntimeStateStore>,
+}
+
+impl SessionPersistence for SqliteSessionPersistence {
+    fn load(&self) -> Result<Vec<AgentSession>, AgentError> {
+        self.store
+            .list_sessions()
+            .map_err(product_store_error)?
+            .into_iter()
+            .filter_map(|(key, value)| {
+                key.strip_prefix(AGENTKIT_SESSION_PREFIX)
+                    .map(|_| serde_json::from_value(value).map_err(decode_session_error))
+            })
+            .collect()
+    }
+
+    fn store(&self, session: &AgentSession) -> Result<(), AgentError> {
+        self.store
+            .put_session(
+                &format!("{AGENTKIT_SESSION_PREFIX}{}", session.session_id),
+                &serde_json::to_value(session).map_err(decode_session_error)?,
+            )
+            .map_err(product_store_error)
+    }
+}
+
 pub struct NativeAgentKitRuntime {
     bootstrap: NativeRuntimeBootstrap,
-    sessions: Mutex<BTreeMap<String, SessionRecord>>,
-    /// Product projection store (not Agent Runtime fact source). Durable SQLite.
+    bindings: Mutex<BTreeMap<String, ProductSessionBinding>>,
     projections: SqliteTimelineProjectionStore,
-    /// Last built product profile revision snapshot for diagnostics.
+    runtime_state: Arc<SqliteAgentRuntimeStateStore>,
     product_profile: Mutex<Option<AgentRuntimeProfile>>,
-    /// Optional openai-compatible endpoint override (tests / local gateway).
     model_endpoint_override: Mutex<Option<String>>,
-    /// Optional Anthropic Messages endpoint override (tests / local gateway).
     anthropic_endpoint_override: Mutex<Option<String>>,
+    host: Mutex<Option<CachedHost>>,
+    active_runs: Mutex<BTreeMap<String, ActiveRun>>,
+    pending_turn_cancellations: Mutex<BTreeSet<(String, String)>>,
+    turn_event_observers: Mutex<BTreeMap<(String, String), TurnEventObserver>>,
+    next_session: AtomicU64,
 }
 
 impl NativeAgentKitRuntime {
     pub fn from_bootstrap(bootstrap: NativeRuntimeBootstrap) -> Self {
-        let projections = SqliteTimelineProjectionStore::open_in_memory()
-            .expect("in-memory product projection store");
-        Self::from_bootstrap_with_projections(bootstrap, projections)
+        Self::from_bootstrap_with_stores(
+            bootstrap,
+            SqliteTimelineProjectionStore::open_in_memory()
+                .expect("in-memory product projection store"),
+            SqliteAgentRuntimeStateStore::open_in_memory().expect("in-memory AgentKit state store"),
+        )
     }
 
     pub fn from_bootstrap_with_projections(
         bootstrap: NativeRuntimeBootstrap,
         projections: SqliteTimelineProjectionStore,
     ) -> Self {
+        Self::from_bootstrap_with_stores(
+            bootstrap,
+            projections,
+            SqliteAgentRuntimeStateStore::open_in_memory().expect("in-memory AgentKit state store"),
+        )
+    }
+
+    pub fn from_bootstrap_with_stores(
+        mut bootstrap: NativeRuntimeBootstrap,
+        projections: SqliteTimelineProjectionStore,
+        runtime_state: SqliteAgentRuntimeStateStore,
+    ) -> Self {
+        let runtime_state = Arc::new(runtime_state);
+        bootstrap.bundle.core.sessions =
+            SessionStore::with_persistence(Arc::new(SqliteSessionPersistence {
+                store: runtime_state.clone(),
+            }))
+            .expect("restore AgentKit-owned durable sessions");
         let profile = build_product_coding_profile(bootstrap.credentials(), None).ok();
         Self {
             bootstrap,
-            sessions: Mutex::new(BTreeMap::new()),
+            bindings: Mutex::new(BTreeMap::new()),
             projections,
+            runtime_state,
             product_profile: Mutex::new(profile),
             model_endpoint_override: Mutex::new(None),
             anthropic_endpoint_override: Mutex::new(None),
+            host: Mutex::new(None),
+            active_runs: Mutex::new(BTreeMap::new()),
+            pending_turn_cancellations: Mutex::new(BTreeSet::new()),
+            turn_event_observers: Mutex::new(BTreeMap::new()),
+            next_session: AtomicU64::new(1),
         }
     }
 
-    /// Override Chat Completions endpoint (loopback for recorded/fake Adapter tests).
     pub fn set_model_endpoint_override(&self, endpoint: Option<String>) {
         if let Ok(mut guard) = self.model_endpoint_override.lock() {
             *guard = endpoint;
         }
+        self.invalidate_host();
     }
 
-    /// Override Anthropic Messages endpoint (loopback for recorded/fake Adapter tests).
     pub fn set_anthropic_endpoint_override(&self, endpoint: Option<String>) {
         if let Ok(mut guard) = self.anthropic_endpoint_override.lock() {
             *guard = endpoint;
         }
-    }
-
-    fn model_endpoint(&self) -> String {
-        let override_endpoint = self
-            .model_endpoint_override
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone());
-        resolve_model_endpoint(override_endpoint.as_deref())
-    }
-
-    fn anthropic_endpoint(&self) -> Option<String> {
-        self.anthropic_endpoint_override
-            .lock()
-            .ok()
-            .and_then(|guard| guard.clone())
+        self.invalidate_host();
     }
 
     pub fn bootstrap(&self) -> &NativeRuntimeBootstrap {
@@ -257,25 +335,26 @@ impl NativeAgentKitRuntime {
         self.projections.list_pending_for_task(task_id)
     }
 
-    /// Product timeline rows from `lilia-storage` (not Desktop SQLite).
     pub fn product_timeline_for_task(&self, task_id: &TaskId) -> Vec<TimelineProjectionEvent> {
         self.projections.list_for_task(task_id)
     }
 
-    /// Rebuild product timeline for a session from stored AgentKit envelopes.
+    pub fn task_for_session(&self, session_id: &str) -> Result<TaskId, AgentKitPortError> {
+        TaskId::new(self.binding(session_id)?.task_id)
+            .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))
+    }
+
     pub fn rebuild_product_timeline_for_session(
         &self,
         session: &AgentSessionRef,
     ) -> Result<usize, AgentKitPortError> {
-        let (task_id, events) = self.with_session_mut(session.as_str(), |record| {
-            Ok((record.task_id.clone(), record.events.clone()))
-        })?;
-        let task =
-            TaskId::new(task_id).map_err(|err| AgentKitPortError::InvalidInput(err.to_string()))?;
-        let commands = project_agent_events(&task, &events);
+        let snapshot = self.session_snapshot(session.as_str())?;
+        let task_id = self.binding(session.as_str())?.task_id;
+        let task = TaskId::new(task_id)
+            .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?;
         self.projections
-            .rebuild_session(session, commands)
-            .map_err(|err| AgentKitPortError::Unavailable(err.to_string()))
+            .rebuild_session(session, project_agent_events(&task, &snapshot.events))
+            .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))
     }
 
     pub fn refresh_product_profile(
@@ -301,10 +380,6 @@ impl NativeAgentKitRuntime {
     pub fn independent_diagnostics(&self) -> IndependentDiagnostics {
         let caps = self.capabilities_inner();
         let profile = self.current_product_profile();
-        let live = profile
-            .as_ref()
-            .map(live_model_adapter_eligible)
-            .unwrap_or(false);
         IndependentDiagnostics {
             credential: self.credentials().health(),
             runtime_backend: caps.backend,
@@ -313,18 +388,20 @@ impl NativeAgentKitRuntime {
             node_runner_default: caps.node_runner_default,
             profile_id: profile
                 .as_ref()
-                .map(|p| p.profile_id.clone())
+                .map(|profile| profile.profile_id.clone())
                 .or(caps.profile_id),
             profile_has_credential_refs: profile
                 .as_ref()
                 .map(profile_has_credential_refs)
                 .unwrap_or(false),
             credential_and_runtime_independent: true,
-            live_model_adapter_drives_turn: live,
+            live_model_adapter_drives_turn: profile
+                .as_ref()
+                .map(live_model_adapter_eligible)
+                .unwrap_or(false),
         }
     }
 
-    /// Credential Broker quota / limits surface (#50). Never fabricates remote remaining quota.
     pub fn native_quota_surface(&self) -> crate::NativeQuotaSurface {
         crate::NativeQuotaSurface::from_credential_health(self.credentials().health())
     }
@@ -333,11 +410,872 @@ impl NativeAgentKitRuntime {
         Arc::new(self)
     }
 
-    fn capabilities_inner(&self) -> NativeAgentCapabilitySnapshot {
-        let profile_id = self
+    pub fn submit_turn_streaming(
+        &self,
+        session: &AgentSessionRef,
+        prompt: &str,
+        turn_id: &str,
+    ) -> Result<NativeTurnStreamPage, AgentKitPortError> {
+        self.submit_turn_with_context_streaming(session, prompt, turn_id, None)
+    }
+
+    pub fn with_turn_event_observer<T, O, F>(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        observer: O,
+        action: F,
+    ) -> Result<T, AgentKitPortError>
+    where
+        O: Fn(&[AgentEventEnvelope]) + Send + Sync + 'static,
+        F: FnOnce() -> T,
+    {
+        let key = (session_id.to_string(), turn_id.to_string());
+        {
+            let mut observers = self.turn_event_observers.lock().map_err(|_| {
+                AgentKitPortError::Unavailable("turn event observer lock poisoned".into())
+            })?;
+            if observers.insert(key.clone(), Arc::new(observer)).is_some() {
+                return Err(AgentKitPortError::Unavailable(format!(
+                    "turn event observer already registered for `{session_id}` / `{turn_id}`"
+                )));
+            }
+        }
+        let guard = TurnEventObserverGuard {
+            observers: &self.turn_event_observers,
+            key,
+        };
+        let result = action();
+        drop(guard);
+        Ok(result)
+    }
+
+    pub fn submit_turn_with_context_streaming(
+        &self,
+        session: &AgentSessionRef,
+        prompt: &str,
+        turn_id: &str,
+        context: Option<Value>,
+    ) -> Result<NativeTurnStreamPage, AgentKitPortError> {
+        if prompt.trim().is_empty() || turn_id.trim().is_empty() {
+            return Err(AgentKitPortError::InvalidInput(
+                "prompt and turn_id are required".into(),
+            ));
+        }
+        let binding = self.binding(session.as_str())?;
+        self.gate_credentials_for_turn()?;
+        let (plan, workspace) = self.turn_plan(context.as_ref())?;
+        if let Some(workspace) = &workspace {
+            self.prepare_native_coding_workspace(&workspace.root)
+                .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))?;
+        }
+        let host = self.host_for_plan(Some(&plan), workspace.is_some())?;
+        let mut messages = Vec::new();
+        if let Some(context) = &context {
+            messages.push(AgentMessage::system(format!(
+                "Product-provided workspace and turn context (authoritative for this turn): {context}"
+            )));
+        }
+        let mut user = AgentMessage::user(prompt);
+        user.metadata = context.clone();
+        messages.push(user);
+        let mut request = AgentRunRequest::new(binding.profile_id.clone(), messages);
+        request.session_id = Some(session.as_str().to_string());
+        request.turn_id = Some(turn_id.to_string());
+        request.model = Some(plan.model.clone());
+        request.provider_hint = Some(plan.provider.provider_id.clone());
+        request.permission_mode = permission_mode(context.as_ref());
+        request.metadata = workspace.map(|workspace| {
+            serde_json::to_value(NativeCodingRunContext {
+                workspace,
+                turn_id: turn_id.to_string(),
+            })
+            .expect("Native Coding run context serializes")
+        });
+        let result = self.run_agent(host, session.as_str(), request)?;
+        self.page_from_result(session.as_str(), turn_id, &binding, &plan, true, result)
+    }
+
+    pub fn respond_approval_streaming(
+        &self,
+        session: &AgentSessionRef,
+        decision: &ProductApprovalDecision,
+    ) -> Result<NativeTurnStreamPage, AgentKitPortError> {
+        if decision.session_id != session.as_str() {
+            return Err(AgentKitPortError::InvalidInput(
+                "approval session_id does not match target session".into(),
+            ));
+        }
+        let binding = self.binding(session.as_str())?;
+        self.gate_credentials_for_turn()?;
+        let snapshot = self.session_snapshot(session.as_str())?;
+        let context = snapshot
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == AgentRole::User)
+            .and_then(|message| message.metadata.clone());
+        let (plan, workspace) = self.turn_plan(context.as_ref())?;
+        let host = self.host_for_plan(Some(&plan), workspace.is_some())?;
+        let mut request = AgentRunRequest::new(binding.profile_id.clone(), Vec::new());
+        request.session_id = Some(session.as_str().to_string());
+        request.turn_id = Some(decision.turn_id.clone());
+        request.model = Some(plan.model.clone());
+        request.provider_hint = Some(plan.provider.provider_id.clone());
+        request.permission_mode = permission_mode(context.as_ref());
+        request.metadata = workspace.map(|workspace| {
+            serde_json::to_value(NativeCodingRunContext {
+                workspace,
+                turn_id: decision.turn_id.clone(),
+            })
+            .expect("Native Coding run context serializes")
+        });
+        request.permission_decisions = vec![PermissionDecision {
+            session_id: decision.session_id.clone(),
+            turn_id: decision.turn_id.clone(),
+            action_id: decision.action_id.clone(),
+            version: decision.version,
+            decision: if decision.approved {
+                PermissionDecisionKind::Approved
+            } else {
+                PermissionDecisionKind::Rejected
+            },
+        }];
+        let result = self.run_agent(host, session.as_str(), request)?;
+        let page = self.page_from_result(
+            session.as_str(),
+            &decision.turn_id,
+            &binding,
+            &plan,
+            true,
+            result,
+        )?;
+        self.resolve_product_approval(&binding, decision, page.next_sequence)?;
+        Ok(page)
+    }
+
+    pub fn events_after(
+        &self,
+        session: &AgentSessionRef,
+        after_sequence: u64,
+    ) -> Result<Vec<AgentEventEnvelope>, AgentKitPortError> {
+        Ok(self
+            .session_snapshot(session.as_str())?
+            .events
+            .into_iter()
+            .filter(|event| event.sequence > after_sequence)
+            .collect())
+    }
+
+    pub fn open_bound_session(
+        &self,
+        task_id: &TaskId,
+        session_id: &str,
+        profile_id: Option<&str>,
+    ) -> Result<AgentSessionRef, AgentKitPortError> {
+        if session_id.trim().is_empty() {
+            return Err(AgentKitPortError::InvalidInput(
+                "session_id is required".into(),
+            ));
+        }
+        let profile_id = profile_id.map(str::to_string).unwrap_or_else(|| {
+            self.current_product_profile()
+                .map(|profile| profile.profile_id)
+                .unwrap_or_else(|| self.bootstrap.bundle.profile.profile_id.clone())
+        });
+        {
+            let bindings = self.bindings.lock().map_err(|_| {
+                AgentKitPortError::Unavailable("session binding lock poisoned".into())
+            })?;
+            if let Some(existing) = bindings.get(session_id) {
+                if existing.task_id != task_id.as_str() || existing.profile_id != profile_id {
+                    return Err(AgentKitPortError::InvalidInput(format!(
+                        "session `{session_id}` is already bound to a different task or profile"
+                    )));
+                }
+                return AgentSessionRef::new(session_id.to_string())
+                    .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()));
+            }
+        }
+        let host = self.host_for_plan(None, false)?;
+        let session: AgentSession = self.call(
+            &host,
+            "session-create",
+            AGENT_SESSION_CREATE_PROTOCOL,
+            AgentSessionCreateRequest {
+                session_id: Some(session_id.to_string()),
+                profile_id: profile_id.clone(),
+                title: None,
+            },
+        )?;
+        if session.session_id != session_id {
+            return Err(AgentKitPortError::Unavailable(
+                "AgentKit returned a mismatched session id".into(),
+            ));
+        }
+        self.bindings
+            .lock()
+            .map_err(|_| AgentKitPortError::Unavailable("session binding lock poisoned".into()))?
+            .insert(
+                session_id.to_string(),
+                ProductSessionBinding {
+                    task_id: task_id.as_str().to_string(),
+                    profile_id,
+                },
+            );
+        AgentSessionRef::new(session_id.to_string())
+            .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))
+    }
+
+    pub(crate) fn fork_session_state(
+        &self,
+        source_session_id: &str,
+        target_session_id: &str,
+    ) -> Result<(), AgentKitPortError> {
+        let source = self.binding(source_session_id)?;
+        let host = self.host_for_plan(None, false)?;
+        let _: AgentSession = self.call(
+            &host,
+            "session-fork",
+            AGENT_SESSION_FORK_PROTOCOL,
+            AgentSessionForkRequest {
+                source_session_id: source_session_id.to_string(),
+                target_session_id: target_session_id.to_string(),
+                title: None,
+            },
+        )?;
+        self.bindings
+            .lock()
+            .map_err(|_| AgentKitPortError::Unavailable("session binding lock poisoned".into()))?
+            .insert(target_session_id.to_string(), source);
+        Ok(())
+    }
+
+    pub(crate) fn persist_wire_session(
+        &self,
+        session_id: &str,
+        state: &Value,
+    ) -> Result<(), AgentKitPortError> {
+        self.runtime_state
+            .put_session(&format!("{WIRE_SESSION_PREFIX}{session_id}"), state)
+            .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))
+    }
+
+    pub(crate) fn persisted_wire_sessions(
+        &self,
+    ) -> Result<Vec<(String, Value)>, AgentKitPortError> {
+        self.runtime_state
+            .list_sessions()
+            .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))
+            .map(|rows| {
+                rows.into_iter()
+                    .filter_map(|(key, value)| {
+                        key.strip_prefix(WIRE_SESSION_PREFIX)
+                            .map(|session_id| (session_id.to_string(), value))
+                    })
+                    .collect()
+            })
+    }
+
+    fn binding(&self, session_id: &str) -> Result<ProductSessionBinding, AgentKitPortError> {
+        self.bindings
+            .lock()
+            .map_err(|_| AgentKitPortError::Unavailable("session binding lock poisoned".into()))?
+            .get(session_id)
+            .cloned()
+            .ok_or_else(|| AgentKitPortError::NotFound(session_id.to_string()))
+    }
+
+    pub(crate) fn session_snapshot(
+        &self,
+        session_id: &str,
+    ) -> Result<AgentSession, AgentKitPortError> {
+        let host = self.host_for_plan(None, false)?;
+        self.session_snapshot_on_host(&host, session_id)
+    }
+
+    fn session_snapshot_on_host(
+        &self,
+        host: &Arc<AgentKitHost>,
+        session_id: &str,
+    ) -> Result<AgentSession, AgentKitPortError> {
+        self.call(
+            host,
+            "session-get",
+            AGENT_SESSION_GET_PROTOCOL,
+            AgentSessionGetRequest {
+                session_id: session_id.to_string(),
+            },
+        )
+    }
+
+    fn call<T: for<'de> Deserialize<'de>>(
+        &self,
+        host: &Arc<AgentKitHost>,
+        label: &str,
+        protocol_id: &str,
+        request: impl Serialize,
+    ) -> Result<T, AgentKitPortError> {
+        let payload = serde_json::to_value(request)
+            .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?;
+        let handle = host
+            .submit(label, protocol_id, payload)
+            .map_err(agent_port_error)?;
+        let output = host.wait(&handle, TASK_TIMEOUT).map_err(agent_port_error)?;
+        serde_json::from_value(output)
+            .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))
+    }
+
+    fn run_agent(
+        &self,
+        host: Arc<AgentKitHost>,
+        session_id: &str,
+        request: AgentRunRequest,
+    ) -> Result<AgentRunResult, AgentKitPortError> {
+        let turn_id = request.turn_id.clone();
+        let mut observed_sequence = self
+            .session_snapshot_on_host(&host, session_id)?
+            .next_event_sequence;
+        let subscription = self
+            .bootstrap
+            .bundle()
+            .core
+            .sessions
+            .subscribe_events(session_id, observed_sequence)
+            .map_err(agent_port_error)?;
+        let handle = host
+            .submit(
+                "agent-run",
+                AGENT_RUN_PROTOCOL,
+                serde_json::to_value(request)
+                    .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?,
+            )
+            .map_err(agent_port_error)?;
+        let task_id = handle.task_id.to_string();
+        {
+            let mut active = self
+                .active_runs
+                .lock()
+                .map_err(|_| AgentKitPortError::Unavailable("active run lock poisoned".into()))?;
+            active.insert(
+                task_id.clone(),
+                ActiveRun {
+                    session_id: session_id.to_string(),
+                    turn_id: turn_id.clone(),
+                    host: host.clone(),
+                    handle: handle.clone(),
+                },
+            );
+        }
+        let cancellation_result = if let Some(turn_id) = turn_id.as_deref() {
+            let cancel_requested = self.take_pending_turn_cancellation(session_id, turn_id)?;
+            if cancel_requested {
+                self.cancel_active_runs(session_id, Some(turn_id))
+                    .map(|_| ())
+            } else {
+                Ok(())
+            }
+        } else {
+            Ok(())
+        };
+        let output = cancellation_result.and_then(|()| {
+            self.wait_agent_and_publish_events(
+                &host,
+                &handle,
+                session_id,
+                turn_id.as_deref().unwrap_or_default(),
+                &mut observed_sequence,
+                &subscription,
+            )
+        });
+        self.active_runs
+            .lock()
+            .map_err(|_| AgentKitPortError::Unavailable("active run lock poisoned".into()))?
+            .remove(&task_id);
+        if let Some(turn_id) = turn_id.as_deref() {
+            self.take_pending_turn_cancellation(session_id, turn_id)?;
+        }
+        serde_json::from_value(output?)
+            .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))
+    }
+
+    fn wait_agent_and_publish_events(
+        &self,
+        host: &Arc<AgentKitHost>,
+        handle: &TaskHandle,
+        session_id: &str,
+        turn_id: &str,
+        observed_sequence: &mut u64,
+        subscription: &SessionEventSubscription,
+    ) -> Result<Value, AgentKitPortError> {
+        let deadline = Instant::now() + TASK_TIMEOUT;
+        loop {
+            match host.try_output(handle) {
+                Ok(Some(output)) => {
+                    self.drain_turn_events(session_id, turn_id, observed_sequence, subscription)?;
+                    return Ok(output);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.drain_turn_events(session_id, turn_id, observed_sequence, subscription)?;
+                    return Err(agent_port_error(error));
+                }
+            }
+            if Instant::now() >= deadline {
+                return Err(AgentKitPortError::Unavailable(
+                    "AgentKit task did not reach a terminal state before the deadline".into(),
+                ));
+            }
+            if let Some(events) = subscription
+                .next_timeout(STREAM_WAIT_INTERVAL)
+                .map_err(agent_port_error)?
+            {
+                self.publish_turn_event_batch(session_id, turn_id, observed_sequence, events)?;
+            }
+        }
+    }
+
+    fn drain_turn_events(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        observed_sequence: &mut u64,
+        subscription: &SessionEventSubscription,
+    ) -> Result<(), AgentKitPortError> {
+        while let Some(events) = subscription
+            .next_timeout(Duration::ZERO)
+            .map_err(agent_port_error)?
+        {
+            self.publish_turn_event_batch(session_id, turn_id, observed_sequence, events)?;
+        }
+        Ok(())
+    }
+
+    fn publish_turn_event_batch(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        observed_sequence: &mut u64,
+        events: Vec<AgentEventEnvelope>,
+    ) -> Result<(), AgentKitPortError> {
+        let events = events
+            .into_iter()
+            .filter(|event| event.sequence > *observed_sequence)
+            .collect::<Vec<_>>();
+        let Some(last_sequence) = events.last().map(|event| event.sequence) else {
+            return Ok(());
+        };
+        let task_id = TaskId::new(self.binding(session_id)?.task_id)
+            .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?;
+        for command in project_agent_events(&task_id, &events) {
+            self.projections
+                .apply(command)
+                .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))?;
+        }
+        let observer = self
+            .turn_event_observers
+            .lock()
+            .map_err(|_| {
+                AgentKitPortError::Unavailable("turn event observer lock poisoned".into())
+            })?
+            .get(&(session_id.to_string(), turn_id.to_string()))
+            .cloned();
+        *observed_sequence = last_sequence;
+        if let Some(observer) = observer {
+            observer(&events);
+        }
+        Ok(())
+    }
+
+    fn cancel_active_runs(
+        &self,
+        session_id: &str,
+        turn_id: Option<&str>,
+    ) -> Result<bool, AgentKitPortError> {
+        let active = self
+            .active_runs
+            .lock()
+            .map_err(|_| AgentKitPortError::Unavailable("active run lock poisoned".into()))?;
+        let runs = active
+            .values()
+            .filter(|run| {
+                run.session_id == session_id
+                    && turn_id.is_none_or(|turn_id| run.turn_id.as_deref() == Some(turn_id))
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        drop(active);
+        for run in &runs {
+            run.host.cancel(&run.handle).map_err(agent_port_error)?;
+            if let Some(turn_id) = run.turn_id.as_deref() {
+                self.append_cancelled_turn_event(&run.host, &run.session_id, turn_id)?;
+            }
+        }
+        Ok(!runs.is_empty())
+    }
+
+    fn request_turn_cancellation(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<(), AgentKitPortError> {
+        self.pending_turn_cancellations
+            .lock()
+            .map_err(|_| {
+                AgentKitPortError::Unavailable("pending turn cancellation lock poisoned".into())
+            })?
+            .insert((session_id.to_string(), turn_id.to_string()));
+        Ok(())
+    }
+
+    fn take_pending_turn_cancellation(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<bool, AgentKitPortError> {
+        self.pending_turn_cancellations
+            .lock()
+            .map_err(|_| {
+                AgentKitPortError::Unavailable("pending turn cancellation lock poisoned".into())
+            })
+            .map(|mut pending| pending.remove(&(session_id.to_string(), turn_id.to_string())))
+    }
+
+    fn append_cancelled_turn_event(
+        &self,
+        host: &Arc<AgentKitHost>,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<Option<AgentEventEnvelope>, AgentKitPortError> {
+        let snapshot = self.session_snapshot_on_host(host, session_id)?;
+        if snapshot.events.iter().any(|event| {
+            matches!(
+                &event.event,
+                AgentEvent::TurnState {
+                    turn_id: event_turn_id,
+                    status,
+                } if event_turn_id == turn_id && status == "cancelled"
+            )
+        }) {
+            return Ok(None);
+        }
+        let sequence = snapshot.next_event_sequence.saturating_add(1);
+        let event = AgentEventEnvelope {
+            session_id: session_id.to_string(),
+            sequence,
+            meta: AgentEventMeta::new(format!("{turn_id}:{sequence}"), "turn cancelled")
+                .with_turn(turn_id),
+            event: AgentEvent::TurnState {
+                turn_id: turn_id.to_string(),
+                status: "cancelled".into(),
+            },
+        };
+        let _: AgentSession = self.call(
+            host,
+            "session-cancel-event",
+            AGENT_SESSION_APPEND_PROTOCOL,
+            AgentSessionAppendRequest {
+                session_id: session_id.to_string(),
+                messages: Vec::new(),
+                events: vec![event.clone()],
+                advance_turn: false,
+            },
+        )?;
+        Ok(Some(event))
+    }
+
+    pub fn cancel_session_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+    ) -> Result<TurnCancellationDisposition, AgentKitPortError> {
+        let snapshot = self.session_snapshot(session_id)?;
+        self.request_turn_cancellation(session_id, turn_id)?;
+        if self.cancel_active_runs(session_id, Some(turn_id))? {
+            self.take_pending_turn_cancellation(session_id, turn_id)?;
+            return Ok(TurnCancellationDisposition::ActiveRun);
+        }
+        if turn_is_waiting_approval(&snapshot, turn_id) {
+            let host = self.host_for_plan(None, false)?;
+            if let Some(event) = self.append_cancelled_turn_event(&host, session_id, turn_id)? {
+                self.project_and_observe_turn_events(
+                    session_id,
+                    turn_id,
+                    std::slice::from_ref(&event),
+                )?;
+                self.resolve_open_pending_for_turn(
+                    session_id,
+                    turn_id,
+                    PendingProjectionStatus::Cancelled,
+                    event.sequence,
+                    json!({ "cancelled": true }),
+                )?;
+            }
+            self.take_pending_turn_cancellation(session_id, turn_id)?;
+            return Ok(TurnCancellationDisposition::PausedApproval);
+        }
+        Ok(TurnCancellationDisposition::PendingRegistration)
+    }
+
+    fn project_and_observe_turn_events(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        events: &[AgentEventEnvelope],
+    ) -> Result<(), AgentKitPortError> {
+        let task_id = TaskId::new(self.binding(session_id)?.task_id)
+            .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?;
+        for command in project_agent_events(&task_id, events) {
+            self.projections
+                .apply(command)
+                .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))?;
+        }
+        let observer = self
+            .turn_event_observers
+            .lock()
+            .map_err(|_| {
+                AgentKitPortError::Unavailable("turn event observer lock poisoned".into())
+            })?
+            .get(&(session_id.to_string(), turn_id.to_string()))
+            .cloned();
+        if let Some(observer) = observer {
+            observer(events);
+        }
+        Ok(())
+    }
+
+    fn resolve_product_approval(
+        &self,
+        binding: &ProductSessionBinding,
+        decision: &ProductApprovalDecision,
+        sequence: u64,
+    ) -> Result<(), AgentKitPortError> {
+        self.projections
+            .apply(TimelineProjectionCommand::ResolvePending {
+                session_id: decision.session_id.clone(),
+                request_id: decision.action_id.clone(),
+                status: if decision.approved {
+                    PendingProjectionStatus::Resolved
+                } else {
+                    PendingProjectionStatus::Cancelled
+                },
+                sequence,
+                response: json!({
+                    "approved": decision.approved,
+                    "turnId": decision.turn_id,
+                    "actionRevision": decision.version,
+                    "taskId": binding.task_id,
+                }),
+            })
+            .map(|_| ())
+            .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))
+    }
+
+    fn resolve_open_pending_for_turn(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        status: PendingProjectionStatus,
+        sequence: u64,
+        response: Value,
+    ) -> Result<(), AgentKitPortError> {
+        let task_id = TaskId::new(self.binding(session_id)?.task_id)
+            .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?;
+        for pending in self
+            .projections
+            .list_pending_for_task(&task_id)
+            .into_iter()
+            .filter(|pending| {
+                pending.agent_session.as_str() == session_id
+                    && pending.turn_id.as_deref() == Some(turn_id)
+                    && pending.status == PendingProjectionStatus::Open
+            })
+        {
+            self.projections
+                .apply(TimelineProjectionCommand::ResolvePending {
+                    session_id: session_id.to_string(),
+                    request_id: pending.request_id,
+                    status: status.clone(),
+                    sequence,
+                    response: response.clone(),
+                })
+                .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn page_from_result(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        binding: &ProductSessionBinding,
+        plan: &LiveModelTurnPlan,
+        credential_bound: bool,
+        result: AgentRunResult,
+    ) -> Result<NativeTurnStreamPage, AgentKitPortError> {
+        let task_id = TaskId::new(binding.task_id.clone())
+            .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?;
+        for command in project_agent_events(&task_id, &result.events) {
+            self.projections
+                .apply(command)
+                .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))?;
+        }
+        let next_sequence = result
+            .events
+            .last()
+            .map(|event| event.sequence)
+            .unwrap_or_else(|| {
+                self.session_snapshot(session_id)
+                    .map(|session| session.next_event_sequence)
+                    .unwrap_or_default()
+            });
+        let executed = result
+            .steps
+            .iter()
+            .filter(|step| step.kind == "tool_execute")
+            .count();
+        let model_steps = result
+            .steps
+            .iter()
+            .filter(|step| step.kind.starts_with("model_"))
+            .count();
+        let blocked = result
+            .steps
+            .iter()
+            .filter(|step| step.kind == "tool_blocked")
+            .count();
+        Ok(NativeTurnStreamPage {
+            session_id: session_id.to_string(),
+            turn_id: turn_id.to_string(),
+            events: result.events,
+            next_sequence,
+            waiting_approval: result.status == AgentRunStatus::WaitingApproval,
+            completed: result.status == AgentRunStatus::Completed,
+            tool_summary: Some(json!({
+                "driver": plan.driver.as_str(),
+                "official_servers": 0,
+                "waiting_approval": result.status == AgentRunStatus::WaitingApproval,
+                "auto_executed": executed,
+                "blocked": blocked,
+                "model_steps": model_steps,
+            })),
+            official_agent_server: false,
+            credential_bound,
+            live_model_adapter_drives_turn: true,
+            profile_id: binding.profile_id.clone(),
+        })
+    }
+
+    fn turn_plan(
+        &self,
+        context: Option<&Value>,
+    ) -> Result<(LiveModelTurnPlan, Option<AgentWorkspaceRef>), AgentKitPortError> {
+        let profile = self
             .current_product_profile()
-            .map(|p| p.profile_id)
-            .unwrap_or_else(|| self.bootstrap.bundle.profile.profile_id.clone());
+            .ok_or_else(|| AgentKitPortError::Unavailable("product profile missing".into()))?;
+        let mut plan = build_live_turn_plan(
+            &profile,
+            &self.model_endpoint(),
+            self.anthropic_endpoint().as_deref(),
+        )
+        .ok_or_else(|| {
+            AgentKitPortError::Unavailable(
+                "Native Coding turn requires a configured model provider credential".into(),
+            )
+        })?;
+        if let Some(model) = context
+            .and_then(|value| value.get("model"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|model| !model.is_empty() && *model != "auto")
+        {
+            plan.model = model.to_string();
+        }
+        let workspace = workspace_cwd(context).map(|root| AgentWorkspaceRef {
+            workspace_id: root.clone(),
+            root,
+        });
+        Ok((plan, workspace))
+    }
+
+    fn host_for_plan(
+        &self,
+        plan: Option<&LiveModelTurnPlan>,
+        enable_tools: bool,
+    ) -> Result<Arc<AgentKitHost>, AgentKitPortError> {
+        let key = match plan {
+            Some(plan) => format!(
+                "{}:{enable_tools}:{}:{}",
+                plan.driver.as_str(),
+                plan.model,
+                serde_json::to_string(&plan.provider)
+                    .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?
+            ),
+            None => "control".into(),
+        };
+        let mut cached = self
+            .host
+            .lock()
+            .map_err(|_| AgentKitPortError::Unavailable("AgentKit Host lock poisoned".into()))?;
+        if let Some(cached) = cached.as_ref().filter(|cached| cached.key == key) {
+            return Ok(cached.host.clone());
+        }
+        let host = Arc::new(
+            AgentKitHost::build(
+                self.bootstrap.bundle.clone(),
+                plan,
+                adapter_credential_broker(self.credentials().broker().clone()),
+                enable_tools,
+            )
+            .map_err(agent_port_error)?,
+        );
+        *cached = Some(CachedHost {
+            key,
+            host: host.clone(),
+        });
+        Ok(host)
+    }
+
+    fn invalidate_host(&self) {
+        if let Ok(mut host) = self.host.lock() {
+            *host = None;
+        }
+    }
+
+    fn model_endpoint(&self) -> String {
+        resolve_model_endpoint(
+            self.model_endpoint_override
+                .lock()
+                .ok()
+                .and_then(|value| value.clone())
+                .as_deref(),
+        )
+    }
+
+    fn anthropic_endpoint(&self) -> Option<String> {
+        self.anthropic_endpoint_override
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
+    }
+
+    fn gate_credentials_for_turn(&self) -> Result<bool, AgentKitPortError> {
+        let profile = self
+            .refresh_product_profile(None)
+            .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))?;
+        let mut bound = false;
+        for provider in &profile.providers {
+            if let Some(credential) = &provider.credential_ref {
+                self.credentials()
+                    .resolve_for_adapter(credential)
+                    .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))?;
+                bound = true;
+            }
+        }
+        Ok(bound)
+    }
+
+    fn capabilities_inner(&self) -> NativeAgentCapabilitySnapshot {
         NativeAgentCapabilitySnapshot {
             backend: "native-agentkit".into(),
             bundle_id: NATIVE_CODING_BUNDLE_ID.into(),
@@ -348,562 +1286,10 @@ impl NativeAgentKitRuntime {
             supports_approval: true,
             supports_cancel: true,
             supports_resume: true,
-            profile_id: Some(profile_id),
+            profile_id: self
+                .current_product_profile()
+                .map(|profile| profile.profile_id),
         }
-    }
-
-    fn with_session_mut<R>(
-        &self,
-        session_id: &str,
-        f: impl FnOnce(&mut SessionRecord) -> Result<R, AgentKitPortError>,
-    ) -> Result<R, AgentKitPortError> {
-        let mut sessions = self.sessions.lock().map_err(|_| {
-            AgentKitPortError::Unavailable("native runtime session lock poisoned".into())
-        })?;
-        let record = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| AgentKitPortError::NotFound(session_id.to_string()))?;
-        f(record)
-    }
-
-    fn append_event(
-        &self,
-        session_id: &str,
-        meta: AgentEventMeta,
-        event: AgentEvent,
-    ) -> Result<AgentEventEnvelope, AgentKitPortError> {
-        self.with_session_mut(session_id, |record| {
-            record.next_sequence += 1;
-            let envelope = AgentEventEnvelope {
-                session_id: session_id.to_string(),
-                sequence: record.next_sequence,
-                meta,
-                event,
-            };
-            record.events.push(envelope.clone());
-            Ok(envelope)
-        })
-    }
-
-    /// Ensure any bound CredentialRef resolves through Broker before turn tools run.
-    /// Does not call official Agent Server. Secret material stays in Broker.
-    fn gate_credentials_for_turn(&self) -> Result<bool, AgentKitPortError> {
-        let profile = self
-            .refresh_product_profile(None)
-            .map_err(|err| AgentKitPortError::Unavailable(err.to_string()))?;
-        let mut bound = false;
-        for provider in &profile.providers {
-            if let Some(credential) = &provider.credential_ref {
-                self.credentials()
-                    .resolve_for_adapter(credential)
-                    .map_err(|err| AgentKitPortError::Unavailable(err.to_string()))?;
-                bound = true;
-            }
-        }
-        Ok(bound)
-    }
-
-    /// Submit a turn and return the streamed AgentKit events for that turn.
-    ///
-    /// When the product profile binds a usable openai-compatible CredentialRef,
-    /// the turn is driven by the protocol HTTP Model Adapter (Credential resolve →
-    /// Adapter generate/stream). Otherwise the reference Native Coding tool path
-    /// (`run_fix_golden_path`) is retained for credential-free / smoke environments.
-    pub fn submit_turn_streaming(
-        &self,
-        session: &AgentSessionRef,
-        prompt: &str,
-        turn_id: &str,
-    ) -> Result<NativeTurnStreamPage, AgentKitPortError> {
-        let session_id = session.as_str().to_string();
-        let after = self.with_session_mut(&session_id, |record| {
-            if record.cancelled {
-                return Err(AgentKitPortError::InvalidInput(
-                    "cannot submit turn on cancelled session".into(),
-                ));
-            }
-            if prompt.trim().is_empty() {
-                return Err(AgentKitPortError::InvalidInput(
-                    "prompt must not be empty".into(),
-                ));
-            }
-            Ok(record.next_sequence)
-        })?;
-
-        self.bootstrap
-            .bundle
-            .assert_no_official_agent_server_dependency()
-            .map_err(|err| AgentKitPortError::Unavailable(err.to_string()))?;
-
-        let credential_bound = self.gate_credentials_for_turn()?;
-        let profile = self
-            .current_product_profile()
-            .ok_or_else(|| AgentKitPortError::Unavailable("product profile missing".into()))?;
-        let profile_id = profile.profile_id.clone();
-        let live_plan = if live_model_adapter_eligible(&profile) {
-            build_live_turn_plan(
-                &profile,
-                &self.model_endpoint(),
-                self.anthropic_endpoint().as_deref(),
-            )
-        } else {
-            None
-        };
-
-        self.with_session_mut(&session_id, |record| {
-            record.turns.push(prompt.to_string());
-            Ok(())
-        })?;
-
-        self.append_event(
-            &session_id,
-            AgentEventMeta::new(format!("evt-turn-{turn_id}"), "turn started").with_turn(turn_id),
-            AgentEvent::TurnState {
-                turn_id: turn_id.into(),
-                status: "running".into(),
-            },
-        )?;
-
-        let (tool_summary, live_model_adapter_drives_turn) = if let Some(plan) = live_plan.as_ref()
-        {
-            let live = drive_live_model_turn(
-                self.credentials().broker(),
-                plan,
-                &session_id,
-                turn_id,
-                prompt,
-            )
-            .map_err(AgentKitPortError::Unavailable)?;
-            for (meta, event) in live.events {
-                self.append_event(&session_id, meta, event)?;
-            }
-            if live.waiting_approval {
-                self.with_session_mut(&session_id, |record| {
-                    for call in live.pending_approvals {
-                        record.pending_approvals.push(SessionPendingApproval {
-                            turn_id: turn_id.to_string(),
-                            call,
-                            prompt: prompt.to_string(),
-                        });
-                    }
-                    Ok(())
-                })?;
-            }
-            let mut summary = live.tool_summary;
-            if let Some(object) = summary.as_object_mut() {
-                object.insert("waiting_approval".into(), json!(live.waiting_approval));
-            }
-            (Some(summary), true)
-        } else {
-            self.append_event(
-                &session_id,
-                AgentEventMeta::new(format!("evt-delta-{turn_id}"), "model delta")
-                    .with_turn(turn_id),
-                AgentEvent::ModelDelta {
-                    turn_id: turn_id.into(),
-                    text: format!(
-                        "Native AgentKit reference path: {} (credential_bound={credential_bound})",
-                        prompt.trim()
-                    ),
-                },
-            )?;
-            self.append_event(
-                &session_id,
-                AgentEventMeta::new(format!("evt-tool-{turn_id}"), "tool call").with_turn(turn_id),
-                AgentEvent::ToolCallStarted {
-                    turn_id: turn_id.into(),
-                    call_id: format!("tool-{turn_id}"),
-                    name: "native.coding.fix".into(),
-                    input: json!({ "prompt": prompt }),
-                },
-            )?;
-
-            let tool_summary = run_fix_golden_path(&self.bootstrap.bundle)
-                .map_err(|err| AgentKitPortError::Unavailable(err.to_string()))?;
-            if tool_summary
-                .get("official_servers")
-                .and_then(|v| v.as_u64())
-                != Some(0)
-            {
-                return Err(AgentKitPortError::Unavailable(
-                    "native path must not depend on official agent servers".into(),
-                ));
-            }
-
-            self.append_event(
-                &session_id,
-                AgentEventMeta::new(format!("evt-cmd-{turn_id}"), "command started")
-                    .with_turn(turn_id),
-                AgentEvent::CommandStarted {
-                    turn_id: turn_id.into(),
-                    command: CodingCommandRef {
-                        command_id: format!("cmd-{turn_id}"),
-                        command: "native.coding.fix".into(),
-                        args: vec![],
-                        cwd: None,
-                    },
-                },
-            )?;
-            self.append_event(
-                &session_id,
-                AgentEventMeta::new(format!("evt-tool-done-{turn_id}"), "tool completed")
-                    .with_turn(turn_id),
-                AgentEvent::ToolCallCompleted {
-                    turn_id: turn_id.into(),
-                    call_id: format!("tool-{turn_id}"),
-                    summary: tool_summary
-                        .get("patched")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("ok")
-                        .to_string(),
-                    details: None,
-                },
-            )?;
-            self.append_event(
-                    &session_id,
-                    AgentEventMeta::new(format!("evt-final-{turn_id}"), "final response")
-                        .with_turn(turn_id),
-                    AgentEvent::FinalResponse {
-                        turn_id: turn_id.into(),
-                        summary: format!(
-                            "Native AgentKit reference turn complete (official_servers=0, credential_bound={credential_bound}, patched={})",
-                            tool_summary
-                                .get("patched")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("?")
-                        ),
-                        result: None,
-                    },
-                )?;
-            self.append_event(
-                &session_id,
-                AgentEventMeta::new(format!("evt-turn-done-{turn_id}"), "turn completed")
-                    .with_turn(turn_id),
-                AgentEvent::TurnState {
-                    turn_id: turn_id.into(),
-                    status: "completed".into(),
-                },
-            )?;
-            (Some(tool_summary), false)
-        };
-
-        let events = self.with_session_mut(&session_id, |record| {
-            Ok(record
-                .events
-                .iter()
-                .filter(|event| event.sequence > after)
-                .cloned()
-                .collect::<Vec<_>>())
-        })?;
-        let next_sequence = events.last().map(|e| e.sequence).unwrap_or(after);
-
-        // Project AgentKit events into product projection store (not execution source).
-        if let Ok(task_id) =
-            TaskId::new(self.with_session_mut(&session_id, |record| Ok(record.task_id.clone()))?)
-        {
-            for command in project_agent_events(&task_id, &events) {
-                let _ = self.projections.apply(command);
-            }
-        }
-
-        Ok(NativeTurnStreamPage {
-            session_id,
-            turn_id: turn_id.to_string(),
-            events,
-            next_sequence,
-            tool_summary,
-            official_agent_server: false,
-            credential_bound,
-            live_model_adapter_drives_turn,
-            profile_id,
-        })
-    }
-
-    /// Apply product approval decision and execute/deny the pending tool.
-    pub fn respond_approval_streaming(
-        &self,
-        session: &AgentSessionRef,
-        decision: &ProductApprovalDecision,
-    ) -> Result<NativeTurnStreamPage, AgentKitPortError> {
-        let session_id = session.as_str().to_string();
-        if decision.session_id != session_id {
-            return Err(AgentKitPortError::InvalidInput(
-                "approval session_id does not match target session".into(),
-            ));
-        }
-        let after = self.with_session_mut(&session_id, |record| Ok(record.next_sequence))?;
-
-        let pending = self.with_session_mut(&session_id, |record| {
-            let index = record.pending_approvals.iter().position(|item| {
-                item.turn_id == decision.turn_id
-                    && item.call.call_id == decision.action_id
-                    && item.call.version == decision.version
-            });
-            let Some(index) = index else {
-                return Err(AgentKitPortError::NotFound(format!(
-                    "pending approval `{}`@v{}",
-                    decision.action_id, decision.version
-                )));
-            };
-            Ok(record.pending_approvals.remove(index))
-        })?;
-
-        let turn_id = pending.turn_id.clone();
-        let call_id = pending.call.call_id.clone();
-        let tool_name = pending.call.name.clone();
-
-        self.append_event(
-            &session_id,
-            AgentEventMeta::new(
-                format!("evt-approval-decision-{call_id}"),
-                "approval decision",
-            )
-            .with_turn(&turn_id),
-            AgentEvent::TurnState {
-                turn_id: turn_id.clone(),
-                status: if decision.approved {
-                    "approval_granted".into()
-                } else {
-                    "approval_denied".into()
-                },
-            },
-        )?;
-
-        let tool_summary = if decision.approved {
-            self.execute_approved_tool(
-                &session_id,
-                &turn_id,
-                &call_id,
-                &tool_name,
-                &pending.call.input,
-            )?
-        } else {
-            self.append_event(
-                &session_id,
-                AgentEventMeta::new(format!("evt-tool-denied-{call_id}"), "tool denied")
-                    .with_turn(&turn_id),
-                AgentEvent::ToolCallCompleted {
-                    turn_id: turn_id.clone(),
-                    call_id: call_id.clone(),
-                    summary: format!("Tool `{tool_name}` denied by product approval"),
-                    details: None,
-                },
-            )?;
-            self.append_event(
-                &session_id,
-                AgentEventMeta::new(format!("evt-final-{turn_id}-denied"), "final response")
-                    .with_turn(&turn_id),
-                AgentEvent::FinalResponse {
-                    turn_id: turn_id.clone(),
-                    summary: format!("Turn stopped: tool `{tool_name}` was denied"),
-                    result: None,
-                },
-            )?;
-            self.append_event(
-                &session_id,
-                AgentEventMeta::new(format!("evt-turn-done-{turn_id}-denied"), "turn completed")
-                    .with_turn(&turn_id),
-                AgentEvent::TurnState {
-                    turn_id: turn_id.clone(),
-                    status: "completed".into(),
-                },
-            )?;
-            Some(json!({
-                "driver": "approval",
-                "official_servers": 0,
-                "approved": false,
-                "tool": tool_name,
-            }))
-        };
-
-        let events = self.with_session_mut(&session_id, |record| {
-            Ok(record
-                .events
-                .iter()
-                .filter(|event| event.sequence > after)
-                .cloned()
-                .collect::<Vec<_>>())
-        })?;
-        let next_sequence = events.last().map(|e| e.sequence).unwrap_or(after);
-        let profile_id = self
-            .current_product_profile()
-            .map(|p| p.profile_id)
-            .unwrap_or_default();
-
-        if let Ok(task_id) =
-            TaskId::new(self.with_session_mut(&session_id, |record| Ok(record.task_id.clone()))?)
-        {
-            for command in project_agent_events(&task_id, &events) {
-                let _ = self.projections.apply(command);
-            }
-        }
-
-        Ok(NativeTurnStreamPage {
-            session_id,
-            turn_id,
-            events,
-            next_sequence,
-            tool_summary,
-            official_agent_server: false,
-            credential_bound: true,
-            live_model_adapter_drives_turn: true,
-            profile_id,
-        })
-    }
-
-    fn execute_approved_tool(
-        &self,
-        session_id: &str,
-        turn_id: &str,
-        call_id: &str,
-        tool_name: &str,
-        input: &Value,
-    ) -> Result<Option<Value>, AgentKitPortError> {
-        self.append_event(
-            session_id,
-            AgentEventMeta::new(format!("evt-cmd-{call_id}"), "command started").with_turn(turn_id),
-            AgentEvent::CommandStarted {
-                turn_id: turn_id.into(),
-                command: CodingCommandRef {
-                    command_id: format!("cmd-{call_id}"),
-                    command: tool_name.into(),
-                    args: vec![],
-                    cwd: None,
-                },
-            },
-        )?;
-
-        let tool_summary = if tool_name == "native.coding.fix" {
-            run_fix_golden_path(&self.bootstrap.bundle)
-                .map_err(|err| AgentKitPortError::Unavailable(err.to_string()))?
-        } else {
-            json!({
-                "official_servers": 0,
-                "executed": true,
-                "tool": tool_name,
-                "input": input,
-                "note": "generic tool execution stub in product native runtime",
-            })
-        };
-        if tool_summary
-            .get("official_servers")
-            .and_then(|v| v.as_u64())
-            != Some(0)
-        {
-            return Err(AgentKitPortError::Unavailable(
-                "native path must not depend on official agent servers".into(),
-            ));
-        }
-
-        let summary = tool_summary
-            .get("patched")
-            .and_then(|v| v.as_str())
-            .map(|value| format!("executed `{tool_name}`: {value}"))
-            .unwrap_or_else(|| format!("executed `{tool_name}`"));
-
-        self.append_event(
-            session_id,
-            AgentEventMeta::new(format!("evt-tool-done-{call_id}"), "tool completed")
-                .with_turn(turn_id),
-            AgentEvent::ToolCallCompleted {
-                turn_id: turn_id.into(),
-                call_id: call_id.into(),
-                summary: summary.clone(),
-                details: None,
-            },
-        )?;
-        self.append_event(
-            session_id,
-            AgentEventMeta::new(format!("evt-final-{turn_id}-approved"), "final response")
-                .with_turn(turn_id),
-            AgentEvent::FinalResponse {
-                turn_id: turn_id.into(),
-                summary: format!("Native tool completed after approval ({summary})"),
-                result: None,
-            },
-        )?;
-        self.append_event(
-            session_id,
-            AgentEventMeta::new(
-                format!("evt-turn-done-{turn_id}-approved"),
-                "turn completed",
-            )
-            .with_turn(turn_id),
-            AgentEvent::TurnState {
-                turn_id: turn_id.into(),
-                status: "completed".into(),
-            },
-        )?;
-
-        let mut summary_value = tool_summary;
-        if let Some(object) = summary_value.as_object_mut() {
-            object.insert("approved".into(), json!(true));
-            object.insert("tool".into(), json!(tool_name));
-            object.insert("official_servers".into(), json!(0));
-        }
-        Ok(Some(summary_value))
-    }
-
-    pub fn events_after(
-        &self,
-        session: &AgentSessionRef,
-        after_sequence: u64,
-    ) -> Result<Vec<AgentEventEnvelope>, AgentKitPortError> {
-        self.with_session_mut(session.as_str(), |record| {
-            Ok(record
-                .events
-                .iter()
-                .filter(|event| event.sequence > after_sequence)
-                .cloned()
-                .collect())
-        })
-    }
-
-    /// Open (or idempotently resume) a Live Runtime session for a product binding.
-    ///
-    /// Used after migration: binding already holds a deterministic AgentKit session id
-    /// (`agentkit-from-legacy:…`); first Native turn must attach that id rather than
-    /// forging a new one.
-    pub fn open_bound_session(
-        &self,
-        task_id: &TaskId,
-        session_id: &str,
-        profile_id: Option<&str>,
-    ) -> Result<AgentSessionRef, AgentKitPortError> {
-        let profile = match profile_id {
-            Some(id) => id.to_string(),
-            None => self
-                .refresh_product_profile(None)
-                .map_err(|err| AgentKitPortError::Unavailable(err.to_string()))?
-                .profile_id,
-        };
-        let mut sessions = self.sessions.lock().map_err(|_| {
-            AgentKitPortError::Unavailable("native runtime session lock poisoned".into())
-        })?;
-        if let Some(existing) = sessions.get(session_id) {
-            if existing.task_id != task_id.as_str() {
-                return Err(AgentKitPortError::InvalidInput(format!(
-                    "session `{session_id}` already bound to task `{}`",
-                    existing.task_id
-                )));
-            }
-            return AgentSessionRef::new(session_id.to_string())
-                .map_err(|err| AgentKitPortError::InvalidInput(err.to_string()));
-        }
-        sessions.insert(
-            session_id.to_string(),
-            SessionRecord {
-                task_id: task_id.as_str().to_string(),
-                profile_id: profile,
-                turns: Vec::new(),
-                cancelled: false,
-                next_sequence: 0,
-                events: Vec::new(),
-                pending_approvals: Vec::new(),
-            },
-        );
-        AgentSessionRef::new(session_id.to_string())
-            .map_err(|err| AgentKitPortError::InvalidInput(err.to_string()))
     }
 }
 
@@ -917,19 +1303,12 @@ impl AgentKitClientPort for NativeAgentKitRuntime {
         task_id: &TaskId,
         profile_id: Option<&str>,
     ) -> Result<AgentSessionRef, AgentKitPortError> {
-        let profile = self
-            .refresh_product_profile(None)
-            .map_err(|err| AgentKitPortError::Unavailable(err.to_string()))?;
-        let profile = profile_id
-            .map(str::to_string)
-            .unwrap_or_else(|| profile.profile_id.clone());
-        let session_id = {
-            let sessions = self.sessions.lock().map_err(|_| {
-                AgentKitPortError::Unavailable("native runtime session lock poisoned".into())
-            })?;
-            format!("native-{}-{}", task_id.as_str(), sessions.len())
-        };
-        self.open_bound_session(task_id, &session_id, Some(&profile))
+        let ordinal = self.next_session.fetch_add(1, Ordering::Relaxed);
+        self.open_bound_session(
+            task_id,
+            &format!("native-{}-{ordinal}", task_id.as_str()),
+            profile_id,
+        )
     }
 
     fn submit_turn(
@@ -943,18 +1322,10 @@ impl AgentKitClientPort for NativeAgentKitRuntime {
     }
 
     fn cancel_turn(&self, session: &AgentSessionRef) -> Result<(), AgentKitPortError> {
-        let mut sessions = self.sessions.lock().map_err(|_| {
-            AgentKitPortError::Unavailable("native runtime session lock poisoned".into())
-        })?;
-        let record = sessions
-            .get_mut(session.as_str())
-            .ok_or_else(|| AgentKitPortError::NotFound(session.as_str().to_string()))?;
-        record.cancelled = true;
-        self.bootstrap
-            .bundle
-            .subagents
-            .cancel_parent(session.as_str());
-        Ok(())
+        if self.cancel_active_runs(session.as_str(), None)? {
+            return Ok(());
+        }
+        self.session_snapshot(session.as_str()).map(|_| ())
     }
 
     fn respond_approval(
@@ -967,16 +1338,6 @@ impl AgentKitClientPort for NativeAgentKitRuntime {
     }
 }
 
-fn uuid_like_turn_id(session_id: &str, prompt: &str) -> u64 {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
-    let mut hasher = DefaultHasher::new();
-    session_id.hash(&mut hasher);
-    prompt.hash(&mut hasher);
-    hasher.finish()
-}
-
-/// Newtype so `Arc` can implement the product AgentKit port without orphan rules.
 #[derive(Clone)]
 pub struct SharedNativeAgentKitRuntime(pub Arc<NativeAgentKitRuntime>);
 
@@ -1020,203 +1381,110 @@ impl AgentKitClientPort for SharedNativeAgentKitRuntime {
         session: &AgentSessionRef,
         decision: &ProductApprovalDecision,
     ) -> Result<(), AgentKitPortError> {
-        self.0.respond_approval_streaming(session, decision)?;
-        Ok(())
+        self.0.respond_approval(session, decision)
     }
+}
+
+fn workspace_cwd(context: Option<&Value>) -> Option<String> {
+    context
+        .and_then(|value| value.get("workspace"))
+        .and_then(|value| value.get("folders"))
+        .and_then(Value::as_array)
+        .and_then(|folders| folders.first())
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+fn permission_mode(context: Option<&Value>) -> AgentPermissionMode {
+    match context
+        .and_then(|value| value.get("permission"))
+        .and_then(Value::as_str)
+    {
+        Some("full" | "free") => AgentPermissionMode::Full,
+        Some("readonly") => AgentPermissionMode::ReadOnly,
+        _ => AgentPermissionMode::Ask,
+    }
+}
+
+fn turn_is_waiting_approval(session: &AgentSession, turn_id: &str) -> bool {
+    session
+        .events
+        .iter()
+        .rev()
+        .find_map(|event| match &event.event {
+            AgentEvent::TurnState {
+                turn_id: event_turn_id,
+                status,
+            } if event_turn_id == turn_id => Some(status.as_str()),
+            _ => None,
+        })
+        == Some("waiting_approval")
+}
+
+fn uuid_like_turn_id(session_id: &str, prompt: &str) -> u64 {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    session_id.hash(&mut hasher);
+    prompt.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn agent_port_error(error: AgentError) -> AgentKitPortError {
+    if error.code.contains("not_found") {
+        AgentKitPortError::NotFound(error.message)
+    } else if error.code.contains("invalid") || error.code.contains("approval") {
+        AgentKitPortError::InvalidInput(error.message)
+    } else {
+        AgentKitPortError::Unavailable(error.to_string())
+    }
+}
+
+fn product_store_error(error: lilia_contracts::ProductError) -> AgentError {
+    AgentError::new("agent.session.persistence", error.to_string())
+}
+
+fn decode_session_error(error: serde_json::Error) -> AgentError {
+    AgentError::new("agent.session.persistence_decode", error.to_string())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::credential::ProductCredentialLoginInput;
-    use crate::live_model_adapter_eligible;
-    use crate::profile::PRODUCT_NATIVE_CODING_PROFILE_HINT;
-    use lilia_client::LiliaClient;
-    use lilia_contracts::{BindingId, ProductApprovalDecision, ProjectId};
-    use lilia_core::SessionBindingService;
-    use lilia_storage::ProjectionApplyResult;
-    use mutsuki_agent_contracts::{
-        AgentRuntimeMode, CredentialKind, OPENAI_CREDENTIAL_PROVIDER_ID,
-    };
-    use mutsuki_agent_testkit::{emit_deterministic_coding_run, CodingEventLog};
+    use mutsuki_agent_contracts::{CredentialKind, OPENAI_CREDENTIAL_PROVIDER_ID};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::path::PathBuf;
+    use std::sync::mpsc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    #[test]
-    fn embedded_bootstrap_rejects_official_servers_and_binds_product_session() {
-        let bootstrap = NativeRuntimeBootstrap::embedded_reference().unwrap();
-        assert_eq!(bootstrap.mode(), NativeRuntimeMode::Embedded);
-        assert_eq!(bootstrap.bundle().profile.mode, AgentRuntimeMode::Test);
-        let smoke = bootstrap.run_reference_fix_smoke().unwrap();
-        assert_eq!(smoke["official_servers"], 0);
+    struct TestWorkspace(PathBuf);
 
-        let runtime = SharedNativeAgentKitRuntime::new(bootstrap.into_runtime());
-        let caps = runtime.capabilities().unwrap();
-        assert_eq!(caps.backend, "native-agentkit");
-        assert!(!caps.official_agent_server);
-        assert!(!caps.node_runner_default);
-        assert!(caps.supports_approval);
-        assert_eq!(caps.bundle_id, NATIVE_CODING_BUNDLE_ID);
-
-        let client = LiliaClient::with_agent(runtime.clone());
-        let project = client
-            .create_project(ProjectId::new("p-native").unwrap(), "Native")
-            .unwrap();
-        let task = client
-            .create_task(
-                TaskId::new("t-native").unwrap(),
-                Some(project.id),
-                "Native path",
-            )
-            .unwrap();
-        let binding = client
-            .bind_agent_session(
-                &task.id,
-                None,
-                Some("mutsuki.reference.coding-agent"),
-                BindingId::new("bind-1").unwrap(),
-            )
-            .unwrap();
-        assert_eq!(client.list_bindings(&task.id).len(), 1);
-        SessionBindingService::new(client.products(), &runtime)
-            .submit_prompt(&binding.agent_session, "fix the failing test")
-            .unwrap();
-    }
-
-    #[test]
-    fn native_client_session_submit_stream_cancel_and_tool_events() {
-        let runtime = NativeRuntimeBootstrap::embedded_reference()
-            .unwrap()
-            .into_runtime();
-        let task = TaskId::new("task-42").unwrap();
-        let session = runtime.start_session_for_task(&task, None).unwrap();
-        let page = runtime
-            .submit_turn_streaming(&session, "implement fix", "turn-1")
-            .unwrap();
-        assert!(!page.events.is_empty());
-        assert!(!page.official_agent_server);
-        assert!(!page.credential_bound);
-        assert!(!page.live_model_adapter_drives_turn);
-        assert_eq!(
-            page.tool_summary
-                .as_ref()
-                .and_then(|v| v.get("official_servers"))
-                .and_then(|v| v.as_u64()),
-            Some(0)
-        );
-        assert!(page.events.iter().any(|envelope| {
-            matches!(
-                envelope.event,
-                AgentEvent::ToolCallStarted { .. }
-                    | AgentEvent::ToolCallCompleted { .. }
-                    | AgentEvent::FinalResponse { .. }
-                    | AgentEvent::ModelDelta { .. }
-            )
-        }));
-        assert!(!runtime.projections().list_for_task(&task).is_empty());
-
-        runtime.cancel_turn(&session).unwrap();
-        let err = runtime
-            .submit_turn_streaming(&session, "should fail", "turn-2")
-            .unwrap_err();
-        assert!(matches!(err, AgentKitPortError::InvalidInput(_)));
-
-        let events = CodingEventLog::new(session.as_str());
-        emit_deterministic_coding_run(&events, "product-projection");
-        let page = events.page(0);
-        assert!(!page.events.is_empty());
-    }
-
-    #[test]
-    fn credential_login_binds_profile_and_drives_live_model_adapter_turn() {
-        let runtime = NativeRuntimeBootstrap::embedded_reference()
-            .unwrap()
-            .into_runtime();
-        let before = runtime.independent_diagnostics();
-        assert!(before.credential_and_runtime_independent);
-        assert!(before.runtime_ready);
-        assert!(!before.credential.has_usable_model_credential);
-        assert!(!before.live_model_adapter_drives_turn);
-
-        runtime
-            .credentials()
-            .login(ProductCredentialLoginInput {
-                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
-                kind: CredentialKind::ApiKey,
-                secret_material: "sk-test-openai-api-key-0123456789abcdef".into(),
-                account_label: Some("openai".into()),
-                source: Some("user_api_key".into()),
-            })
-            .unwrap();
-        let _ = runtime.refresh_product_profile(None).unwrap();
-        assert!(
-            runtime
-                .independent_diagnostics()
-                .live_model_adapter_drives_turn
-        );
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            use std::io::{Read, Write};
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut bytes = [0_u8; 16_384];
-            let _ = stream.read(&mut bytes).unwrap();
-            let payload = r#"{"choices":[{"message":{"role":"assistant","content":"credential live reply"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#;
-            let body = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
-                payload.len()
-            );
-            stream.write_all(body.as_bytes()).unwrap();
-        });
-        runtime.set_model_endpoint_override(Some(format!("http://{address}/v1/chat/completions")));
-
-        let task = TaskId::new("task-cred").unwrap();
-        let session = runtime.start_session_for_task(&task, None).unwrap();
-        let page = runtime
-            .submit_turn_streaming(&session, "with credential", "turn-c1")
-            .unwrap();
-        assert!(page.credential_bound);
-        assert!(page.live_model_adapter_drives_turn);
-        assert!(page
-            .profile_id
-            .starts_with(PRODUCT_NATIVE_CODING_PROFILE_HINT));
-        assert!(!page.official_agent_server);
-        assert!(page.events.iter().any(|envelope| {
-            matches!(
-                &envelope.event,
-                AgentEvent::ModelDelta { text, .. } if text.contains("credential live reply")
-            )
-        }));
-        assert_eq!(
-            page.tool_summary
-                .as_ref()
-                .and_then(|v| v.get("driver"))
-                .and_then(|v| v.as_str()),
-            Some("openai-compatible")
-        );
-
-        let after = runtime.independent_diagnostics();
-        assert!(after.credential.has_usable_model_credential);
-        assert!(after.profile_has_credential_refs);
-        assert!(after.live_model_adapter_drives_turn);
-        assert!(after.runtime_ready);
-        assert!(!after.official_agent_server);
-
-        let projected = runtime.projections().list_for_task(&task);
-        assert!(!projected.is_empty());
-        for command in crate::project_agent_event(&task, &page.events[0]) {
-            let again = runtime.projections().apply(command);
-            assert!(matches!(
-                again.unwrap(),
-                ProjectionApplyResult::DuplicateIgnored | ProjectionApplyResult::Updated
+    impl TestWorkspace {
+        fn new(label: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "lilia-agentkit-{label}-{}-{nonce}",
+                std::process::id()
             ));
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
         }
-        server.join().unwrap();
     }
 
-    #[test]
-    fn live_adapter_tool_call_emits_approval_request() {
-        use std::io::{Read, Write};
+    impl Drop for TestWorkspace {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
 
+    fn configured_runtime(
+        responses: Vec<Value>,
+    ) -> (NativeAgentKitRuntime, std::thread::JoinHandle<()>) {
         let runtime = NativeRuntimeBootstrap::embedded_reference()
             .unwrap()
             .into_runtime();
@@ -1230,124 +1498,282 @@ mod tests {
                 source: Some("user_api_key".into()),
             })
             .unwrap();
-        let _ = runtime.refresh_product_profile(None).unwrap();
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        runtime.refresh_product_profile(None).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut bytes = [0_u8; 16_384];
-            let _ = stream.read(&mut bytes).unwrap();
-            let body = json!({
-                "choices": [{
-                    "finish_reason": "tool_calls",
-                    "message": {
-                        "content": null,
-                        "tool_calls": [{
-                            "id": "call-approve-1",
-                            "type": "function",
-                            "function": {
-                                "name": "native.coding.fix",
-                                "arguments": "{\"prompt\":\"fix\"}"
-                            }
-                        }]
-                    }
-                }],
-                "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
-            })
-            .to_string();
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            stream.write_all(response.as_bytes()).unwrap();
+            for response in responses {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut bytes = [0_u8; 32_768];
+                let _ = stream.read(&mut bytes).unwrap();
+                let body = response.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
         });
         runtime.set_model_endpoint_override(Some(format!("http://{address}/v1/chat/completions")));
+        (runtime, server)
+    }
 
-        let task = TaskId::new("task-approval").unwrap();
-        let session = runtime.start_session_for_task(&task, None).unwrap();
+    fn write_call() -> Value {
+        json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "write-1",
+                        "type": "function",
+                        "function": {
+                            "name": "computer.fs.write",
+                            "arguments": "{\"path\":\"created.txt\",\"content\":\"agentkit\",\"create\":true}"
+                        }
+                    }]
+                }
+            }],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
+        })
+    }
+
+    fn final_response() -> Value {
+        json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "done"}
+            }],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}
+        })
+    }
+
+    fn session(runtime: &NativeAgentKitRuntime, suffix: &str) -> AgentSessionRef {
+        runtime
+            .open_bound_session(
+                &TaskId::new(format!("task-{suffix}")).unwrap(),
+                &format!("session-{suffix}"),
+                Some("mutsuki.reference.coding-agent"),
+            )
+            .unwrap()
+    }
+
+    #[test]
+    fn full_permission_runs_model_and_native_tool_only_through_agentkit_host() {
+        let workspace = TestWorkspace::new("full");
+        let (runtime, server) = configured_runtime(vec![write_call(), final_response()]);
+        let session = session(&runtime, "full");
         let page = runtime
-            .submit_turn_streaming(&session, "please fix", "turn-a1")
+            .submit_turn_with_context_streaming(
+                &session,
+                "write the fixture",
+                "turn-full",
+                Some(json!({
+                    "workspace": {"folders": [workspace.0.to_string_lossy()]},
+                    "permission": "full"
+                })),
+            )
             .unwrap();
-        assert!(page.live_model_adapter_drives_turn);
-        assert!(page
+        server.join().unwrap();
+        assert_eq!(
+            std::fs::read_to_string(workspace.0.join("created.txt")).unwrap(),
+            "agentkit"
+        );
+        assert_eq!(page.tool_summary.as_ref().unwrap()["auto_executed"], 1);
+        assert_eq!(
+            page.tool_summary.as_ref().unwrap()["waiting_approval"],
+            false
+        );
+        assert!(page.events.iter().any(|event| matches!(
+            event.event,
+            mutsuki_agent_contracts::AgentEvent::FinalResponse { .. }
+        )));
+    }
+
+    #[test]
+    fn readonly_permission_returns_tool_error_to_model_without_side_effect() {
+        let workspace = TestWorkspace::new("readonly");
+        let (runtime, server) = configured_runtime(vec![write_call(), final_response()]);
+        let session = session(&runtime, "readonly");
+        let page = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "inspect without writing",
+                "turn-readonly",
+                Some(json!({
+                    "workspace": {"folders": [workspace.0.to_string_lossy()]},
+                    "permission": "readonly"
+                })),
+            )
+            .unwrap();
+        server.join().unwrap();
+        assert!(!workspace.0.join("created.txt").exists());
+        assert_eq!(page.tool_summary.as_ref().unwrap()["blocked"], 1);
+        assert_eq!(
+            page.tool_summary.as_ref().unwrap()["waiting_approval"],
+            false
+        );
+    }
+
+    #[test]
+    fn ask_permission_pauses_and_resumes_same_agentkit_session() {
+        let workspace = TestWorkspace::new("ask");
+        let (runtime, server) = configured_runtime(vec![write_call(), final_response()]);
+        let session = session(&runtime, "ask");
+        let waiting = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "ask before writing",
+                "turn-ask",
+                Some(json!({
+                    "workspace": {"folders": [workspace.0.to_string_lossy()]},
+                    "permission": "ask"
+                })),
+            )
+            .unwrap();
+        assert_eq!(
+            waiting.tool_summary.as_ref().unwrap()["waiting_approval"],
+            true
+        );
+        let task = TaskId::new("task-ask").unwrap();
+        assert!(runtime
+            .product_pending_for_task(&task)
+            .iter()
+            .any(|pending| pending.status == PendingProjectionStatus::Open));
+        let approval = waiting
             .events
             .iter()
-            .any(|envelope| { matches!(envelope.event, AgentEvent::ApprovalRequest { .. }) }));
-        assert!(page.events.iter().any(|envelope| {
-            matches!(
-                &envelope.event,
-                AgentEvent::TurnState { status, .. } if status == "waiting_approval"
-            )
-        }));
-        assert!(!runtime.projections().list_for_task(&task).is_empty());
-        server.join().unwrap();
-
-        let approved = runtime
+            .find_map(|event| match &event.event {
+                mutsuki_agent_contracts::AgentEvent::ApprovalRequest { request } => {
+                    Some(request.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(!workspace.0.join("created.txt").exists());
+        let resumed = runtime
             .respond_approval_streaming(
                 &session,
                 &ProductApprovalDecision {
-                    session_id: session.as_str().to_string(),
-                    turn_id: "turn-a1".into(),
-                    action_id: "call-approve-1".into(),
-                    version: 1,
+                    session_id: approval.session_id,
+                    turn_id: approval.turn_id,
+                    action_id: approval.action_id,
+                    version: approval.version,
                     approved: true,
                 },
             )
             .unwrap();
-        assert!(approved.events.iter().any(|envelope| {
-            matches!(
-                &envelope.event,
-                AgentEvent::ToolCallCompleted { summary, .. }
-                    if summary.contains("native.coding.fix")
-            )
-        }));
-        assert!(approved.events.iter().any(|envelope| {
-            matches!(
-                &envelope.event,
-                AgentEvent::TurnState { status, .. } if status == "completed"
-            )
-        }));
+        server.join().unwrap();
         assert_eq!(
-            approved
-                .tool_summary
-                .as_ref()
-                .and_then(|v| v.get("official_servers"))
-                .and_then(|v| v.as_u64()),
-            Some(0)
+            resumed.tool_summary.as_ref().unwrap()["waiting_approval"],
+            false
         );
-        let timeline = runtime.product_timeline_for_task(&task);
-        assert!(timeline.iter().any(|event| event.kind == "tool"));
-        assert!(timeline.iter().any(|event| {
-            event.payload.get("productProjectionStore")
-                == Some(&json!(lilia_contracts::PRODUCT_TIMELINE_STORE_ID))
-        }));
-        assert!(
-            !runtime.product_pending_for_task(&task).is_empty(),
-            "approval should project into pending surface"
-        );
-        let rebuilt = runtime
-            .rebuild_product_timeline_for_session(&session)
-            .unwrap();
-        assert!(rebuilt >= timeline.len());
-        let again = runtime
-            .rebuild_product_timeline_for_session(&session)
-            .unwrap();
-        assert_eq!(again, rebuilt);
+        assert!(resumed.completed);
+        assert!(runtime
+            .product_pending_for_task(&task)
+            .iter()
+            .any(|pending| pending.status == PendingProjectionStatus::Resolved));
         assert_eq!(
-            runtime.product_timeline_for_task(&task).len(),
-            timeline.len()
+            std::fs::read_to_string(workspace.0.join("created.txt")).unwrap(),
+            "agentkit"
         );
-        assert!(!runtime.product_pending_for_task(&task).is_empty());
+        let snapshot = runtime.session_snapshot(session.as_str()).unwrap();
+        assert_eq!(snapshot.turn_count, 1);
+        assert!(snapshot.next_event_sequence >= resumed.next_sequence);
     }
 
     #[test]
-    fn approval_deny_stops_tool_without_official_server() {
-        use std::io::{Read, Write};
+    fn cancelling_paused_approval_is_terminal_in_session_and_product_projection() {
+        let workspace = TestWorkspace::new("cancel-paused-approval");
+        let (runtime, server) = configured_runtime(vec![write_call()]);
+        let session = session(&runtime, "cancel-paused-approval");
+        let waiting = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "ask before writing",
+                "turn-cancel-paused",
+                Some(json!({
+                    "workspace": {"folders": [workspace.0.to_string_lossy()]},
+                    "permission": "ask"
+                })),
+            )
+            .unwrap();
+        server.join().unwrap();
+        assert!(waiting.waiting_approval);
+        let waiting_turn_count = runtime
+            .session_snapshot(session.as_str())
+            .unwrap()
+            .turn_count;
 
+        assert_eq!(
+            runtime
+                .cancel_session_turn(session.as_str(), "turn-cancel-paused")
+                .unwrap(),
+            TurnCancellationDisposition::PausedApproval
+        );
+
+        let snapshot = runtime.session_snapshot(session.as_str()).unwrap();
+        assert_eq!(snapshot.turn_count, waiting_turn_count);
+        assert!(snapshot.events.iter().any(|event| matches!(
+            &event.event,
+            AgentEvent::TurnState { turn_id, status }
+                if turn_id == "turn-cancel-paused" && status == "cancelled"
+        )));
+        let task = TaskId::new("task-cancel-paused-approval").unwrap();
+        assert!(runtime
+            .product_pending_for_task(&task)
+            .iter()
+            .any(|pending| {
+                pending.turn_id.as_deref() == Some("turn-cancel-paused")
+                    && pending.status == PendingProjectionStatus::Cancelled
+            }));
+        assert!(runtime
+            .product_timeline_for_task(&task)
+            .iter()
+            .any(|event| {
+                event.turn_id.as_deref() == Some("turn-cancel-paused")
+                    && event.payload.get("turnStatus").and_then(Value::as_str) == Some("cancelled")
+            }));
+        assert!(!workspace.0.join("created.txt").exists());
+    }
+
+    #[test]
+    fn cancellation_before_host_task_registration_is_retained_once() {
         let runtime = NativeRuntimeBootstrap::embedded_reference()
             .unwrap()
             .into_runtime();
+        let session = session(&runtime, "cancel-before-registration");
+
+        assert_eq!(
+            runtime
+                .cancel_session_turn(session.as_str(), "turn-before-registration")
+                .unwrap(),
+            TurnCancellationDisposition::PendingRegistration
+        );
+        assert_eq!(
+            runtime
+                .cancel_session_turn(session.as_str(), "turn-before-registration")
+                .unwrap(),
+            TurnCancellationDisposition::PendingRegistration
+        );
+
+        assert!(runtime
+            .take_pending_turn_cancellation(session.as_str(), "turn-before-registration")
+            .unwrap());
+        assert!(!runtime
+            .take_pending_turn_cancellation(session.as_str(), "turn-before-registration")
+            .unwrap());
+    }
+
+    #[test]
+    fn exact_turn_cancellation_stops_the_host_task_and_releases_the_session() {
+        let runtime = Arc::new(
+            NativeRuntimeBootstrap::embedded_reference()
+                .unwrap()
+                .into_runtime(),
+        );
         runtime
             .credentials()
             .login(ProductCredentialLoginInput {
@@ -1358,126 +1784,155 @@ mod tests {
                 source: Some("user_api_key".into()),
             })
             .unwrap();
-        let _ = runtime.refresh_product_profile(None).unwrap();
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        runtime.refresh_product_profile(None).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        let (request_started_tx, request_started_rx) = mpsc::channel();
+        let (release_response_tx, release_response_rx) = mpsc::channel();
+        let (streamed_events_tx, streamed_events_rx) = mpsc::channel();
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut bytes = [0_u8; 16_384];
-            let _ = stream.read(&mut bytes).unwrap();
-            let body = json!({
-                "choices": [{
-                    "finish_reason": "tool_calls",
-                    "message": {
-                        "content": null,
-                        "tool_calls": [{
-                            "id": "call-deny-1",
-                            "type": "function",
-                            "function": {
-                                "name": "native.coding.fix",
-                                "arguments": "{\"prompt\":\"fix\"}"
-                            }
-                        }]
-                    }
-                }],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
-            })
-            .to_string();
-            let response = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            stream.write_all(response.as_bytes()).unwrap();
+            for index in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut bytes = [0_u8; 32_768];
+                let _ = stream.read(&mut bytes).unwrap();
+                if index == 0 {
+                    request_started_tx.send(()).unwrap();
+                    release_response_rx.recv().unwrap();
+                }
+                let body = final_response().to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
         });
         runtime.set_model_endpoint_override(Some(format!("http://{address}/v1/chat/completions")));
-        let task = TaskId::new("task-deny").unwrap();
-        let session = runtime.start_session_for_task(&task, None).unwrap();
-        runtime
-            .submit_turn_streaming(&session, "deny me", "turn-d1")
-            .unwrap();
-        server.join().unwrap();
-        let denied = runtime
-            .respond_approval_streaming(
-                &session,
-                &ProductApprovalDecision {
-                    session_id: session.as_str().to_string(),
-                    turn_id: "turn-d1".into(),
-                    action_id: "call-deny-1".into(),
-                    version: 1,
-                    approved: false,
-                },
-            )
-            .unwrap();
-        assert!(denied.events.iter().any(|envelope| {
-            matches!(
-                &envelope.event,
-                AgentEvent::ToolCallCompleted { summary, .. } if summary.contains("denied")
-            )
-        }));
-        assert!(!denied.official_agent_server);
-    }
+        let session = session(&runtime, "cancel");
+        let running_runtime = Arc::clone(&runtime);
+        let running_session = session.clone();
+        let running = std::thread::spawn(move || {
+            running_runtime
+                .with_turn_event_observer(
+                    running_session.as_str(),
+                    "turn-cancel",
+                    move |events| {
+                        streamed_events_tx.send(events.to_vec()).unwrap();
+                    },
+                    || {
+                        running_runtime.submit_turn_with_context_streaming(
+                            &running_session,
+                            "wait for cancellation",
+                            "turn-cancel",
+                            Some(json!({"permission": "full"})),
+                        )
+                    },
+                )
+                .and_then(|result| result)
+        });
 
-    #[test]
-    fn anthropic_credential_drives_live_messages_adapter_turn() {
-        use mutsuki_agent_contracts::ANTHROPIC_CREDENTIAL_PROVIDER_ID;
-        use std::io::{Read, Write};
-
-        let runtime = NativeRuntimeBootstrap::embedded_reference()
-            .unwrap()
-            .into_runtime();
-        runtime
-            .credentials()
-            .login(ProductCredentialLoginInput {
-                provider_id: ANTHROPIC_CREDENTIAL_PROVIDER_ID.into(),
-                kind: CredentialKind::ApiKey,
-                secret_material: "sk-ant-api03-console-key-0123456789abcdef".into(),
-                account_label: None,
-                source: Some("anthropic_console".into()),
+        request_started_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        let observed = streamed_events_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        assert!(observed.iter().any(|event| matches!(
+            &event.event,
+            mutsuki_agent_contracts::AgentEvent::TurnState { status, .. }
+                if status == "running"
+        )));
+        assert!(!observed.iter().any(|event| matches!(
+            event.event,
+            mutsuki_agent_contracts::AgentEvent::FinalResponse { .. }
+        )));
+        let streamed = runtime.events_after(&session, 0).unwrap();
+        assert!(streamed.iter().any(|event| matches!(
+            &event.event,
+            mutsuki_agent_contracts::AgentEvent::TurnState { status, .. }
+                if status == "running"
+        )));
+        assert!(streamed.iter().any(|event| matches!(
+            &event.event,
+            mutsuki_agent_contracts::AgentEvent::StepState { status, .. }
+                if status == "model_started"
+        )));
+        assert!(!streamed.iter().any(|event| matches!(
+            event.event,
+            mutsuki_agent_contracts::AgentEvent::FinalResponse { .. }
+        )));
+        let running_sequence = streamed
+            .iter()
+            .find_map(|event| match &event.event {
+                mutsuki_agent_contracts::AgentEvent::TurnState { status, .. }
+                    if status == "running" =>
+                {
+                    Some(event.sequence)
+                }
+                _ => None,
             })
             .unwrap();
-        let profile = runtime.refresh_product_profile(None).unwrap();
-        assert!(live_model_adapter_eligible(&profile));
-        assert!(
-            runtime
-                .independent_diagnostics()
-                .live_model_adapter_drives_turn
-        );
-
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut bytes = [0_u8; 16_384];
-            let n = stream.read(&mut bytes).unwrap();
-            let request = String::from_utf8_lossy(&bytes[..n]);
-            assert!(request.contains("x-api-key"));
-            let payload = r#"{"content":[{"type":"text","text":"anthropic live reply"}],"stop_reason":"end_turn","usage":{"input_tokens":2,"output_tokens":3}}"#;
-            let body = format!(
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
-                payload.len()
-            );
-            stream.write_all(body.as_bytes()).unwrap();
-        });
-        runtime.set_anthropic_endpoint_override(Some(format!("http://{address}")));
-        let task = TaskId::new("task-anthropic").unwrap();
-        let session = runtime.start_session_for_task(&task, None).unwrap();
-        let page = runtime
-            .submit_turn_streaming(&session, "hello anthropic", "turn-ant-1")
-            .unwrap();
-        assert!(page.live_model_adapter_drives_turn);
+        let projected_sequences = runtime
+            .product_timeline_for_task(&TaskId::new("task-cancel").unwrap())
+            .into_iter()
+            .map(|event| event.sequence)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(projected_sequences.contains(&running_sequence));
         assert_eq!(
-            page.tool_summary
-                .as_ref()
-                .and_then(|v| v.get("driver"))
-                .and_then(|v| v.as_str()),
-            Some("anthropic-messages")
+            runtime
+                .cancel_session_turn(session.as_str(), "turn-cancel")
+                .unwrap(),
+            TurnCancellationDisposition::ActiveRun
         );
-        assert!(page.events.iter().any(|envelope| {
+        release_response_tx.send(()).unwrap();
+        assert!(running.join().unwrap().is_err());
+        let cancelled_events = runtime.events_after(&session, 0).unwrap();
+        assert!(cancelled_events.iter().any(|event| {
             matches!(
-                &envelope.event,
-                AgentEvent::ModelDelta { text, .. } if text.contains("anthropic live reply")
+                &event.event,
+                mutsuki_agent_contracts::AgentEvent::TurnState {
+                    turn_id,
+                    status,
+                } if turn_id == "turn-cancel" && status == "cancelled"
             )
         }));
+        let cancelled_sequence = cancelled_events
+            .iter()
+            .find_map(|event| match &event.event {
+                mutsuki_agent_contracts::AgentEvent::TurnState { turn_id, status }
+                    if turn_id == "turn-cancel" && status == "cancelled" =>
+                {
+                    Some(event.sequence)
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert!(runtime
+            .product_timeline_for_task(&TaskId::new("task-cancel").unwrap())
+            .iter()
+            .any(|event| event.sequence == cancelled_sequence));
+        assert!(!cancelled_events.iter().any(|event| {
+            matches!(
+                &event.event,
+                mutsuki_agent_contracts::AgentEvent::FinalResponse { turn_id, .. }
+                    if turn_id == "turn-cancel"
+            )
+        }));
+
+        let completed = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "run after cancellation",
+                "turn-after-cancel",
+                Some(json!({"permission": "full"})),
+            )
+            .unwrap();
         server.join().unwrap();
+        assert!(completed.events.iter().any(|event| matches!(
+            event.event,
+            mutsuki_agent_contracts::AgentEvent::FinalResponse { .. }
+        )));
+        assert!(runtime.active_runs.lock().unwrap().is_empty());
     }
 }

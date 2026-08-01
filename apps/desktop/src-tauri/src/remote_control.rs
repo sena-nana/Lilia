@@ -12,6 +12,7 @@ use uuid::Uuid;
 
 use crate::agent_timeline;
 use crate::chat;
+use crate::native_agent::BACKEND_NATIVE_AGENTKIT;
 use crate::projects_tasks::{SidebarConversationSummaryRow, TaskRow};
 use crate::store::LiliaStore;
 use crate::util::now_millis;
@@ -123,6 +124,7 @@ pub struct RemoteCapabilitySet {
     pub supports_chat_send: bool,
     pub supports_interaction_response: bool,
     pub supports_interrupt: bool,
+    pub supports_agent_wire: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -203,6 +205,7 @@ fn capabilities() -> RemoteCapabilitySet {
         supports_chat_send: true,
         supports_interaction_response: true,
         supports_interrupt: true,
+        supports_agent_wire: true,
     }
 }
 
@@ -805,9 +808,19 @@ fn dispatch_request(
                             .map(str::trim)
                             .filter(|value| !value.is_empty())
                             .ok_or_else(|| RemoteDispatchError::invalid("timeline cursor 缺失"))?;
-                        agent_timeline::list_before_page(&conn, &task_id, cursor, limit)
+                        crate::native_agent::product_timeline_page_before(&task_id, cursor, limit)
+                            .map_err(RemoteDispatchError::internal)?
+                            .map(Ok)
+                            .unwrap_or_else(|| {
+                                agent_timeline::list_before_page(&conn, &task_id, cursor, limit)
+                            })
                     }
-                    _ => agent_timeline::list_latest_page(&conn, &task_id, limit),
+                    _ => crate::native_agent::latest_product_timeline_page(&task_id, limit)
+                        .map_err(RemoteDispatchError::internal)?
+                        .map(Ok)
+                        .unwrap_or_else(|| {
+                            agent_timeline::list_latest_page(&conn, &task_id, limit)
+                        }),
                 }
                 .map_err(RemoteDispatchError::internal)?;
                 return Ok(json!({
@@ -822,8 +835,14 @@ fn dispatch_request(
                     },
                 }));
             }
-            let events =
-                agent_timeline::list(&conn, &task_id).map_err(RemoteDispatchError::internal)?;
+            let events = match crate::native_agent::list_default_timeline_for_task(&task_id)
+                .map_err(RemoteDispatchError::internal)?
+            {
+                Some(events) => events,
+                None => {
+                    agent_timeline::list(&conn, &task_id).map_err(RemoteDispatchError::internal)?
+                }
+            };
             Ok(json!({
                 "type": request_type,
                 "taskId": task_id,
@@ -845,8 +864,13 @@ fn dispatch_request(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                agent_timeline::list_after_cursor(&conn, &task_id, after_cursor, limit)
+                match crate::native_agent::product_timeline_after(&task_id, after_cursor, limit)
                     .map_err(RemoteDispatchError::internal)?
+                {
+                    Some(events) => events,
+                    None => agent_timeline::list_after_cursor(&conn, &task_id, after_cursor, limit)
+                        .map_err(RemoteDispatchError::internal)?,
+                }
             } else if let Some(after_event_id) = envelope
                 .request
                 .get("afterEventId")
@@ -854,15 +878,84 @@ fn dispatch_request(
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
             {
-                agent_timeline::list_after_event(&conn, &task_id, after_event_id, limit)
+                match crate::native_agent::product_timeline_after(&task_id, after_event_id, limit)
                     .map_err(RemoteDispatchError::internal)?
+                {
+                    Some(events) => events,
+                    None => {
+                        agent_timeline::list_after_event(&conn, &task_id, after_event_id, limit)
+                            .map_err(RemoteDispatchError::internal)?
+                    }
+                }
             } else {
-                agent_timeline::list(&conn, &task_id).map_err(RemoteDispatchError::internal)?
+                match crate::native_agent::list_default_timeline_for_task(&task_id)
+                    .map_err(RemoteDispatchError::internal)?
+                {
+                    Some(events) => events,
+                    None => agent_timeline::list(&conn, &task_id)
+                        .map_err(RemoteDispatchError::internal)?,
+                }
             };
             Ok(json!({
                 "type": request_type,
                 "taskId": task_id,
                 "events": events,
+            }))
+        }
+        "agent.session.open" => {
+            let task_id = string_field(&envelope.request, "taskId")?;
+            let session = crate::native_agent::open_product_agent_wire_session(&app, &task_id)
+                .map_err(RemoteDispatchError::unavailable)?;
+            let project_cwd = load_task_project_cwd(&conn, &task_id).unwrap_or_default();
+            let generation = u64::try_from(now_millis()).unwrap_or_default();
+            let workspace = json!({
+                "workspace_id": format!("lilia.task:{task_id}"),
+                "folders": if project_cwd.is_empty() {
+                    Vec::<String>::new()
+                } else {
+                    vec![project_cwd]
+                },
+                "metadata": {
+                    "productTaskId": task_id,
+                    "source": "lilia-android-remote",
+                },
+            });
+            Ok(json!({
+                "type": "agent.session.open",
+                "taskId": task_id,
+                "session": session,
+                "context": {
+                    "workspace": workspace,
+                    "editorContext": {
+                        "snapshot_id": format!("lilia:{task_id}:remote:{generation}"),
+                        "workspace": workspace,
+                        "generation": generation,
+                        "active_document": null,
+                        "documents": [],
+                        "supports_workspace_edit_preview": false,
+                        "supports_workspace_edit_apply": false,
+                    },
+                },
+            }))
+        }
+        "agent.wire" => {
+            let request = envelope
+                .request
+                .get("envelope")
+                .cloned()
+                .ok_or_else(|| RemoteDispatchError::invalid("agent wire envelope 缺失"))?;
+            let request = serde_json::from_value(request)
+                .map_err(|error| RemoteDispatchError::invalid(error.to_string()))?;
+            let response = crate::native_agent::dispatch_agent_wire(request).map_err(|error| {
+                RemoteDispatchError {
+                    code: "agentWire",
+                    message: format!("{}: {}", error.code, error.message),
+                    retryable: error.retryable,
+                }
+            })?;
+            Ok(json!({
+                "type": "agent.wire",
+                "envelope": response,
             }))
         }
         "chat.send" => {
@@ -967,12 +1060,61 @@ fn dispatch_request(
             .map_err(RemoteDispatchError::unavailable)?;
             Ok(json!({ "type": "chat.retry", "result": result }))
         }
-        "interaction.pending.read" => Ok(json!({
-            "type": "interaction.pending",
-            "interactions": pending_interactions_for_task(
-                envelope.request.get("taskId").and_then(JsonValue::as_str)
-            ),
-        })),
+        "interaction.pending.read" => {
+            let task_id = envelope.request.get("taskId").and_then(JsonValue::as_str);
+            let mut interactions = Vec::new();
+            if let Some(task_id) = task_id {
+                let native = crate::native_agent::list_product_pending_for_task(task_id)
+                    .map_err(RemoteDispatchError::internal)?;
+                interactions.extend(native.into_iter().filter_map(|pending| {
+                    if pending.status != lilia_contracts::PendingProjectionStatus::Open {
+                        return None;
+                    }
+                    let provider_context = pending
+                        .payload
+                        .get("providerContext")
+                        .cloned()
+                        .unwrap_or(JsonValue::Null);
+                    let tool = pending
+                        .payload
+                        .get("tool")
+                        .cloned()
+                        .unwrap_or(JsonValue::Null);
+                    let side_effect = pending
+                        .payload
+                        .get("sideEffect")
+                        .cloned()
+                        .unwrap_or(JsonValue::Null);
+                    Some(json!({
+                        "taskId": pending.task_id.as_str(),
+                        "turnId": pending.turn_id,
+                        "backend": BACKEND_NATIVE_AGENTKIT,
+                        "requestId": pending.request_id,
+                        "kind": pending.kind,
+                        "payload": {
+                            "title": "Native 审批",
+                            "body": pending.prompt,
+                            "toolName": tool,
+                            "requestedAccess": {
+                                "tool": tool,
+                                "sideEffect": side_effect,
+                            },
+                            "scopeSuggestion": "turn",
+                            "providerContext": provider_context,
+                        },
+                    }))
+                }));
+            }
+            interactions.extend(
+                pending_interactions_for_task(task_id)
+                    .into_iter()
+                    .map(|pending| serde_json::to_value(pending).unwrap_or(JsonValue::Null)),
+            );
+            Ok(json!({
+                "type": "interaction.pending",
+                "interactions": interactions,
+            }))
+        }
         "interaction.respond" => {
             let response = envelope
                 .request
@@ -986,6 +1128,42 @@ fn dispatch_request(
                 .get("result")
                 .cloned()
                 .ok_or_else(|| RemoteDispatchError::invalid("interaction result 缺失"))?;
+            if kind == "permission_approval" {
+                let pending = crate::native_agent::list_product_pending_for_task(&task_id)
+                    .map_err(RemoteDispatchError::internal)?
+                    .into_iter()
+                    .find(|pending| {
+                        pending.request_id == request_id
+                            && pending.status == lilia_contracts::PendingProjectionStatus::Open
+                    });
+                if let Some(pending) = pending {
+                    let approved = result
+                        .get("action")
+                        .and_then(JsonValue::as_str)
+                        .is_some_and(|action| action == "approve");
+                    let turn_id = pending.turn_id.ok_or_else(|| {
+                        RemoteDispatchError::invalid("native approval turnId 缺失")
+                    })?;
+                    let version = pending.action_revision.ok_or_else(|| {
+                        RemoteDispatchError::invalid("native approval version 缺失")
+                    })?;
+                    crate::native_agent::respond_product_agent_approval(
+                        lilia_contracts::ProductApprovalDecision {
+                            session_id: pending.agent_session.as_str().to_string(),
+                            turn_id,
+                            action_id: pending.request_id,
+                            version,
+                            approved,
+                        },
+                    )
+                    .map_err(RemoteDispatchError::unavailable)?;
+                    return Ok(json!({
+                        "type": "interaction.respond",
+                        "accepted": true,
+                        "backend": BACKEND_NATIVE_AGENTKIT,
+                    }));
+                }
+            }
             let chat_store = app.state::<chat::state::ChatStore>();
             chat::commands::chat_respond_agent_interaction(
                 task_id,

@@ -122,6 +122,7 @@ data class RemoteCapabilities(
     val supportsChatSend: Boolean = true,
     val supportsInteractionResponse: Boolean = true,
     val supportsInterrupt: Boolean = true,
+    val supportsAgentWire: Boolean = false,
 )
 
 data class RemoteProviderStatus(

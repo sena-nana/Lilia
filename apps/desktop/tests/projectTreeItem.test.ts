@@ -6,7 +6,6 @@ import {
   POPUP_OPEN_CHILD_QUESTION_COMMAND,
   POPUP_OPEN_NEW_CHAT_COMMAND,
   POPUP_OPEN_TASK_COMMAND,
-  PROJECT_RENAME_COMMAND,
   type Task,
 } from "@lilia/contracts";
 import ProjectTreeItem from "../src/components/sidebar/ProjectTreeItem.vue";
@@ -14,6 +13,7 @@ import ContextMenuHost from "@lilia/ui/components/ContextMenuHost";
 import { installContextMenu } from "@lilia/ui/composables/useContextMenu";
 import { vContextMenu } from "@lilia/ui/directives/contextMenu";
 import { TASKS } from "../src/data/tasks";
+import { getProject } from "../src/data/projects";
 import { mockInvoke } from "./tauriMock";
 
 function projectConversation(id: string, title: string, index: number): Task {
@@ -192,11 +192,10 @@ describe("ProjectTreeItem", () => {
     await fireEvent.update(input, "  Lilia Next  ");
     await fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(mockInvoke).toHaveBeenCalledWith(PROJECT_RENAME_COMMAND, {
-      id: "lilia",
-      nextName: "Lilia Next",
-    }, undefined);
-    expect(view.queryByRole("textbox")).toBeNull();
+    await waitFor(() => {
+      expect(getProject("lilia")?.name).toBe("Lilia Next");
+      expect(view.queryByRole("textbox")).toBeNull();
+    });
   });
 
   it("中键点击项目行会在弹出窗口中创建对话", async () => {

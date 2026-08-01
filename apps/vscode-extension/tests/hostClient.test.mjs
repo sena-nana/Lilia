@@ -19,6 +19,10 @@ function fakeDocument(text = "fn main() {", languageId = "rust") {
 }
 
 async function main() {
+  const production = readHostConfig({});
+  assert.equal(production.hostMode, "process");
+  assert.equal(production.hostBinary, "lilia-editor-compat");
+
   const config = readHostConfig({ LILIA_AGENTKIT_HOST_MODE: "deterministic" });
   assert.equal(config.hostMode, "deterministic");
 
@@ -66,6 +70,7 @@ async function main() {
   assert.equal(nextEdit.ok, true);
   assert.ok(nextEdit.candidate?.proposal?.proposalId);
   assert.equal(nextEdit.candidate.proposal.changes.length, 1);
+  assert.equal(nextEdit.candidate.proposal.changes[0].edits.length, 1);
 
   const nextFromDoc = await planNextEditFromDocument(fakeDocument("fn main() {}"), config);
   assert.equal(nextFromDoc.ok, true);

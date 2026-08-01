@@ -28,6 +28,7 @@ object RemotePayloadParser {
             supportsChatSend = capabilities.optBoolean("supportsChatSend", true),
             supportsInteractionResponse = capabilities.optBoolean("supportsInteractionResponse", true),
             supportsInterrupt = capabilities.optBoolean("supportsInterrupt", true),
+            supportsAgentWire = capabilities.optBoolean("supportsAgentWire", false),
         )
     }
 

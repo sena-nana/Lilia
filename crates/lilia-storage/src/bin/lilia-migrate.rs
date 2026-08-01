@@ -12,7 +12,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use lilia_storage::{LiliaDataPaths, LegacyMigrationTool, MigrationMode};
+use lilia_storage::{LegacyMigrationTool, LiliaDataPaths, MigrationMode};
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1).collect::<Vec<_>>();

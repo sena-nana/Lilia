@@ -529,7 +529,7 @@ pub fn project_agent_events(
 mod tests {
     use super::*;
     use mutsuki_agent_contracts::{
-        ArtifactRef, AgentEventMeta, InteractionKind, InteractionRequest, InteractionResolution,
+        AgentEventMeta, ArtifactRef, InteractionKind, InteractionRequest, InteractionResolution,
         TodoItem, TodoItemStatus, TodoState,
     };
 

@@ -22,7 +22,11 @@ mutsuki-agent-plugin-git = { workspace = true }
 mutsuki-agent-plugin-lsp = { workspace = true }
 mutsuki-agent-plugin-mcp = { workspace = true }
 mutsuki-agent-runtime = { workspace = true }
+mutsuki-agent-sdk = { workspace = true }
 mutsuki-plugin-agent-memory-router = { workspace = true }
+mutsuki-runtime-contracts = { workspace = true }
+mutsuki-runtime-host = { workspace = true }
+mutsuki-runtime-sdk = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

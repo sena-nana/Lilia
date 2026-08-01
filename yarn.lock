@@ -1041,6 +1041,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@lilia/vscode-extension@workspace:apps/vscode-extension":
+  version: 0.0.0-use.local
+  resolution: "@lilia/vscode-extension@workspace:apps/vscode-extension"
+  peerDependencies:
+    vscode: ^1.96.0
+  peerDependenciesMeta:
+    vscode:
+      optional: true
+  languageName: unknown
+  linkType: soft
+
 "@lucide/vue@npm:^1.22.0":
   version: 1.23.0
   resolution: "@lucide/vue@npm:1.23.0"

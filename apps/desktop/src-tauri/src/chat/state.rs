@@ -39,6 +39,13 @@ pub(crate) struct PendingChatTurn {
 pub(crate) struct RunningTurn {
     pub(crate) turn_id: String,
     pub(crate) backend: String,
+    pub(crate) native_approval_pause: Option<NativeApprovalPause>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct NativeApprovalPause {
+    pub(crate) automation_run_id: Option<String>,
+    pub(crate) last_session_id: Option<String>,
 }
 
 // ---------- 进程内状态 ----------
@@ -62,6 +69,46 @@ pub(crate) struct ChatStore {
 
 pub(crate) fn session_key(backend: &str, task_id: &str) -> String {
     format!("{backend}:{task_id}")
+}
+
+pub(crate) fn register_running_turn(
+    store: &ChatStore,
+    task_id: impl Into<String>,
+    turn_id: impl Into<String>,
+    backend: impl Into<String>,
+) {
+    store.running_turns.lock().unwrap().insert(
+        task_id.into(),
+        RunningTurn {
+            turn_id: turn_id.into(),
+            backend: backend.into(),
+            native_approval_pause: None,
+        },
+    );
+}
+
+pub(crate) fn pause_native_running_turn(
+    store: &ChatStore,
+    task_id: &str,
+    turn_id: &str,
+    automation_run_id: Option<String>,
+    last_session_id: Option<String>,
+) -> bool {
+    let mut turns = store.running_turns.lock().unwrap();
+    let Some(turn) = turns.get_mut(task_id).filter(|turn| {
+        turn.turn_id == turn_id && turn.backend == crate::native_agent::BACKEND_NATIVE_AGENTKIT
+    }) else {
+        return false;
+    };
+    turn.native_approval_pause = Some(NativeApprovalPause {
+        automation_run_id,
+        last_session_id,
+    });
+    true
+}
+
+pub(crate) fn turn_uses_legacy_process_runtime(turn: &RunningTurn) -> bool {
+    turn.backend != crate::native_agent::BACKEND_NATIVE_AGENTKIT
 }
 
 pub(crate) fn set_context_usage(store: &ChatStore, usage: ChatContextUsage) {
@@ -183,6 +230,7 @@ pub(crate) fn load_runtime_state(
                 turn: RunningTurn {
                     turn_id: row.get(1)?,
                     backend: row.get(2)?,
+                    native_approval_pause: None,
                 },
                 phase: row.get(3)?,
                 process_session_id: row.get(4)?,
@@ -213,6 +261,7 @@ pub(crate) fn load_any_runtime_state(
                 turn: RunningTurn {
                     turn_id: row.get(1)?,
                     backend: row.get(2)?,
+                    native_approval_pause: None,
                 },
                 phase: row.get(3)?,
                 process_session_id: row.get(4)?,
@@ -241,6 +290,7 @@ pub(crate) fn list_runtime_states(conn: &Connection) -> Result<Vec<PersistedRunt
                 turn: RunningTurn {
                     turn_id: row.get(1)?,
                     backend: row.get(2)?,
+                    native_approval_pause: None,
                 },
                 phase: row.get(3)?,
                 process_session_id: row.get(4)?,
@@ -1294,10 +1344,7 @@ pub(crate) fn prepare_running_turn_stop(
     mark_interrupted: bool,
     mark_reset: bool,
 ) -> Option<PreparedTurnStop> {
-    let running_turn = {
-        let turns = store.running_turns.lock().unwrap();
-        turns.get(task_id).cloned()
-    }?;
+    let running_turn = store.running_turns.lock().unwrap().remove(task_id)?;
 
     let guide_ids = clear_pending_turns(store, task_id);
     if mark_interrupted {
@@ -1373,10 +1420,10 @@ pub(crate) fn stop_running_turn<R: Runtime>(
     task_id: &str,
     mark_interrupted: bool,
     mark_reset: bool,
-) -> Result<bool, String> {
+) -> Result<Option<RunningTurn>, String> {
     let Some(prepared) = prepare_running_turn_stop(store, task_id, mark_interrupted, mark_reset)
     else {
-        return Ok(false);
+        return Ok(None);
     };
     let phase = if mark_reset {
         Some("reset_pending_finish")
@@ -1385,23 +1432,28 @@ pub(crate) fn stop_running_turn<R: Runtime>(
     } else {
         None
     };
-    if let Some(phase) = phase {
-        persist_runtime_state_for_app(
-            app,
-            store,
-            task_id,
-            &prepared.running_turn,
-            phase,
-            None,
-            None,
-        );
+    let uses_legacy_process_runtime = turn_uses_legacy_process_runtime(&prepared.running_turn);
+    if uses_legacy_process_runtime {
+        if let Some(phase) = phase {
+            persist_runtime_state_for_app(
+                app,
+                store,
+                task_id,
+                &prepared.running_turn,
+                phase,
+                None,
+                None,
+            );
+        }
     }
     let mut guide_ids = prepared.guide_ids;
     guide_ids.append(&mut clear_persisted_pending_turns_for_app(app, task_id));
     reset_cleared_guide_queue(app, guide_ids);
-    super::runner::terminate_runner_process_session(store, task_id)?;
+    if uses_legacy_process_runtime {
+        super::runner::terminate_runner_process_session(store, task_id)?;
+    }
     clear_running_handles(store, task_id);
-    Ok(true)
+    Ok(Some(prepared.running_turn))
 }
 
 pub(crate) fn take_next_pending_turn(

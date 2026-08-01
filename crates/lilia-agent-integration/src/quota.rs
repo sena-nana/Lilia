@@ -103,9 +103,9 @@ fn provider_row(
         .iter()
         .filter(|c| c.provider_id == provider_id)
         .collect();
-    let has_usable = matching.iter().any(|c| {
-        c.status == CredentialStatus::Active && c.model_inference
-    });
+    let has_usable = matching
+        .iter()
+        .any(|c| c.status == CredentialStatus::Active && c.model_inference);
     let credential_health = if matching.is_empty() {
         "none"
     } else if has_usable {
@@ -115,9 +115,15 @@ fn provider_row(
         .any(|c| c.status == CredentialStatus::UnsupportedForCustomRuntime)
     {
         "unsupported_for_custom_runtime"
-    } else if matching.iter().any(|c| c.status == CredentialStatus::Expired) {
+    } else if matching
+        .iter()
+        .any(|c| c.status == CredentialStatus::Expired)
+    {
         "expired"
-    } else if matching.iter().any(|c| c.status == CredentialStatus::Revoked) {
+    } else if matching
+        .iter()
+        .any(|c| c.status == CredentialStatus::Revoked)
+    {
         "revoked"
     } else {
         "unavailable"

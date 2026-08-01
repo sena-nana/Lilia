@@ -15,7 +15,11 @@ default = []
 # Default Desktop builds omit this; enable only for explicit legacy compat until 1.0.0.
 legacy-runner = []
 agent-debug-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
-runtime-domain-reference = []
+runtime-domain-reference = [
+  "dep:mutsuki-runtime-core",
+  "dep:mutsuki-runtime-host",
+  "dep:mutsuki-runtime-sdk",
+]
 
 [[bin]]
 name = "lilia-runtime-domain-bench"
@@ -28,6 +32,7 @@ tauri-build = { version = "2.6.3", features = [] }
 [dependencies]
 lilia-contracts = { workspace = true }
 lilia-core = { workspace = true }
+lilia-client = { workspace = true }
 lilia-agent-integration = { workspace = true }
 lilia-storage = { workspace = true }
 tauri = { version = "2.11.3", features = ["protocol-asset", "image-png", "tray-icon"] }
@@ -39,7 +44,11 @@ tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 mutsuki-runtime-contracts = { workspace = true }
+mutsuki-runtime-core = { workspace = true, optional = true }
+mutsuki-runtime-host = { workspace = true, optional = true }
+mutsuki-runtime-sdk = { workspace = true, optional = true }
 mutsuki-tauri-host = { workspace = true }
+mutsuki-agent-client = { workspace = true }
 mutsuki-agent-contracts = { workspace = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"

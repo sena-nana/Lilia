@@ -2,7 +2,10 @@ use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ConflictKind, ProductError, ProductResult, ProductRevision, ProjectId, TaskId};
+use crate::{
+    AssignmentId, ConflictKind, MilestoneId, ProductError, ProductResult, ProductRevision,
+    ProjectId, TaskId, WorkflowId,
+};
 
 /// Product Task is not an Agent Todo. Agent todos must be explicitly promoted.
 pub const AGENT_TODO_PROMOTION_REQUIRED: &str = "agent_todo_must_be_promoted";
@@ -18,17 +21,42 @@ pub enum ProductTaskStatus {
     Cancelled,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProductTaskPriority {
+    Low,
+    Normal,
+    High,
+    Urgent,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProductTask {
     pub id: TaskId,
     pub project_id: Option<ProjectId>,
     pub title: String,
+    pub description: Option<String>,
     pub status: ProductTaskStatus,
+    pub priority: ProductTaskPriority,
+    pub assignment_id: Option<AssignmentId>,
+    pub completion_criteria: Vec<String>,
+    pub milestone_id: Option<MilestoneId>,
+    pub workflow_id: Option<WorkflowId>,
+    pub agent_profile_id: Option<String>,
+    pub blocked_reason: Option<String>,
     pub depends_on: Vec<TaskId>,
     pub parent_id: Option<TaskId>,
     pub pinned: bool,
     pub sort_order: i64,
+    pub archived: bool,
+    pub tags: Vec<String>,
+    /// Unix epoch milliseconds. Hosts set this through their clock port.
+    #[serde(default)]
+    pub created_at: i64,
+    /// Unix epoch milliseconds. Updated by the application command boundary.
+    #[serde(default)]
+    pub updated_at: i64,
     pub revision: ProductRevision,
     /// Provenance only — never a Claude/Codex brand field on the core model.
     pub legacy_source: Option<String>,
@@ -51,11 +79,23 @@ impl ProductTask {
             id,
             project_id,
             title,
+            description: None,
             status: ProductTaskStatus::Draft,
+            priority: ProductTaskPriority::Normal,
+            assignment_id: None,
+            completion_criteria: Vec::new(),
+            milestone_id: None,
+            workflow_id: None,
+            agent_profile_id: None,
+            blocked_reason: None,
             depends_on: Vec::new(),
             parent_id: None,
             pinned: false,
             sort_order: 0,
+            archived: false,
+            tags: Vec::new(),
+            created_at: 0,
+            updated_at: 0,
             revision: ProductRevision::INITIAL,
             legacy_source: None,
         })
@@ -113,10 +153,13 @@ impl TaskDependencyGraph {
                     message: "task cannot depend on itself".into(),
                 });
             }
-            let dep_project = self.project_of.get(key).ok_or_else(|| ProductError::NotFound {
-                entity: "task".into(),
-                id: key.to_string(),
-            })?;
+            let dep_project = self
+                .project_of
+                .get(key)
+                .ok_or_else(|| ProductError::NotFound {
+                    entity: "task".into(),
+                    id: key.to_string(),
+                })?;
             let expected = project_id.map(|id| id.as_str().to_string());
             if dep_project.as_deref() != expected.as_deref() {
                 return Err(ProductError::InvalidInput {

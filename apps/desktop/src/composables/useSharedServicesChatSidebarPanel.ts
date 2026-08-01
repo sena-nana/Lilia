@@ -4,7 +4,7 @@ import { registerChatSidebarPanel } from "./useChatSidebar";
 export function registerSharedServicesChatSidebarPanel(): () => void {
   return registerChatSidebarPanel({
     id: "shared-services",
-    title: "共享 Services",
+    title: "工作区工具",
     icon: Server,
     order: 30,
     loader: async () =>

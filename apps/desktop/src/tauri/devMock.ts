@@ -167,10 +167,24 @@ import {
   type ChatBackendKind,
   type Memory,
   type MemorySettings,
+  type ProductCommandMeta,
+  type ProductCommandResult,
+  type ProductEntity,
+  type ProductEntityKind,
+  type ProductEvent,
   type QuotaUsageStatsBackendFilter,
   type QuotaUsageStatsDays,
   type RouterMode,
+  type Task,
 } from "@lilia/contracts";
+import {
+  PRODUCT_CREATE_ENTITY_COMMAND,
+  PRODUCT_EVENT_NAME,
+  PRODUCT_GET_ENTITY_COMMAND,
+  PRODUCT_LIST_ENTITIES_COMMAND,
+  PRODUCT_LIST_EVENTS_COMMAND,
+  PRODUCT_UPDATE_ENTITY_COMMAND,
+} from "@lilia/contracts/productCoreContract.mjs";
 import { TAURI_PLUGIN_DIALOG_OPEN_COMMAND } from "./pluginCommands";
 
 type Args = Record<string, unknown>;
@@ -181,7 +195,31 @@ let mockChannelId = 0;
 const now = 1_720_000_000_000;
 const dayMs = 86_400_000;
 
-const projects = [
+interface DevProject {
+  id: string;
+  name: string;
+  cwd: string | null;
+  sessionCount: number;
+  sortOrder: number;
+  pinned: boolean;
+}
+
+interface DevTask {
+  id: string;
+  projectId: string | null;
+  sessionId: string;
+  title: string;
+  titleSource: "auto" | "manual";
+  status: Task["status"];
+  createdAt: number;
+  parentId: string | null;
+  dependsOn: string[];
+  sortOrder: number;
+  pinned: boolean;
+  archived: boolean;
+}
+
+const projects: DevProject[] = [
   {
     id: "lilia",
     name: "Lilia",
@@ -200,7 +238,7 @@ const projects = [
   },
 ];
 
-const tasks = [
+const tasks: DevTask[] = [
   {
     id: "t-001",
     projectId: "lilia",
@@ -221,7 +259,7 @@ const tasks = [
     sessionId: "mock-inbox-001",
     title: "收集箱 mock 对话",
     titleSource: "auto",
-    status: "todo",
+    status: "waiting",
     createdAt: now - 21_600_000,
     parentId: null,
     dependsOn: [],
@@ -230,6 +268,36 @@ const tasks = [
     archived: false,
   },
 ];
+
+const productProjectRevisions = new Map(projects.map((project) => [project.id, 1]));
+const productTaskRevisions = new Map(tasks.map((task) => [task.id, 1]));
+const productConversations = new Map<
+  string,
+  Extract<ProductEntity, { kind: "conversation" }>["value"]
+>(tasks.map((task) => [
+  task.id,
+  {
+    id: task.id,
+    projectId: task.projectId,
+    taskId: task.id,
+    title: task.title,
+    status: "active" as const,
+    archived: task.archived,
+    labels: [],
+    bindingIds: [],
+    forkedFrom: null,
+    migratedFrom: null,
+    legacySource: null,
+    timelineCursor: 0,
+    createdAt: task.createdAt,
+    updatedAt: task.createdAt,
+    revision: 1,
+  },
+]));
+const productExtraEntities = new Map<string, ProductEntity>();
+const productCommandResults = new Map<string, ProductCommandResult<ProductEntity>>();
+const productEvents: ProductEvent[] = [];
+const devEventListeners = new Map<string, Set<(event: { payload: unknown }) => void>>();
 
 let taskWorktrees: Record<string, any> = {};
 let agentDebugLogs: Record<string, unknown>[] = [];
@@ -397,6 +465,213 @@ const providerBackends = CHAT_BACKENDS as readonly ChatBackendKind[];
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function productEntityId(entity: ProductEntity): string {
+  return entity.kind === "binding" ? entity.value.bindingId : entity.value.id;
+}
+
+function productProjectEntity(
+  project: (typeof projects)[number],
+): Extract<ProductEntity, { kind: "project" }> {
+  return {
+    kind: "project",
+    value: {
+      id: project.id,
+      name: project.name,
+      workspacePath: project.cwd,
+      pinned: project.pinned,
+      sortOrder: project.sortOrder,
+      archive: "active",
+      gitWorkspace: null,
+      settings: {
+        defaultAgentProfileId: null,
+        values: {},
+      },
+      assetIds: [],
+      revision: productProjectRevisions.get(project.id) ?? 1,
+    },
+  };
+}
+
+function productTaskEntity(
+  task: (typeof tasks)[number],
+): Extract<ProductEntity, { kind: "task" }> {
+  return {
+    kind: "task",
+    value: {
+      id: task.id,
+      projectId: task.projectId,
+      title: task.title,
+      description: null,
+      status: task.status as Extract<ProductEntity, { kind: "task" }>["value"]["status"],
+      priority: "normal",
+      assignmentId: null,
+      completionCriteria: [],
+      milestoneId: null,
+      workflowId: null,
+      agentProfileId: null,
+      blockedReason: null,
+      dependsOn: [...task.dependsOn],
+      parentId: task.parentId,
+      pinned: task.pinned,
+      sortOrder: task.sortOrder,
+      archived: task.archived,
+      tags: [],
+      createdAt: task.createdAt,
+      updatedAt: task.createdAt,
+      revision: productTaskRevisions.get(task.id) ?? 1,
+      legacySource: null,
+    },
+  };
+}
+
+function listDevProductEntities(kind: ProductEntityKind): ProductEntity[] {
+  if (kind === "project") return projects.map(productProjectEntity);
+  if (kind === "task") return tasks.map(productTaskEntity);
+  if (kind === "conversation") {
+    return [...productConversations.values()].map((value) => ({
+      kind: "conversation",
+      value: clone(value),
+    }));
+  }
+  return [...productExtraEntities.values()]
+    .filter((entity) => entity.kind === kind)
+    .map(clone);
+}
+
+function getDevProductEntity(kind: ProductEntityKind, id: string): ProductEntity | null {
+  return listDevProductEntities(kind)
+    .find((entity) => productEntityId(entity) === id) ?? null;
+}
+
+function emitDevEvent<T>(event: string, payload: T): void {
+  for (const listener of devEventListeners.get(event) ?? []) {
+    listener({ payload: clone(payload) });
+  }
+}
+
+function finishDevProductCommand(
+  meta: ProductCommandMeta,
+  entity: ProductEntity,
+  action: string,
+): ProductCommandResult<ProductEntity> {
+  const existing = productCommandResults.get(meta.idempotencyKey);
+  if (existing) {
+    if (existing.commandId !== meta.commandId) {
+      throw new Error("idempotency key was already used by another command");
+    }
+    return { ...clone(existing), duplicate: true };
+  }
+  const event: ProductEvent = {
+    sequence: productEvents.length + 1,
+    commandId: meta.commandId,
+    entity: entity.kind,
+    entityId: productEntityId(entity),
+    action,
+    revision: entity.value.revision,
+  };
+  productEvents.push(event);
+  const result: ProductCommandResult<ProductEntity> = {
+    commandId: meta.commandId,
+    eventSequence: event.sequence,
+    value: clone(entity),
+    duplicate: false,
+  };
+  productCommandResults.set(meta.idempotencyKey, clone(result));
+  emitDevEvent(PRODUCT_EVENT_NAME, event);
+  return result;
+}
+
+function createDevProductEntity(entity: ProductEntity): void {
+  if (getDevProductEntity(entity.kind, productEntityId(entity))) {
+    throw new Error(`${entity.kind} already exists: ${productEntityId(entity)}`);
+  }
+  if (entity.kind === "project") {
+    projects.push({
+      id: entity.value.id,
+      name: entity.value.name,
+      cwd: entity.value.workspacePath,
+      sessionCount: 0,
+      sortOrder: entity.value.sortOrder,
+      pinned: entity.value.pinned,
+    });
+    productProjectRevisions.set(entity.value.id, entity.value.revision);
+    return;
+  }
+  if (entity.kind === "task") {
+    tasks.push({
+      id: entity.value.id,
+      projectId: entity.value.projectId,
+      sessionId: entity.value.id,
+      title: entity.value.title,
+      titleSource: "auto",
+      status: entity.value.status,
+      createdAt: entity.value.createdAt,
+      parentId: entity.value.parentId,
+      dependsOn: [...entity.value.dependsOn],
+      sortOrder: entity.value.sortOrder,
+      pinned: entity.value.pinned,
+      archived: entity.value.archived,
+    });
+    productTaskRevisions.set(entity.value.id, entity.value.revision);
+    return;
+  }
+  if (entity.kind === "conversation") {
+    productConversations.set(entity.value.id, clone(entity.value));
+    return;
+  }
+  productExtraEntities.set(`${entity.kind}:${productEntityId(entity)}`, clone(entity));
+}
+
+function updateDevProductEntity(
+  meta: ProductCommandMeta,
+  input: ProductEntity,
+): ProductEntity {
+  const id = productEntityId(input);
+  const current = getDevProductEntity(input.kind, id);
+  if (!current) throw new Error(`${input.kind} not found: ${id}`);
+  if (meta.expectedRevision !== current.value.revision) {
+    throw new Error(`stale ${input.kind} revision`);
+  }
+  const updated = clone(input);
+  updated.value.revision = current.value.revision + 1;
+  if (updated.kind === "project") {
+    const index = projects.findIndex((project) => project.id === updated.value.id);
+    if (updated.value.archive === "archived") {
+      if (index >= 0) projects.splice(index, 1);
+    } else if (index >= 0) {
+      projects[index] = {
+        ...projects[index],
+        name: updated.value.name,
+        cwd: updated.value.workspacePath,
+        pinned: updated.value.pinned,
+        sortOrder: updated.value.sortOrder,
+      };
+    }
+    productProjectRevisions.set(updated.value.id, updated.value.revision);
+  } else if (updated.kind === "task") {
+    const index = tasks.findIndex((task) => task.id === updated.value.id);
+    if (index >= 0) {
+      tasks[index] = {
+        ...tasks[index],
+        projectId: updated.value.projectId,
+        title: updated.value.title,
+        status: updated.value.status,
+        parentId: updated.value.parentId,
+        dependsOn: [...updated.value.dependsOn],
+        sortOrder: updated.value.sortOrder,
+        pinned: updated.value.pinned,
+        archived: updated.value.archived,
+      };
+    }
+    productTaskRevisions.set(updated.value.id, updated.value.revision);
+  } else if (updated.kind === "conversation") {
+    productConversations.set(updated.value.id, clone(updated.value));
+  } else {
+    productExtraEntities.set(`${updated.kind}:${productEntityId(updated)}`, clone(updated));
+  }
+  return updated;
 }
 
 function defaultDevRouterModes(): Record<ChatBackendKind, RouterMode> {
@@ -870,6 +1145,55 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
       } as T;
     case TAURI_PLUGIN_DIALOG_OPEN_COMMAND:
       return null as T;
+    case PRODUCT_LIST_ENTITIES_COMMAND:
+      return clone(
+        listDevProductEntities(text(args, "kind") as ProductEntityKind),
+      ) as T;
+    case PRODUCT_GET_ENTITY_COMMAND: {
+      const kind = text(args, "kind") as ProductEntityKind;
+      const id = text(args, "id");
+      const entity = getDevProductEntity(kind, id);
+      return clone(entity) as T;
+    }
+    case PRODUCT_LIST_EVENTS_COMMAND: {
+      const request = args.request && typeof args.request === "object"
+        ? args.request as { after?: number | null; limit?: number }
+        : {};
+      const items = productEvents
+        .filter((event) => event.sequence > (request.after ?? 0))
+        .slice(0, request.limit ?? 100)
+        .map(clone);
+      return {
+        items,
+        next: items.at(-1)?.sequence ?? null,
+      } as T;
+    }
+    case PRODUCT_CREATE_ENTITY_COMMAND: {
+      const meta = clone(args.meta as ProductCommandMeta);
+      const input = clone(args.entity as ProductEntity);
+      const existing = productCommandResults.get(meta.idempotencyKey);
+      if (existing) {
+        if (existing.commandId !== meta.commandId) {
+          throw new Error("idempotency key was already used by another command");
+        }
+        return { ...clone(existing), duplicate: true } as T;
+      }
+      createDevProductEntity(input);
+      return finishDevProductCommand(meta, input, text(args, "action") || "created") as T;
+    }
+    case PRODUCT_UPDATE_ENTITY_COMMAND: {
+      const meta = clone(args.meta as ProductCommandMeta);
+      const input = clone(args.entity as ProductEntity);
+      const existing = productCommandResults.get(meta.idempotencyKey);
+      if (existing) {
+        if (existing.commandId !== meta.commandId) {
+          throw new Error("idempotency key was already used by another command");
+        }
+        return { ...clone(existing), duplicate: true } as T;
+      }
+      const updated = updateDevProductEntity(meta, input);
+      return finishDevProductCommand(meta, updated, text(args, "action") || "updated") as T;
+    }
     case PROJECT_LIST_COMMAND:
       return clone(projects) as T;
     case PROJECT_DASHBOARD_LIST_COMMAND:
@@ -1443,8 +1767,18 @@ export function convertFileSrc(path: string): string {
   return `asset://${path.replace(/\\/g, "/")}`;
 }
 
-export async function listen<T>(_event: string, _handler: (event: { payload: T }) => void): Promise<UnlistenFn> {
-  return () => undefined;
+export async function listen<T>(
+  event: string,
+  handler: (event: { payload: T }) => void,
+): Promise<UnlistenFn> {
+  const listeners = devEventListeners.get(event) ?? new Set();
+  const listener = handler as (event: { payload: unknown }) => void;
+  listeners.add(listener);
+  devEventListeners.set(event, listeners);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) devEventListeners.delete(event);
+  };
 }
 
 export function getCurrentWindow() {

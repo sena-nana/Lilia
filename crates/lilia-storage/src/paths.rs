@@ -11,6 +11,7 @@ pub const LILIA_HOME_ENV: &str = "LILIA_HOME";
 
 pub const PRODUCT_PROJECTIONS_DB_FILE: &str = "product_projections.db";
 pub const PRODUCT_DB_FILE: &str = "product.db";
+pub const AGENT_RUNTIME_DB_FILE: &str = "agent_runtime.db";
 pub const LEGACY_DESKTOP_DB_FILE: &str = "lilia.db";
 
 /// Canonical on-disk layout under a Lilia home directory.
@@ -54,6 +55,11 @@ impl LiliaDataPaths {
     /// Product domain store (Project / Task / Binding / migration ledger).
     pub fn product_db(&self) -> PathBuf {
         self.db_dir().join(PRODUCT_DB_FILE)
+    }
+
+    /// Native AgentKit execution facts (session/Wire/recovery state).
+    pub fn agent_runtime_db(&self) -> PathBuf {
+        self.db_dir().join(AGENT_RUNTIME_DB_FILE)
     }
 
     /// Legacy Desktop SQLite (`apps/desktop` historical fact source).
@@ -107,6 +113,10 @@ mod tests {
             home.join("db").join(PRODUCT_PROJECTIONS_DB_FILE)
         );
         assert_eq!(desktop.product_db(), home.join("db").join(PRODUCT_DB_FILE));
+        assert_eq!(
+            desktop.agent_runtime_db(),
+            home.join("db").join(AGENT_RUNTIME_DB_FILE)
+        );
         assert_eq!(
             desktop.legacy_desktop_db(),
             home.join("db").join(LEGACY_DESKTOP_DB_FILE)

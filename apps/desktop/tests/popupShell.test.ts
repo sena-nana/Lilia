@@ -7,8 +7,8 @@ import {
   POPUP_FOCUS_MAIN_COMMAND,
   POPUP_OPEN_NEW_CHAT_COMMAND,
   POPUP_OPEN_TASK_COMMAND,
-  TASK_GET_COMMAND,
 } from "@lilia/contracts";
+import { PRODUCT_GET_ENTITY_COMMAND } from "@lilia/contracts/productCoreContract.mjs";
 import {
   createLiliaRouter,
   shouldUsePopupHashHistory,
@@ -233,7 +233,11 @@ describe("Popup shell", () => {
     const view = await renderPopup("/popup/projects/lilia/tasks/t-001");
 
     await waitFor(() => {
-      expect(mockInvoke).toHaveBeenCalledWith(TASK_GET_COMMAND, { id: "t-001" }, undefined);
+      expect(mockInvoke).toHaveBeenCalledWith(
+        PRODUCT_GET_ENTITY_COMMAND,
+        { kind: "task", id: "t-001" },
+        undefined,
+      );
       expect(view.getByText("要在 Lilia 中构建什么？")).toBeInTheDocument();
     }, { timeout: 10_000 });
   });
@@ -363,4 +367,3 @@ describe("Popup shell", () => {
     });
   });
 });
-

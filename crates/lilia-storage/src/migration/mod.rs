@@ -24,4 +24,7 @@ pub use report::{
     CompatAssetPreview, LegacySessionPlan, MigrationMode, MigrationObjectResult, MigrationReport,
     ObjectKind,
 };
-pub use tool::{planned_agentkit_session_id, LegacyMigrationTool, LEGACY_SESSION_COMPAT_UNTIL};
+pub use tool::{
+    planned_agentkit_session_id, LegacyMigrationTool, DESKTOP_PRODUCT_CORE_CUTOVER,
+    LEGACY_SESSION_COMPAT_UNTIL,
+};

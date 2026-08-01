@@ -28,10 +28,11 @@ mod lilia_iab;
 mod memory;
 #[cfg(test)]
 mod memory_command_contract;
-mod native_agent;
-mod native_shared_services;
 #[cfg(test)]
 mod milestone_command_contract;
+mod native_agent;
+mod native_agent_contract;
+mod native_shared_services;
 mod plugins;
 #[cfg(test)]
 mod plugins_command_contract;
@@ -222,17 +223,26 @@ pub fn run() {
                 let _ = window.show();
             }
             let home = store::resolve_lilia_home();
-            match store::LiliaStore::new(&home) {
-                Ok(s) => {
-                    app.manage(s);
-                    remote_control::restore_http_bridge_if_enabled(app.handle());
-                    restore_runtime_sessions_on_startup(app.handle());
-                    cli_project::handle_initial_args(app.handle());
-                }
-                Err(err) => {
-                    eprintln!("[lilia-store] init failed at {}: {err}", home.display());
-                }
+            let legacy_store = store::LiliaStore::new(&home)
+                .map_err(|err| std::io::Error::other(format!("legacy store init failed: {err}")))?;
+            let migration = lilia_storage::LegacyMigrationTool::from_paths(
+                lilia_storage::LiliaDataPaths::from_home(home.clone()),
+            );
+            if let Some(report) = migration.apply_if_needed().map_err(|err| {
+                std::io::Error::other(format!("product core migration failed: {err}"))
+            })? {
+                eprintln!(
+                    "[product-core] migrated projects={} tasks={} sessions={}",
+                    report.projects_seen, report.tasks_seen, report.agentkit_bindings_planned
+                );
             }
+            let product_core = product_core::EmbeddedProductCore::open(&home)
+                .map_err(|err| std::io::Error::other(format!("product core init failed: {err}")))?;
+            app.manage(product_core);
+            app.manage(legacy_store);
+            remote_control::restore_http_bridge_if_enabled(app.handle());
+            restore_runtime_sessions_on_startup(app.handle());
+            cli_project::handle_initial_args(app.handle());
             {
                 if let Err(err) = tauri::async_runtime::block_on(async {
                     app_delivery::start_app_delivery_endpoint(app.handle())
@@ -435,6 +445,11 @@ pub fn run() {
             agent_debug::agent_debug_record_action,
             agent_debug::agent_debug_reset_state,
             product_core::product_core_status,
+            product_core::product_create_entity,
+            product_core::product_update_entity,
+            product_core::product_get_entity,
+            product_core::product_list_entities,
+            product_core::product_list_events,
             native_agent::native_agent_host_status,
             native_agent::native_credential_providers,
             native_agent::native_credential_login,
@@ -452,8 +467,10 @@ pub fn run() {
             native_shared_services::native_shared_coding_services_status,
             native_shared_services::native_shared_git_status,
             native_shared_services::native_shared_code_index_search,
+            native_shared_services::native_shared_workspace_list,
             native_shared_services::native_shared_mcp_list_servers,
             native_shared_services::native_shared_lsp_status,
+            native_shared_services::native_shared_lsp_open_workspace,
             native_shared_services::native_shared_memory_query,
             native_shared_services::native_shared_memory_write,
         ])

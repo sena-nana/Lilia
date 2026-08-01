@@ -1,0 +1,150 @@
+{
+  "version": 1,
+  "commands": {
+    "createEntity": "product_create_entity",
+    "updateEntity": "product_update_entity",
+    "getEntity": "product_get_entity",
+    "listEntities": "product_list_entities",
+    "listEvents": "product_list_events"
+  },
+  "events": {
+    "product": "product-event"
+  },
+  "entityKinds": [
+    "project",
+    "task",
+    "conversation",
+    "milestone",
+    "binding",
+    "workflow",
+    "workflow_run",
+    "assignment",
+    "artifact",
+    "project_asset"
+  ],
+  "fields": {
+    "project": [
+      "id",
+      "name",
+      "workspacePath",
+      "pinned",
+      "sortOrder",
+      "archive",
+      "gitWorkspace",
+      "settings",
+      "assetIds",
+      "revision"
+    ],
+    "task": [
+      "id",
+      "projectId",
+      "title",
+      "description",
+      "status",
+      "priority",
+      "assignmentId",
+      "completionCriteria",
+      "milestoneId",
+      "workflowId",
+      "agentProfileId",
+      "blockedReason",
+      "dependsOn",
+      "parentId",
+      "pinned",
+      "sortOrder",
+      "archived",
+      "tags",
+      "createdAt",
+      "updatedAt",
+      "revision",
+      "legacySource"
+    ],
+    "conversation": [
+      "id",
+      "projectId",
+      "taskId",
+      "title",
+      "status",
+      "archived",
+      "labels",
+      "bindingIds",
+      "forkedFrom",
+      "migratedFrom",
+      "legacySource",
+      "timelineCursor",
+      "createdAt",
+      "updatedAt",
+      "revision"
+    ],
+    "milestone": [
+      "id",
+      "projectId",
+      "title",
+      "description",
+      "status",
+      "sortOrder",
+      "startDate",
+      "dueDate",
+      "revision"
+    ],
+    "binding": [
+      "bindingId",
+      "taskId",
+      "conversationId",
+      "agentSession",
+      "profileId",
+      "revision"
+    ],
+    "workflow": [
+      "id",
+      "name",
+      "version",
+      "status",
+      "definitionRef",
+      "revision"
+    ],
+    "workflow_run": [
+      "id",
+      "workflowId",
+      "workflowVersion",
+      "taskId",
+      "status",
+      "nodeProjectionRef",
+      "agentSession",
+      "revision"
+    ],
+    "assignment": [
+      "id",
+      "taskId",
+      "role",
+      "assignee",
+      "agentProfileId",
+      "status",
+      "revision"
+    ],
+    "artifact": [
+      "id",
+      "taskId",
+      "agentSession",
+      "sourceEventId",
+      "artifactRef",
+      "resourceRef",
+      "mediaType",
+      "materialization",
+      "retention",
+      "provenance",
+      "revision"
+    ],
+    "project_asset": [
+      "id",
+      "projectId",
+      "kind",
+      "title",
+      "contentRef",
+      "version",
+      "proposalStatus",
+      "rollbackOf",
+      "revision"
+    ]
+  }
+}

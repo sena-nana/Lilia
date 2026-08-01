@@ -16,7 +16,9 @@ use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use lilia_service::{serve_readonly_http, ServiceAuthority, ServiceHealthStatus};
+use lilia_service::{
+    read_http_request, serve_readonly_http, ServiceAuthority, ServiceHealthStatus,
+};
 
 fn main() {
     if let Err(err) = run() {
@@ -37,16 +39,17 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let health = authority.health();
     if health.status != ServiceHealthStatus::Ready {
-        return Err(format!("service health not ready: {}", serde_json::to_string(&health)?).into());
+        return Err(format!(
+            "service health not ready: {}",
+            serde_json::to_string(&health)?
+        )
+        .into());
     }
 
     let listener = TcpListener::bind(&bind)?;
     let local = listener.local_addr()?;
     println!("lilia-service listening on http://{local}");
-    println!(
-        "health={}",
-        serde_json::to_string(&authority.health())?
-    );
+    println!("health={}", serde_json::to_string(&authority.health())?);
 
     let running = Arc::new(AtomicBool::new(true));
     {
@@ -58,9 +61,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         listener.set_nonblocking(true)?;
         match listener.accept() {
             Ok((mut stream, _)) => {
-                let mut buf = [0u8; 4096];
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let req = String::from_utf8_lossy(&buf[..n]);
+                let req = match read_http_request(&mut stream) {
+                    Ok(request) => request,
+                    Err(error) => {
+                        let response = format!(
+                            "HTTP/1.1 400 Bad Request\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                            error.to_string().len(),
+                            error
+                        );
+                        let _ = stream.write_all(response.as_bytes());
+                        continue;
+                    }
+                };
                 let response = serve_readonly_http(&authority, &req);
                 let _ = stream.write_all(response.as_bytes());
             }

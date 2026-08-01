@@ -1,12 +1,34 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
-use crate::{ProductRevision, ProjectId};
+use crate::{ProductRevision, ProjectAssetId, ProjectId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProjectArchiveState {
     Active,
     Archived,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GitWorkspaceRef {
+    #[serde(default)]
+    pub repository: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectSettings {
+    #[serde(default)]
+    pub default_agent_profile_id: Option<String>,
+    #[serde(default)]
+    pub values: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,6 +40,12 @@ pub struct Project {
     pub pinned: bool,
     pub sort_order: i64,
     pub archive: ProjectArchiveState,
+    #[serde(default)]
+    pub git_workspace: Option<GitWorkspaceRef>,
+    #[serde(default)]
+    pub settings: ProjectSettings,
+    #[serde(default)]
+    pub asset_ids: Vec<ProjectAssetId>,
     pub revision: ProductRevision,
 }
 
@@ -37,6 +65,9 @@ impl Project {
             pinned: false,
             sort_order: 0,
             archive: ProjectArchiveState::Active,
+            git_workspace: None,
+            settings: ProjectSettings::default(),
+            asset_ids: Vec::new(),
             revision: ProductRevision::INITIAL,
         })
     }

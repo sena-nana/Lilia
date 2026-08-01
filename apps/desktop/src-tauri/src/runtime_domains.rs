@@ -382,7 +382,8 @@ mod tests {
             LiliaWorkload::ProductCommand => handoff_payload(),
             LiliaWorkload::AgentEvent | LiliaWorkload::AgentCompletion => json!({
                 "taskId": "issue43-agent",
-                "backend": "codex",
+                "profileId": "lilia.product.native-coding",
+                "sessionId": "issue43-reference-session",
                 "cwd": ".",
                 "prompt": "检查 RuntimeDomain reference profile"
             }),

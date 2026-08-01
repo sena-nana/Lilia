@@ -1,0 +1,31 @@
+{
+  "commands": {
+    "hostStatus": "native_agent_host_status",
+    "credentialProviders": "native_credential_providers",
+    "credentialLogin": "native_credential_login",
+    "credentialImport": "native_credential_import",
+    "credentialRevoke": "native_credential_revoke",
+    "credentialDiagnostics": "native_credential_diagnostics",
+    "quotaSurface": "native_quota_surface",
+    "respondApproval": "native_respond_approval",
+    "productTimeline": "native_product_timeline",
+    "productArtifacts": "native_product_artifacts",
+    "productTodos": "native_product_todos",
+    "productPending": "native_product_pending",
+    "rebuildProductTimeline": "native_rebuild_product_timeline",
+    "rebuildUiTimelineCache": "native_rebuild_ui_timeline_cache",
+    "sharedCodingServicesStatus": "native_shared_coding_services_status",
+    "sharedGitStatus": "native_shared_git_status",
+    "sharedCodeIndexSearch": "native_shared_code_index_search",
+    "sharedWorkspaceList": "native_shared_workspace_list",
+    "sharedMcpListServers": "native_shared_mcp_list_servers",
+    "sharedLspStatus": "native_shared_lsp_status",
+    "sharedLspOpenWorkspace": "native_shared_lsp_open_workspace",
+    "sharedMemoryQuery": "native_shared_memory_query",
+    "sharedMemoryWrite": "native_shared_memory_write",
+    "productCoreStatus": "product_core_status"
+  },
+  "events": {
+    "stream": "native-agent-stream"
+  }
+}

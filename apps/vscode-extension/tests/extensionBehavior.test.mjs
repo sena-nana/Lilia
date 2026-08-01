@@ -23,20 +23,42 @@ function createVscodeMock() {
   const messages = [];
   /** @type {string[]} */
   const outputLines = [];
+  const appliedWorkspaceEdits = [];
 
   class Range {
     /**
      * @param {{ line: number, character: number }} start
      * @param {{ line: number, character: number }} end
      */
-    constructor(start, end) {
-      this.start = start;
-      this.end = end;
+    constructor(startOrLine, startCharacterOrEnd, endLine, endCharacter) {
+      if (typeof startOrLine === "number") {
+        this.start = { line: startOrLine, character: startCharacterOrEnd };
+        this.end = { line: endLine, character: endCharacter };
+      } else {
+        this.start = startOrLine;
+        this.end = startCharacterOrEnd;
+      }
+    }
+  }
+
+  class WorkspaceEdit {
+    constructor() {
+      this.replacements = [];
+    }
+
+    replace(uri, range, newText) {
+      this.replacements.push({ uri, range, newText });
     }
   }
 
   return {
     Range,
+    WorkspaceEdit,
+    Uri: {
+      parse(value) {
+        return { toString: () => value, value };
+      },
+    },
     window: {
       createOutputChannel() {
         return {
@@ -47,9 +69,9 @@ function createVscodeMock() {
           dispose() {},
         };
       },
-      showInformationMessage(message) {
+      showInformationMessage(message, ...items) {
         messages.push({ kind: "info", message: String(message) });
-        return Promise.resolve(undefined);
+        return Promise.resolve(items.includes("Apply") ? "Apply" : undefined);
       },
       showWarningMessage(message) {
         messages.push({ kind: "warn", message: String(message) });
@@ -64,11 +86,24 @@ function createVscodeMock() {
           document: {
             uri: { toString: () => "file:///workspace/main.rs" },
             languageId: "rust",
+            version: 1,
             getText: () => "fn main() {}",
             lineAt: () => ({ text: "fn main() {" }),
             offsetAt: (pos) => pos.character,
           },
         };
+      },
+    },
+    workspace: {
+      getConfiguration() {
+        return { get: () => undefined };
+      },
+      openTextDocument(uri) {
+        return Promise.resolve({ uri, version: 1 });
+      },
+      applyEdit(edit) {
+        appliedWorkspaceEdits.push(edit);
+        return Promise.resolve(true);
       },
     },
     languages: {
@@ -83,23 +118,27 @@ function createVscodeMock() {
         return { dispose() {} };
       },
     },
-    __test: { commands, providers, messages, outputLines },
+    __test: { commands, providers, messages, outputLines, appliedWorkspaceEdits },
   };
 }
 
 async function main() {
-  process.env.LILIA_AGENTKIT_HOST_MODE = "deterministic";
   const vscode = createVscodeMock();
   const subscriptions = [];
-  activate(vscode, {
-    subscriptions: {
-      push(...items) {
-        subscriptions.push(...items);
+  activate(
+    vscode,
+    {
+      subscriptions: {
+        push(...items) {
+          subscriptions.push(...items);
+        },
       },
     },
-  });
+    { hostConfig: { hostMode: "deterministic", hostBinary: "" } },
+  );
 
-  const { commands, providers, messages, outputLines } = vscode.__test;
+  const { commands, providers, messages, outputLines, appliedWorkspaceEdits } =
+    vscode.__test;
   assert.ok(subscriptions.length >= 3);
   assert.equal(providers.length, 1, "InlineCompletionProvider registered");
   assert.ok(commands.has("lilia.agentkit.status"));
@@ -109,6 +148,7 @@ async function main() {
     {
       uri: { toString: () => "file:///workspace/main.rs" },
       languageId: "rust",
+      version: 1,
       getText: () => "fn main() {",
       lineAt: () => ({ text: "fn main() {" }),
       offsetAt: (pos) => pos.character,
@@ -124,17 +164,23 @@ async function main() {
 
   await commands.get("lilia.agentkit.status")();
   assert.ok(
-    messages.some((item) => item.kind === "info" && item.message.includes("AgentKit host ready")),
+    messages.some(
+      (item) =>
+        item.kind === "info" &&
+        item.message.includes("AgentKit coding services are ready"),
+    ),
   );
   assert.ok(outputLines.some((line) => line.includes("requiresLiliaCore")));
 
   await commands.get("lilia.agentkit.nextEdit")();
+  assert.equal(appliedWorkspaceEdits.length, 1);
+  assert.equal(appliedWorkspaceEdits[0].replacements.length, 1);
+  assert.equal(appliedWorkspaceEdits[0].replacements[0].newText, "\n");
   assert.ok(
     messages.some(
       (item) =>
         item.kind === "info" &&
-        item.message.includes("Next Edit proposal") &&
-        item.message.includes("not applied automatically"),
+        item.message.includes("Next Edit applied"),
     ),
   );
 

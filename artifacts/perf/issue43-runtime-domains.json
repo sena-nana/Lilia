@@ -1,0 +1,45 @@
+{
+  "schema": "lilia.runtime-domain-reference.v1",
+  "business_purpose": "prepare the same product handoff while two Agent payload builds and a real Git worktree inspection are active",
+  "workload": {
+    "agent_work": "build and serialize the production AgentKit AgentRunRequest contract without starting a provider",
+    "calibrated": {
+      "agent_iterations": 32768,
+      "workspace_iterations": 2
+    },
+    "measurement": "product handoff submit to terminal outcome",
+    "minimum_background_work_ms": 20,
+    "percentile_method": "nearest-rank",
+    "product_work": "parse the production LiliaGithub handoff contract and build its production prompt",
+    "runtime_lifecycle": "reuse one warmed long-lived runtime per topology",
+    "same_protocols_runners_payloads_and_outputs": true,
+    "same_total_worker_budget": 3,
+    "sample_order": "alternate single-domain-first and three-domain-first paired samples",
+    "samples": 100,
+    "single_domain_threads": 3,
+    "three_domain_threads": {
+      "agent": 1,
+      "product": 1,
+      "workspace": 1
+    },
+    "workspace": ".",
+    "workspace_work": "run production git worktree list --porcelain inspection"
+  },
+  "single_domain": {
+    "samples": 100,
+    "p50_ms": 24.764499999999998,
+    "p95_ms": 28.240000000000002,
+    "p99_ms": 39.701665999999996,
+    "max_ms": 40.942667
+  },
+  "three_domains": {
+    "samples": 100,
+    "p50_ms": 0.105333,
+    "p95_ms": 0.149916,
+    "p99_ms": 0.23525,
+    "max_ms": 0.24445800000000004
+  },
+  "p99_improvement_percent": 99.40745559644778,
+  "expected_minimum_improvement_percent": 50.0,
+  "passed": true
+}

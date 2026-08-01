@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  PROJECT_GET_COMMAND,
-  TASK_GET_COMMAND,
-} from "@lilia/contracts";
+import { PRODUCT_GET_ENTITY_COMMAND } from "@lilia/contracts/productCoreContract.mjs";
 import {
   ensureProjectLoaded,
   PROJECTS,
@@ -26,7 +23,9 @@ describe("data loading single-flight", () => {
     ]);
 
     const taskGets = mockInvoke.mock.calls.filter(([cmd, args]) =>
-      cmd === TASK_GET_COMMAND && (args as { id?: string }).id === "t-001"
+      cmd === PRODUCT_GET_ENTITY_COMMAND &&
+      (args as { kind?: string; id?: string }).kind === "task" &&
+      (args as { id?: string }).id === "t-001"
     );
     expect(taskGets).toHaveLength(1);
   });
@@ -41,9 +40,10 @@ describe("data loading single-flight", () => {
     ]);
 
     const projectGets = mockInvoke.mock.calls.filter(([cmd, args]) =>
-      cmd === PROJECT_GET_COMMAND && (args as { id?: string }).id === "lilia"
+      cmd === PRODUCT_GET_ENTITY_COMMAND &&
+      (args as { kind?: string; id?: string }).kind === "project" &&
+      (args as { id?: string }).id === "lilia"
     );
     expect(projectGets).toHaveLength(1);
   });
 });
-

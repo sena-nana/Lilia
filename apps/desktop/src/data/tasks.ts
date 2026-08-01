@@ -1,25 +1,17 @@
 /**
- * 任务 + 孤儿对话 store：所有数据经 Tauri IPC 走 SQLite 持久化。
+ * 任务 + 孤儿对话 store：所有数据经生成契约的 Product Core facade 持久化。
  *
  * - OrphanConversation = `project_id IS NULL` 的 task，同一张表。
  * - 草稿（draft）留在前端内存，不落库；`promote` 后才 INSERT。
  */
-import { invoke } from "../tauri/runtime";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { ref } from "vue";
-import type { Task, TasksChangedEvent } from "@lilia/contracts";
-import {
-  TASK_ARCHIVE_COMMAND,
-  TASK_ARCHIVE_PROJECT_COMMAND,
-  TASK_GET_COMMAND,
-  TASK_LIST_COMMAND,
-  TASK_PROMOTE_COMMAND,
-  TASK_REORDER_COMMAND,
-  TASK_REPARENT_COMMAND,
-  TASK_TOGGLE_PIN_COMMAND,
-  TASK_UPDATE_DEPENDENCIES_COMMAND,
-} from "@lilia/contracts/taskCommandsContract.mjs";
-import { TASKS_CHANGED_EVENT_NAME } from "@lilia/contracts/taskEventsContract.mjs";
+import type {
+  ProductConversation,
+  ProductEvent,
+  ProductTask,
+  Task,
+} from "@lilia/contracts";
 import {
   ensureProjectsLoaded,
   listProjects,
@@ -27,6 +19,14 @@ import {
 } from "./projects";
 import { addDomEventListener } from "@lilia/ui/utils/eventListeners";
 import { singleFlight } from "@lilia/ui/utils/singleFlight";
+import {
+  createProductEntity,
+  getProductEntity,
+  listProductEntities,
+  newProductCommandMeta,
+  onProductEvent,
+  updateProductEntity,
+} from "../services/productCore";
 
 // OrphanConversation 形状沿用 Task 的子集，project_id 为 null。
 export interface OrphanConversation {
@@ -38,23 +38,6 @@ export interface OrphanConversation {
   parentId: string | null;
 }
 
-interface TaskRow {
-  id: string;
-  projectId: string | null;
-  sessionId: string;
-  title: string;
-  status: string;
-  createdAt: number;
-  parentId: string | null;
-  dependsOn: string[];
-  sortOrder: number;
-  pinned: boolean;
-}
-
-type TasksChangedPayload = TasksChangedEvent & {
-  project_id?: string | null;
-};
-
 export const TASKS = ref<Record<string, Task[]>>({});
 export const ORPHAN_LIST = ref<OrphanConversation[]>([]);
 export const PROJECT_TASKS_LOADED = ref<Record<string, boolean>>({});
@@ -62,10 +45,12 @@ export const ORPHANS_LOADED = ref(false);
 
 const DRAFT_TASKS = new Map<string, Task>();
 const DRAFT_ORPHANS = new Map<string, OrphanConversation>();
+const PRODUCT_TASKS = new Map<string, ProductTask>();
 const DRAFT_TASK_PROMOTIONS = new Map<string, Promise<void>>();
 const DRAFT_ORPHAN_PROMOTIONS = new Map<string, Promise<void>>();
 const projectTaskLoads = new Map<string, Promise<void>>();
-const taskRowLoads = new Map<string, Promise<TaskRow | null>>();
+const taskRowLoads = new Map<string, Promise<ProductTask | null>>();
+let productTaskSnapshotEpoch = 0;
 let orphanLoad: Promise<void> | null = null;
 let tasksChangedListenerInstalled = false;
 let tasksChangedListenerInstallPromise: Promise<void> | null = null;
@@ -86,14 +71,40 @@ function rememberDraftPromotion(
   return promotion;
 }
 
-function loadTaskRow(taskId: string): Promise<TaskRow | null> {
-  return singleFlight(taskRowLoads, taskId, () =>
-    invoke<TaskRow | null>(TASK_GET_COMMAND, { id: taskId })
-  );
+async function loadProductTasks(): Promise<ProductTask[]> {
+  for (;;) {
+    const epoch = productTaskSnapshotEpoch;
+    const entities = await listProductEntities("task");
+    const tasks = entities
+      .filter((entity): entity is Extract<typeof entity, { kind: "task" }> =>
+        entity.kind === "task"
+      )
+      .map((entity) => entity.value);
+    if (epoch !== productTaskSnapshotEpoch) continue;
+    PRODUCT_TASKS.clear();
+    for (const task of tasks) PRODUCT_TASKS.set(task.id, task);
+    return tasks;
+  }
+}
+
+function rememberProductTask(row: ProductTask): void {
+  productTaskSnapshotEpoch += 1;
+  PRODUCT_TASKS.set(row.id, row);
+}
+
+function loadTaskRow(taskId: string): Promise<ProductTask | null> {
+  return singleFlight(taskRowLoads, taskId, async () => {
+    const entity = await getProductEntity("task", taskId);
+    if (!entity || entity.kind !== "task" || entity.value.archived) return null;
+    rememberProductTask(entity.value);
+    return entity.value;
+  });
 }
 
 async function refreshTasks(projectId: string): Promise<void> {
-  const rows = await invoke<TaskRow[]>(TASK_LIST_COMMAND, { projectId });
+  const rows = (await loadProductTasks())
+    .filter((task) => !task.archived && task.projectId === projectId)
+    .sort(compareProductTasks);
   TASKS.value = {
     ...TASKS.value,
     [projectId]: rows.map(rowToTask),
@@ -105,16 +116,25 @@ async function refreshTasks(projectId: string): Promise<void> {
 }
 
 async function refreshOrphans(): Promise<void> {
-  const rows = await invoke<TaskRow[]>(TASK_LIST_COMMAND, { projectId: null });
+  const rows = (await loadProductTasks())
+    .filter((task) => !task.archived && task.projectId === null)
+    .sort(compareProductTasks);
   ORPHAN_LIST.value = rows.map(rowToOrphan);
   ORPHANS_LOADED.value = true;
 }
 
-function rowToTask(r: TaskRow): Task {
+function compareProductTasks(left: ProductTask, right: ProductTask): number {
+  return Number(right.pinned) - Number(left.pinned) ||
+    left.sortOrder - right.sortOrder ||
+    right.createdAt - left.createdAt ||
+    left.id.localeCompare(right.id);
+}
+
+function rowToTask(r: ProductTask): Task {
   return {
     id: r.id,
     projectId: r.projectId ?? "",
-    sessionId: r.sessionId,
+    sessionId: r.id,
     title: r.title,
     status: r.status as Task["status"],
     createdAt: r.createdAt,
@@ -124,10 +144,10 @@ function rowToTask(r: TaskRow): Task {
   };
 }
 
-function rowToOrphan(r: TaskRow): OrphanConversation {
+function rowToOrphan(r: ProductTask): OrphanConversation {
   return {
     id: r.id,
-    sessionId: r.sessionId,
+    sessionId: r.id,
     title: r.title,
     createdAt: r.createdAt,
     pinned: r.pinned,
@@ -135,7 +155,8 @@ function rowToOrphan(r: TaskRow): OrphanConversation {
   };
 }
 
-function upsertTaskRow(row: TaskRow): Task | OrphanConversation {
+function upsertTaskRow(row: ProductTask): Task | OrphanConversation {
+  rememberProductTask(row);
   if (row.projectId) {
     const task = rowToTask(row);
     const existing = TASKS.value[row.projectId] ?? [];
@@ -172,6 +193,26 @@ function upsertTaskRow(row: TaskRow): Task | OrphanConversation {
     }
   }
   return orphan;
+}
+
+async function updateTaskConversations(
+  taskId: string,
+  update: (conversation: ProductConversation) => ProductConversation,
+  action: string,
+): Promise<void> {
+  const entities = await listProductEntities("conversation");
+  for (const entity of entities) {
+    if (entity.kind !== "conversation" || entity.value.taskId !== taskId) continue;
+    const candidate = update(entity.value);
+    const result = await updateProductEntity(
+      newProductCommandMeta(action, entity.value.revision),
+      { kind: "conversation", value: candidate },
+      action,
+    );
+    if (result.value.kind !== "conversation") {
+      throw new Error("Product Core 返回了错误的对话实体。");
+    }
+  }
 }
 
 export function isProjectTasksLoaded(projectId: string): boolean {
@@ -212,22 +253,14 @@ export async function ensureAllProjectTasksLoaded(): Promise<void> {
   await Promise.all(projs.map((p) => ensureProjectTasksLoaded(p.id)));
 }
 
-function readChangedProjectId(payload: TasksChangedPayload): string | null {
-  const value = payload.projectId ?? payload.project_id ?? null;
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-async function refreshChangedTasks(payload: TasksChangedPayload) {
-  const projectId = readChangedProjectId(payload);
-  if (projectId) {
-    if (isProjectTasksLoaded(projectId)) {
-      await ensureProjectTasksLoaded(projectId, true);
-    }
-  } else {
-    if (areOrphansLoaded()) {
-      await ensureOrphansLoaded(true);
-    }
-  }
+async function refreshChangedTasks(event: ProductEvent) {
+  if (event.entity !== "task") return;
+  const loadedProjects = Object.keys(PROJECT_TASKS_LOADED.value)
+    .filter((projectId) => isProjectTasksLoaded(projectId));
+  await Promise.all([
+    ...loadedProjects.map((projectId) => ensureProjectTasksLoaded(projectId, true)),
+    ...(areOrphansLoaded() ? [ensureOrphansLoaded(true)] : []),
+  ]);
 }
 
 export function installTasksChangedListener(options: { force?: boolean } = {}) {
@@ -235,8 +268,8 @@ export function installTasksChangedListener(options: { force?: boolean } = {}) {
     disposeTasksChangedListener();
   }
   if (tasksChangedListenerInstalled || tasksChangedListenerInstallPromise) return;
-  tasksChangedListenerInstallPromise = listen<TasksChangedPayload>(TASKS_CHANGED_EVENT_NAME, (event) => {
-    void refreshChangedTasks(event.payload);
+  tasksChangedListenerInstallPromise = onProductEvent((event) => {
+    void refreshChangedTasks(event);
   })
     .then((unlisten) => {
       tasksChangedListenerUnlisten = unlisten;
@@ -244,7 +277,7 @@ export function installTasksChangedListener(options: { force?: boolean } = {}) {
       installTasksChangedBeforeUnloadCleanup();
     })
     .catch((err) => {
-      console.error(`[tasks] listen ${TASKS_CHANGED_EVENT_NAME} failed`, err);
+      console.error("[tasks] listen product-event failed", err);
     })
     .finally(() => {
       tasksChangedListenerInstallPromise = null;
@@ -359,13 +392,69 @@ export async function promoteDraftTask(id: string, title: string): Promise<void>
   const draft = DRAFT_TASKS.get(id);
   if (!draft) return DRAFT_TASK_PROMOTIONS.get(id);
   return rememberDraftPromotion(DRAFT_TASK_PROMOTIONS, id, async () => {
-    const row = await invoke<TaskRow>(TASK_PROMOTE_COMMAND, {
+    const now = Date.now();
+    const productTask: ProductTask = {
       id,
       projectId: draft.projectId,
       title: title || draft.title,
-      parentId: draft.parentId,
+      description: null,
+      status: "waiting",
+      priority: "normal",
+      assignmentId: null,
+      completionCriteria: [],
+      milestoneId: null,
+      workflowId: null,
+      agentProfileId: null,
+      blockedReason: null,
       dependsOn: draft.dependsOn,
-    });
+      parentId: draft.parentId,
+      pinned: draft.pinned,
+      sortOrder: 0,
+      archived: false,
+      tags: [],
+      createdAt: draft.createdAt,
+      updatedAt: now,
+      revision: 1,
+      legacySource: null,
+    };
+    const taskResult = await createProductEntity(
+      {
+        commandId: `promote-task-${id}`,
+        idempotencyKey: `promote-task-${id}`,
+        expectedRevision: null,
+      },
+      { kind: "task", value: productTask },
+      "promoted",
+    );
+    if (taskResult.value.kind !== "task") throw new Error("Product Core 返回了错误的任务实体。");
+    const conversation: ProductConversation = {
+      id,
+      projectId: draft.projectId,
+      taskId: id,
+      title: productTask.title,
+      status: "active",
+      archived: false,
+      labels: [],
+      bindingIds: [],
+      forkedFrom: null,
+      migratedFrom: null,
+      legacySource: null,
+      timelineCursor: 0,
+      createdAt: draft.createdAt,
+      updatedAt: now,
+      revision: 1,
+    };
+    await createProductEntity(
+      {
+        commandId: `promote-conversation-${id}`,
+        idempotencyKey: `promote-conversation-${id}`,
+        expectedRevision: null,
+      },
+      { kind: "conversation", value: conversation },
+      "created",
+    );
+    const row = taskResult.value.value;
+    rememberProductTask(row);
     const task = rowToTask(row);
     const existing = TASKS.value[draft.projectId] ?? [];
     if (!existing.some((t) => t.id === id)) {
@@ -379,8 +468,28 @@ export async function promoteDraftTask(id: string, title: string): Promise<void>
 }
 
 export async function archiveTask(taskId: string): Promise<boolean> {
-  const ok = await invoke<boolean>(TASK_ARCHIVE_COMMAND, { id: taskId });
-  if (!ok) return false;
+  const current = await loadTaskRow(taskId);
+  if (!current || current.archived) return false;
+  await updateTaskConversations(
+    taskId,
+    (conversation) => ({
+      ...conversation,
+      archived: true,
+      status: "closed",
+      updatedAt: Date.now(),
+    }),
+    "archived",
+  );
+  const result = await updateProductEntity(
+    newProductCommandMeta("archive-task", current.revision),
+    {
+      kind: "task",
+      value: { ...current, archived: true, updatedAt: Date.now() },
+    },
+    "archived",
+  );
+  if (result.value.kind !== "task") throw new Error("Product Core 返回了错误的任务实体。");
+  rememberProductTask(result.value.value);
   removeArchivedTaskFromLists(taskId);
   return true;
 }
@@ -399,7 +508,30 @@ export function removeArchivedTaskFromLists(taskId: string): void {
 }
 
 export async function archiveProjectConversations(projectId: string): Promise<number> {
-  const dbCount = await invoke<number>(TASK_ARCHIVE_PROJECT_COMMAND, { projectId });
+  await loadProductTasks();
+  const tasks = [...PRODUCT_TASKS.values()]
+    .filter((task) => task.projectId === projectId && !task.archived);
+  for (const task of tasks) {
+    await updateTaskConversations(
+      task.id,
+      (conversation) => ({
+        ...conversation,
+        archived: true,
+        status: "closed",
+        updatedAt: Date.now(),
+      }),
+      "archived",
+    );
+    const result = await updateProductEntity(
+      newProductCommandMeta("archive-project-task", task.revision),
+      {
+        kind: "task",
+        value: { ...task, archived: true, updatedAt: Date.now() },
+      },
+      "archived",
+    );
+    if (result.value.kind === "task") rememberProductTask(result.value.value);
+  }
   const next = { ...TASKS.value };
   delete next[projectId];
   TASKS.value = next;
@@ -410,11 +542,23 @@ export async function archiveProjectConversations(projectId: string): Promise<nu
       draftCleared += 1;
     }
   }
-  return dbCount + draftCleared;
+  return tasks.length + draftCleared;
 }
 
 export async function toggleTaskPin(taskId: string): Promise<boolean> {
-  const pinned = await invoke<boolean>(TASK_TOGGLE_PIN_COMMAND, { id: taskId });
+  const current = await loadTaskRow(taskId);
+  if (!current || current.archived) return false;
+  const result = await updateProductEntity(
+    newProductCommandMeta("toggle-task-pin", current.revision),
+    {
+      kind: "task",
+      value: { ...current, pinned: !current.pinned, updatedAt: Date.now() },
+    },
+    "pin_changed",
+  );
+  if (result.value.kind !== "task") throw new Error("Product Core 返回了错误的任务实体。");
+  const pinned = result.value.value.pinned;
+  rememberProductTask(result.value.value);
   for (const [pid, list] of Object.entries(TASKS.value)) {
     if (list.some((t) => t.id === taskId)) {
       await refreshTasks(pid);
@@ -477,18 +621,76 @@ export async function promoteDraftOrphan(id: string, title: string): Promise<voi
   const draft = DRAFT_ORPHANS.get(id);
   if (!draft) return DRAFT_ORPHAN_PROMOTIONS.get(id);
   return rememberDraftPromotion(DRAFT_ORPHAN_PROMOTIONS, id, async () => {
-    const row = await invoke<TaskRow>(TASK_PROMOTE_COMMAND, {
+    const now = Date.now();
+    const productTask: ProductTask = {
       id,
       projectId: null,
       title: title || draft.title,
-      parentId: draft.parentId,
+      description: null,
+      status: "waiting",
+      priority: "normal",
+      assignmentId: null,
+      completionCriteria: [],
+      milestoneId: null,
+      workflowId: null,
+      agentProfileId: null,
+      blockedReason: null,
       dependsOn: [],
-    });
+      parentId: draft.parentId,
+      pinned: draft.pinned,
+      sortOrder: 0,
+      archived: false,
+      tags: [],
+      createdAt: draft.createdAt,
+      updatedAt: now,
+      revision: 1,
+      legacySource: null,
+    };
+    const taskResult = await createProductEntity(
+      {
+        commandId: `promote-task-${id}`,
+        idempotencyKey: `promote-task-${id}`,
+        expectedRevision: null,
+      },
+      { kind: "task", value: productTask },
+      "promoted",
+    );
+    if (taskResult.value.kind !== "task") throw new Error("Product Core 返回了错误的任务实体。");
+    await createProductEntity(
+      {
+        commandId: `promote-conversation-${id}`,
+        idempotencyKey: `promote-conversation-${id}`,
+        expectedRevision: null,
+      },
+      {
+        kind: "conversation",
+        value: {
+          id,
+          projectId: null,
+          taskId: id,
+          title: productTask.title,
+          status: "active",
+          archived: false,
+          labels: [],
+          bindingIds: [],
+          forkedFrom: null,
+          migratedFrom: null,
+          legacySource: null,
+          timelineCursor: 0,
+          createdAt: draft.createdAt,
+          updatedAt: now,
+          revision: 1,
+        },
+      },
+      "created",
+    );
+    const row = taskResult.value.value;
+    rememberProductTask(row);
     if (!ORPHAN_LIST.value.some((o) => o.id === id)) {
       ORPHAN_LIST.value = [
         {
           id: row.id,
-          sessionId: row.sessionId,
+          sessionId: row.id,
           title: row.title,
           createdAt: row.createdAt,
           pinned: row.pinned,
@@ -505,7 +707,20 @@ export async function reorderTasks(
   projectId: string | null,
   orderedIds: string[],
 ): Promise<void> {
-  await invoke(TASK_REORDER_COMMAND, { projectId, orderedIds });
+  await loadProductTasks();
+  for (const [sortOrder, id] of orderedIds.entries()) {
+    const current = PRODUCT_TASKS.get(id);
+    if (!current || current.projectId !== projectId || current.sortOrder === sortOrder) continue;
+    const result = await updateProductEntity(
+      newProductCommandMeta("reorder-task", current.revision),
+      {
+        kind: "task",
+        value: { ...current, sortOrder, updatedAt: Date.now() },
+      },
+      "reordered",
+    );
+    if (result.value.kind === "task") rememberProductTask(result.value.value);
+  }
   if (projectId) {
     const list = TASKS.value[projectId] ?? [];
     const byId = new Map(list.map((t) => [t.id, t]));
@@ -527,11 +742,32 @@ export async function reparentTask(
   targetProjectId: string | null,
   targetParentId: string | null = null,
 ): Promise<void> {
-  await invoke(TASK_REPARENT_COMMAND, {
+  const current = await loadTaskRow(taskId);
+  if (!current) return;
+  await updateTaskConversations(
     taskId,
-    newProjectId: targetProjectId,
-    newParentId: targetParentId,
-  });
+    (conversation) => ({
+      ...conversation,
+      projectId: targetProjectId,
+      updatedAt: Date.now(),
+    }),
+    "reparented",
+  );
+  const result = await updateProductEntity(
+    newProductCommandMeta("reparent-task", current.revision),
+    {
+      kind: "task",
+      value: {
+        ...current,
+        projectId: targetProjectId,
+        parentId: targetParentId,
+        updatedAt: Date.now(),
+      },
+    },
+    "reparented",
+  );
+  if (result.value.kind !== "task") throw new Error("Product Core 返回了错误的任务实体。");
+  rememberProductTask(result.value.value);
   if (sourceProjectId) {
     const list = TASKS.value[sourceProjectId] ?? [];
     TASKS.value = {
@@ -541,11 +777,7 @@ export async function reparentTask(
   } else {
     ORPHAN_LIST.value = ORPHAN_LIST.value.filter((o) => o.id !== taskId);
   }
-  if (targetProjectId) {
-    await refreshTasks(targetProjectId);
-  } else {
-    await refreshOrphans();
-  }
+  upsertTaskRow(result.value.value);
 }
 
 export async function updateTaskDependencies(
@@ -553,7 +785,18 @@ export async function updateTaskDependencies(
   projectId: string | null,
   dependsOn: string[],
 ): Promise<void> {
-  const row = await invoke<TaskRow>(TASK_UPDATE_DEPENDENCIES_COMMAND, { id: taskId, dependsOn });
+  const current = await loadTaskRow(taskId);
+  if (!current) return;
+  const result = await updateProductEntity(
+    newProductCommandMeta("update-task-dependencies", current.revision),
+    {
+      kind: "task",
+      value: { ...current, dependsOn, updatedAt: Date.now() },
+    },
+    "dependencies_updated",
+  );
+  if (result.value.kind !== "task") throw new Error("Product Core 返回了错误的任务实体。");
+  const row = result.value.value;
   upsertTaskRow(row);
   if (projectId && row.projectId !== projectId) {
     await refreshTasks(projectId);

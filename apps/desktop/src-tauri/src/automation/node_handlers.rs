@@ -15,7 +15,6 @@ use crate::chat::state::{
 use crate::chat::timeline_sink::{persist_and_emit_input, persist_and_emit_message_timeline_event};
 use crate::chat::types::{ChatComposerState, ChatMessage, ChatSendResult, ChatWorkflow};
 use crate::provider::normalize_permission_mode;
-use crate::store::LiliaStore;
 use crate::task_contract;
 use crate::todos::contract as todo_contract;
 use crate::util::now_millis;
@@ -445,7 +444,10 @@ fn execute_agent_node<R: Runtime>(
         .map(str::trim)
         .filter(|value| !value.is_empty());
     if let Some(backend) = configured {
-        if matches!(backend, "claude" | "codex" | "node" | "node-agent-runner" | "agent-runner") {
+        if matches!(
+            backend,
+            "claude" | "codex" | "node" | "node-agent-runner" | "agent-runner"
+        ) {
             return Err(format!(
                 "Automation Agent 节点禁止直调品牌后端 `{backend}`；须走 AgentKit/Native（backend=native-agentkit）"
             ));
@@ -508,7 +510,6 @@ fn create_agent_target_task<R: Runtime>(
     node: &AutomationNode,
     input: &JsonValue,
 ) -> Result<String, String> {
-    let conn = app.state::<LiliaStore>().conn()?;
     let id = Uuid::new_v4().to_string();
     let title = render_template(
         node.config
@@ -519,29 +520,15 @@ fn create_agent_target_task<R: Runtime>(
     );
     let project_id = optional_rendered_string(node.config.get("projectId"), input)
         .or_else(|| run.trigger.project_id.clone());
-    let now = now_millis();
-    let sort_order: i64 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM tasks WHERE project_id IS ?1",
-            params![project_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("automation agent create_task: sort_order 失败：{e}"))?;
-    conn.execute(
-        r#"INSERT INTO tasks
-           (id, project_id, session_id, title, title_source, status, created_at, parent_id, archived, sort_order, pinned)
-           VALUES (?1, ?2, ?3, ?4, 'auto', ?5, ?6, NULL, 0, ?7, 0)"#,
-        params![
-            id,
-            project_id,
-            id,
-            title,
-            contract::running_task_status(),
-            now,
-            sort_order
-        ],
-    )
-    .map_err(|e| format!("automation agent create_task: insert 失败：{e}"))?;
+    let task_id = lilia_contracts::TaskId::new(id.clone()).map_err(|error| error.to_string())?;
+    let product_project_id = project_id
+        .as_deref()
+        .map(lilia_contracts::ProjectId::new)
+        .transpose()
+        .map_err(|error| error.to_string())?;
+    app.state::<crate::product_core::EmbeddedProductCore>()
+        .create_task_with_conversation(task_id, product_project_id, &title)
+        .map_err(|error| format!("automation agent create product task: {error}"))?;
     let _ = app.emit(
         task_contract::tasks_changed_event_name(),
         task_contract::tasks_changed_event_payload(project_id.as_deref()),
@@ -760,10 +747,12 @@ mod tests {
     fn automation_agent_refuses_brand_backends_for_new_tasks() {
         let previous = std::env::var("LILIA_AGENT_EXECUTION_BACKEND").ok();
         std::env::remove_var("LILIA_AGENT_EXECUTION_BACKEND");
-        assert!(crate::native_agent::require_native_for_automation_or_multi_agent(
-            "Automation Agent 节点"
-        )
-        .is_ok());
+        assert!(
+            crate::native_agent::require_native_for_automation_or_multi_agent(
+                "Automation Agent 节点"
+            )
+            .is_ok()
+        );
 
         for brand in ["claude", "codex", "node", "node-agent-runner"] {
             let err = format!(
@@ -774,11 +763,22 @@ mod tests {
         }
 
         std::env::set_var("LILIA_AGENT_EXECUTION_BACKEND", "node");
-        let err = crate::native_agent::require_native_for_automation_or_multi_agent(
-            "Automation 多 Agent 路径",
-        )
-        .unwrap_err();
-        assert!(err.contains("不得直调"));
+        #[cfg(feature = "legacy-runner")]
+        {
+            let err = crate::native_agent::require_native_for_automation_or_multi_agent(
+                "Automation 多 Agent 路径",
+            )
+            .unwrap_err();
+            assert!(err.contains("不得直调"));
+        }
+        #[cfg(not(feature = "legacy-runner"))]
+        assert!(
+            crate::native_agent::require_native_for_automation_or_multi_agent(
+                "Automation 多 Agent 路径"
+            )
+            .is_ok(),
+            "default builds ignore the unavailable legacy backend and remain Native"
+        );
         match previous {
             Some(value) => std::env::set_var("LILIA_AGENT_EXECUTION_BACKEND", value),
             None => std::env::remove_var("LILIA_AGENT_EXECUTION_BACKEND"),

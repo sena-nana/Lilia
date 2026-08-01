@@ -7,6 +7,7 @@ import {
   type IconInput,
   type LiliaUiConfig,
 } from "@lilia/ui/shell";
+import KeyRound from "@lucide/vue/dist/esm/icons/key-round.mjs";
 import desktopPackage from "../package.json";
 
 type AppSettingsTab = Omit<LiliaSettingsTabInput, "icon"> & { icon: IconInput };
@@ -15,12 +16,11 @@ const settingsTabs = [
   { key: "appearance", label: "外观", icon: "palette" },
   { key: "window", label: "窗口", icon: "panel-top" },
   { key: "providers", label: "连接", icon: "network" },
-  { key: "credentials", label: "凭据", icon: "key-round" },
+  { key: "credentials", label: "凭据", icon: KeyRound },
   { key: "remote-control", label: "Android 远控", icon: "monitor-smartphone" },
   { key: "assistant", label: "Provider 配置", icon: "sparkles" },
   { key: "model-config", label: "模型配置", icon: "brain" },
   { key: "agent", label: "Agent", icon: "bot" },
-  { key: "shared-services", label: "共享 Services", icon: "server" },
   { key: "quota", label: "额度", icon: "gauge" },
   { key: "plugin-skills", label: "技能", icon: "sparkles", props: { section: "skills" } },
   { key: "plugin-packages", label: "插件", icon: "puzzle", props: { section: "packages" } },
@@ -58,7 +58,6 @@ export const settingsModel = createLiliaSettingsModel({
     assistant: () => import("./pages/settings/AssistantAISection.vue"),
     "model-config": () => import("./pages/settings/ModelConfigurationSection.vue"),
     agent: () => import("./pages/settings/AgentInteractionSection.vue"),
-    "shared-services": () => import("./pages/settings/NativeSharedServicesSection.vue"),
     quota: () => import("./pages/settings/QuotaUsageSection.vue"),
     "plugin-skills": () => import("./pages/Plugins.vue"),
     "plugin-packages": () => import("./pages/Plugins.vue"),

@@ -8,7 +8,7 @@ use std::io::{self, BufRead, Write};
 use lilia_editor_compat::{handle_request, EditorCompatHost, HostRequest};
 
 fn main() {
-    let host = EditorCompatHost::new();
+    let host = EditorCompatHost::from_environment().map_err(|error| error.to_string());
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     for line in stdin.lock().lines() {
@@ -27,7 +27,10 @@ fn main() {
             continue;
         }
         let response = match serde_json::from_str::<HostRequest>(&line) {
-            Ok(request) => handle_request(&host, request),
+            Ok(request) => match &host {
+                Ok(host) => handle_request(host, request),
+                Err(error) => lilia_editor_compat::HostResponse::error(error.clone()),
+            },
             Err(err) => lilia_editor_compat::HostResponse {
                 ok: false,
                 status: None,

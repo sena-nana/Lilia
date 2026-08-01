@@ -44,10 +44,7 @@ fn preview_claude_mcp(paths: &LiliaDataPaths, out: &mut Vec<CompatAssetPreview>)
             kind: "mcp".into(),
             id: "claude:config".into(),
             disposition: "report_only".into(),
-            reason: format!(
-                "no Claude MCP config at {}; nothing to map",
-                file.display()
-            ),
+            reason: format!("no Claude MCP config at {}; nothing to map", file.display()),
         });
         return;
     }
@@ -182,7 +179,9 @@ fn preview_claude_skills(home: Option<&Path>, out: &mut Vec<CompatAssetPreview>)
             kind: "skill".into(),
             id: format!("claude:{name}"),
             disposition: "map_to_agentkit".into(),
-            reason: "Claude skill directory can import into AgentKit Skills registry / Profile binding".into(),
+            reason:
+                "Claude skill directory can import into AgentKit Skills registry / Profile binding"
+                    .into(),
         });
     }
     if found == 0 {
@@ -258,7 +257,8 @@ fn preview_credential_env_presence(out: &mut Vec<CompatAssetPreview>) {
         kind: "credential".into(),
         id: "subscription:cli-refresh-cookie".into(),
         disposition: "skip".into(),
-        reason: "CLI private refresh tokens / cookies / subscription credentials are not imported".into(),
+        reason: "CLI private refresh tokens / cookies / subscription credentials are not imported"
+            .into(),
     });
 }
 
@@ -272,7 +272,9 @@ fn preview_unsupported_hooks(home: Option<&Path>, out: &mut Vec<CompatAssetPrevi
             kind: "hook".into(),
             id: "claude:settings-hooks".into(),
             disposition: "skip".into(),
-            reason: "Claude hooks / managed settings are not migrated into AgentKit public contract".into(),
+            reason:
+                "Claude hooks / managed settings are not migrated into AgentKit public contract"
+                    .into(),
         });
     }
     let plugins = home.join(".claude").join("plugins");
@@ -301,7 +303,9 @@ mod tests {
         let assets = preview_compat_assets(&paths);
         let blob = serde_json::to_string(&assets).unwrap();
         assert!(!blob.contains("sk-should-never-appear-in-report"));
-        assert!(assets.iter().any(|a| a.kind == "credential" && a.id == "openai-api-key"));
+        assert!(assets
+            .iter()
+            .any(|a| a.kind == "credential" && a.id == "openai-api-key"));
         match previous {
             Some(v) => std::env::set_var("OPENAI_API_KEY", v),
             None => std::env::remove_var("OPENAI_API_KEY"),

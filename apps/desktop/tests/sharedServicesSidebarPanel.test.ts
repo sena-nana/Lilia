@@ -2,9 +2,11 @@ import { fireEvent, render, waitFor } from "@testing-library/vue";
 import { describe, expect, it } from "vitest";
 import SharedServicesSidebarPanel from "../src/components/chat/SharedServicesSidebarPanel.vue";
 import {
+  NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND,
   NATIVE_SHARED_CODING_SERVICES_STATUS_COMMAND,
   NATIVE_SHARED_GIT_STATUS_COMMAND,
   NATIVE_SHARED_MEMORY_WRITE_COMMAND,
+  NATIVE_SHARED_WORKSPACE_LIST_COMMAND,
 } from "../src/services/nativeAgent";
 import { mockInvoke } from "./tauriMock";
 
@@ -22,15 +24,8 @@ describe("SharedServicesSidebarPanel", () => {
       expect(
         mockInvoke.mock.calls.some(([cmd]) => cmd === NATIVE_SHARED_CODING_SERVICES_STATUS_COMMAND),
       ).toBe(true);
-      expect(
-        view.container.querySelector('[data-agent-id="chat.shared-services.source"]')?.textContent,
-      ).toContain("agentkit.native_coding_bundle");
+      expect(view.getByText("已连接")).toBeInTheDocument();
     });
-
-    const pathInput = view.container.querySelector(
-      '[data-agent-id="chat.shared-services.git.path"]',
-    ) as HTMLInputElement;
-    expect(pathInput.value).toBe("/tmp/lilia-demo-repo");
 
     await fireEvent.click(
       view.container.querySelector(
@@ -46,9 +41,57 @@ describe("SharedServicesSidebarPanel", () => {
             (args as { path?: string }).path === "/tmp/lilia-demo-repo",
         ),
       ).toBe(true);
+      expect(view.getByText("main · 工作区干净")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(
+      view.container.querySelector(
+        '[data-agent-id="chat.shared-services.tab.files"]',
+      ) as HTMLButtonElement,
+    );
+    await fireEvent.click(
+      view.container.querySelector(
+        '[data-agent-id="chat.shared-services.files.list"]',
+      ) as HTMLButtonElement,
+    );
+    await waitFor(() => {
       expect(
-        view.container.querySelector('[data-agent-id="chat.shared-services.result"]')?.textContent,
-      ).toContain('"kind": "status"');
+        mockInvoke.mock.calls.some(
+          ([cmd, args]) =>
+            cmd === NATIVE_SHARED_WORKSPACE_LIST_COMMAND &&
+            (args as { root?: string }).root === "/tmp/lilia-demo-repo",
+        ),
+      ).toBe(true);
+      expect(view.getByText("Cargo.toml")).toBeInTheDocument();
+    });
+
+    await fireEvent.click(
+      view.container.querySelector(
+        '[data-agent-id="chat.shared-services.tab.index"]',
+      ) as HTMLButtonElement,
+    );
+    await fireEvent.update(
+      view.container.querySelector(
+        '[data-agent-id="chat.shared-services.index.query"]',
+      ) as HTMLInputElement,
+      "NativeRuntimeBootstrap",
+    );
+    await fireEvent.click(
+      view.container.querySelector(
+        '[data-agent-id="chat.shared-services.index.search"]',
+      ) as HTMLButtonElement,
+    );
+    await waitFor(() => {
+      const call = mockInvoke.mock.calls.find(
+        ([cmd]) => cmd === NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND,
+      );
+      expect(call?.[1]).toMatchObject({
+        workspaceId: "project-1",
+        root: "/tmp/lilia-demo-repo",
+        query: "NativeRuntimeBootstrap",
+      });
+      expect(call?.[1]).not.toHaveProperty("content");
+      expect(view.getByText("src/main.rs")).toBeInTheDocument();
     });
 
     await fireEvent.click(
@@ -74,9 +117,6 @@ describe("SharedServicesSidebarPanel", () => {
             (args as { text?: string }).text === "sidebar memory probe",
         ),
       ).toBe(true);
-      expect(
-        view.container.querySelector('[data-agent-id="chat.shared-services.result"]')?.textContent,
-      ).toContain("mock-memory-1");
     });
   });
 });

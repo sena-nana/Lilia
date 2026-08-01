@@ -447,6 +447,7 @@ mod tests {
         let codex_turn = RunningTurn {
             turn_id: "turn-1".to_string(),
             backend: BACKEND_CODEX.to_string(),
+            native_approval_pause: None,
         };
         let claude_turn = RunningTurn {
             backend: "claude".to_string(),

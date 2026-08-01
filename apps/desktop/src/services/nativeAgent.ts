@@ -3,25 +3,60 @@
  * 命令名与 Rust `native_agent` 模块对齐；secret 仅经 login/import 边界传入，不落前端状态。
  */
 
+import {
+  NATIVE_AGENT_HOST_STATUS_COMMAND,
+  NATIVE_CREDENTIAL_DIAGNOSTICS_COMMAND,
+  NATIVE_CREDENTIAL_IMPORT_COMMAND,
+  NATIVE_CREDENTIAL_LOGIN_COMMAND,
+  NATIVE_CREDENTIAL_PROVIDERS_COMMAND,
+  NATIVE_CREDENTIAL_REVOKE_COMMAND,
+  NATIVE_PRODUCT_ARTIFACTS_COMMAND,
+  NATIVE_PRODUCT_PENDING_COMMAND,
+  NATIVE_PRODUCT_TIMELINE_COMMAND,
+  NATIVE_PRODUCT_TODOS_COMMAND,
+  NATIVE_QUOTA_SURFACE_COMMAND,
+  NATIVE_REBUILD_PRODUCT_TIMELINE_COMMAND,
+  NATIVE_REBUILD_UI_TIMELINE_CACHE_COMMAND,
+  NATIVE_RESPOND_APPROVAL_COMMAND,
+  NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND,
+  NATIVE_SHARED_CODING_SERVICES_STATUS_COMMAND,
+  NATIVE_SHARED_GIT_STATUS_COMMAND,
+  NATIVE_SHARED_LSP_OPEN_WORKSPACE_COMMAND,
+  NATIVE_SHARED_LSP_STATUS_COMMAND,
+  NATIVE_SHARED_MCP_LIST_SERVERS_COMMAND,
+  NATIVE_SHARED_MEMORY_QUERY_COMMAND,
+  NATIVE_SHARED_MEMORY_WRITE_COMMAND,
+  NATIVE_SHARED_WORKSPACE_LIST_COMMAND,
+  PRODUCT_CORE_STATUS_COMMAND,
+} from "@lilia/contracts";
 import { invoke } from "../tauri/runtime";
 
-export const NATIVE_AGENT_HOST_STATUS_COMMAND = "native_agent_host_status";
-export const NATIVE_CREDENTIAL_PROVIDERS_COMMAND = "native_credential_providers";
-export const NATIVE_CREDENTIAL_LOGIN_COMMAND = "native_credential_login";
-export const NATIVE_CREDENTIAL_IMPORT_COMMAND = "native_credential_import";
-export const NATIVE_CREDENTIAL_REVOKE_COMMAND = "native_credential_revoke";
-export const NATIVE_CREDENTIAL_DIAGNOSTICS_COMMAND = "native_credential_diagnostics";
-export const NATIVE_QUOTA_SURFACE_COMMAND = "native_quota_surface";
-export const NATIVE_RESPOND_APPROVAL_COMMAND = "native_respond_approval";
-export const NATIVE_PRODUCT_TIMELINE_COMMAND = "native_product_timeline";
-export const NATIVE_SHARED_CODING_SERVICES_STATUS_COMMAND =
-  "native_shared_coding_services_status";
-export const NATIVE_SHARED_MCP_LIST_SERVERS_COMMAND = "native_shared_mcp_list_servers";
-export const NATIVE_SHARED_LSP_STATUS_COMMAND = "native_shared_lsp_status";
-export const NATIVE_SHARED_MEMORY_QUERY_COMMAND = "native_shared_memory_query";
-export const NATIVE_SHARED_MEMORY_WRITE_COMMAND = "native_shared_memory_write";
-export const NATIVE_SHARED_GIT_STATUS_COMMAND = "native_shared_git_status";
-export const NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND = "native_shared_code_index_search";
+export {
+  NATIVE_AGENT_HOST_STATUS_COMMAND,
+  NATIVE_CREDENTIAL_DIAGNOSTICS_COMMAND,
+  NATIVE_CREDENTIAL_IMPORT_COMMAND,
+  NATIVE_CREDENTIAL_LOGIN_COMMAND,
+  NATIVE_CREDENTIAL_PROVIDERS_COMMAND,
+  NATIVE_CREDENTIAL_REVOKE_COMMAND,
+  NATIVE_PRODUCT_ARTIFACTS_COMMAND,
+  NATIVE_PRODUCT_PENDING_COMMAND,
+  NATIVE_PRODUCT_TIMELINE_COMMAND,
+  NATIVE_PRODUCT_TODOS_COMMAND,
+  NATIVE_QUOTA_SURFACE_COMMAND,
+  NATIVE_REBUILD_PRODUCT_TIMELINE_COMMAND,
+  NATIVE_REBUILD_UI_TIMELINE_CACHE_COMMAND,
+  NATIVE_RESPOND_APPROVAL_COMMAND,
+  NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND,
+  NATIVE_SHARED_CODING_SERVICES_STATUS_COMMAND,
+  NATIVE_SHARED_GIT_STATUS_COMMAND,
+  NATIVE_SHARED_LSP_OPEN_WORKSPACE_COMMAND,
+  NATIVE_SHARED_LSP_STATUS_COMMAND,
+  NATIVE_SHARED_MCP_LIST_SERVERS_COMMAND,
+  NATIVE_SHARED_MEMORY_QUERY_COMMAND,
+  NATIVE_SHARED_MEMORY_WRITE_COMMAND,
+  NATIVE_SHARED_WORKSPACE_LIST_COMMAND,
+  PRODUCT_CORE_STATUS_COMMAND,
+};
 
 export type NativeCredentialKind = "api_key" | "oauth_grant" | "generated_api_key" | "cloud_identity";
 
@@ -227,6 +262,7 @@ export interface NativeSharedCodingServicesStatus {
   codeIndexSameInstance: boolean;
   lspSameInstance: boolean;
   mcpSameInstance: boolean;
+  computerUseSameInstance: boolean;
   memorySharedRouter: boolean;
   mcpActiveServers: number;
   lspActiveWorkspaces: number;
@@ -245,6 +281,7 @@ export function listNativeSharedMcpServers(): Promise<unknown[]> {
 export function getNativeSharedLspStatus(): Promise<{
   serviceId: string;
   activeWorkspaces: number;
+  workspaces: unknown[];
   dataSource: string;
   sameInstance: boolean;
 }> {
@@ -286,15 +323,30 @@ export function getNativeSharedGitStatus(path: string): Promise<unknown> {
 export function searchNativeSharedCodeIndex(input: {
   workspaceId: string;
   root: string;
-  relativePath: string;
-  content: string;
   query: string;
 }): Promise<unknown> {
   return invoke(NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND, {
     workspaceId: input.workspaceId,
     root: input.root,
-    relativePath: input.relativePath,
-    content: input.content,
     query: input.query,
   });
+}
+
+export function listNativeSharedWorkspace(input: {
+  workspaceId: string;
+  root: string;
+  path?: string;
+}): Promise<unknown> {
+  return invoke(NATIVE_SHARED_WORKSPACE_LIST_COMMAND, {
+    workspaceId: input.workspaceId,
+    root: input.root,
+    path: input.path ?? "",
+  });
+}
+
+export function openNativeSharedLspWorkspace(input: {
+  workspaceId: string;
+  root: string;
+}): Promise<unknown> {
+  return invoke(NATIVE_SHARED_LSP_OPEN_WORKSPACE_COMMAND, input);
 }

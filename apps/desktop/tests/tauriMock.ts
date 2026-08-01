@@ -183,9 +183,21 @@ import {
   type BackendEnvStatus,
   type ConnectionMode,
   type MilestoneStatus,
+  type ProductCommandMeta,
+  type ProductCommandResult,
+  type ProductEntity,
+  type ProductEvent,
   type ProjectTaskStatusCounts,
   type RouterMode,
 } from "@lilia/contracts";
+import {
+  PRODUCT_CREATE_ENTITY_COMMAND,
+  PRODUCT_EVENT_NAME,
+  PRODUCT_GET_ENTITY_COMMAND,
+  PRODUCT_LIST_ENTITIES_COMMAND,
+  PRODUCT_LIST_EVENTS_COMMAND,
+  PRODUCT_UPDATE_ENTITY_COMMAND,
+} from "@lilia/contracts/productCoreContract.mjs";
 import {
   TAURI_PLUGIN_DIALOG_OPEN_COMMAND,
   TAURI_PLUGIN_EVENT_LISTEN_COMMAND,
@@ -203,10 +215,12 @@ import {
   NATIVE_SHARED_CODING_SERVICES_STATUS_COMMAND,
   NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND,
   NATIVE_SHARED_GIT_STATUS_COMMAND,
+  NATIVE_SHARED_LSP_OPEN_WORKSPACE_COMMAND,
   NATIVE_SHARED_LSP_STATUS_COMMAND,
   NATIVE_SHARED_MCP_LIST_SERVERS_COMMAND,
   NATIVE_SHARED_MEMORY_QUERY_COMMAND,
   NATIVE_SHARED_MEMORY_WRITE_COMMAND,
+  NATIVE_SHARED_WORKSPACE_LIST_COMMAND,
   type NativeCredentialDescriptorView,
   type NativeIndependentDiagnostics,
   type NativeQuotaSurface,
@@ -558,6 +572,11 @@ const baseCodexThreads: CodexThreadRow[] = [
 
 let projects: ProjectRow[] = [];
 let tasks: TaskRow[] = [];
+let productProjectRevisions = new Map<string, number>();
+let productTaskRevisions = new Map<string, number>();
+let productConversations = new Map<string, Extract<ProductEntity, { kind: "conversation" }>["value"]>();
+let productCommandResults = new Map<string, ProductCommandResult<ProductEntity>>();
+let productEvents: ProductEvent[] = [];
 let milestones: MilestoneRow[] = [];
 let taskMilestoneLinks: TaskMilestoneLinkRow[] = [];
 let codexThreads: CodexThreadRow[] = [];
@@ -2068,6 +2087,30 @@ function mockSlashCommandOutput(command: MockSlashCommand, projectCwd: string, b
 export function resetTauriMockData() {
   projects = baseProjects.map(cloneProject);
   tasks = baseTasks.map(cloneTask);
+  productProjectRevisions = new Map(projects.map((project) => [project.id, 1]));
+  productTaskRevisions = new Map(tasks.map((task) => [task.id, 1]));
+  productConversations = new Map(tasks.map((task) => [
+    task.id,
+    {
+      id: task.id,
+      projectId: task.projectId,
+      taskId: task.id,
+      title: task.title,
+      status: "active" as const,
+      archived: task.archived === true,
+      labels: [],
+      bindingIds: [],
+      forkedFrom: null,
+      migratedFrom: null,
+      legacySource: null,
+      timelineCursor: 0,
+      createdAt: task.createdAt,
+      updatedAt: task.createdAt,
+      revision: 1,
+    },
+  ]));
+  productCommandResults = new Map();
+  productEvents = [];
   milestones = baseMilestones.map(cloneMilestone);
   taskMilestoneLinks = baseTaskMilestoneLinks.map(cloneTaskMilestoneLink);
   codexThreads = baseCodexThreads.map((thread) => ({ ...thread }));
@@ -2875,6 +2918,105 @@ export const mockListen = vi.fn(async (
   };
 });
 
+function cloneProductEntity<T extends ProductEntity>(entity: T): T {
+  return structuredClone(entity);
+}
+
+function productProjectEntity(project: ProjectRow): Extract<ProductEntity, { kind: "project" }> {
+  return {
+    kind: "project",
+    value: {
+      id: project.id,
+      name: project.name,
+      workspacePath: project.cwd,
+      pinned: project.pinned,
+      sortOrder: project.sortOrder,
+      archive: "active",
+      gitWorkspace: null,
+      settings: {
+        defaultAgentProfileId: null,
+        values: {},
+      },
+      assetIds: [],
+      revision: productProjectRevisions.get(project.id) ?? 1,
+    },
+  };
+}
+
+function productTaskEntity(task: TaskRow): Extract<ProductEntity, { kind: "task" }> {
+  return {
+    kind: "task",
+    value: {
+      id: task.id,
+      projectId: task.projectId,
+      title: task.title,
+      description: null,
+      status: task.status as Extract<ProductEntity, { kind: "task" }>["value"]["status"],
+      priority: "normal",
+      assignmentId: null,
+      completionCriteria: [],
+      milestoneId: null,
+      workflowId: null,
+      agentProfileId: null,
+      blockedReason: null,
+      dependsOn: [...task.dependsOn],
+      parentId: task.parentId,
+      pinned: task.pinned,
+      sortOrder: task.sortOrder,
+      archived: task.archived === true,
+      tags: [],
+      createdAt: task.createdAt,
+      updatedAt: task.createdAt,
+      revision: productTaskRevisions.get(task.id) ?? 1,
+      legacySource: null,
+    },
+  };
+}
+
+function listMockProductEntities(kind: string): ProductEntity[] {
+  if (kind === "project") return projects.map(productProjectEntity);
+  if (kind === "task") return tasks.map(productTaskEntity);
+  if (kind === "conversation") {
+    return [...productConversations.values()].map((value) => ({
+      kind: "conversation",
+      value: structuredClone(value),
+    }));
+  }
+  return [];
+}
+
+function finishMockProductCommand(
+  meta: ProductCommandMeta,
+  entity: ProductEntity,
+  action: string,
+): ProductCommandResult<ProductEntity> {
+  const existing = productCommandResults.get(meta.idempotencyKey);
+  if (existing) {
+    if (existing.commandId !== meta.commandId) {
+      throw new Error("idempotency key was already used by another command");
+    }
+    return { ...structuredClone(existing), duplicate: true };
+  }
+  const event: ProductEvent = {
+    sequence: productEvents.length + 1,
+    commandId: meta.commandId,
+    entity: entity.kind,
+    entityId: entity.kind === "binding" ? entity.value.bindingId : entity.value.id,
+    action,
+    revision: entity.value.revision,
+  };
+  productEvents.push(event);
+  const result: ProductCommandResult<ProductEntity> = {
+    commandId: meta.commandId,
+    eventSequence: event.sequence,
+    value: cloneProductEntity(entity),
+    duplicate: false,
+  };
+  productCommandResults.set(meta.idempotencyKey, structuredClone(result));
+  emitTauriEvent(PRODUCT_EVENT_NAME, structuredClone(event));
+  return result;
+}
+
 export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown> = {}) => {
   switch (cmd) {
     case APP_RESTART_COMMAND:
@@ -2882,6 +3024,157 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
 
     case TAURI_PLUGIN_DIALOG_OPEN_COMMAND:
       return mockPickedFolderPath;
+
+    case PRODUCT_LIST_ENTITIES_COMMAND:
+      return listMockProductEntities(String(args.kind));
+
+    case PRODUCT_GET_ENTITY_COMMAND: {
+      const kind = String(args.kind);
+      const id = String(args.id);
+      const entity = listMockProductEntities(kind).find((candidate) =>
+        (candidate.kind === "binding" ? candidate.value.bindingId : candidate.value.id) === id
+      );
+      return entity ? cloneProductEntity(entity) : null;
+    }
+
+    case PRODUCT_LIST_EVENTS_COMMAND: {
+      const request = args.request && typeof args.request === "object"
+        ? args.request as { after?: number | null; limit?: number }
+        : {};
+      const after = request.after ?? 0;
+      const limit = request.limit ?? 100;
+      const items = productEvents
+        .filter((event) => event.sequence > after)
+        .slice(0, limit)
+        .map((event) => structuredClone(event));
+      return {
+        items,
+        next: items.at(-1)?.sequence ?? null,
+      };
+    }
+
+    case PRODUCT_CREATE_ENTITY_COMMAND: {
+      const meta = args.meta as ProductCommandMeta;
+      const input = cloneProductEntity(args.entity as ProductEntity);
+      const existing = productCommandResults.get(meta.idempotencyKey);
+      if (existing) {
+        if (existing.commandId !== meta.commandId) {
+          throw new Error("idempotency key was already used by another command");
+        }
+        return { ...structuredClone(existing), duplicate: true };
+      }
+      if (input.kind === "project") {
+        if (projects.some((project) => project.id === input.value.id)) {
+          throw new Error(`project already exists: ${input.value.id}`);
+        }
+        projects.push({
+          id: input.value.id,
+          name: input.value.name,
+          cwd: input.value.workspacePath,
+          sessionCount: 0,
+          sortOrder: input.value.sortOrder,
+          pinned: input.value.pinned,
+        });
+        productProjectRevisions.set(input.value.id, input.value.revision);
+      } else if (input.kind === "task") {
+        if (tasks.some((task) => task.id === input.value.id)) {
+          throw new Error(`task already exists: ${input.value.id}`);
+        }
+        tasks.push({
+          id: input.value.id,
+          projectId: input.value.projectId,
+          sessionId: input.value.id,
+          title: input.value.title,
+          titleSource: "auto",
+          status: input.value.status,
+          createdAt: input.value.createdAt,
+          parentId: input.value.parentId,
+          dependsOn: [...input.value.dependsOn],
+          sortOrder: input.value.sortOrder,
+          pinned: input.value.pinned,
+          archived: input.value.archived,
+        });
+        productTaskRevisions.set(input.value.id, input.value.revision);
+        refreshSessionCounts();
+      } else if (input.kind === "conversation") {
+        if (productConversations.has(input.value.id)) {
+          throw new Error(`conversation already exists: ${input.value.id}`);
+        }
+        productConversations.set(input.value.id, structuredClone(input.value));
+      }
+      return finishMockProductCommand(meta, input, String(args.action ?? "created"));
+    }
+
+    case PRODUCT_UPDATE_ENTITY_COMMAND: {
+      const meta = args.meta as ProductCommandMeta;
+      const input = cloneProductEntity(args.entity as ProductEntity);
+      const existing = productCommandResults.get(meta.idempotencyKey);
+      if (existing) {
+        if (existing.commandId !== meta.commandId) {
+          throw new Error("idempotency key was already used by another command");
+        }
+        return { ...structuredClone(existing), duplicate: true };
+      }
+      let updated = input;
+      if (input.kind === "project") {
+        const currentRevision = productProjectRevisions.get(input.value.id);
+        if (currentRevision === undefined) throw new Error(`project not found: ${input.value.id}`);
+        if (meta.expectedRevision !== currentRevision) throw new Error("stale project revision");
+        updated = {
+          kind: "project",
+          value: { ...input.value, revision: currentRevision + 1 },
+        };
+        const value = updated.value;
+        if (value.archive === "archived") {
+          projects = projects.filter((project) => project.id !== value.id);
+        } else {
+          projects = projects.map((project) => project.id === value.id
+            ? {
+                ...project,
+                name: value.name,
+                cwd: value.workspacePath,
+                pinned: value.pinned,
+                sortOrder: value.sortOrder,
+              }
+            : project);
+        }
+        productProjectRevisions.set(value.id, value.revision);
+      } else if (input.kind === "task") {
+        const currentRevision = productTaskRevisions.get(input.value.id);
+        if (currentRevision === undefined) throw new Error(`task not found: ${input.value.id}`);
+        if (meta.expectedRevision !== currentRevision) throw new Error("stale task revision");
+        updated = {
+          kind: "task",
+          value: { ...input.value, revision: currentRevision + 1 },
+        };
+        const value = updated.value;
+        tasks = tasks.map((task) => task.id === value.id
+          ? {
+              ...task,
+              projectId: value.projectId,
+              title: value.title,
+              status: value.status,
+              parentId: value.parentId,
+              dependsOn: [...value.dependsOn],
+              sortOrder: value.sortOrder,
+              pinned: value.pinned,
+              archived: value.archived,
+            }
+          : task);
+        productTaskRevisions.set(value.id, value.revision);
+        refreshSessionCounts();
+      } else if (input.kind === "conversation") {
+        const current = productConversations.get(input.value.id);
+        if (!current) throw new Error(`conversation not found: ${input.value.id}`);
+        if (meta.expectedRevision !== current.revision) throw new Error("stale conversation revision");
+        updated = {
+          kind: "conversation",
+          value: { ...input.value, revision: current.revision + 1 },
+        };
+        productConversations.set(updated.value.id, structuredClone(updated.value));
+      }
+      return finishMockProductCommand(meta, updated, String(args.action ?? "updated"));
+    }
 
     case PROJECT_LIST_COMMAND:
       refreshSessionCounts();
@@ -5116,6 +5409,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
         codeIndexSameInstance: true,
         lspSameInstance: true,
         mcpSameInstance: true,
+        computerUseSameInstance: true,
         memorySharedRouter: true,
         mcpActiveServers: 0,
         lspActiveWorkspaces: 0,
@@ -5130,23 +5424,48 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       return {
         serviceId: "mutsuki.agent.service.lsp",
         activeWorkspaces: 0,
+        workspaces: [],
         dataSource: "agentkit.native_coding_bundle",
         sameInstance: true,
+      };
+
+    case NATIVE_SHARED_LSP_OPEN_WORKSPACE_COMMAND:
+      return {
+        workspace: String(args.workspaceId ?? ""),
+        server_id: "rust-analyzer",
+        state: "ready",
+        open_documents: 0,
+        restart_count: 0,
       };
 
     case NATIVE_SHARED_GIT_STATUS_COMMAND:
       return {
         kind: "status",
-        path: String(args.path ?? ""),
-        dataSource: "agentkit.native_coding_bundle",
+        worktree: { path: String(args.path ?? "") },
+        head: {
+          commit: "0123456789abcdef",
+          branch: "main",
+          generation: 1,
+        },
+        changes: [],
         clean: true,
+      };
+
+    case NATIVE_SHARED_WORKSPACE_LIST_COMMAND:
+      return {
+        kind: "entries",
+        entries: [
+          { path: "src", kind: "dir" },
+          { path: "Cargo.toml", kind: "file", size: 256 },
+        ],
       };
 
     case NATIVE_SHARED_CODE_INDEX_SEARCH_COMMAND:
       return {
         hits: [
           {
-            path: String(args.relativePath ?? "src/shared_probe.rs"),
+            path: "src/main.rs",
+            summary: String(args.query ?? ""),
             score: 1,
           },
         ],

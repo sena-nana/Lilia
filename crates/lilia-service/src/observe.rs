@@ -5,11 +5,11 @@
 
 use lilia_agent_integration::IndependentDiagnostics;
 use lilia_contracts::{TaskId, TimelineProjectionEvent};
+use mutsuki_agent_contracts::AgentWireRequestEnvelope;
 use serde::Serialize;
+use std::io::{self, Read};
 
-use crate::{
-    health_http_response, ServiceAuthority, ServiceAuthorityStatus, ServiceHealthReport,
-};
+use crate::{health_http_response, ServiceAuthority, ServiceAuthorityStatus, ServiceHealthReport};
 
 /// Read-only product/Agent observation surface for Remote / CLI.
 #[derive(Clone, Debug, Serialize)]
@@ -49,9 +49,8 @@ impl ServiceAuthority {
         &self,
         task_id: &str,
     ) -> Result<RemoteTimelineObserve, crate::ServiceAuthorityError> {
-        let task = TaskId::new(task_id.trim()).map_err(|err| {
-            crate::ServiceAuthorityError::Product(err.to_string())
-        })?;
+        let task = TaskId::new(task_id.trim())
+            .map_err(|err| crate::ServiceAuthorityError::Product(err.to_string()))?;
         Ok(RemoteTimelineObserve {
             read_only: true,
             task_id: task.as_str().to_string(),
@@ -70,9 +69,8 @@ impl ServiceAuthority {
 }
 
 fn json_ok(body: impl Serialize) -> String {
-    let body = serde_json::to_string(&body).unwrap_or_else(|_| {
-        r#"{"error":"serialize_failed"}"#.to_string()
-    });
+    let body = serde_json::to_string(&body)
+        .unwrap_or_else(|_| r#"{"error":"serialize_failed"}"#.to_string());
     format!(
         "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -87,15 +85,17 @@ fn json_err(code: &str, message: &str) -> String {
     )
 }
 
-fn parse_request_target(request: &str) -> (&str, &str) {
+fn parse_request_target(request: &str) -> (&str, &str, &str, &str) {
     let line = request.lines().next().unwrap_or("");
     let mut parts = line.split_whitespace();
-    let _method = parts.next().unwrap_or("");
+    let method = parts.next().unwrap_or("");
     let target = parts.next().unwrap_or("/");
-    match target.split_once('?') {
-        Some((path, query)) => (path, query),
-        None => (target, ""),
-    }
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let body = request
+        .split_once("\r\n\r\n")
+        .map(|(_, body)| body)
+        .unwrap_or("");
+    (method, path, query, body)
 }
 
 fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
@@ -109,19 +109,78 @@ fn query_param<'a>(query: &'a str, key: &str) -> Option<&'a str> {
     })
 }
 
-/// Serve the minimal read-only HTTP surface used by `apps/service`.
+/// Read one bounded HTTP/1 request, including the complete Content-Length body.
+pub fn read_http_request(reader: &mut impl Read) -> io::Result<String> {
+    const MAX_HEADER_BYTES: usize = 64 * 1024;
+    const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
+
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    let header_end = loop {
+        let count = reader.read(&mut chunk)?;
+        if count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "connection closed before HTTP headers completed",
+            ));
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+        if let Some(index) = bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            break index + 4;
+        }
+        if bytes.len() > MAX_HEADER_BYTES {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "HTTP headers exceed limit",
+            ));
+        }
+    };
+    let headers = String::from_utf8_lossy(&bytes[..header_end]);
+    let content_length = headers
+        .lines()
+        .filter_map(|line| line.split_once(':'))
+        .find_map(|(name, value)| {
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    if content_length > MAX_BODY_BYTES {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "HTTP body exceeds limit",
+        ));
+    }
+    let expected = header_end.saturating_add(content_length);
+    while bytes.len() < expected {
+        let count = reader.read(&mut chunk)?;
+        if count == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "connection closed before HTTP body completed",
+            ));
+        }
+        bytes.extend_from_slice(&chunk[..count]);
+    }
+    bytes.truncate(expected);
+    String::from_utf8(bytes)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
+}
+
+/// Serve the Service HTTP surface used by Remote / CLI clients.
 ///
 /// Routes:
 /// - `GET /health`
 /// - `GET /status` | `GET /observe/status`
 /// - `GET /timeline?taskId=` | `GET /observe/timeline?taskId=`
 /// - `GET /diagnostics` | `GET /observe/diagnostics`
+/// - `POST /agent/wire` (canonical Mutsuki Agent Wire envelope)
 pub fn serve_readonly_http(authority: &ServiceAuthority, request: &str) -> String {
-    let (path, query) = parse_request_target(request);
-    match path {
-        "/health" => health_http_response(&authority.health()),
-        "/status" | "/observe/status" => json_ok(authority.observe_status()),
-        "/timeline" | "/observe/timeline" => {
+    let (method, path, query, body) = parse_request_target(request);
+    match (method, path) {
+        ("GET", "/health") => health_http_response(&authority.health()),
+        ("GET", "/status" | "/observe/status") => json_ok(authority.observe_status()),
+        ("GET", "/timeline" | "/observe/timeline") => {
             let Some(task_id) = query_param(query, "taskId").filter(|v| !v.is_empty()) else {
                 return json_err("400 Bad Request", "taskId query parameter is required");
             };
@@ -130,18 +189,40 @@ pub fn serve_readonly_http(authority: &ServiceAuthority, request: &str) -> Strin
                 Err(err) => json_err("400 Bad Request", &err.to_string()),
             }
         }
-        "/diagnostics" | "/observe/diagnostics" => json_ok(authority.observe_diagnostics()),
-        _ => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
-            .to_string(),
+        ("GET", "/diagnostics" | "/observe/diagnostics") => {
+            json_ok(authority.observe_diagnostics())
+        }
+        ("POST", "/agent/wire") => {
+            let request = match serde_json::from_str::<AgentWireRequestEnvelope>(body) {
+                Ok(request) => request,
+                Err(error) => {
+                    return json_err("400 Bad Request", &format!("invalid agent wire: {error}"));
+                }
+            };
+            match authority.dispatch_agent_wire(request) {
+                Ok(response) => json_ok(response),
+                Err(error) => json_err(
+                    "400 Bad Request",
+                    &format!("{}: {}", error.code, error.message),
+                ),
+            }
+        }
+        _ => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lilia_agent_integration::ProductCredentialLoginInput;
     use lilia_contracts::{
         AgentSessionRef, ProjectionEventId, TimelineProjectionCommand, TimelineProjectionEvent,
         PRODUCT_TIMELINE_STORE_ID,
+    };
+    use mutsuki_agent_client::AgentEventCursor;
+    use mutsuki_agent_contracts::{
+        AgentMessage, AgentSessionCreateRequest, CredentialKind, SessionVersion,
+        OPENAI_CREDENTIAL_PROVIDER_ID,
     };
     use serde_json::json;
     use std::io::{Read, Write};
@@ -211,6 +292,42 @@ mod tests {
     #[test]
     fn readonly_http_covers_status_timeline_and_diagnostics() {
         let authority = authority("test:observe-http");
+        let runtime = authority.shared_runtime();
+        runtime
+            .inner()
+            .credentials()
+            .login(ProductCredentialLoginInput {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: "sk-test-openai-api-key-0123456789abcdef".into(),
+                account_label: None,
+                source: Some("user_api_key".into()),
+            })
+            .unwrap();
+        runtime.inner().refresh_product_profile(None).unwrap();
+        let model_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let model_address = model_listener.local_addr().unwrap();
+        let model_server = thread::spawn(move || {
+            let (mut stream, _) = model_listener.accept().unwrap();
+            let mut bytes = [0_u8; 16_384];
+            let _ = stream.read(&mut bytes).unwrap();
+            let payload = json!({
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "service wire complete"}
+                }],
+                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+            })
+            .to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        runtime.inner().set_model_endpoint_override(Some(format!(
+            "http://{model_address}/v1/chat/completions"
+        )));
         let client = authority.client().unwrap();
         let task = client
             .create_task(TaskId::new("task-http").unwrap(), None, "http")
@@ -238,11 +355,9 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         let authority_for_server = authority.clone();
         thread::spawn(move || {
-            for _ in 0..8 {
+            for _ in 0..12 {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut buf = [0u8; 2048];
-                let n = stream.read(&mut buf).unwrap_or(0);
-                let req = String::from_utf8_lossy(&buf[..n]);
+                let req = read_http_request(&mut stream).unwrap();
                 let response = serve_readonly_http(&authority_for_server, &req);
                 stream.write_all(response.as_bytes()).unwrap();
             }
@@ -292,5 +407,35 @@ mod tests {
         assert_eq!(remote_timeline["events"][0]["title"], json!("http-event"));
         let remote_diag = remote.get_diagnostics().unwrap();
         assert_eq!(remote_diag["readOnly"], json!(true));
+
+        let mut agent = lilia_client::AgentWireHttpBackend::new(format!(
+            "http://{}:{}",
+            addr.ip(),
+            addr.port()
+        ))
+        .unwrap()
+        .into_client();
+        let agent_session = agent
+            .start_session(AgentSessionCreateRequest {
+                session_id: None,
+                profile_id: "mutsuki.reference.coding-agent".into(),
+                title: Some("remote wire task".into()),
+            })
+            .unwrap();
+        let version = agent
+            .submit_turn(
+                &agent_session.session_id,
+                SessionVersion(1),
+                "remote-wire-turn",
+                vec![AgentMessage::user("run through service wire")],
+                "remote-wire-idempotency",
+            )
+            .unwrap();
+        model_server.join().unwrap();
+        assert_eq!(version, SessionVersion(2));
+        let mut cursor = AgentEventCursor::new(&agent_session.session_id, 0, 100).unwrap();
+        let agent_events = cursor.poll(&mut agent).unwrap();
+        assert!(!agent_events.is_empty());
+        assert!(cursor.last_seen() > 0);
     }
 }

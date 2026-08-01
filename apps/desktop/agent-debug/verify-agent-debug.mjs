@@ -43,14 +43,7 @@ const CHAT_SEND_MESSAGE_COMMAND = "chat_send_message";
 const SLOW_INVOKE_WARNING_MS = 1000;
 const SLOW_INVOKE_HIGH_MS = 5000;
 const SEND_ERROR_TEXT_MARKERS = ["发生错误", "发送失败"];
-const CODEX_ACCOUNT_QUOTA_COMMAND = "quota_usage_get_codex_account_status";
-const CODEX_ACCOUNT_QUOTA_UTILITY_ENV = "LILIA_CODEX_ACCOUNT_QUOTA_UTILITY";
-const codexAccountQuotaUtilityPath = path.join(runDir, "codex-account-quota-agent-debug.mjs");
-const CODEX_ACCOUNT_QUOTA_REQUIRED_RESOURCES = [
-  "../legacy/codex-account-quota.mjs",
-  "../legacy/agent-runner/codex/accountQuota.mjs",
-  "../legacy/agent-runner/codex/appServer.mjs",
-];
+const NATIVE_QUOTA_SURFACE_COMMAND = "native_quota_surface";
 const PROVIDER_BLOCK_ERROR_MARKERS = [
   "辅助模型未配置",
   "Base URL",
@@ -85,10 +78,10 @@ const SCENARIOS = {
     label: "permission pending action",
     artifact: "scenario-permission-pending-action.png",
   },
-  codexAccountQuotaResource: {
-    id: "codex-account-quota-resource",
-    label: "Codex account quota resource",
-    artifact: "scenario-codex-account-quota-resource.png",
+  nativeQuotaSurface: {
+    id: "native-quota-surface",
+    label: "Native Provider quota diagnostics",
+    artifact: "scenario-native-quota-surface.png",
   },
 };
 const requestedScenarioId = (process.env.LILIA_AGENT_DEBUG_SCENARIO ?? "").trim();
@@ -324,27 +317,6 @@ async function ensureAgentDebugTools() {
 
 async function writeJson(name, value) {
   return await artifacts.writeJson(name, value);
-}
-
-async function collectCodexAccountQuotaResourcePreflight() {
-  const configPath = path.join(repoRoot, "apps", "desktop", "src-tauri", "tauri.conf.json");
-  const config = JSON.parse(await readFile(configPath, "utf8"));
-  const resources = config?.bundle?.resources ?? {};
-  const configured = CODEX_ACCOUNT_QUOTA_REQUIRED_RESOURCES.filter((resource) =>
-    Object.prototype.hasOwnProperty.call(resources, resource)
-  );
-  const missing = CODEX_ACCOUNT_QUOTA_REQUIRED_RESOURCES.filter((resource) => !configured.includes(resource));
-  const missingFiles = CODEX_ACCOUNT_QUOTA_REQUIRED_RESOURCES.filter((resource) =>
-    !existsSync(path.resolve(path.dirname(configPath), resource))
-  );
-  return {
-    configPath,
-    required: CODEX_ACCOUNT_QUOTA_REQUIRED_RESOURCES,
-    configured,
-    missing,
-    missingFiles,
-    ok: missing.length === 0 && missingFiles.length === 0,
-  };
 }
 
 async function writeRunSummary(
@@ -778,60 +750,17 @@ async function clickRadioUnlessChecked(sessionId, target, scenarioId) {
   );
 }
 
-async function configureCodexAccountEntry(sessionId, scenarioId) {
-  await navigateRoute(sessionId, "/settings?tab=providers", scenarioId);
-  await clickRadioUnlessChecked(sessionId, "settings.provider.backend.codex", scenarioId);
-  await clickRadioUnlessChecked(sessionId, "settings.provider.codex-mode.codex-account", scenarioId);
-}
-
-function codexQuotaMockUtilitySource() {
-  const now = Date.now();
-  const status = {
-    available: true,
-    connectionMode: "codex-account",
-    limitId: "codex",
-    limitName: "回归额度",
-    planType: "AgentDebug",
-    rateLimitReachedType: null,
-    fiveHour: {
-      usedPercent: 21,
-      windowDurationMins: 300,
-      resetsAt: Math.floor((now + 90 * 60 * 1000) / 1000),
-    },
-    weekly: {
-      usedPercent: 34,
-      windowDurationMins: 10080,
-      resetsAt: Math.floor((now + 3 * 24 * 60 * 60 * 1000) / 1000),
-    },
-    sparkFiveHour: null,
-    sparkWeekly: null,
-    credits: {
-      hasCredits: true,
-      unlimited: false,
-      balance: "123",
-    },
-    sparkCredits: null,
-    rateLimitResetCredits: {
-      availableCount: 2,
-    },
-    accountUsage: null,
-    usageError: null,
-    fetchedAt: now,
-    error: null,
-  };
-  return `process.stdout.write(${JSON.stringify(`${JSON.stringify(status)}\n`)});`;
-}
-
-async function installCodexQuotaMockUtility() {
-  await writeFile(codexAccountQuotaUtilityPath, codexQuotaMockUtilitySource(), "utf8");
-}
-
-async function refreshQuotaPanel(sessionId, scenarioId) {
+async function refreshNativeQuotaPanel(sessionId, scenarioId) {
   await navigateRoute(sessionId, "/settings?tab=quota", scenarioId);
   await waitForAgentElement(sessionId, "settings.quota.refresh", 30_000);
-  const beforeCount = await invokeCount(sessionId, CODEX_ACCOUNT_QUOTA_COMMAND);
+  const beforeCount = await invokeCount(sessionId, NATIVE_QUOTA_SURFACE_COMMAND);
   await clickAgent(sessionId, "settings.quota.refresh", scenarioId);
-  return await waitForCommandInvoke(sessionId, CODEX_ACCOUNT_QUOTA_COMMAND, beforeCount, 30_000);
+  return await waitForCommandInvoke(
+    sessionId,
+    NATIVE_QUOTA_SURFACE_COMMAND,
+    beforeCount,
+    30_000,
+  );
 }
 
 function assertVisibleText(snapshot, markers, label) {
@@ -842,55 +771,32 @@ function assertVisibleText(snapshot, markers, label) {
   }
 }
 
-async function runCodexAccountQuotaResourceScenario(sessionId) {
-  const scenario = SCENARIOS.codexAccountQuotaResource;
+async function runNativeQuotaSurfaceScenario(sessionId) {
+  const scenario = SCENARIOS.nativeQuotaSurface;
   await markScenario(sessionId, scenario);
-  const previousSettings = await readCodexProviderSettings(sessionId);
-  const utilityName = path.basename(codexAccountQuotaUtilityPath);
-  try {
-    await rm(codexAccountQuotaUtilityPath, { force: true });
-    await configureCodexAccountEntry(sessionId, scenario.id);
-
-    const missingResult = await refreshQuotaPanel(sessionId, scenario.id);
-    const missingSnapshot = await waitForCondition(
-      sessionId,
-      "missing Codex account quota utility visible",
-      (snapshot) => String(snapshot?.visibleText ?? "").includes("Codex 官方额度") &&
-        String(snapshot?.visibleText ?? "").includes(utilityName),
-      30_000,
-    );
-    assertVisibleText(missingSnapshot, ["Codex 官方额度", utilityName], "missing quota utility state");
-
-    await installCodexQuotaMockUtility();
-    const restoredResult = await refreshQuotaPanel(sessionId, scenario.id);
-    await waitForCondition(
-      sessionId,
-      "restored Codex account quota visible",
-      (snapshot) => String(snapshot?.visibleText ?? "").includes("计划 AgentDebug") &&
-        String(snapshot?.visibleText ?? "").includes("Workspace credit") &&
-        String(snapshot?.visibleText ?? "").includes("剩余 123"),
-      30_000,
-    );
-
-    return await recordScenarioResult(sessionId, scenario, "passed", {
-      command: CODEX_ACCOUNT_QUOTA_COMMAND,
-      missingUtility: utilityName,
-      missingCommandStatus: missingResult.invoke?.status ?? null,
-      restoredCommandStatus: restoredResult.invoke?.status ?? null,
-      restoredPlanType: "AgentDebug",
-      restoredResetCredits: 2,
-    });
-  } finally {
-    await restoreCodexProviderSettings(sessionId, previousSettings).catch((error) => {
-      replay.push({
-        type: "settings",
-        target: "provider.codex",
-        restored: false,
-        error: error?.message ?? String(error),
-      });
-    });
-    await rm(codexAccountQuotaUtilityPath, { force: true }).catch(() => undefined);
-  }
+  const result = await refreshNativeQuotaPanel(sessionId, scenario.id);
+  await waitForAgentElement(sessionId, "settings.quota.native", 30_000);
+  await waitForAgentElement(sessionId, "settings.quota.native.remote-api", 30_000);
+  const snapshot = await waitForCondition(
+    sessionId,
+    "Native quota diagnostics visible",
+    (next) => String(next?.visibleText ?? "").includes("Credential Broker / Native") &&
+      String(next?.visibleText ?? "").includes("远程额度 API：不可用") &&
+      String(next?.visibleText ?? "").includes("订阅 ≠ API 额度") &&
+      String(next?.visibleText ?? "").includes("已隔离"),
+    30_000,
+  );
+  assertVisibleText(
+    snapshot,
+    ["Credential Broker / Native", "远程额度 API：不可用", "订阅 ≠ API 额度", "已隔离"],
+    "Native quota diagnostics",
+  );
+  return await recordScenarioResult(sessionId, scenario, "passed", {
+    command: NATIVE_QUOTA_SURFACE_COMMAND,
+    commandStatus: result.invoke?.status ?? null,
+    remoteQuotaApi: "unavailable",
+    subscriptionCredentialBoundary: "isolated",
+  });
 }
 
 async function writePassedRun(sessionId, {
@@ -1316,7 +1222,6 @@ async function main() {
   const driverOutput = [];
   let setupInfo = null;
   let setupError = null;
-  const codexAccountQuotaResources = await collectCodexAccountQuotaResourcePreflight();
   try {
     setupInfo = await ensureAgentDebugTools();
   } catch (error) {
@@ -1336,23 +1241,11 @@ async function main() {
     tauriDriver: commandExists("tauri-driver", ["--help"]),
     edgeDriver: commandExists("msedgedriver") || commandExists("MicrosoftWebDriver"),
     appBinaryExists: existsSync(appBinary),
-    codexAccountQuotaResources,
+    nativeQuotaSurfaceCommand: NATIVE_QUOTA_SURFACE_COMMAND,
+    requiresLegacyAgentServerResources: false,
     requestedScenario: requestedScenarioId || null,
   };
   await writeJson("preflight.json", preflight);
-  if (!codexAccountQuotaResources.ok) {
-    await writeRunSummary(artifacts, {
-      status: "failed",
-      preflight,
-      message: "Codex account quota packaged resources are missing from the Tauri bundle config or source tree.",
-      details: codexAccountQuotaResources,
-      nextStep: "Restore the codex-account-quota.mjs bundle resources in apps/desktop/src-tauri/tauri.conf.json.",
-      driverOutput,
-      devServerOutput,
-    });
-    process.exitCode = 1;
-    return;
-  }
   if (!preflight.tauriDriver || !preflight.edgeDriver || !preflight.appBinaryExists) {
     await writeRunSummary(artifacts, {
       status: "blocked",
@@ -1375,9 +1268,6 @@ async function main() {
       devServerPlan.devUrl,
       devServerPlan.port,
     );
-    if (requestedScenarioId === SCENARIOS.codexAccountQuotaResource.id) {
-      childEnv[CODEX_ACCOUNT_QUOTA_UTILITY_ENV] = codexAccountQuotaUtilityPath;
-    }
     if (!(await isUrlReady(devServerPlan.devUrl))) {
       devServer = spawnYarn(["--cwd", "apps/desktop", "dev", "--host", "127.0.0.1"], {
         cwd: repoRoot,
@@ -1445,10 +1335,10 @@ async function main() {
     }
     replay.push({ type: "click", target: "missing.debug.target", expectedError: true });
     if (requestedScenarioId) {
-      if (requestedScenarioId !== SCENARIOS.codexAccountQuotaResource.id) {
+      if (requestedScenarioId !== SCENARIOS.nativeQuotaSurface.id) {
         throw new Error(`Unknown agent-debug scenario filter: ${requestedScenarioId}`);
       }
-      await runCodexAccountQuotaResourceScenario(sessionId);
+      await runNativeQuotaSurfaceScenario(sessionId);
       await writePassedRun(sessionId, {
         preflight,
         driverOutput,

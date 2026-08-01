@@ -15,7 +15,7 @@ apps/vscode-extension        ← InlineCompletion + Next Edit command
 ## 运行
 
 ```bash
-# Rust host（真实 AgentKit 服务，deterministic adapter）
+# Rust host contract / service behavior
 cargo test -p lilia-editor-compat --locked
 
 # Extension host client 契约测试（不启动 VS Code）
@@ -24,14 +24,23 @@ node apps/vscode-extension/tests/hostClient.test.mjs
 # Extension 行为（host mock：InlineCompletion + Next Edit command）
 node apps/vscode-extension/tests/extensionBehavior.test.mjs
 
-# 一键（要求 Node 26；本机若为 Node 25，请直接跑上面三条底层命令）
+# 一键（要求 Node 26）
 yarn verify:vscode-compat
 ```
 
-**Toolchain 限制：** 根 `engines.node` / `check-toolchain` 要求 Node `>=26 <27`。
-Node 25 下请用底层命令验证，不要宣称 `yarn verify:vscode-compat` 已绿。
+Extension 默认启动 PATH 中的 `lilia-editor-compat`。Host 通过环境变量接收
+Host-owned Provider 配置；API key 只在 Credential Broker 边界解析，不进入
+Completion / Next Edit 请求或日志：
 
-Extension 默认 `lilia.agentkit.hostMode=deterministic`。接真机二进制时：
+```bash
+export LILIA_AGENTKIT_PROVIDER=openai-compatible
+export LILIA_AGENTKIT_MODEL=<model>
+export LILIA_AGENTKIT_API_KEY=<api-key>
+# 可选；OpenAI-compatible 默认 https://api.openai.com/v1
+export LILIA_AGENTKIT_ENDPOINT=<https-endpoint>
+```
+
+需要使用绝对路径时：
 
 ```json
 {

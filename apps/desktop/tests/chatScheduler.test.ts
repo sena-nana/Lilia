@@ -9,7 +9,6 @@ import {
   CHAT_INTERRUPT_TURN_COMMAND,
   CHAT_SEND_MESSAGE_COMMAND,
   LILIA_IAB_OPEN_COMMAND,
-  TASK_PROMOTE_COMMAND,
   TODO_CREATE_COMMAND,
   WORKTREE_GET_FOR_TASK_COMMAND,
 } from "@lilia/contracts";
@@ -475,11 +474,19 @@ describe("chat scheduler", () => {
       expect(mockInvoke.mock.calls.some(([cmd]) => cmd === CHAT_SEND_MESSAGE_COMMAND))
         .toBe(true);
     });
-    const promote = mockInvoke.mock.calls.find(([cmd]) => cmd === TASK_PROMOTE_COMMAND);
+    const promote = mockInvoke.mock.calls.find(([cmd, args]) =>
+      cmd === "product_create_entity" &&
+      (args?.entity as { kind?: string } | undefined)?.kind === "task"
+    );
     expect(promote?.[1]).toMatchObject({
-      id: draft.id,
-      projectId: "lilia",
-      title: "/release",
+      entity: {
+        kind: "task",
+        value: {
+          id: draft.id,
+          projectId: "lilia",
+          title: "/release",
+        },
+      },
     });
   });
 
@@ -494,12 +501,20 @@ describe("chat scheduler", () => {
       expect(mockInvoke.mock.calls.some(([cmd]) => cmd === CHAT_SEND_MESSAGE_COMMAND))
         .toBe(true);
     });
-    const promote = mockInvoke.mock.calls.find(([cmd]) => cmd === TASK_PROMOTE_COMMAND);
+    const promote = mockInvoke.mock.calls.find(([cmd, args]) =>
+      cmd === "product_create_entity" &&
+      (args?.entity as { kind?: string } | undefined)?.kind === "task"
+    );
     const send = mockInvoke.mock.calls.find(([cmd]) => cmd === CHAT_SEND_MESSAGE_COMMAND);
     expect(promote?.[1]).toMatchObject({
-      id: draft.id,
-      projectId: "lilia",
-      title: "用 Codex 开始草稿对话",
+      entity: {
+        kind: "task",
+        value: {
+          id: draft.id,
+          projectId: "lilia",
+          title: "用 Codex 开始草稿对话",
+        },
+      },
     });
     expect(send?.[1]).toMatchObject({
       taskId: draft.id,
@@ -507,7 +522,10 @@ describe("chat scheduler", () => {
         backend: "codex",
       }),
     });
-    expect(mockInvoke.mock.calls.findIndex(([cmd]) => cmd === TASK_PROMOTE_COMMAND))
+    expect(mockInvoke.mock.calls.findIndex(([cmd, args]) =>
+      cmd === "product_create_entity" &&
+      (args?.entity as { kind?: string } | undefined)?.kind === "task"
+    ))
       .toBeLessThan(mockInvoke.mock.calls.findIndex(([cmd]) => cmd === CHAT_SEND_MESSAGE_COMMAND));
   });
 
@@ -521,7 +539,10 @@ describe("chat scheduler", () => {
       expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === CHAT_SEND_MESSAGE_COMMAND))
         .toHaveLength(1);
     });
-    expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === TASK_PROMOTE_COMMAND))
+    expect(mockInvoke.mock.calls.filter(([cmd, args]) =>
+      cmd === "product_create_entity" &&
+      (args?.entity as { kind?: string } | undefined)?.kind === "task"
+    ))
       .toHaveLength(1);
 
     completeMockAgentTurn(draft.id);
@@ -536,7 +557,10 @@ describe("chat scheduler", () => {
       expect(mockInvoke.mock.calls.filter(([cmd]) => cmd === CHAT_SEND_MESSAGE_COMMAND))
         .toHaveLength(1);
     });
-    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === TASK_PROMOTE_COMMAND)).toBe(false);
+    expect(mockInvoke.mock.calls.some(([cmd, args]) =>
+      cmd === "product_create_entity" &&
+      (args?.entity as { kind?: string } | undefined)?.kind === "task"
+    )).toBe(false);
     expect(view.queryByText(/草稿已失效，请重新创建对话/)).toBeNull();
   });
 
@@ -550,12 +574,20 @@ describe("chat scheduler", () => {
       expect(mockInvoke.mock.calls.some(([cmd]) => cmd === CHAT_SEND_MESSAGE_COMMAND))
         .toBe(true);
     });
-    const promote = mockInvoke.mock.calls.find(([cmd]) => cmd === TASK_PROMOTE_COMMAND);
+    const promote = mockInvoke.mock.calls.find(([cmd, args]) =>
+      cmd === "product_create_entity" &&
+      (args?.entity as { kind?: string } | undefined)?.kind === "task"
+    );
     expect(promote?.[1]).toMatchObject({
-      id: draft.id,
-      projectId: "lilia",
-      parentId: "t-001",
-      title: "基于父对话继续追问",
+      entity: {
+        kind: "task",
+        value: {
+          id: draft.id,
+          projectId: "lilia",
+          parentId: "t-001",
+          title: "基于父对话继续追问",
+        },
+      },
     });
   });
 
@@ -1111,4 +1143,3 @@ describe("chat scheduler", () => {
     expect(send?.[1]).toMatchObject({ content: "本地发送失败后重试" });
   });
 });
-

@@ -21,7 +21,7 @@ import {
   readArrayRecords,
   readFirstString,
   readFirstText,
-} from "../../../packages/contracts/src/toolUtils.mjs";
+} from "../../../../packages/contracts/src/toolUtils.mjs";
 export {
   isClaudePlanTool,
   isReadonlyDeniedClaudeTool,

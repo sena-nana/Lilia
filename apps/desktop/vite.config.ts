@@ -137,6 +137,9 @@ export default defineConfig(async ({ command, mode }) => ({
       "@lilia/contracts/projectCommandsContract.mjs": fileURLToPath(
         new URL("../../packages/contracts/src/projectCommandsContract.mjs", import.meta.url),
       ),
+      "@lilia/contracts/productCoreContract.mjs": fileURLToPath(
+        new URL("../../packages/contracts/src/productCoreContract.mjs", import.meta.url),
+      ),
       "@lilia/contracts/quotaContract.mjs": fileURLToPath(
         new URL("../../packages/contracts/src/quotaContract.mjs", import.meta.url),
       ),

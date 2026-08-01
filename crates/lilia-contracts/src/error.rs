@@ -21,6 +21,9 @@ pub enum ProductError {
     #[error("invalid state: {message}")]
     InvalidState { message: String },
 
+    #[error("permission denied: {message}")]
+    PermissionDenied { message: String },
+
     #[error("unavailable: {message}")]
     Unavailable { message: String },
 }

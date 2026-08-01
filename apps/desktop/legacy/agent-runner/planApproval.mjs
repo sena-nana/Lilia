@@ -5,7 +5,7 @@ import {
 } from "@lilia/contracts/askUserContract.mjs";
 import { PLAN_APPROVAL_SPEC_DEFAULTS } from "@lilia/contracts/agentInteractionContract.mjs";
 import { TIMELINE_DISPLAY_DETAIL_TEXT_LIMIT } from "@lilia/contracts/timelineContract.mjs";
-import { compactLine, isRecord } from "../../../packages/contracts/src/toolUtils.mjs";
+import { compactLine, isRecord } from "../../../../packages/contracts/src/toolUtils.mjs";
 
 export const PLAN_APPROVAL_QUESTION_ID = PLAN_APPROVAL_SPEC_DEFAULTS.questionId;
 

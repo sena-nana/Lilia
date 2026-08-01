@@ -232,14 +232,34 @@ pub fn chat_interrupt_turn(
     app: AppHandle,
     store: State<'_, ChatStore>,
 ) -> Result<ChatInterruptResult, String> {
-    if !store.running_turns.lock().unwrap().contains_key(&task_id) {
+    let running_turn = store.running_turns.lock().unwrap().get(&task_id).cloned();
+    let Some(running_turn) = running_turn else {
         return Ok(ChatInterruptResult::default());
     };
 
-    if let Err(err) = write_runner_stdin(&store, &task_id, interrupt_turn_control_payload()) {
+    let native_cancellation = if running_turn.backend
+        == crate::native_agent::BACKEND_NATIVE_AGENTKIT
+    {
+        Some(crate::native_agent::cancel_product_agent_turn(
+            &app,
+            &task_id,
+            &running_turn.turn_id,
+        )?)
+    } else if let Err(err) = write_runner_stdin(&store, &task_id, interrupt_turn_control_payload())
+    {
         eprintln!("[chat-runtime] send interrupt control message failed: {err}");
+        None
+    } else {
+        None
+    };
+    let stopped = stop_running_turn(&app, &store, &task_id, true, false)?;
+    if native_cancellation
+        == Some(lilia_agent_integration::TurnCancellationDisposition::PausedApproval)
+    {
+        if let Some(turn) = stopped.filter(|turn| turn.native_approval_pause.is_some()) {
+            crate::native_agent::finish_cancelled_native_approval_turn(&app, &task_id, turn);
+        }
     }
-    stop_running_turn(&app, &store, &task_id, true, false)?;
     Ok(ChatInterruptResult::default())
 }
 
