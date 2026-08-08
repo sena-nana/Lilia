@@ -6,6 +6,11 @@ authors = ["Sena"]
 edition = "2021"
 default-run = "lilia"
 
+[lints.rust]
+# MSVC link.exe prints "正在创建库 …" when writing import libs for cdylib/bin.
+# Informational only; silence the default `linker_messages` warning on Windows.
+linker_messages = "allow"
+
 [lib]
 name = "lilia_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
