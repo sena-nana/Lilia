@@ -265,40 +265,18 @@ fn query_milestones(conn: &Connection) -> ProductResult<Vec<LegacyMilestoneRow>>
     if !table_exists(conn, "milestones")? {
         return Ok(Vec::new());
     }
-    // Desktop legacy `lilia.db` milestones evolved over time:
-    // - no `start_date` (product has it)
-    // - `due_date` may be INTEGER millis or TEXT
-    // - `description` may be NOT NULL TEXT
+    // Desktop legacy schema may omit start_date; due_date may be INTEGER or TEXT.
     let cols = table_columns(conn, "milestones")?;
-    let description_expr = if cols.iter().any(|c| c == "description") {
-        "description"
-    } else {
-        "NULL"
-    };
-    let status_expr = if cols.iter().any(|c| c == "status") {
-        "status"
-    } else {
-        "'upcoming'"
-    };
-    let sort_order_expr = if cols.iter().any(|c| c == "sort_order") {
-        "sort_order"
-    } else {
-        "0"
-    };
-    let start_date_expr = if cols.iter().any(|c| c == "start_date") {
-        "start_date"
-    } else {
-        "NULL"
-    };
-    let due_date_expr = if cols.iter().any(|c| c == "due_date") {
-        "due_date"
-    } else {
-        "NULL"
-    };
+    let has = |name: &str| cols.iter().any(|c| c == name);
+    let description = if has("description") { "description" } else { "NULL" };
+    let status = if has("status") { "status" } else { "'upcoming'" };
+    let sort_order = if has("sort_order") { "sort_order" } else { "0" };
+    let start_date = if has("start_date") { "start_date" } else { "NULL" };
+    let due_date = if has("due_date") { "due_date" } else { "NULL" };
     let sql = format!(
-        "SELECT id, project_id, title, {description_expr}, {status_expr}, {sort_order_expr}, \
-         {start_date_expr}, {due_date_expr} \
-         FROM milestones ORDER BY project_id, {sort_order_expr}, id"
+        "SELECT id, project_id, title, {description}, {status}, {sort_order}, \
+         {start_date}, {due_date} \
+         FROM milestones ORDER BY project_id, {sort_order}, id"
     );
     let mut stmt = conn.prepare(&sql).map_err(map_sql)?;
     let rows = stmt
@@ -378,38 +356,30 @@ fn table_columns(conn: &Connection, table: &str) -> ProductResult<Vec<String>> {
     let rows = stmt
         .query_map([], |row| row.get::<_, String>(1))
         .map_err(map_sql)?;
-    let mut cols = Vec::new();
-    for row in rows {
-        cols.push(row.map_err(map_sql)?);
-    }
-    Ok(cols)
+    collect_rows(rows)
 }
 
-/// Read a legacy cell as optional text. Accepts TEXT / INTEGER / REAL so older
-/// Desktop `due_date INTEGER` (epoch millis) still migrates without failing.
+/// TEXT / INTEGER / REAL → optional string (Desktop due_date may be epoch millis).
 fn optional_cell_as_text(
     row: &rusqlite::Row<'_>,
     idx: usize,
 ) -> Result<Option<String>, rusqlite::Error> {
     match row.get_ref(idx)? {
-        rusqlite::types::ValueRef::Null => Ok(None),
+        rusqlite::types::ValueRef::Null | rusqlite::types::ValueRef::Blob(_) => Ok(None),
         rusqlite::types::ValueRef::Text(bytes) => {
             let text = std::str::from_utf8(bytes)
-                .map_err(|err| rusqlite::Error::FromSqlConversionFailure(
-                    idx,
-                    rusqlite::types::Type::Text,
-                    Box::new(err),
-                ))?
+                .map_err(|err| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        idx,
+                        rusqlite::types::Type::Text,
+                        Box::new(err),
+                    )
+                })?
                 .trim();
-            if text.is_empty() {
-                Ok(None)
-            } else {
-                Ok(Some(text.to_string()))
-            }
+            Ok((!text.is_empty()).then(|| text.to_string()))
         }
         rusqlite::types::ValueRef::Integer(value) => Ok(Some(value.to_string())),
         rusqlite::types::ValueRef::Real(value) => Ok(Some(value.to_string())),
-        rusqlite::types::ValueRef::Blob(_) => Ok(None),
     }
 }
 

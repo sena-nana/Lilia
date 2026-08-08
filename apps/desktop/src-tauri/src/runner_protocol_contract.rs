@@ -12,10 +12,9 @@ static RUNNER_PROTOCOL_CONTRACT: OnceLock<RunnerProtocolContract> = OnceLock::ne
 struct RunnerProtocolContract {
     runtime_event_types: RunnerRuntimeEventTypes,
     control_message_types: RunnerControlMessageTypes,
-    // Read by build_runner_stdin_payload (legacy-runner / tests only).
-    #[allow(dead_code)]
+    #[allow(dead_code)] // legacy-runner / tests
     stdin_payload_keys: RunnerStdinPayloadKeys,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // legacy-runner / tests
     stdin_turn_keys: RunnerStdinTurnKeys,
 }
 

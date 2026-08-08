@@ -81,14 +81,11 @@ fn global_workspace_domain() -> Result<&'static ProductionWorkspaceDomain, Strin
     if let Some(domain) = DOMAIN.get() {
         return Ok(domain);
     }
-    // Only cache success so a transient init failure can be retried.
+    // Cache only successful starts so a transient failure can retry.
     let started = ProductionWorkspaceDomain::start()?;
     Ok(DOMAIN.get_or_init(|| started))
 }
 
-/// Production entry: list git worktrees via `lilia-workspace-domain`.
-///
-/// Falls back to direct git list if domain bootstrap fails (degraded, logged).
 pub fn list_worktrees_via_domain(
     base_repo_path: &Path,
 ) -> Result<Vec<crate::worktrees::GitWorktree>, String> {

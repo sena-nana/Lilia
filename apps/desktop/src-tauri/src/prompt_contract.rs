@@ -9,10 +9,9 @@ static PROMPT_CONTRACT: OnceLock<PromptContract> = OnceLock::new();
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PromptContract {
-    // Used by legacy Node runner prompt assembly / its unit tests.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // legacy-runner / tests
     main_agent: MainAgentPrompts,
-    #[allow(dead_code)]
+    #[allow(dead_code)] // legacy-runner / tests
     codex: CodexPrompts,
     assistant: AssistantPrompts,
     suggestion: SuggestionPrompts,

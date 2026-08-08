@@ -7,8 +7,7 @@ edition = "2021"
 default-run = "lilia"
 
 [lints.rust]
-# MSVC link.exe prints "正在创建库 …" when writing import libs for cdylib/bin.
-# Informational only; silence the default `linker_messages` warning on Windows.
+# MSVC "正在创建库 …" import-lib chatter when linking cdylib/bin.
 linker_messages = "allow"
 
 [lib]

@@ -10,8 +10,7 @@ static CHAT_EVENTS_CONTRACT: OnceLock<ChatEventsContract> = OnceLock::new();
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatEventsContract {
-    // Kept for contract completeness; currently emitted only by legacy Node runner.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // legacy-runner emits; native path does not yet
     chat_turn_started_event_name: String,
     chat_done_event_name: String,
     chat_context_usage_event_name: String,
