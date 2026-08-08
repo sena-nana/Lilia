@@ -75,9 +75,9 @@
     "verify:vscode-compat": "yarn check:toolchain && cargo test -p lilia-editor-compat --locked && node apps/vscode-extension/tests/hostClient.test.mjs && node apps/vscode-extension/tests/extensionBehavior.test.mjs"
   },
   "devDependencies": {
-    "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=30a8ffebf9024c126011c8963b75881b165f1e53",
-    "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=30a8ffebf9024c126011c8963b75881b165f1e53",
-    "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=30a8ffebf9024c126011c8963b75881b165f1e53",
+    "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=5478dab570e5685e753804e16e788e5ad33bc5d9",
+    "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=5478dab570e5685e753804e16e788e5ad33bc5d9",
+    "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=5478dab570e5685e753804e16e788e5ad33bc5d9",
     "@types/node": "^26.1.1",
     "vitepress": "^1.6.4"
   },
