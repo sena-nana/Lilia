@@ -22,15 +22,9 @@ export interface PromptMainAgentContract {
   workflowOrder: readonly string[];
 }
 
-export interface PromptClaudeContract {
-  systemPromptPreset: string;
+export interface PromptNativeContract {
   windowsPlatformAppend: readonly string[];
   compactPrompt: string;
-  workflows: Record<string, Record<string, string>>;
-}
-
-export interface PromptCodexContract {
-  sparkDefaultInstruction: string;
   subagents: {
     delegationHeader: string;
     baselineIntro: string;
@@ -46,6 +40,11 @@ export interface PromptCodexContract {
   planExecution: Record<string, string>;
   workflows: Record<string, Record<string, string>>;
 }
+
+/** @deprecated Use PromptNativeContract. */
+export type PromptClaudeContract = PromptNativeContract;
+/** @deprecated Use PromptNativeContract. */
+export type PromptCodexContract = PromptNativeContract;
 
 export interface PromptAssistantContract {
   promptRouter: {
@@ -83,8 +82,7 @@ export interface PromptAutomationContract {
 export interface PromptContract {
   runner: PromptRunnerContract;
   mainAgent: PromptMainAgentContract;
-  claude: PromptClaudeContract;
-  codex: PromptCodexContract;
+  native: PromptNativeContract;
   assistant: PromptAssistantContract;
   suggestion: PromptSuggestionContract;
   title: PromptTitleContract;
@@ -94,8 +92,7 @@ export interface PromptContract {
 export const PROMPT_CONTRACT: Readonly<PromptContract>;
 export const PROMPT_RUNNER: Readonly<PromptRunnerContract>;
 export const PROMPT_MAIN_AGENT: Readonly<PromptMainAgentContract>;
-export const PROMPT_CLAUDE: Readonly<PromptClaudeContract>;
-export const PROMPT_CODEX: Readonly<PromptCodexContract>;
+export const PROMPT_NATIVE: Readonly<PromptNativeContract>;
 export const PROMPT_ASSISTANT: Readonly<PromptAssistantContract>;
 export const PROMPT_SUGGESTION: Readonly<PromptSuggestionContract>;
 export const PROMPT_TITLE: Readonly<PromptTitleContract>;

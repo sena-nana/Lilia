@@ -1,4 +1,5 @@
-use std::env;
+//! Auto-title after Native turn complete (Assistant AI + timeline UI cache samples).
+
 use std::thread;
 use std::time::Duration;
 
@@ -10,20 +11,14 @@ use uuid::Uuid;
 
 use crate::agent_timeline::{self, AgentTimelineEventInput};
 use crate::agent_timeline_contract;
-use crate::chat::state::default_model_for_backend;
 use crate::chat::timeline_sink::persist_and_emit_input;
-use crate::codex_history;
+use crate::native_agent::BACKEND_NATIVE_AGENTKIT;
 use crate::projects_tasks::events::emit_tasks_changed;
 use crate::prompt_contract;
 use crate::provider::{
-    assistant_ai_secret, backend_api_key_env, backend_direct_url, codex_account_spark_enabled,
-    is_codex_account_spark_request, load_active_backend, load_assistant_ai_config,
-    load_model_feature_settings, request_codex_account_spark, resolve_connection_for,
-    AssistantAIConfig, BackendConnectionPlan, ConnectionMode, CODEX_SPARK_BASE_URL,
-    CODEX_SPARK_MODEL,
+    assistant_ai_secret, load_assistant_ai_config, load_model_feature_settings, AssistantAIConfig,
 };
 use crate::store::LiliaStore;
-use crate::{BACKEND_CLAUDE, BACKEND_CODEX};
 
 const TITLE_LABEL: &str = "标题已更新";
 const TITLE_MAX_CHARS: usize = 18;
@@ -38,22 +33,14 @@ struct TaskTitleState {
     title_source: String,
 }
 
-#[derive(Debug, Clone)]
-struct ModelRequest {
-    backend: String,
-    model: String,
-    base_url: String,
-    api_key: String,
-}
-
+/// Spawn background auto-title generation for a finished Native turn.
 pub(crate) fn spawn_title_update<R: Runtime>(
     app: AppHandle<R>,
     task_id: String,
-    backend: String,
     turn_id: Option<String>,
 ) {
     thread::spawn(move || {
-        if let Err(err) = run_title_update(&app, &task_id, &backend, turn_id.as_deref()) {
+        if let Err(err) = run_title_update(&app, &task_id, turn_id.as_deref()) {
             eprintln!("[title-update] skipped: {err}");
         }
     });
@@ -62,7 +49,6 @@ pub(crate) fn spawn_title_update<R: Runtime>(
 fn run_title_update<R: Runtime>(
     app: &AppHandle<R>,
     task_id: &str,
-    backend: &str,
     turn_id: Option<&str>,
 ) -> Result<(), String> {
     let store = app
@@ -72,26 +58,12 @@ fn run_title_update<R: Runtime>(
     let task =
         load_task_title_state(&conn, task_id)?.ok_or_else(|| "task not found".to_string())?;
     let prompt = build_title_prompt(&conn, task_id, &task.title)?;
-    if prompt.is_none() {
+    let Some(prompt) = prompt else {
         return Ok(());
-    }
-    let prompt = prompt.unwrap();
-    let mut last_error = None;
-    let mut proposed = None;
-    for model in resolve_model_requests(app, backend) {
-        match request_title(app, &model, &prompt).and_then(normalize_title) {
-            Ok(title) => {
-                proposed = Some(title);
-                break;
-            }
-            Err(err) => {
-                eprintln!("[title-update] model failed: {err}");
-                last_error = Some(err);
-            }
-        }
-    }
-    let proposed =
-        proposed.ok_or_else(|| last_error.unwrap_or_else(|| "model unavailable".to_string()))?;
+    };
+    let model = assistant_ai_model_request(app)
+        .ok_or_else(|| "assistant AI model unavailable for title".to_string())?;
+    let proposed = request_title(&model, &prompt).and_then(normalize_title)?;
     if proposed == compact_line(&task.title) {
         return Ok(());
     }
@@ -100,7 +72,6 @@ fn run_title_update<R: Runtime>(
         persist_title_event(
             app,
             &task,
-            backend,
             turn_id,
             "requires_action",
             &proposed,
@@ -113,17 +84,12 @@ fn run_title_update<R: Runtime>(
         )
         .map_err(|e| format!("update auto title failed: {e}"))?;
         emit_tasks_changed(app, task.project_id.clone());
-        spawn_codex_thread_title_sync(
-            app.clone(),
-            task.id.clone(),
-            backend.to_string(),
-            proposed.clone(),
-        );
-        persist_title_event(app, &task, backend, turn_id, "success", &proposed, false)?;
+        persist_title_event(app, &task, turn_id, "success", &proposed, false)?;
     }
     Ok(())
 }
 
+/// Accept or decline a previously proposed title-update interaction.
 #[tauri::command]
 pub fn chat_respond_title_update(
     app: AppHandle,
@@ -158,12 +124,6 @@ pub fn chat_respond_title_update(
         )
         .map_err(|e| format!("accept title update failed: {e}"))?;
         emit_tasks_changed(&app, task.project_id.clone());
-        spawn_codex_thread_title_sync(
-            app.clone(),
-            task_id.clone(),
-            event.backend.clone(),
-            proposed.clone(),
-        );
     }
 
     let status = if accepted { "success" } else { "skipped" };
@@ -187,22 +147,6 @@ pub fn chat_respond_title_update(
         },
     );
     Ok(())
-}
-
-fn spawn_codex_thread_title_sync<R: Runtime>(
-    app: AppHandle<R>,
-    task_id: String,
-    backend: String,
-    title: String,
-) {
-    if backend != BACKEND_CODEX {
-        return;
-    }
-    thread::spawn(move || {
-        if let Err(err) = codex_history::sync_thread_title_blocking(&app, &task_id, &title) {
-            eprintln!("[title-update] Codex thread title sync skipped: {err}");
-        }
-    });
 }
 
 fn load_task_title_state(
@@ -299,124 +243,38 @@ fn load_timeline_samples(conn: &Connection, task_id: &str) -> Result<Vec<String>
     Ok(out)
 }
 
-fn resolve_model_requests<R: Runtime>(app: &AppHandle<R>, backend: &str) -> Vec<ModelRequest> {
-    let mut requests = Vec::new();
-    if let Some(request) = codex_spark_model_request(app) {
-        requests.push(request);
-    }
-    if let Some(request) = assistant_ai_model_request(app) {
-        requests.push(request);
-    }
-    if let Some(request) = provider_model_request(app, backend) {
-        requests.push(request);
-    }
-    requests
-}
-
-fn codex_spark_model_request<R: Runtime>(app: &AppHandle<R>) -> Option<ModelRequest> {
-    if !codex_account_spark_enabled(app) {
-        return None;
-    }
-    Some(ModelRequest {
-        backend: BACKEND_CODEX.to_string(),
-        model: CODEX_SPARK_MODEL.to_string(),
-        base_url: CODEX_SPARK_BASE_URL.to_string(),
-        api_key: String::new(),
-    })
-}
-
-fn is_codex_spark_request(model: &ModelRequest) -> bool {
-    is_codex_account_spark_request(Some(&model.backend), &model.model, &model.base_url)
-}
-
-fn assistant_ai_model_request<R: Runtime>(app: &AppHandle<R>) -> Option<ModelRequest> {
-    let cfg: AssistantAIConfig = load_assistant_ai_config(app);
-    let base_url = cfg.base_url?.trim().trim_end_matches('/').to_string();
-    let api_key = assistant_ai_secret().ok().flatten()?;
-    let model = load_model_feature_settings(app)
-        .title
-        .or(cfg.model)?
-        .trim()
-        .to_string();
-    if base_url.is_empty() || api_key.is_empty() || model.is_empty() {
-        return None;
-    }
-    Some(ModelRequest {
-        backend: BACKEND_CODEX.to_string(),
-        model,
-        base_url,
-        api_key,
-    })
-}
-
-fn provider_model_request<R: Runtime>(app: &AppHandle<R>, backend: &str) -> Option<ModelRequest> {
-    let backend = if backend == BACKEND_CODEX || backend == BACKEND_CLAUDE {
-        backend.to_string()
-    } else {
-        load_active_backend(app)
-    };
-    let plan: BackendConnectionPlan = resolve_connection_for(app, &backend);
-    if plan.mode == ConnectionMode::CodexAccount {
-        return None;
-    }
-    let api_key = plan
-        .api_key
-        .or_else(|| env::var(backend_api_key_env(&backend)).ok())?
-        .trim()
-        .to_string();
-    if api_key.is_empty() {
-        return None;
-    }
-    let base_url = plan
+fn assistant_ai_model_request<R: Runtime>(app: &AppHandle<R>) -> Option<AssistantAIConfig> {
+    let mut cfg = load_assistant_ai_config(app);
+    cfg.base_url = cfg
         .base_url
-        .unwrap_or_else(|| backend_direct_url(&backend).to_string())
-        .trim()
-        .trim_end_matches('/')
-        .to_string();
-    if base_url.is_empty() {
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty());
+    cfg.model = load_model_feature_settings(app)
+        .title
+        .or(cfg.model)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    cfg.api_key = assistant_ai_secret().ok().flatten();
+    if cfg.base_url.is_none() || cfg.model.is_none() || cfg.api_key.is_none() {
         return None;
     }
-    Some(ModelRequest {
-        model: default_model_for_backend(&backend).to_string(),
-        backend,
-        base_url,
-        api_key,
-    })
+    Some(cfg)
 }
 
-fn request_title<R: Runtime>(
-    app: &AppHandle<R>,
-    model: &ModelRequest,
-    prompt: &str,
-) -> Result<String, String> {
-    if is_codex_spark_request(model) {
-        return request_codex_account_spark(
-            app,
-            prompt,
-            prompt_contract::title_system_instruction(),
-        )
-        .map_err(|err| format!("title Codex Spark request failed: {err}"));
-    }
+fn request_title(model: &AssistantAIConfig, prompt: &str) -> Result<String, String> {
+    let base_url = model
+        .base_url
+        .as_deref()
+        .unwrap_or("")
+        .trim_end_matches('/');
+    let url = format!("{base_url}/chat/completions");
     let client = Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|e| format!("HTTP client failed: {e}"))?;
-    if model.backend == BACKEND_CLAUDE {
-        request_anthropic(&client, model, prompt)
-    } else {
-        request_openai_compatible(&client, model, prompt)
-    }
-}
-
-fn request_openai_compatible(
-    client: &Client,
-    model: &ModelRequest,
-    prompt: &str,
-) -> Result<String, String> {
-    let url = format!("{}/chat/completions", model.base_url.trim_end_matches('/'));
     let resp = client
-        .post(&url)
-        .bearer_auth(&model.api_key)
+        .post(url)
+        .bearer_auth(model.api_key.as_deref().unwrap_or(""))
         .json(&json!({
             "model": model.model,
             "messages": [
@@ -445,52 +303,9 @@ fn request_openai_compatible(
         .ok_or_else(|| "title response missing content".to_string())
 }
 
-fn request_anthropic(
-    client: &Client,
-    model: &ModelRequest,
-    prompt: &str,
-) -> Result<String, String> {
-    let base = model.base_url.trim_end_matches('/');
-    let url = if base.ends_with("/v1") {
-        format!("{base}/messages")
-    } else {
-        format!("{base}/v1/messages")
-    };
-    let resp = client
-        .post(&url)
-        .header("x-api-key", &model.api_key)
-        .header("anthropic-version", "2023-06-01")
-        .json(&json!({
-            "model": model.model,
-            "max_tokens": 80,
-            "temperature": 0.2,
-            "system": prompt_contract::title_system_instruction(),
-            "messages": [{ "role": "user", "content": prompt }]
-        }))
-        .send()
-        .map_err(|e| format!("title request failed: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("title request HTTP {}", resp.status()));
-    }
-    let value = resp
-        .json::<JsonValue>()
-        .map_err(|e| format!("title response parse failed: {e}"))?;
-    value
-        .get("content")
-        .and_then(|value| value.as_array())
-        .and_then(|items| {
-            items
-                .iter()
-                .find_map(|item| item.get("text").and_then(|value| value.as_str()))
-        })
-        .map(str::to_string)
-        .ok_or_else(|| "title response missing text".to_string())
-}
-
 fn persist_title_event<R: Runtime>(
     app: &AppHandle<R>,
     task: &TaskTitleState,
-    backend: &str,
     turn_id: Option<&str>,
     status: &str,
     proposed: &str,
@@ -506,7 +321,7 @@ fn persist_title_event<R: Runtime>(
             id,
             task_id: task.id.clone(),
             turn_id: turn_id.map(str::to_string),
-            backend: backend.to_string(),
+            backend: BACKEND_NATIVE_AGENTKIT.to_string(),
             kind: agent_timeline_contract::title_update_action_kind().to_string(),
             status: status.to_string(),
             title: TITLE_LABEL.to_string(),

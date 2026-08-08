@@ -1,22 +1,14 @@
 export type RuntimePermissionMode = "full" | "ask" | "readonly" | "free";
-export type RuntimePermissionBackend = "claude" | "codex";
+export type RuntimePermissionBackend = "native-agentkit";
 
 export interface PermissionModeDisplay {
   label: string;
   description: string;
 }
 
-export interface ClaudePermissionRuntimeMapping {
-  permissionMode: "default" | "bypassPermissions";
-  allowDangerouslySkipPermissions: boolean;
-}
-
-export interface CodexPermissionRuntimeMapping {
-  sandboxMode: "danger-full-access" | "workspace-write" | "read-only";
-  sandboxPolicy: "dangerFullAccess" | "workspaceWrite" | "readOnly";
-  approvalPolicy: "never" | "on-request";
-  permissionProfile: "dangerFullAccess" | "workspaceWrite" | "readOnly";
-  permissionProfileId: ":danger-no-sandbox" | ":workspace" | ":read-only";
+export interface NativePermissionRuntimeMapping {
+  mode: "full_access" | "default" | "readonly";
+  requireApproval: boolean;
 }
 
 export const PERMISSION_MODES_MANIFEST: {
@@ -25,8 +17,7 @@ export const PERMISSION_MODES_MANIFEST: {
   display: Readonly<Record<RuntimePermissionMode, PermissionModeDisplay>>;
   displayOrder: readonly RuntimePermissionMode[];
   runtimeMappings: {
-    claude: Record<RuntimePermissionMode, ClaudePermissionRuntimeMapping>;
-    codex: Record<RuntimePermissionMode, CodexPermissionRuntimeMapping>;
+    "native-agentkit": Record<RuntimePermissionMode, NativePermissionRuntimeMapping>;
   };
 };
 
@@ -43,20 +34,13 @@ export function normalizeRuntimePermissionMode(
 ): RuntimePermissionMode;
 
 export function runtimePermissionMapping(
-  backend: "claude",
+  backend: "native-agentkit",
   permission: unknown,
-): ClaudePermissionRuntimeMapping | null;
-
-export function runtimePermissionMapping(
-  backend: "codex",
-  permission: unknown,
-): CodexPermissionRuntimeMapping | null;
+): NativePermissionRuntimeMapping | null;
 
 export function runtimePermissionMapping(
   backend: RuntimePermissionBackend,
   permission: unknown,
-): ClaudePermissionRuntimeMapping | CodexPermissionRuntimeMapping | null;
+): NativePermissionRuntimeMapping | null;
 
-export function claudePermissionRuntime(permission: unknown): ClaudePermissionRuntimeMapping | null;
-
-export function codexPermissionRuntime(permission: unknown): CodexPermissionRuntimeMapping | null;
+export function nativePermissionRuntime(permission: unknown): NativePermissionRuntimeMapping | null;

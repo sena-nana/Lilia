@@ -45,7 +45,7 @@ pub fn build_product_coding_profile(
     let mut builder = AgentRuntimeProfileBuilder::new(profile_id)
         .mode(AgentRuntimeMode::Production)
         .system_instruction(
-            "Lilia product Native Coding Agent. Use protocol adapters only; never official Agent Server.",
+            "Lilia product Native Coding Agent on Mutsuki AgentKit. Use Lilia product protocol and model protocol adapters only; never official Agent Server or brand CLI runners.",
         );
 
     let mut providers: Vec<(String, CredentialRef)> = openai_bindings;

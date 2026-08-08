@@ -38,7 +38,7 @@ LiliaCode's roadmap is organized around one goal: turning agent sessions in soft
 - Task dependencies and assignment: complete the dependency, blocker, assignment, and team-mode operation loop.
 - Multi-Agent writing and scheduling: support multiple Agents contributing to one goal through writing, review, verification, and integration flows.
 - Automation in the main conversation path: connect the automation framework to scheduling, failure handling, recovery, and degradation strategy.
-- Claude Plugins / Subagents / helper agents: complete Claude Plugins management, Subagents display and scheduling, and low-cost helper Agents.
+- AgentKit extensions and helper agents: complete Mutsuki-native MCP / Skill / Hook management, Subagents display and scheduling, and low-cost helper Agents.
 - Conversation-level completion: add message-body search, session fork, continue from a specific turn, regeneration, and more session-management actions.
 - Android remote-control hardening: turn the `v1.0-beta` experimental path into a stable remote-control entry point, including event stream coverage, capability negotiation, foreground/background recovery, error recovery, and end-to-end regression coverage.
 

@@ -10,12 +10,6 @@ export const PROVIDER_GET_ACTIVE_BACKEND_COMMAND =
   manifest.providerGetActiveBackendCommand;
 export const PROVIDER_SET_ACTIVE_BACKEND_COMMAND =
   manifest.providerSetActiveBackendCommand;
-export const PROVIDER_CODEX_APP_SERVER_CHECK_UPDATE_COMMAND =
-  manifest.providerCodexAppServerCheckUpdateCommand;
-export const PROVIDER_CODEX_APP_SERVER_INSTALL_UPDATE_COMMAND =
-  manifest.providerCodexAppServerInstallUpdateCommand;
-export const PROVIDER_CODEX_ACCOUNT_START_LOGIN_COMMAND =
-  manifest.providerCodexAccountStartLoginCommand;
 export const ROUTER_GET_MODE_COMMAND = manifest.routerGetModeCommand;
 export const ROUTER_SET_MODE_COMMAND = manifest.routerSetModeCommand;
 export const ASSISTANT_AI_GET_CONFIG_COMMAND = manifest.assistantAiGetConfigCommand;

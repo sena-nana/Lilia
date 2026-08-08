@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "legacy-runner")]
-use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -170,51 +168,3 @@ pub struct HookDocumentUpdateInput {
     pub handlers: Vec<HookHandlerUpdateInput>,
 }
 
-#[cfg(feature = "legacy-runner")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeRuntimePlugin {
-    pub r#type: String,
-    pub path: String,
-}
-
-#[cfg(feature = "legacy-runner")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeRuntimeExtensions {
-    pub skills: Vec<String>,
-    pub plugins: Vec<ClaudeRuntimePlugin>,
-    pub mcp_servers: BTreeMap<String, ClaudeRuntimeMcpServer>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hooks: Option<JsonValue>,
-    pub warnings: Vec<String>,
-}
-
-#[cfg(any(feature = "legacy-runner", test))]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ClaudeRuntimeMcpServer {
-    pub r#type: String,
-    pub command: String,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub args: Vec<String>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub env: BTreeMap<String, String>,
-}
-
-#[cfg(feature = "legacy-runner")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexRuntimeExtensions {
-    pub mcp_servers: Vec<PluginMcpServer>,
-    pub config_path: Option<String>,
-    pub warnings: Vec<String>,
-}
-
-#[cfg(feature = "legacy-runner")]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AgentRuntimeExtensions {
-    pub claude: ClaudeRuntimeExtensions,
-    pub codex: CodexRuntimeExtensions,
-}

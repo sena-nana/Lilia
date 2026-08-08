@@ -343,7 +343,7 @@ describe("Automations page", () => {
     const inspector = await waitForInspectorReady(view);
     await fireEvent.click(within(inspector).getByRole("button", { name: "Lilia" }));
     await fireEvent.click(within(inspector).getByRole("button", { name: "运行" }));
-    await fireEvent.click(within(inspector).getByRole("button", { name: "claude" }));
+    await fireEvent.click(within(inspector).getByRole("button", { name: "native-agentkit" }));
     await waitForWorkflowActionEnabled(view, "保存草稿");
     await fireEvent.click(view.getByRole("button", { name: "保存草稿" }));
 
@@ -353,7 +353,7 @@ describe("Automations page", () => {
         scope: {
           projectIds: ["lilia"],
           taskStatuses: ["running"],
-          backends: ["claude"],
+          backends: ["native-agentkit"],
         },
       });
     });

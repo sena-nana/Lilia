@@ -169,7 +169,7 @@ impl NativeAgentKitRuntime {
         Ok(serde_json::to_value(servers)?)
     }
 
-    /// Durable AgentKit MCP/Skills registry written by `lilia-migrate apply` (#47).
+    /// Durable AgentKit MCP/Skills registry under `$LILIA_HOME/config/` (#47).
     /// Does not spawn MCP transports; reports configured (secret-free) entries only.
     pub fn shared_agentkit_registry_status(
         &self,

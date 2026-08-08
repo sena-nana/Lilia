@@ -6,7 +6,6 @@ use serde_json::json;
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Runtime};
 
-use super::codex_spark::{codex_account_spark_enabled, request_codex_account_spark};
 use super::config::{assistant_ai_secret, load_assistant_ai_config, load_model_feature_settings};
 use super::credentials::normalize_secret;
 use super::types::{
@@ -14,7 +13,6 @@ use super::types::{
 };
 use crate::chat::types::{ChatAttachment, ChatConversationReference, ChatWorkflow};
 use crate::prompt_contract;
-use crate::BACKEND_CODEX;
 
 const PROMPT_OPTIMIZE_TIMEOUT: Duration = Duration::from_secs(12);
 const PROMPT_ROUTE_CONFIDENCE_THRESHOLD: f64 = 0.6;
@@ -189,7 +187,7 @@ pub(crate) fn fetch_models(mut config: AssistantAIConfig) -> AssistantAIModelsRe
                             id: id.to_string(),
                             label: id.to_string(),
                             source: "remote".to_string(),
-                            backend: BACKEND_CODEX.to_string(),
+                            backend: "assistant-ai".to_string(),
                         })
                         .collect()
                 })
@@ -277,10 +275,6 @@ fn request_assistant_text<R: Runtime>(
     label: &str,
     override_model: Option<String>,
 ) -> Result<String, String> {
-    if codex_account_spark_enabled(app) {
-        return request_codex_account_spark(app, prompt, system_instruction)
-            .map_err(|err| format!("{label}失败：{err}"));
-    }
     let model = assistant_ai_model_request(app, override_model)?;
     request_openai_compatible(&model, prompt, system_instruction, max_tokens)
 }

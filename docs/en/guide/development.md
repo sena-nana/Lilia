@@ -7,24 +7,25 @@ The repository, package names, protocol names, and local configuration paths sti
 ```text
 Lilia/
 ├── apps/
-│   └── desktop/                # Main app: Vue 3 + Tauri 2
-│       ├── src/
-│       │   ├── layouts/        # AppShell / SecondaryPanel / TitleBar
-│       │   ├── components/     # ViewTabs / TodoFloat / ChatComposer, etc.
-│       │   ├── pages/          # project/ProjectShell / TaskDetail / Settings
-│       │   ├── services/       # projectsStore / tasksStore / todos / chat
-│       │   ├── styles/         # Theme tokens, standard components, shell, and lazy page styles
-│       │   ├── router.ts
-│       │   └── mainBootstrap.ts
-│       └── src-tauri/          # Tauri 2 Rust side
-│           └── src/
-│               ├── store.rs    # lilia-store: SQLite + r2d2 + migrations
-│               ├── todos.rs    # Intercepts TodoWrite / todo_list events -> TaskTodo upsert
-│               ├── plugins.rs  # Claude skills / plugins / MCP and Codex MCP discovery
-│               └── lib.rs      # chat / settings / project / plugin IPC
-└── packages/
-    └── contracts/              # Shared TS types and timeline display rules
+│   ├── desktop/                # Main app: Vue 3 + Tauri 2
+│   │   ├── src/                # UI, services, composables
+│   │   └── src-tauri/src/      # Tauri IPC: chat / project / plugins / remote
+│   ├── service/                # Shared LiliaCore + AgentKit service entry
+│   └── cli/                    # Agent Wire turn CLI
+├── crates/
+│   ├── lilia-core/             # Product ports and task binding
+│   ├── lilia-agent-integration/# Mutsuki AgentKit anticorruption layer
+│   ├── lilia-storage/          # Product SQLite and paths
+│   └── lilia-contracts/        # Rust product contracts
+├── packages/
+│   └── contracts/              # Shared TS contracts (Lilia protocol + timeline)
+└── docs/
+    └── design/
+        ├── lilia-agent-interface.md
+        └── mutsuki-dependency-pin.md
 ```
+
+Agent execution uses **Mutsuki Native AgentKit** only (`native-agentkit`). Configure OpenAI-compatible or Anthropic Messages credentials for model APIs; do not install Claude Code or Codex CLIs as product backends.
 
 ## Local Development
 

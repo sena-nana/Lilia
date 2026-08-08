@@ -47,16 +47,6 @@ import {
   CONVERSATION_SUGGESTIONS_SET_SETTINGS_COMMAND,
 } from "@lilia/contracts/suggestionsContract.mjs";
 import {
-  HISTORY_IMPORT_ATTACH_COMMAND,
-  HISTORY_IMPORT_CLEAN_BACKGROUND_TERMINALS_COMMAND,
-  HISTORY_IMPORT_PREVIEW_COMMAND,
-  HISTORY_IMPORT_RUNTIME_STATES_COMMAND,
-  HISTORY_IMPORT_SEARCH_COMMAND,
-} from "@lilia/contracts/historyImportContract.mjs";
-import {
-  normalizeCodexAccountQuotaStatus as normalizeLiliaCodeCoreCodexQuotaStatus,
-} from "@lilia/contracts/liliaCodeCore.mjs";
-import {
   ASSISTANT_AI_FETCH_MODELS_COMMAND,
   ASSISTANT_AI_GET_CONFIG_COMMAND,
   ASSISTANT_AI_OPTIMIZE_PROMPT_COMMAND,
@@ -66,9 +56,6 @@ import {
   MODEL_FEATURE_GET_SETTINGS_COMMAND,
   MODEL_FEATURE_LIST_MODEL_OPTIONS_COMMAND,
   MODEL_FEATURE_SET_SETTINGS_COMMAND,
-  PROVIDER_CODEX_ACCOUNT_START_LOGIN_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_CHECK_UPDATE_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_INSTALL_UPDATE_COMMAND,
   PROVIDER_GET_ACTIVE_BACKEND_COMMAND,
   PROVIDER_GET_CONFIG_COMMAND,
   PROVIDER_SET_ACTIVE_BACKEND_COMMAND,
@@ -84,8 +71,6 @@ import {
   PROJECT_ARCHITECTURE_ROLLBACK_COMMAND,
 } from "@lilia/contracts/architectureContract.mjs";
 import {
-  QUOTA_USAGE_CONSUME_CODEX_RATE_LIMIT_RESET_CREDIT_COMMAND,
-  QUOTA_USAGE_GET_CODEX_ACCOUNT_STATUS_COMMAND,
   QUOTA_USAGE_GET_STATS_COMMAND,
 } from "@lilia/contracts/quotaContract.mjs";
 import {
@@ -121,13 +106,6 @@ import type {
   ChatRuntimeSnapshot,
   ChatWorkflow,
   ProviderRuntimeOptions,
-  HistoryImportAttachInput,
-  HistoryImportAttachResult,
-  HistoryImportPreviewInput,
-  HistoryImportPreview,
-  HistoryImportRuntimeState,
-  HistoryImportSearchInput,
-  HistoryImportSearchResult,
   ChatInterruptResult,
   AgentTimelineEvent,
   AssistantAIModelPoolItem,
@@ -159,10 +137,6 @@ import type {
   ProjectArchitectureGraph,
   ProjectArchitectureRejectInput,
   ProjectArchitectureRollbackResult,
-  CodexAccountQuotaStatus,
-  CodexAppServerStatus,
-  CodexRateLimitResetCreditConsumeInput,
-  CodexRateLimitResetCreditConsumeResult,
   CustomSubagentDefinition,
   CustomSubagentUpsertInput,
   QuotaUsageStats,
@@ -192,13 +166,6 @@ export type {
   ChatRuntimeSnapshot,
   ProviderRuntimeOptions,
   ModelFeatureSettings,
-  HistoryImportAttachInput,
-  HistoryImportAttachResult,
-  HistoryImportPreviewInput,
-  HistoryImportPreview,
-  HistoryImportRuntimeState,
-  HistoryImportSearchInput,
-  HistoryImportSearchResult,
   ConnectionMode,
   BackendEnvStatus,
   EnvStatusReport,
@@ -224,7 +191,6 @@ export type {
   ProjectArchitectureGraph,
   ProjectArchitectureRejectInput,
   ProjectArchitectureRollbackResult,
-  CodexAccountQuotaStatus,
   QuotaUsageStats,
   QuotaUsageStatsInput,
   RemoteControlStatus,
@@ -236,30 +202,6 @@ export type DoneEvent = ChatDoneEvent;
 
 export function listAgentTimeline(taskId: string): Promise<AgentTimelineEvent[]> {
   return invoke<AgentTimelineEvent[]>(AGENT_TIMELINE_LIST_COMMAND, { taskId });
-}
-
-export function searchHistoryImports(
-  input: HistoryImportSearchInput,
-): Promise<HistoryImportSearchResult> {
-  return invoke<HistoryImportSearchResult>(HISTORY_IMPORT_SEARCH_COMMAND, { input });
-}
-
-export function previewHistoryImport(input: HistoryImportPreviewInput): Promise<HistoryImportPreview> {
-  return invoke<HistoryImportPreview>(HISTORY_IMPORT_PREVIEW_COMMAND, { input });
-}
-
-export function attachHistoryImport(
-  input: HistoryImportAttachInput,
-): Promise<HistoryImportAttachResult> {
-  return invoke<HistoryImportAttachResult>(HISTORY_IMPORT_ATTACH_COMMAND, { input });
-}
-
-export function listHistoryImportRuntimeStates(): Promise<HistoryImportRuntimeState[]> {
-  return invoke<HistoryImportRuntimeState[]>(HISTORY_IMPORT_RUNTIME_STATES_COMMAND);
-}
-
-export function cleanHistoryImportBackgroundTerminals(itemId: string): Promise<void> {
-  return invoke<void>(HISTORY_IMPORT_CLEAN_BACKGROUND_TERMINALS_COMMAND, { itemId });
 }
 
 /**
@@ -401,7 +343,7 @@ export function ackRestoredRollback(taskId: string): Promise<void> {
   return invoke<void>(CHAT_ACK_RESTORED_ROLLBACK_COMMAND, { taskId });
 }
 
-/** 健康检查：node、本机内置 Codex app-server，以及两个 backend 当前的连接模式。 */
+/** 健康检查：node 运行时与 native-agentkit 连接模式。 */
 export function checkEnv(options: { forceRefresh?: boolean } = {}): Promise<EnvStatusReport> {
   return invoke<EnvStatusReport>(CHAT_CHECK_ENV_COMMAND, {
     forceRefresh: options.forceRefresh ?? false,
@@ -422,18 +364,6 @@ export function getActiveBackend(): Promise<ChatBackendKind> {
 
 export function setActiveBackend(backend: ChatBackendKind): Promise<void> {
   return invoke<void>(PROVIDER_SET_ACTIVE_BACKEND_COMMAND, { backend });
-}
-
-export function checkCodexAppServerUpdate(): Promise<CodexAppServerStatus> {
-  return invoke<CodexAppServerStatus>(PROVIDER_CODEX_APP_SERVER_CHECK_UPDATE_COMMAND);
-}
-
-export function installCodexAppServerUpdate(): Promise<CodexAppServerStatus> {
-  return invoke<CodexAppServerStatus>(PROVIDER_CODEX_APP_SERVER_INSTALL_UPDATE_COMMAND);
-}
-
-export function startCodexAccountLogin(): Promise<void> {
-  return invoke<void>(PROVIDER_CODEX_ACCOUNT_START_LOGIN_COMMAND);
 }
 
 export function getRouterMode(backend: ChatBackendKind): Promise<RouterMode> {
@@ -560,24 +490,6 @@ export function getQuotaUsageStats(
   input: QuotaUsageStatsInput = {},
 ): Promise<QuotaUsageStats> {
   return invoke<QuotaUsageStats>(QUOTA_USAGE_GET_STATS_COMMAND, { input });
-}
-
-export async function getCodexAccountQuotaStatus(): Promise<CodexAccountQuotaStatus> {
-  const result = await invoke<unknown>(QUOTA_USAGE_GET_CODEX_ACCOUNT_STATUS_COMMAND);
-  return normalizeLiliaCodeCoreCodexQuotaStatus(result);
-}
-
-export async function consumeCodexRateLimitResetCredit(
-  input: CodexRateLimitResetCreditConsumeInput,
-): Promise<CodexRateLimitResetCreditConsumeResult> {
-  const result = await invoke<CodexRateLimitResetCreditConsumeResult>(
-    QUOTA_USAGE_CONSUME_CODEX_RATE_LIMIT_RESET_CREDIT_COMMAND,
-    { input },
-  );
-  return {
-    ...result,
-    status: normalizeLiliaCodeCoreCodexQuotaStatus(result.status),
-  };
 }
 
 export function getRemoteControlStatus(): Promise<RemoteControlStatus> {

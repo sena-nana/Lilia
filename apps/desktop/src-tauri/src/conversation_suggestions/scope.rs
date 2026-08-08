@@ -4,7 +4,6 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value as JsonValue;
 use tauri::AppHandle;
 
-use super::codex_thread::load_recent_codex_threads;
 use super::generation::{compact_line, truncate_chars};
 use super::github_context::load_github_activity_context;
 use super::local_git::load_local_git_context;
@@ -47,13 +46,8 @@ pub(super) fn build_scope(
     } else {
         Vec::new()
     };
-    let codex_threads = match load_recent_codex_threads(app, conn, &project, requested_project_id) {
-        Ok(threads) => threads,
-        Err(err) => {
-            eprintln!("[conversation-suggestions] Codex thread context skipped: {err}");
-            Vec::new()
-        }
-    };
+    // Official Codex thread context removed; keep empty for shared suggestion shapes.
+    let codex_threads = Vec::new();
     build_scope_from_parts(
         conn,
         requested_project_id,
@@ -132,7 +126,7 @@ pub(super) fn summarize_scope_sources(scope: &SuggestionScope) -> SuggestionSour
         sources.push(SuggestionItemSource::Github);
     }
     if !scope.codex_threads.is_empty() {
-        sources.push(SuggestionItemSource::CodexThread);
+        sources.push(SuggestionItemSource::SessionThread);
     }
     let local_git = if scope.local_git_contexts.is_empty() {
         None

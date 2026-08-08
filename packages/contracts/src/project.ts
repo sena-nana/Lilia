@@ -1,4 +1,4 @@
-import type { CodexComposerSettings } from "./provider";
+import type { CodexComposerSettings, NativeComposerSettings } from "./provider";
 import {
   GITHUB_CLONE_REPO_COMMAND,
   GITHUB_GET_BINDING_STATUS_COMMAND,
@@ -261,6 +261,9 @@ export interface WorktreeMergeResult {
 
 export interface ProjectSettings {
   cloneParentDir: string | null;
+  /** Native AgentKit project defaults (Mutsuki path). */
+  nativeDefaults?: NativeComposerSettings | null;
+  /** @deprecated Use nativeDefaults. */
   codexDefaults?: CodexComposerSettings | null;
   githubBinding?: GitHubBindingMetadata | null;
   worktree?: WorktreeSettings | null;

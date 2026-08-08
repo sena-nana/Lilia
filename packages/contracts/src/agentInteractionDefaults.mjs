@@ -1,9 +1,5 @@
 import agentInteractionDefaults from "./agent-interaction-defaults.json" with { type: "json" };
 import {
-  DEFAULT_CODEX_PROFILE_SETTINGS,
-  normalizeCodexProfileSettings,
-} from "./providerRuntime.mjs";
-import {
   DEFAULT_PERMISSION_MODE,
   PERMISSION_MODE_DISPLAY_ORDER,
   PERMISSION_MODES,
@@ -57,22 +53,12 @@ export function normalizeAgentSubagentModeSettings(
 ) {
   return {
     enabled: typeof input?.enabled === "boolean" ? input.enabled : base.enabled,
-    codex: {
-      enabled: typeof input?.codex?.enabled === "boolean"
-        ? input.codex.enabled
-        : base.codex.enabled,
-    },
-    claude: {
-      enabled: typeof input?.claude?.enabled === "boolean"
-        ? input.claude.enabled
-        : base.claude.enabled,
-      forwardSubagentText: typeof input?.claude?.forwardSubagentText === "boolean"
-        ? input.claude.forwardSubagentText
-        : base.claude.forwardSubagentText,
-      agentProgressSummaries: typeof input?.claude?.agentProgressSummaries === "boolean"
-        ? input.claude.agentProgressSummaries
-        : base.claude.agentProgressSummaries,
-    },
+    forwardSubagentText: typeof input?.forwardSubagentText === "boolean"
+      ? input.forwardSubagentText
+      : base.forwardSubagentText,
+    agentProgressSummaries: typeof input?.agentProgressSummaries === "boolean"
+      ? input.agentProgressSummaries
+      : base.agentProgressSummaries,
   };
 }
 
@@ -149,7 +135,6 @@ export function normalizeAgentInteractionSettings(
       input?.mainAgentCustomPrompt,
       base.mainAgentCustomPrompt,
     ),
-    codexProfile: normalizeCodexProfileSettings(input?.codexProfile, base.codexProfile),
     subagentMode: normalizeAgentSubagentModeSettings(input?.subagentMode, base.subagentMode),
     autoTurnDecision: normalizeAutoTurnDecisionSettings(
       input?.autoTurnDecision,
@@ -163,10 +148,6 @@ function readAgentInteractionDefaultsManifest(value) {
   if (!isRuntimePermissionMode(row.permissionMode)) {
     throw new Error("agent-interaction-defaults.json.permissionMode must be a permission mode");
   }
-  const codexProfile = requireManifestRecord(
-    row.codexProfile,
-    "agent-interaction-defaults.json.codexProfile",
-  );
   const permissionModeAvailability = requireManifestRecord(
     row.permissionModeAvailability,
     "agent-interaction-defaults.json.permissionModeAvailability",
@@ -192,10 +173,6 @@ function readAgentInteractionDefaultsManifest(value) {
     ),
     mainAgentPromptMode: normalizeMainAgentPromptMode(row.mainAgentPromptMode),
     mainAgentCustomPrompt: normalizeMainAgentCustomPrompt(row.mainAgentCustomPrompt),
-    codexProfile: normalizeCodexProfileSettings(
-      codexProfile,
-      DEFAULT_CODEX_PROFILE_SETTINGS,
-    ),
     subagentMode: readAgentSubagentModeDefaults(subagentMode),
     autoTurnDecision: readAutoTurnDecisionDefaults(autoTurnDecision),
   };
@@ -214,44 +191,22 @@ function readPermissionModeAvailabilityDefaults(row) {
 }
 
 function readAgentSubagentModeDefaults(row) {
-  const codex = requireManifestRecord(
-    row.codex,
-    "agent-interaction-defaults.json.subagentMode.codex",
-  );
-  const claude = requireManifestRecord(
-    row.claude,
-    "agent-interaction-defaults.json.subagentMode.claude",
-  );
   return {
     enabled: booleanManifestField(
       row,
       "enabled",
       "agent-interaction-defaults.json.subagentMode",
     ),
-    codex: {
-      enabled: booleanManifestField(
-        codex,
-        "enabled",
-        "agent-interaction-defaults.json.subagentMode.codex",
-      ),
-    },
-    claude: {
-      enabled: booleanManifestField(
-        claude,
-        "enabled",
-        "agent-interaction-defaults.json.subagentMode.claude",
-      ),
-      forwardSubagentText: booleanManifestField(
-        claude,
-        "forwardSubagentText",
-        "agent-interaction-defaults.json.subagentMode.claude",
-      ),
-      agentProgressSummaries: booleanManifestField(
-        claude,
-        "agentProgressSummaries",
-        "agent-interaction-defaults.json.subagentMode.claude",
-      ),
-    },
+    forwardSubagentText: booleanManifestField(
+      row,
+      "forwardSubagentText",
+      "agent-interaction-defaults.json.subagentMode",
+    ),
+    agentProgressSummaries: booleanManifestField(
+      row,
+      "agentProgressSummaries",
+      "agent-interaction-defaults.json.subagentMode",
+    ),
   };
 }
 
@@ -281,8 +236,8 @@ function booleanManifestField(row, key, path) {
 function freezeSubagentModeSettings(value) {
   return Object.freeze({
     enabled: value.enabled,
-    codex: Object.freeze({ ...value.codex }),
-    claude: Object.freeze({ ...value.claude }),
+    forwardSubagentText: value.forwardSubagentText,
+    agentProgressSummaries: value.agentProgressSummaries,
   });
 }
 
@@ -294,7 +249,6 @@ function freezeAgentInteractionSettings(value) {
     permissionModeAvailability: Object.freeze({ ...value.permissionModeAvailability }),
     mainAgentPromptMode: value.mainAgentPromptMode,
     mainAgentCustomPrompt: value.mainAgentCustomPrompt,
-    codexProfile: Object.freeze({ ...value.codexProfile }),
     subagentMode: freezeSubagentModeSettings(value.subagentMode),
     autoTurnDecision: Object.freeze({ ...value.autoTurnDecision }),
   });

@@ -131,35 +131,43 @@ export interface PluginMcpServerInput {
   removeEnvKeys?: string[];
 }
 
-export interface ClaudeRuntimePlugin {
+export interface NativeRuntimePlugin {
   type: "local";
   path: string;
 }
 
-export interface ClaudeRuntimeMcpServer {
+export interface NativeRuntimeMcpServer {
   type: "stdio";
   command: string;
   args?: string[];
   env?: Record<string, string>;
 }
 
-export interface ClaudeRuntimeExtensions {
+/** AgentKit-native runtime extensions (Mutsuki plugins / MCP / hooks). */
+export interface NativeRuntimeExtensions {
   skills: string[];
-  plugins: ClaudeRuntimePlugin[];
-  mcpServers: Record<string, ClaudeRuntimeMcpServer>;
+  plugins: NativeRuntimePlugin[];
+  mcpServers: Record<string, NativeRuntimeMcpServer> | PluginMcpServer[];
   hooks?: Record<string, unknown>;
+  configPath?: string | null;
   warnings: string[];
 }
 
-export interface CodexRuntimeExtensions {
-  mcpServers: PluginMcpServer[];
-  configPath: string | null;
-  warnings: string[];
-}
+/** @deprecated Use NativeRuntimePlugin. */
+export type ClaudeRuntimePlugin = NativeRuntimePlugin;
+/** @deprecated Use NativeRuntimeMcpServer. */
+export type ClaudeRuntimeMcpServer = NativeRuntimeMcpServer;
+/** @deprecated Use NativeRuntimeExtensions. */
+export type ClaudeRuntimeExtensions = NativeRuntimeExtensions;
+/** @deprecated Use NativeRuntimeExtensions. */
+export type CodexRuntimeExtensions = NativeRuntimeExtensions;
 
 export interface AgentRuntimeExtensions {
-  claude?: ClaudeRuntimeExtensions;
-  codex?: CodexRuntimeExtensions;
+  "native-agentkit"?: NativeRuntimeExtensions;
+  /** @deprecated Official product path removed; prefer native-agentkit. */
+  claude?: NativeRuntimeExtensions;
+  /** @deprecated Official product path removed; prefer native-agentkit. */
+  codex?: NativeRuntimeExtensions;
 }
 
 export interface PluginsOverview {

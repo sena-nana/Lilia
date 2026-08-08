@@ -1,6 +1,4 @@
 mod cache;
-mod claude_native;
-mod codex_thread;
 #[cfg(test)]
 mod command_contract;
 mod contract;
@@ -11,7 +9,6 @@ mod model;
 mod scope;
 mod types;
 
-pub(crate) use claude_native::save_claude_prompt_suggestion;
 pub(crate) use types::{SuggestionItem, SuggestionSettings};
 
 use tauri::{AppHandle, Manager, State};
@@ -20,11 +17,10 @@ use crate::settings_store::{load_store_value, save_store_value};
 use crate::store::LiliaStore;
 
 use cache::{build_cache_key, cache_scope_key, load_cache_hit, normalize_settings, save_cache};
-use claude_native::{load_claude_native_suggestions, should_use_claude_native_suggestions};
 use generation::{build_generation_prompt, materialize_items, parse_model_suggestions};
 use model::{request_model, resolve_model_requests};
 use scope::{build_scope, summarize_scope_sources};
-use types::{SuggestionItemSource, SuggestionSourceProbe, SETTINGS_KEY};
+use types::{SuggestionSourceProbe, SETTINGS_KEY};
 
 #[tauri::command]
 pub fn conversation_suggestions_get_settings(app: AppHandle) -> SuggestionSettings {
@@ -48,21 +44,12 @@ pub async fn conversation_suggestions_get_sources(
 fn conversation_suggestions_get_sources_blocking(
     app: AppHandle,
     project_id: Option<String>,
-    force_refresh: Option<bool>,
+    _force_refresh: Option<bool>,
 ) -> Result<SuggestionSourceProbe, String> {
     let settings = conversation_suggestions_get_settings(app.clone());
     if !settings.enabled {
         return Ok(SuggestionSourceProbe {
             sources: Vec::new(),
-            local_git: None,
-        });
-    }
-
-    if should_use_claude_native_suggestions(&settings, force_refresh)
-        && load_claude_native_suggestions(&app, project_id.as_deref()).is_some()
-    {
-        return Ok(SuggestionSourceProbe {
-            sources: vec![SuggestionItemSource::Claude],
             local_git: None,
         });
     }
@@ -108,12 +95,6 @@ fn conversation_suggestions_get_blocking(
     let settings = conversation_suggestions_get_settings(app.clone());
     if !settings.enabled {
         return Ok(Vec::new());
-    }
-
-    if should_use_claude_native_suggestions(&settings, force_refresh) {
-        if let Some(items) = load_claude_native_suggestions(&app, project_id.as_deref()) {
-            return Ok(items);
-        }
     }
 
     let store = app.state::<LiliaStore>();

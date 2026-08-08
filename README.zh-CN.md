@@ -20,7 +20,7 @@
 
 <p align="center"><strong>面向代码工程的 Agent 协同桌面客户端。</strong></p>
 
-<p align="center">LiliaCode 以统一的 Lilia 工作流组织 Claude Code 与 Codex 执行过程，并沉淀为可恢复、可追踪、可调度的本地任务状态，帮助开发者管理项目里的会话、上下文、待办和执行过程。</p>
+<p align="center">LiliaCode 以 Lilia 自有协议 + Mutsuki AgentKit 为 Agent 核心，将执行过程沉淀为可恢复、可追踪、可调度的本地任务状态，帮助开发者管理项目里的会话、上下文、待办和执行过程。</p>
 
 <p align="center">
   <img src="./.github/assets/main-window.png" alt="LiliaCode 主界面" />
@@ -30,7 +30,7 @@
 
 ## 产品定位
 
-LiliaCode 是 Lilia 系列中的代码工程工作台。它不是把 Claude Code 或 Codex 包进一个聊天窗口，而是在 Agent 执行层之外提供项目、任务、会话、权限和过程信息的桌面级组织层。
+LiliaCode 是 Lilia 系列中的代码工程工作台。Agent 执行由 **Lilia 产品协议（Mutsuki 实现）** 驱动，桌面层提供项目、任务、会话、权限和过程信息的组织能力。
 
 它面向需要长期推进工程项目的开发者：每条会话都可以被视作可管理的任务，Agent 的执行过程和待处理交互会沉淀为本地状态，并为后续任务树、自动编排和多 Agent 协同提供基础。
 
@@ -48,69 +48,42 @@ LiliaCode 聚焦代码工程场景；同系列应用可以继续围绕其他高�
 - 非打断交互：权限请求、计划确认和 Agent 提问可以进入待处理区，减少对输入流的打断。
 - 面向协同调度：为任务树、依赖关系、自动编排和辅助 Agent 留出统一结构。
 
-LiliaCode 仍优先维护自己的可恢复任务结构，而不是直接沿用上游 CLI / SDK 的历史格式。Claude / Codex 原始历史可作为接入入口导入为 Lilia task，但本地 task timeline 仍是主要工作模型。
+LiliaCode 维护自己的可恢复任务结构与 timeline；不再依赖 Claude Code / Codex 官方 CLI、SDK 或 app-server 作为执行路径。模型侧仍可通过 OpenAI-compatible / Anthropic Messages 等 **LLM API** 接入。
 
 ## 安装后如何跑起来
 
-- 跑 Claude：确认本机有 Node.js 18+，在“连接”里选择 Claude，并填写 Anthropic API key。Base URL 留空时使用 `https://api.anthropic.com`；也可以填写本地代理或 Anthropic 兼容端点。
-- 跑 Codex：先安装 Codex CLI：`npm i -g @openai/codex`，并确保 Lilia 能检测到 `codex app-server`。Lilia 需要 Codex CLI `0.128.0+` 的 app-server 协议能力；默认复用本机 `codex login` 的官方账号登录态。
-- Codex API：如需按 OpenAI API key 计费，在“连接”里把 Codex 接入方式切到 API，填写 `OPENAI_API_KEY`；Base URL 留空时使用 `https://api.openai.com/v1`。
-- 兼容 API / 本地代理：把对应服务地址直接填入 Base URL。原 CC-Switch 不再有专门适配，可作为普通 API 来源使用，例如 `http://127.0.0.1:15721`。
-- 失败修复：连接页会把 Node 缺失、Codex CLI 缺失、app-server 版本过低、Codex 未登录、API 密钥缺失等状态映射成可执行建议。修复后点击“重新检测”，再回到对话页发送第一条消息。
+- 在设置中配置 **Native 凭据**（OpenAI 或 Anthropic API Key，或兼容端点）。
+- Agent 执行默认走 **Native AgentKit**（`native-agentkit`），无需安装 Claude Code 或 Codex CLI。
+- 兼容 API / 本地代理：在凭据或模型配置中填写 Base URL，例如 `http://127.0.0.1:15721`。
+- 配置完成后回到对话页发送第一条消息；连接与凭据状态可在设置页刷新检查。
 
 ## 功能状态
 
-以下按当前真实接入面记录。只有已经能作为用户功能使用的项目标记为完成；部分接入和未接入项目均保持未完成。最近核对时间：2026-06-25。
+以下按当前真实接入面记录。只有已经能作为用户功能使用的项目标记为完成。最近核对时间：2026-08-08。
 
 ### 共通 Agent 能力
 
-- [x] 权限模式：按执行风险选择完全访问、询问、只读等执行范围，并映射到 Claude / Codex 的运行参数。
-- [x] Todo 展示：镜像 Claude `TodoWrite` 和 Codex `todo_list`，展示 Agent 当前任务清单和执行进度。
+- [x] Native AgentKit 执行：对话 turn 走 LiliaCore，不再直连 Claude Code / Codex 官方产品。
+- [x] 权限模式：按执行风险选择完全访问、询问、只读等执行范围。
+- [x] Todo 展示：展示 Agent 当前任务清单和执行进度。
 - [x] 过程时间线：区分并展示 Agent 的思考、命令、工具调用、文件变更、计划和最终回复。
 - [x] 关键节点跳转：在滚动条中高亮关键节点，并支持快速跳转。
 - [x] 非打断交互切换：权限请求、Agent 提问和计划确认可以进入待处理区，不抢占输入框。
 - [x] 引导队列：用户引导 Todo 可创建、排队、串行发送，并在运行中恢复队列状态。
-- [x] MCP 基础接入：Claude stdio MCP 可由 Lilia 管理并注入运行时；Codex 可读取并管理 `~/.codex/config.toml` 中的 stdio MCP server。
-- [x] 统一交互协议：跨后端统一计划确认、工具确认和 Agent 提问。
-- [x] 统一 Lilia 工作流：内置任务工作流、审查、修复建议、批量应用、上下文压缩、会话分叉、Goal、memory、配置诊断和后台终端清理在界面层统一使用 Lilia 协议名，内部按 backend 分发。
+- [x] 统一交互协议：统一计划确认、工具确认和 Agent 提问。
+- [x] 统一 Lilia 工作流：内置任务工作流、审查、修复建议、批量应用等在界面层使用 Lilia 协议名。
 - [x] 文件上下文：支持通过 `@` 提及文件、目录和图片等上下文，也支持粘贴/拖入附件。
-- [x] 智能模型选择：在当前后端内按任务上下文自动选择模型级别与思考强度，发送前仍可手动覆盖。
-- [x] 斜杠命令：支持在输入框通过 `/` 打开命令面板，执行内置命令和 `.lilia/commands` 项目命令，并把执行结果回写到任务 timeline；还不承诺完整代理后端原生命令。
-
-### Claude Code 接入
-
-- [x] Claude 对话：通过 Claude Agent SDK `query()` 发起新 turn，并保存 SDK `session_id` 用于同任务继续会话。
-- [x] Claude Plan：镜像 `ExitPlanMode`，通过统一 AskUser 完成同意、取消和修订请求，确认后恢复执行阶段权限模式。
-- [x] Claude 提示建议：消费原生 `prompt_suggestion` 事件，并在输入框建议区展示。
-- [x] Claude 历史：可搜索本地 Claude JSONL session，预览消息 / timeline，导入为 Lilia task，并从接入的 SDK session 继续会话。
-- [x] Claude Skills：管理用户级和项目级 Skills，并把启用列表传给 SDK。
-- [x] Claude 工具展示：归一化 Bash、Read / Write / Edit / MultiEdit、Glob / Grep、NotebookEdit、WebSearch / WebFetch、TodoWrite、Task / Agent、ExitPlanMode 等常用工具。
-- [x] Claude Lilia 工作流：内置任务工作流、审查 / 修复建议 / 批量应用通过结构化 prompt 接入，session fork 使用 SDK，Goal 和原生能力缺口写入 Lilia timeline 诊断。
-- [ ] Claude MCP 管理（部分接入）：v1.0.0 已支持 stdio MCP 的增删改/启停；HTTP / SSE、OAuth、elicitation、tool policy 和 SDK instance MCP 复杂能力暂缓到 v2.0。
-- [ ] Claude Plugins（部分接入）：已支持用户级本地 plugin 发现与启停并回传 SDK 路径；安装、更新、项目级 / marketplace 作用域管理暂缓到 v2.0。
-- [ ] Claude Hooks（部分接入）：当前展示小规模 SDK hook 生命周期；Hooks 配置管理与执行结果面板复杂能力暂缓到 v2.0。
-- [ ] Claude Subagents（部分接入）：已展示 Task / Agent 调用与任务进度；subagent 定义、列表管理、主动调度 UI 暂缓到 v2.0。
-
-### Codex 接入
-
-- [x] Codex 对话：通过 Codex app-server 启动 / 恢复 thread，并按 task 保存运行时状态。
-- [x] Codex 过程展示：展示 Codex 的思考、命令、文件变更、搜索、计划和最终回复。
-- [x] Codex 环境检查：提示 Codex CLI、app-server、API 和连接状态是否可用。
-- [x] Codex Plan：启用 app-server experimental API，读取 `collaborationMode/list` 的 plan preset，并在 `turn/start` 传入 `collaborationMode`；计划确认后显式回到 default mode 执行。
-- [x] Codex 审批桥接：命令和文件变更审批进入统一工具确认，支持 `additionalPermissions` / `availableDecisions`，并可由 Lilia 执行用户编辑后的 Codex 命令再回灌结果。
-- [x] Codex MCP 管理：界面可查看、增删改启停用户级 `~/.codex/config.toml` stdio MCP server；HTTP / OAuth / 未知 transport 只读展示。
-- [x] Codex 配置档案：支持全局 / 项目级 profile、reasoning effort、runtime workspace roots、受控 permissions，并通过 sticky `thread/settings/update` 传给 app-server。
-- [x] Codex 历史：可从左侧栏导入入口搜索、预览、导入并继续既有 Codex app-server thread。
-- [x] Codex Lilia 工作流适配：Lilia 内置任务工作流、审查、修复建议、批量应用、压缩、会话分叉、Goal、memory mode / reset、配置诊断和后台终端清理会分发到 Codex app-server 方法。
-- [x] 内置浏览器交互：Codex 可打开和导航 IAB 窗口，采集页面标题 / URL / 截图元数据，并把结果送回运行中的 turn 或作为消息附件；截图采集目前以 Windows 为主。
+- [x] 智能模型选择：按任务上下文自动选择模型级别与思考强度，发送前仍可手动覆盖。
+- [x] 斜杠命令：支持在输入框通过 `/` 打开命令面板，执行内置命令和 `.lilia/commands` 项目命令。
+- [x] Native 凭据：OpenAI / Anthropic API Key 登录、导入与诊断。
 
 ### LiliaCode 特色功能
 
 - [x] 项目级管理：支持本地项目、GitHub clone 项目、项目总览、任务状态分布、最近活跃、会话 / 任务统计和已知用量成本。
 - [x] 会话任务化：会话以 Task 持久化，支持草稿提升、项目内会话、孤儿会话、归档、置顶和排序。
 - [x] 任务树：支持父子关系、依赖维护、树形拖拽和阻塞状态提示；自动驱动、阻塞调度和失败重排闭环尚未完整打通。
-- [x] 内置 Lilia 工作流类型：通用任务、前端、重构、测试验证、文档提示词、Git 发布和架构记忆等内置目录通过 `lilia_task_workflow.kind` 路由，不进入插件 / 技能页。
-- [ ] 插件系统（部分接入）：v1.0 已有 Claude Skills / Plugins / MCP 与 Codex MCP 的扩展管理与运行时注入；通用治理、行为策略插件与可分发插件能力推迟到 v2/v3。
+- [x] 内置 Lilia 工作流类型：通用任务、前端、重构、测试验证、文档提示词、Git 发布和架构记忆等内置目录通过 `lilia_task_workflow.kind` 路由。
+- [ ] 插件系统（部分接入）：官方 Claude/Codex 扩展管理已移除；AgentKit 原生扩展治理仍在迭代。
 - [x] Memory：支持手动保存用户级和项目级记忆，并在会话启动时按 Layer 1 基线注入；外置模型检索与机会窗口引导尚未实现。
 - [x] Roadmap / Milestone：项目路线图、里程碑与任务里程碑关联的数据链路已落地；当前主要待补齐的是度量解释性和高级汇总视图体验。
 - [ ] 自动编排（目标阶段：`v2.0`）：还没有根据任务状态、依赖关系和用户策略调度多个 Agent。

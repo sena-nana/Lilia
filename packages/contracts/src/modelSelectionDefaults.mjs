@@ -1,6 +1,7 @@
 import modelSelectionDefaults from "./model-selection-defaults.json" with { type: "json" };
 import {
   CHAT_BACKENDS,
+  DEFAULT_CHAT_BACKEND,
   MODEL_OPTIONS_BY_BACKEND,
   REASONING_EFFORTS,
 } from "./chatBackendsContract.mjs";
@@ -20,7 +21,11 @@ export const AUTO_RUNTIME_COMMAND_SIGNAL_LABELS =
 export const AUTO_CONTEXT_THRESHOLDS = manifest.autoTierRules.contextThresholds;
 
 export function autoModelForBackendTier(backend, tier) {
-  return AUTO_MODEL_BY_BACKEND_AND_TIER[backend][tier];
+  const row =
+    AUTO_MODEL_BY_BACKEND_AND_TIER[backend] ??
+    AUTO_MODEL_BY_BACKEND_AND_TIER[DEFAULT_CHAT_BACKEND] ??
+    AUTO_MODEL_BY_BACKEND_AND_TIER[CHAT_BACKENDS[0]];
+  return row?.[tier] ?? null;
 }
 
 export function autoReasoningEffortForTier(tier) {

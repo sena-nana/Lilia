@@ -2,7 +2,6 @@ import { fireEvent, render, waitFor } from "@testing-library/vue";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AgentTimelineEvent } from "@lilia/contracts";
 import { deriveTimelineDisplay, isAgentTimelineToolWindowKind } from "@lilia/contracts";
-import { normalizeClaudeTool } from "../../../packages/contracts/src/claudeTools.mjs";
 import AgentTimeline from "../src/components/chat/AgentTimeline.vue";
 import {
   readTimelineDisplay,
@@ -175,59 +174,50 @@ describe("timeline display derivation", () => {
     expect(codeContent(display.details, "OUTPUT")).toBe("ok");
   });
 
-  it("Claude AskUserQuestion 派生为提问事件并用问题文本做缩略", () => {
-    const normalized = normalizeClaudeTool("AskUserQuestion", {
-      questions: [
-        {
-          header: "方案",
-          question: "选哪个方案？",
-          options: [{ label: "方案 A" }, { label: "方案 B" }],
-        },
-        {
-          header: "范围",
-          question: "是否包含测试？",
-          options: [{ label: "包含" }, { label: "不包含" }],
-        },
-      ],
-    });
-
+  it("AskUser 提问事件使用问题文本做缩略", () => {
     const event = {
-      kind: normalized.kind,
+      kind: "ask_user",
       status: "started" as const,
       title: "AskUserQuestion",
-      summary: normalized.summary,
+      summary: "方案 · 选哪个方案？ 等 2 个问题",
       payload: {
         toolName: "AskUserQuestion",
-        ...normalized.payload,
+        questions: [
+          {
+            header: "方案",
+            question: "选哪个方案？",
+            options: [{ label: "方案 A" }, { label: "方案 B" }],
+          },
+          {
+            header: "范围",
+            question: "是否包含测试？",
+            options: [{ label: "包含" }, { label: "不包含" }],
+          },
+        ],
       },
     };
 
-    expect(normalized.kind).toBe("ask_user");
     expect(timelineEventLabel(event)).toBe("正在提问");
     expect(timelineInlinePreview(event)).toBe("方案 · 选哪个方案？ 等 2 个问题");
   });
 
-  it("Claude ExitPlanMode 派生为待确认计划事件", () => {
-    const normalized = normalizeClaudeTool("ExitPlanMode", {
-      plan: "## 修改计划\n- 接线 runner\n- 补测试",
-      allowedPrompts: [{ tool: "Bash", prompt: "yarn test" }],
-    });
-
+  it("待确认计划事件可派生显示", () => {
     const event = {
-      kind: normalized.kind,
+      kind: "plan",
       status: "requires_action" as const,
       title: "ExitPlanMode",
       summary: "",
       payload: {
         toolName: "ExitPlanMode",
-        ...normalized.payload,
+        plan: "## 修改计划\n- 接线 runner\n- 补测试",
+        allowedPrompts: [{ tool: "Bash", prompt: "yarn test" }],
         approved: null,
         executionPermission: "ask",
       },
     };
     const display = deriveTimelineDisplay(event);
 
-    expect(normalized.kind).toBe("plan");
+    expect(event.kind).toBe("plan");
     expect(timelineEventLabel(event)).toBe("等待确认计划");
     expect(timelineInlinePreview(event)).toBe("## 修改计划 - 接线 runner - 补测试");
     expect(display.defaultExpanded).toBeUndefined();

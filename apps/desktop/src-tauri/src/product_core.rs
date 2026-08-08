@@ -1,9 +1,7 @@
 //! Product-core facade status exposed to Desktop.
 //!
-//! Native AgentKit is the default Desktop execution backend after Host pin alignment
-//! (`Mutsuki@d475f1b`). Legacy Node `agent-runner` is limited-time compatibility
-//! only via `LILIA_AGENT_EXECUTION_BACKEND=node` until
-//! [`crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL`] (#47).
+//! Native AgentKit is the Desktop execution backend after Host pin alignment
+//! (`Mutsuki@d475f1b`).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -150,16 +148,16 @@ pub struct ProductCoreStatus {
     pub native_agentkit_crate: &'static str,
     pub native_agentkit_wired_in_desktop: bool,
     pub node_runner_is_default: bool,
-    /// #47 — Node runner remains compile/runtime compatible only behind explicit env.
+    /// Always false: Node agent-runner feature removed.
     pub node_runner_legacy_compatibility: bool,
     pub node_runner_compat_until: &'static str,
-    /// #47 — default install resources exclude Codex app-server.
+    /// Default install resources exclude Codex app-server.
     pub default_bundle_includes_official_agent_server: bool,
-    /// #47 — default install resources exclude Node agent-runner.
+    /// Default install resources exclude Node agent-runner.
     pub default_bundle_includes_node_agent_runner: bool,
-    /// #47 honesty: `legacy-runner` Cargo feature compiled into this binary.
+    /// Always false: `legacy-runner` Cargo feature permanently removed.
     pub legacy_runner_feature_compiled: bool,
-    /// Raw `LILIA_AGENT_EXECUTION_BACKEND` when set (debug / escape hatch).
+    /// Raw `LILIA_AGENT_EXECUTION_BACKEND` when set (ignored; Native only).
     pub execution_backend_env_override: Option<String>,
     pub agent_capabilities: lilia_core::NativeAgentCapabilitySnapshot,
     pub mutsuki_core_pin: &'static str,
@@ -288,7 +286,7 @@ mod tests {
         assert!(status.native_agentkit_wired_in_desktop);
         assert!(!status.node_runner_is_default);
         assert!(!status.agent_capabilities.node_runner_default);
-        assert!(status.node_runner_legacy_compatibility);
+        assert!(!status.node_runner_legacy_compatibility);
         assert_eq!(
             status.node_runner_compat_until,
             LEGACY_NODE_RUNNER_COMPAT_UNTIL

@@ -108,7 +108,7 @@ type ModeChip = {
 };
 
 function supportsBuiltinAgentActions(backend: ChatComposerState["backend"]) {
-  return backend === "codex" || backend === "claude";
+  return backend === "native-agentkit" || backend === "codex" || backend === "claude";
 }
 
 function contextUsageTone(usage: ChatContextUsage | null | undefined): string {

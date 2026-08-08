@@ -71,7 +71,6 @@
     "verify:mutsuki-pin": "node scripts/check-mutsuki-pin.mjs",
     "verify:rust": "yarn check:toolchain && cargo test -p lilia-contracts -p lilia-core -p lilia-client && cargo check -p lilia",
     "verify:native-agentkit": "yarn check:toolchain && bash scripts/verify-native-agentkit.sh",
-    "verify:legacy-retire": "yarn check:toolchain && node scripts/check-default-bundle-no-official-server.mjs && node scripts/mark-legacy-agent-runner.mjs --check && node scripts/check-legacy-runner-reachability.mjs && node scripts/check-legacy-default-unreachable.mjs",
     "verify:vscode-compat": "yarn check:toolchain && cargo test -p lilia-editor-compat --locked && node apps/vscode-extension/tests/hostClient.test.mjs && node apps/vscode-extension/tests/extensionBehavior.test.mjs"
   },
   "devDependencies": {

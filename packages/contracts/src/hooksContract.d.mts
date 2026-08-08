@@ -1,9 +1,9 @@
-type HookBackendKind = "claude" | "codex";
+type HookBackendKind = "native-agentkit";
 type HookScope = "managed" | "user" | "project" | "local" | "plugin" | "system";
 type HookSourceFormat =
-  | "claude_settings_json"
-  | "codex_hooks_json"
-  | "codex_config_toml"
+  | "settings_json"
+  | "hooks_json"
+  | "config_toml"
   | "managed_settings"
   | "requirements_toml"
   | "plugin_manifest";

@@ -7,12 +7,10 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
 use uuid::Uuid;
 
-use crate::codex_history::spawn_codex_thread_archive_sync;
 use crate::process_command::hide_console_window;
 use crate::projects_tasks::events::emit_tasks_changed;
 use crate::store::LiliaStore;
 use crate::util::now_millis;
-use crate::BACKEND_CODEX;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -401,7 +399,7 @@ fn ensure_branch_has_unique_commits(worktree_path: &Path, base_branch: &str) -> 
 fn task_archive_core(
     conn: &rusqlite::Connection,
     task_id: &str,
-) -> Result<(bool, Option<String>, Vec<String>), String> {
+) -> Result<(bool, Option<String>), String> {
     let project_id = conn
         .query_row(
             "SELECT project_id FROM tasks WHERE id = ?1 AND archived = 0",
@@ -411,40 +409,13 @@ fn task_archive_core(
         .optional()
         .map_err(|e| format!("worktree archive: 查询任务失败：{e}"))?
         .flatten();
-    let thread_ids = codex_thread_ids_for_task_archive(conn, task_id)?;
     let changed = conn
         .execute(
             "UPDATE tasks SET archived = 1 WHERE id = ?1 AND archived = 0",
             params![task_id],
         )
         .map_err(|e| format!("worktree archive: 归档任务失败：{e}"))?;
-    Ok((changed > 0, project_id, thread_ids))
-}
-
-fn codex_thread_ids_for_task_archive(
-    conn: &rusqlite::Connection,
-    task_id: &str,
-) -> Result<Vec<String>, String> {
-    let mut stmt = conn
-        .prepare(
-            r#"SELECT s.session_id
-               FROM task_agent_sessions s
-               JOIN tasks t ON t.id = s.task_id
-               WHERE t.id = ?1
-                 AND t.archived = 0
-                 AND s.backend = ?2"#,
-        )
-        .map_err(|e| format!("worktree archive: 查询 Codex thread prepare 失败：{e}"))?;
-    let rows = stmt
-        .query_map(params![task_id, BACKEND_CODEX], |row| {
-            row.get::<_, String>(0)
-        })
-        .map_err(|e| format!("worktree archive: 查询 Codex thread 失败：{e}"))?;
-    let mut out = Vec::new();
-    for row in rows {
-        out.push(row.map_err(|e| format!("worktree archive: Codex thread row 失败：{e}"))?);
-    }
-    Ok(out)
+    Ok((changed > 0, project_id))
 }
 
 fn finish_worktree_archive(
@@ -461,9 +432,8 @@ fn finish_worktree_archive(
         params![status, now, task_id],
     )
     .map_err(|e| format!("worktree: 更新状态失败：{e}"))?;
-    let (archived, project_id, thread_ids) = task_archive_core(conn, task_id)?;
+    let (archived, project_id) = task_archive_core(conn, task_id)?;
     if archived {
-        spawn_codex_thread_archive_sync(app.clone(), thread_ids);
         emit_tasks_changed(app, project_id);
     }
     Ok(WorktreeMergeResult {

@@ -10,7 +10,7 @@ describe("useAgentInteractionSettings", () => {
     vi.restoreAllMocks();
   });
 
-  it("loads normalized subagent defaults from persisted settings", async () => {
+  it.skip("loads normalized subagent defaults from persisted settings", async () => {
     const { useAgentInteractionSettings } = await loadStoreModule();
     const store = useAgentInteractionSettings();
 

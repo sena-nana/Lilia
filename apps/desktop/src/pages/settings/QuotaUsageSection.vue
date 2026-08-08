@@ -1,17 +1,11 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, type CSSProperties } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import type { ChartData, ChartOptions, ChartType, TooltipItem } from "chart.js";
 import AlertTriangle from "@lucide/vue/dist/esm/icons/triangle-alert.mjs";
 import Coins from "@lucide/vue/dist/esm/icons/coins.mjs";
 import Database from "@lucide/vue/dist/esm/icons/database.mjs";
-import RotateCcw from "@lucide/vue/dist/esm/icons/rotate-ccw.mjs";
 import RefreshCw from "@lucide/vue/dist/esm/icons/refresh-cw.mjs";
 import {
-  type CodexAccountUsageDailyBucket,
-  type CodexAccountQuotaWindow,
-  type CodexAccountQuotaStatus,
-  connectionModeUsesCodexAccount,
-  codexRateLimitResetCreditConsumeOutcomeLabel,
   DEFAULT_QUOTA_USAGE_STATS_DAYS,
   QUOTA_USAGE_STATS_BACKEND_FILTERS,
   QUOTA_USAGE_STATS_DAYS,
@@ -23,8 +17,6 @@ import {
 } from "@lilia/contracts";
 import QuotaChartCanvas from "./QuotaChartCanvas.vue";
 import {
-  consumeCodexRateLimitResetCredit,
-  getCodexAccountQuotaStatus,
   getQuotaUsageStats,
 } from "../../services/chat";
 import {
@@ -32,12 +24,8 @@ import {
   type NativeQuotaSurface,
 } from "../../services/nativeAgent";
 import {
-  codexQuotaUnavailableStatus,
-  clampPercent,
   formatCompactNumber,
   formatDateTime,
-  formatPercent,
-  formatUnixSeconds,
 } from "../../utils/quotaDisplay";
 
 type BackendOption = { value: QuotaUsageStatsBackendFilter; label: string };
@@ -48,17 +36,6 @@ type QuotaBreakdownItem = {
   value: number;
   meta: string;
   color: string;
-};
-type AccountUsageHeatmapCell = CodexAccountUsageDailyBucket & {
-  level: number;
-  weekStart: string;
-};
-type OfficialQuotaWindowRow = {
-  key: string;
-  label: string;
-  resetsAt: number | null;
-  remainingLabel: string;
-  barStyle: CSSProperties;
 };
 type NumericChartData = ChartData<ChartType, number[], string>;
 
@@ -88,26 +65,15 @@ const breakdownPalette = [
   "var(--text)",
   "var(--text-muted)",
 ];
-const accountUsageHeatmapLayout = {
-  cellSize: 12,
-  gap: 3,
-  minWeeks: 53,
-} as const;
 
 const selectedBackend = ref<QuotaUsageStatsBackendFilter>("all");
 const selectedDays = ref<QuotaUsageStatsDays>(DEFAULT_QUOTA_USAGE_STATS_DAYS);
 const stats = ref<QuotaUsageStats | null>(null);
-const officialQuota = ref<CodexAccountQuotaStatus | null>(null);
 const nativeQuota = ref<NativeQuotaSurface | null>(null);
 const loading = ref(false);
-const quotaLoading = ref(false);
 const nativeQuotaLoading = ref(false);
-const resetCreditLoading = ref(false);
-const resetCreditMessage = ref("");
-const resetCreditError = ref("");
 const error = ref("");
 let requestSeq = 0;
-let quotaRequestSeq = 0;
 let nativeQuotaRequestSeq = 0;
 let disposed = false;
 
@@ -115,7 +81,7 @@ const totalRecords = computed(() => stats.value?.cost.totalRecordCount ?? 0);
 const hasUsage = computed(() => totalRecords.value > 0);
 const totalTokens = computed(() => stats.value?.totals.totalTokens ?? 0);
 const refreshing = computed(
-  () => loading.value || quotaLoading.value || nativeQuotaLoading.value,
+  () => loading.value || nativeQuotaLoading.value,
 );
 const remoteQuotaUnavailable = computed(
   () => nativeQuota.value?.remoteQuotaApi === "unavailable",
@@ -128,90 +94,6 @@ const CREDENTIAL_HEALTH_LABELS: Record<string, string> = {
   unsupported_for_custom_runtime: "不支持自定义运行时",
   unavailable: "不可用",
 };
-const showOfficialQuota = computed(() =>
-  connectionModeUsesCodexAccount(officialQuota.value?.connectionMode),
-);
-const officialQuotaGroups = computed(() => [
-  {
-    key: "codex",
-    label: "通用额度",
-    rows: [
-      officialQuotaWindowRow("fiveHour", "5 小时使用限额", officialQuota.value?.fiveHour),
-      officialQuotaWindowRow("weekly", "每周使用限制", officialQuota.value?.weekly),
-    ].filter(isOfficialQuotaWindowRow),
-  },
-  {
-    key: "spark",
-    label: "Spark额度",
-    rows: [
-      officialQuotaWindowRow("sparkFiveHour", "5 小时使用限额", officialQuota.value?.sparkFiveHour),
-      officialQuotaWindowRow("sparkWeekly", "每周使用限制", officialQuota.value?.sparkWeekly),
-    ].filter(isOfficialQuotaWindowRow),
-  },
-].filter((group) => group.rows.length));
-const hasOfficialQuotaWindow = computed(() => officialQuotaGroups.value.length > 0);
-const resetCreditAvailableCount = computed(() =>
-  officialQuota.value?.rateLimitResetCredits?.availableCount ?? 0,
-);
-const canConsumeResetCredit = computed(() =>
-  showOfficialQuota.value &&
-  Boolean(officialQuota.value?.available) &&
-  resetCreditAvailableCount.value > 0 &&
-  !quotaLoading.value &&
-  !resetCreditLoading.value,
-);
-const accountUsageSummaryRows = computed(() => {
-  const summary = officialQuota.value?.accountUsage?.summary;
-  if (!summary) return [];
-  return [
-    {
-      key: "lifetime",
-      label: "累计 Token 数",
-      value: accountUsageTokenValue(summary.lifetimeTokens),
-    },
-    {
-      key: "peak",
-      label: "峰值 Token 数",
-      value: accountUsageTokenValue(summary.peakDailyTokens),
-    },
-    {
-      key: "longestTurn",
-      label: "最长任务时长",
-      value: accountUsageDurationValue(summary.longestRunningTurnSec),
-    },
-    {
-      key: "currentStreak",
-      label: "当前连续天数",
-      value: accountUsageDaysValue(summary.currentStreakDays),
-    },
-    {
-      key: "longestStreak",
-      label: "最长连续天数",
-      value: accountUsageDaysValue(summary.longestStreakDays),
-    },
-  ];
-});
-const accountUsageBuckets = computed(() =>
-  [...(officialQuota.value?.accountUsage?.dailyUsageBuckets ?? [])]
-    .filter((bucket) => isDateOnly(bucket.startDate))
-    .sort((a, b) => a.startDate.localeCompare(b.startDate)),
-);
-const accountUsageWeeks = computed(() => buildAccountUsageWeeks(accountUsageBuckets.value));
-const accountUsageMonthLabels = computed(() =>
-  buildAccountUsageMonthLabels(accountUsageWeeks.value),
-);
-const accountUsageHeatmapStyle = computed<CSSProperties>(() => {
-  const weekCount = Math.max(1, accountUsageWeeks.value.length);
-  const { cellSize, gap } = accountUsageHeatmapLayout;
-  const weekGridWidth =
-    weekCount * cellSize + (weekCount - 1) * gap;
-  return {
-    "--quota-heatmap-week-count": weekCount,
-    "--quota-heatmap-cell-size": `${cellSize}px`,
-    "--quota-heatmap-gap": `${gap}px`,
-    "--quota-heatmap-max-width": `${weekGridWidth}px`,
-  };
-});
 const sortedBackends = computed(() =>
   [...(stats.value?.backends ?? [])].sort((a, b) => b.totalTokens - a.totalTokens),
 );
@@ -505,135 +387,6 @@ function breakdownShareText(context: TooltipItem<ChartType>) {
   return `${Math.round((Number(context.raw ?? 0) / total) * 100)}%`;
 }
 
-function resetCreditText(count: number) {
-  return count > 0 ? `可用 ${formatNumber(count)} 次` : "暂无可用重置次数";
-}
-
-function officialQuotaWindowRow(
-  key: string,
-  label: string,
-  window: CodexAccountQuotaWindow | null | undefined,
-): OfficialQuotaWindowRow | null {
-  if (!window) return null;
-  const remainingPercent = clampPercent(100 - window.usedPercent);
-  return {
-    key,
-    label,
-    resetsAt: window.resetsAt,
-    remainingLabel: `剩余 ${formatPercent(remainingPercent)}`,
-    barStyle: {
-      "--quota-official-window-value": `${remainingPercent}%`,
-    },
-  };
-}
-
-function isOfficialQuotaWindowRow(row: OfficialQuotaWindowRow | null): row is OfficialQuotaWindowRow {
-  return Boolean(row);
-}
-
-function accountUsageTokenValue(value: number | null) {
-  if (value === null) return "--";
-  return formatCompactNumber(value);
-}
-
-function accountUsageDaysValue(value: number | null) {
-  if (value === null) return "--";
-  return `${formatNumber(value)} 天`;
-}
-
-function accountUsageDurationValue(value: number | null) {
-  if (value === null) return "--";
-  const totalMinutes = Math.max(0, Math.round(value / 60));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (hours > 0 && minutes > 0) return `${formatNumber(hours)} 小时 ${minutes} 分`;
-  if (hours > 0) return `${formatNumber(hours)} 小时`;
-  return `${formatNumber(minutes)} 分钟`;
-}
-
-function buildAccountUsageWeeks(days: readonly CodexAccountUsageDailyBucket[]) {
-  if (!days.length) return [];
-  const maxTokens = Math.max(1, ...days.map((day) => day.tokens));
-  const firstWeekStart = weekStartDate(days[0].startDate);
-  const lastWeekStart = weekStartDate(days[days.length - 1].startDate);
-  const start = new Date(lastWeekStart);
-  start.setUTCDate(start.getUTCDate() - (accountUsageHeatmapLayout.minWeeks - 1) * 7);
-  if (firstWeekStart < start) start.setTime(firstWeekStart.getTime());
-  const end = new Date(lastWeekStart);
-  end.setUTCDate(end.getUTCDate() + 6);
-  const byDate = new Map(days.map((day) => [day.startDate, day]));
-  const weeks: AccountUsageHeatmapCell[][] = [];
-  for (const cursor = new Date(start); cursor <= end; cursor.setUTCDate(cursor.getUTCDate() + 7)) {
-    const week: AccountUsageHeatmapCell[] = [];
-    for (let offset = 0; offset < 7; offset += 1) {
-      const date = new Date(cursor);
-      date.setUTCDate(cursor.getUTCDate() + offset);
-      const key = date.toISOString().slice(0, 10);
-      const day = byDate.get(key) ?? { startDate: key, tokens: 0 };
-      week.push({
-        ...day,
-        level: accountUsageHeatLevel(day.tokens, maxTokens),
-        weekStart: cursor.toISOString().slice(0, 10),
-      });
-    }
-    weeks.push(week);
-  }
-  return weeks;
-}
-
-function buildAccountUsageMonthLabels(weeks: readonly AccountUsageHeatmapCell[][]) {
-  const monthStarts: { index: number; key: string; month: string }[] = [];
-  let lastMonth = "";
-  weeks.forEach((week, index) => {
-    const weekStart = week[0]?.weekStart ?? String(index);
-    const month = week
-      .map((day) => day.startDate.slice(0, 7))
-      .find((value) => value && value !== lastMonth) ?? "";
-    if (month) lastMonth = month;
-    if (month && index > 0 && index < weeks.length - 1) {
-      monthStarts.push({ index, key: weekStart, month });
-    }
-  });
-  return monthStarts.map((start, index) => {
-    const endIndex = Math.min(monthStarts[index + 1]?.index ?? weeks.length, weeks.length - 1);
-    return {
-      key: start.key,
-      label: formatAccountUsageMonth(start.month),
-      style: { gridColumn: `${start.index + 1} / span ${Math.max(1, endIndex - start.index)}` },
-    };
-  });
-}
-
-function accountUsageHeatLevel(tokens: number, maxTokens: number) {
-  if (tokens <= 0) return 0;
-  return Math.min(4, Math.max(1, Math.ceil((tokens / maxTokens) * 4)));
-}
-
-function accountUsageHeatTitle(day: CodexAccountUsageDailyBucket) {
-  const tokens = Math.max(0, Math.trunc(day.tokens));
-  const tokenText = tokens >= 100_000_000 ? `${(tokens / 100_000_000).toFixed(3)} 亿` : formatNumber(tokens);
-  return `${day.startDate}: ${tokenText} tokens`;
-}
-
-function formatAccountUsageMonth(month: string) {
-  const [, rawMonth] = month.split("-");
-  return `${Number(rawMonth)}月`;
-}
-
-function weekStartDate(date: string) {
-  const result = new Date(`${date}T00:00:00Z`);
-  result.setUTCDate(result.getUTCDate() - result.getUTCDay());
-  return result;
-}
-
-function isDateOnly(value: string) {
-  return /^\d{4}-\d{2}-\d{2}$/.test(value);
-}
-
-function createIdempotencyKey() {
-  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
 async function loadStats() {
   const seq = ++requestSeq;
   loading.value = true;
@@ -651,21 +404,6 @@ async function loadStats() {
   }
 }
 
-async function loadOfficialQuota() {
-  const seq = ++quotaRequestSeq;
-  quotaLoading.value = true;
-  try {
-    const result = await getCodexAccountQuotaStatus();
-    if (!disposed && seq === quotaRequestSeq) officialQuota.value = result;
-  } catch (err) {
-    if (!disposed && seq === quotaRequestSeq) {
-      officialQuota.value = codexQuotaUnavailableStatus(err);
-    }
-  } finally {
-    if (!disposed && seq === quotaRequestSeq) quotaLoading.value = false;
-  }
-}
-
 async function loadNativeQuotaSurface() {
   const seq = ++nativeQuotaRequestSeq;
   nativeQuotaLoading.value = true;
@@ -679,30 +417,9 @@ async function loadNativeQuotaSurface() {
   }
 }
 
-async function consumeResetCredit() {
-  if (disposed || !canConsumeResetCredit.value) return;
-  resetCreditLoading.value = true;
-  resetCreditMessage.value = "";
-  resetCreditError.value = "";
-  try {
-    const result = await consumeCodexRateLimitResetCredit({
-      idempotencyKey: createIdempotencyKey(),
-    });
-    if (disposed) return;
-    officialQuota.value = result.status;
-    resetCreditMessage.value = codexRateLimitResetCreditConsumeOutcomeLabel(result.outcome);
-  } catch (err) {
-    if (!disposed) resetCreditError.value = String(err);
-  } finally {
-    if (!disposed) resetCreditLoading.value = false;
-  }
-}
-
 async function refreshAll() {
   if (disposed) return;
-  resetCreditMessage.value = "";
-  resetCreditError.value = "";
-  await Promise.all([loadStats(), loadOfficialQuota(), loadNativeQuotaSurface()]);
+  await Promise.all([loadStats(), loadNativeQuotaSurface()]);
 }
 
 async function selectBackend(backend: QuotaUsageStatsBackendFilter) {
@@ -725,7 +442,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
   disposed = true;
   requestSeq += 1;
-  quotaRequestSeq += 1;
+  nativeQuotaRequestSeq += 1;
 });
 </script>
 
@@ -853,137 +570,6 @@ onBeforeUnmount(() => {
           </li>
         </ul>
       </div>
-    </div>
-  </div>
-
-  <div
-    v-if="showOfficialQuota && (accountUsageSummaryRows.length || accountUsageBuckets.length || officialQuota?.usageError)"
-    class="quota-official-usage"
-  >
-    <div v-if="accountUsageSummaryRows.length" class="quota-official-usage__metrics">
-      <div
-        v-for="row in accountUsageSummaryRows"
-        :key="row.key"
-        class="quota-official-usage__metric"
-      >
-        <strong>{{ row.value }}</strong>
-        <span>{{ row.label }}</span>
-      </div>
-    </div>
-    <div v-if="officialQuota?.usageError" class="quota-official-usage__head">
-      <span>{{ officialQuota.usageError }}</span>
-    </div>
-    <div
-      v-if="accountUsageWeeks.length"
-      class="quota-official-usage__heatmap"
-      aria-label="官方账号每日 Token 活动"
-    >
-      <div class="quota-official-usage__heatmap-window">
-        <div class="quota-official-usage__heatmap-grid" :style="accountUsageHeatmapStyle">
-          <div class="quota-official-usage__weeks">
-            <div
-              v-for="week in accountUsageWeeks"
-              :key="week[0]?.weekStart"
-              class="quota-official-usage__week"
-            >
-              <span
-                v-for="day in week"
-                :key="day.startDate"
-                class="quota-official-usage__day"
-                :class="`quota-official-usage__day--${day.level}`"
-                :title="accountUsageHeatTitle(day)"
-                :aria-label="accountUsageHeatTitle(day)"
-              />
-            </div>
-          </div>
-          <div class="quota-official-usage__months" aria-hidden="true">
-            <span
-              v-for="month in accountUsageMonthLabels"
-              :key="month.key"
-              class="quota-official-usage__month"
-              :style="month.style"
-            >
-              {{ month.label }}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div v-else-if="!officialQuota?.usageError" class="quota-official-usage__empty">
-      暂无 Token 活动
-    </div>
-  </div>
-
-  <div v-if="showOfficialQuota" class="card quota-panel quota-official">
-    <div class="quota-official__head">
-      <div class="quota-official__title">
-        <h2>
-          <span class="card-h2__title">Codex 官方额度</span>
-        </h2>
-        <div class="quota-official__meta">
-          <span>
-            {{ officialQuota?.planType ? `计划 ${officialQuota.planType}` : "官方账号" }}
-            <template v-if="officialQuota?.limitName"> · {{ officialQuota.limitName }}</template>
-          </span>
-          <span>
-            {{ quotaLoading ? "读取中" : `查询 ${formatDateTime(officialQuota?.fetchedAt ?? Date.now())}` }}
-          </span>
-          <span>重置次数 {{ resetCreditText(resetCreditAvailableCount) }}</span>
-        </div>
-      </div>
-      <div class="quota-official__actions">
-        <button
-          type="button"
-          class="ui-button ui-button--ghost quota-official__reset"
-          data-agent-id="settings.quota.reset-credit.consume"
-          :disabled="!canConsumeResetCredit"
-          @click="consumeResetCredit"
-        >
-          <RotateCcw :size="12" :class="{ 'is-spinning': resetCreditLoading }" aria-hidden="true" />
-          {{ resetCreditLoading ? "使用中" : "使用重置次数" }}
-        </button>
-      </div>
-    </div>
-    <div
-      v-for="group in officialQuotaGroups"
-      :key="group.key"
-      class="quota-official__section"
-    >
-      <strong v-if="group.label">{{ group.label }}</strong>
-      <div class="quota-official__grid">
-        <div
-          v-for="row in group.rows"
-          :key="row.key"
-          class="quota-official-window"
-          role="group"
-          :aria-label="`${group.label}${row.label}`"
-        >
-          <div class="quota-official-window__main">
-            <strong>{{ row.label }}</strong>
-            <small>重置时间：{{ formatUnixSeconds(row.resetsAt) }}</small>
-          </div>
-          <div class="quota-official-window__usage">
-            <span
-              class="quota-official-window__bar"
-              :style="row.barStyle"
-              aria-hidden="true"
-            />
-            <strong>{{ row.remainingLabel }}</strong>
-          </div>
-        </div>
-      </div>
-    </div>
-    <div v-if="!hasOfficialQuotaWindow" class="quota-official__empty">
-      暂无官方额度数据
-    </div>
-    <div v-if="resetCreditMessage" class="quota-official__message">
-      {{ resetCreditMessage }}
-    </div>
-    <div v-if="resetCreditError" class="quota-official__error">
-      {{ resetCreditError }}
-    </div>
-    <div v-if="officialQuota?.error" class="quota-official__error">
-      {{ officialQuota.error }}
     </div>
   </div>
 

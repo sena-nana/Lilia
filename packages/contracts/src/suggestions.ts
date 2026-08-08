@@ -164,15 +164,16 @@ export function suggestionSourceLabel(
   const [thread] = codexThreads;
   if (!thread) return "";
   const title = thread.title.trim();
-  const source = title ? `Codex thread · ${title}` : "Codex thread";
+  const source = title ? `会话线程 · ${title}` : "会话线程";
   const extraCount = codexThreads.length - 1;
   return extraCount > 0 ? `${source} +${extraCount}` : source;
 }
 
 export function conversationSuggestionLoadingText(probe: ConversationSuggestionSources): string {
-  const sources = new Set(probe.sources);
-  if (sources.has("claude")) {
-    return `正在读取 ${SUGGESTION_LOADING_SOURCE_LABELS.claude}`;
+  const sources = new Set(probe.sources as string[]);
+  if (sources.has("provider") || sources.has("claude")) {
+    const labels = SUGGESTION_LOADING_SOURCE_LABELS as Record<string, string>;
+    return `正在读取 ${labels.provider ?? labels.claude ?? "Provider 建议"}`;
   }
   const labels: string[] = [];
   if (sources.has("task")) labels.push(SUGGESTION_LOADING_SOURCE_LABELS.task);
@@ -180,7 +181,10 @@ export function conversationSuggestionLoadingText(probe: ConversationSuggestionS
   if (sources.has("local-git")) {
     labels.push(localGitLoadingLabel(probe.localGit));
   }
-  if (sources.has("codex-thread")) labels.push(SUGGESTION_LOADING_SOURCE_LABELS["codex-thread"]);
+  if (sources.has("session-thread") || sources.has("codex-thread")) {
+    const sourceLabels = SUGGESTION_LOADING_SOURCE_LABELS as Record<string, string>;
+    labels.push(sourceLabels["session-thread"] ?? sourceLabels["codex-thread"] ?? "会话线程");
+  }
   if (labels.length === 0) return DEFAULT_SUGGESTION_LOADING_TEXT;
   return `正在检查${joinSuggestionSourceLabels(labels)}`;
 }

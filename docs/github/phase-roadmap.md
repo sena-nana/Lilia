@@ -59,7 +59,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 
 #### 任务清单
 
-- [ ] 覆盖 Claude / Codex 的普通发送、继续历史会话和任务恢复路径。
+- [ ] 覆盖 Native AgentKit（Mutsuki）的普通发送、继续历史会话和任务恢复路径。
 - [ ] 核对 timeline、pending action、permission approval 和 plan confirmation 展示。
 - [ ] 确认文件上下文、图片附件和失败提示不会破坏主链路。
 
@@ -155,9 +155,9 @@ labels: enhancement,area: desktop,area: tauri
 
 #### 任务清单
 
-- [ ] 核对 Claude Skills、Claude MCP、Codex MCP 和 Hook 来源展示。
+- [ ] 核对 AgentKit 原生 MCP / Skill / Hook 来源展示。
 - [ ] 核对只读 transport、警告、诊断和配置文件入口。
-- [ ] 明确 Claude Plugins 完整管理与 Hook 治理归入 v2.0。
+- [ ] 明确 AgentKit 扩展完整管理与 Hook 治理归入 v2.0。
 
 #### 完成条件
 
@@ -491,37 +491,37 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
-title: [v2.0] Claude Plugins 完整管理
+title: [v2.0] AgentKit 原生插件完整管理
 labels: enhancement,area: desktop,area: tauri
 -->
-### [v2.0] Claude Plugins 完整管理
+### [v2.0] AgentKit 原生插件完整管理
 
 #### 要做什么
 
-完整管理 Claude Plugin 的安装、启停、更新和作用域。
+完整管理 Mutsuki AgentKit 侧 MCP / Skill / Hook / 插件包的安装、启停、更新和作用域。
 
 #### 任务清单
 
-- [ ] 展示已安装 Claude Plugins 和状态。
+- [ ] 展示已安装 AgentKit 扩展与状态。
 - [ ] 支持安装、启停、更新和作用域控制。
-- [ ] 与 Skill、MCP、Hook 管理入口保持一致。
+- [ ] 与共享服务（MCP、Memory、Git、LSP）入口保持一致。
 
 #### 完成条件
 
-- [ ] Claude Plugins 不再只是能力占位。
-- [ ] 用户能理解插件启用后会影响哪些项目或会话。
+- [ ] 插件管理不再是空状态占位。
+- [ ] 用户能理解扩展启用后会影响哪些项目或会话。
 <!-- /issue -->
 
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
-title: [v2.0] Claude Subagents/辅助 Agent 接入
+title: [v2.0] Subagents / 辅助 Agent 接入
 labels: enhancement,area: desktop,area: tauri,area: contracts
 -->
-### [v2.0] Claude Subagents/辅助 Agent 接入
+### [v2.0] Subagents / 辅助 Agent 接入
 
 #### 要做什么
 
-补齐 Claude Subagents 展示调度和低成本辅助 Agent 能力。
+补齐 Mutsuki / Lilia 协议下的 Subagents 展示调度和低成本辅助 Agent 能力。
 
 #### 任务清单
 

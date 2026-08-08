@@ -28,9 +28,6 @@ import {
   MODEL_FEATURE_GET_SETTINGS_COMMAND,
   MODEL_FEATURE_LIST_MODEL_OPTIONS_COMMAND,
   MODEL_FEATURE_SET_SETTINGS_COMMAND,
-  PROVIDER_CODEX_ACCOUNT_START_LOGIN_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_CHECK_UPDATE_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_INSTALL_UPDATE_COMMAND,
   PROVIDER_GET_ACTIVE_BACKEND_COMMAND,
   PROVIDER_GET_CONFIG_COMMAND,
   PROVIDER_SET_ACTIVE_BACKEND_COMMAND,
@@ -50,20 +47,19 @@ import {
   normalizeUniqueTrimmedStrings as normalizeUniqueTrimmedStringsImpl,
 } from "./providerRuntime.mjs";
 
-type ProviderRouterModeTuple = readonly ["api", "codex-account"];
-type ConnectionModeTuple = readonly ["api", "custom", "codex-account", "unconfigured"];
+type ProviderRouterModeTuple = readonly ["api"];
+type ConnectionModeTuple = readonly ["api", "custom", "unconfigured"];
 
 export type ProviderConnectionMode = ProviderRouterModeTuple[number];
 export type RouterMode = ProviderConnectionMode;
 export type ConnectionMode = ConnectionModeTuple[number];
 
-type CodexReasoningEffortTuple = readonly ["low", "medium", "high", "xhigh"];
-type CodexSettingsProfileTuple = readonly ["default", "fast", "balanced", "deep"];
+/** @deprecated Official Codex product removed. */
+export type CodexReasoningEffort = never;
+/** @deprecated Official Codex product removed. */
+export type CodexSettingsProfile = never;
 
-export type CodexReasoningEffort = CodexReasoningEffortTuple[number];
-
-export type CodexSettingsProfile = CodexSettingsProfileTuple[number];
-
+/** @deprecated Official Codex product removed. */
 export type CodexJsonObject = Record<string, unknown>;
 
 export {
@@ -87,9 +83,6 @@ export {
   MODEL_FEATURE_LIST_MODEL_OPTIONS_COMMAND,
   MODEL_FEATURE_SET_SETTINGS_COMMAND,
   PROVIDER_STORE_KEY_BY_BACKEND,
-  PROVIDER_CODEX_ACCOUNT_START_LOGIN_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_CHECK_UPDATE_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_INSTALL_UPDATE_COMMAND,
   PROVIDER_GET_ACTIVE_BACKEND_COMMAND,
   PROVIDER_GET_CONFIG_COMMAND,
   PROVIDER_SET_ACTIVE_BACKEND_COMMAND,
@@ -103,8 +96,10 @@ export {
   ROUTER_SET_MODE_COMMAND,
   UNCONFIGURED_CONNECTION_MODES,
 };
+
+/** @deprecated Official Codex product removed; empty. */
 export const CODEX_SETTINGS_PROFILES =
-  CODEX_SETTINGS_PROFILES_IMPL as CodexSettingsProfileTuple;
+  CODEX_SETTINGS_PROFILES_IMPL as readonly never[];
 
 const ROUTER_MODES_USING_API_CONFIG_SET = new Set<string>(ROUTER_MODES_USING_API_CONFIG);
 const ROUTER_MODES_USING_CODEX_ACCOUNT_SET = new Set<string>(ROUTER_MODES_USING_CODEX_ACCOUNT);
@@ -155,6 +150,7 @@ export function routerModeUsesApiConfig(mode: RouterMode): boolean {
   return ROUTER_MODES_USING_API_CONFIG_SET.has(mode);
 }
 
+/** @deprecated Official Codex account modes removed; always false. */
 export function routerModeUsesCodexAccount(mode: RouterMode): boolean {
   return ROUTER_MODES_USING_CODEX_ACCOUNT_SET.has(mode);
 }
@@ -179,7 +175,8 @@ export function connectionModeUsesCustomUrl(mode: unknown): mode is "custom" {
   return typeof mode === "string" && CONNECTION_MODES_USING_CUSTOM_URL_SET.has(mode);
 }
 
-export function connectionModeUsesCodexAccount(mode: unknown): mode is "codex-account" {
+/** @deprecated Official Codex account modes removed; always false. */
+export function connectionModeUsesCodexAccount(mode: unknown): boolean {
   return typeof mode === "string" && CONNECTION_MODES_USING_CODEX_ACCOUNT_SET.has(mode);
 }
 
@@ -187,10 +184,11 @@ export function connectionModeIsUnconfigured(mode: unknown): mode is "unconfigur
   return typeof mode === "string" && UNCONFIGURED_CONNECTION_MODE_SET.has(mode);
 }
 
+/** @deprecated Official Codex product removed. */
 export interface CodexProfileSettings {
-  profile: CodexSettingsProfile;
+  profile: string;
   model: string | null;
-  reasoningEffort: CodexReasoningEffort | null;
+  reasoningEffort: string | null;
   runtimeWorkspaceRoots: string[];
   responsesApiClientMetadata: CodexJsonObject | null;
   additionalContext: string | null;
@@ -199,42 +197,50 @@ export interface CodexProfileSettings {
   excludeTurns: string[];
 }
 
+/** @deprecated Official Codex product removed. */
 export const DEFAULT_CODEX_PROFILE_SETTINGS =
   DEFAULT_CODEX_PROFILE_SETTINGS_IMPL as CodexProfileSettings;
 
+/** @deprecated Official Codex product removed. */
 export const isCodexReasoningEffort = isCodexReasoningEffortImpl as (
   value: unknown,
-) => value is CodexReasoningEffort;
+) => value is never;
 
+/** @deprecated Official Codex product removed. */
 export const normalizeCodexReasoningEffort = normalizeCodexReasoningEffortImpl as (
   value: unknown,
-) => CodexReasoningEffort | null;
+) => null;
 
+/** @deprecated Official Codex product removed. */
 export const isCodexSettingsProfile = isCodexSettingsProfileImpl as (
   value: unknown,
-) => value is CodexSettingsProfile;
+) => value is never;
 
+/** @deprecated Official Codex product removed. */
 export const normalizeCodexSettingsProfile = normalizeCodexSettingsProfileImpl as (
   value: unknown,
-) => CodexSettingsProfile;
+) => string;
 
 export const normalizeUniqueTrimmedStrings = normalizeUniqueTrimmedStringsImpl as (
   value: unknown,
 ) => string[];
 
+/** @deprecated Official Codex product removed. */
 export const normalizeCodexJsonObject = normalizeCodexJsonObjectImpl as (
   value: unknown,
 ) => CodexJsonObject | null;
 
+/** @deprecated Official Codex product removed. */
 export const normalizeCodexProfileSettings = normalizeCodexProfileSettingsImpl as (
   input: Partial<CodexProfileSettings> | null | undefined,
   base?: CodexProfileSettings,
 ) => CodexProfileSettings;
 
-export interface CodexComposerSettings {
-  profile?: CodexSettingsProfile | null;
+/** Native AgentKit composer defaults for a project. */
+export interface NativeComposerSettings {
+  profile?: string | null;
   model?: string | null;
-  reasoningEffort?: CodexReasoningEffort | null;
+  reasoningEffort?: string | null;
   runtimeWorkspaceRoots?: string[] | null;
   responsesApiClientMetadata?: CodexJsonObject | null;
   additionalContext?: string | null;
@@ -242,6 +248,9 @@ export interface CodexComposerSettings {
   initialTurnsPage?: CodexJsonObject | null;
   excludeTurns?: string[] | null;
 }
+
+/** @deprecated Use NativeComposerSettings. Official Codex product removed. */
+export type CodexComposerSettings = NativeComposerSettings;
 
 export interface ProviderConfig {
   backend: ChatBackendKind;
@@ -256,7 +265,6 @@ export interface AssistantAIConfig {
   apiKey: string | null;
   model: string | null;
   modelPool?: AssistantAIModelPoolItem[];
-  codexAccountSparkEnabled: boolean;
   hasApiKey: boolean;
   clearApiKey?: boolean;
 }
@@ -297,32 +305,8 @@ export interface BackendEnvStatus {
   effectiveUrl: string | null;
 }
 
-export interface CodexAppServerStatus {
-  version: string | null;
-  installPath: string | null;
-  managed: boolean;
-  available: boolean;
-  supportsRequiredProtocol: boolean;
-  failureKind:
-    | "missingCli"
-    | "appServerUnavailable"
-    | "experimentalApiUnsupported"
-    | "providerIncompatible"
-    | null;
-  issues: string[];
-  latestVersion: string | null;
-  updateAvailable: boolean;
-  releaseNotes: string[];
-  updateError: string | null;
-  updateState: "idle" | "available" | "downloading" | "ready" | "switching" | "failed";
-  preparedVersion: string | null;
-  updateProgressPercent: number | null;
-}
-
 export interface EnvStatusReport {
   nodeAvailable: boolean;
-  codexCliAvailable: boolean;
-  codexAppServer: CodexAppServerStatus;
   routerModes: Record<ChatBackendKind, RouterMode>;
   backends: Record<ChatBackendKind, BackendEnvStatus>;
 }

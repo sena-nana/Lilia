@@ -1,24 +1,8 @@
-export function createProviderHelpers(providerCodexJson, chatBackendsJson) {
-  const providerCodex = deepFreeze(providerCodexJson);
+export function createProviderHelpers(chatBackendsJson) {
   const chatBackends = deepFreeze(chatBackendsJson);
   const reasoningEfforts = chatBackends.reasoningEfforts;
   const backendReasoningEfforts = chatBackends.backendReasoningEfforts;
-  const codexReasoningEfforts = chatBackends.backendReasoningEfforts.codex;
-  const codexSettingsProfiles = providerCodex.codexSettingsProfiles;
-  const defaultCodexProfileSettings = deepFreeze({
-    profile: providerCodex.defaultCodexSettingsProfile,
-    model: null,
-    reasoningEffort: null,
-    runtimeWorkspaceRoots: [],
-    responsesApiClientMetadata: null,
-    additionalContext: null,
-    persistExtendedHistory: null,
-    initialTurnsPage: null,
-    excludeTurns: [],
-  });
   const reasoningEffortSet = new Set(reasoningEfforts);
-  const codexReasoningEffortSet = new Set(codexReasoningEfforts);
-  const codexSettingsProfileSet = new Set(codexSettingsProfiles);
 
   function isReasoningEffort(value) {
     return typeof value === "string" && reasoningEffortSet.has(value);
@@ -45,55 +29,63 @@ export function createProviderHelpers(providerCodexJson, chatBackendsJson) {
     return supportedEfforts[0] || null;
   }
 
-  function isCodexReasoningEffort(value) {
-    return typeof value === "string" && codexReasoningEffortSet.has(value);
-  }
-
-  function normalizeCodexReasoningEffort(value) {
-    return isCodexReasoningEffort(value) ? value : null;
-  }
-
-  function isCodexSettingsProfile(value) {
-    return typeof value === "string" && codexSettingsProfileSet.has(value);
-  }
-
-  function normalizeCodexSettingsProfile(value) {
-    return isCodexSettingsProfile(value) ? value : defaultCodexProfileSettings.profile;
-  }
-
-  function normalizeCodexProfileSettings(input, base = defaultCodexProfileSettings) {
-    return {
-      profile: normalizeCodexSettingsProfile(input?.profile ?? base.profile),
-      model: normalizeNullableText(input?.model ?? base.model),
-      reasoningEffort: normalizeCodexReasoningEffort(input?.reasoningEffort ?? base.reasoningEffort),
-      runtimeWorkspaceRoots: normalizeUniqueTrimmedStrings(input?.runtimeWorkspaceRoots ?? base.runtimeWorkspaceRoots),
-      responsesApiClientMetadata: normalizeCodexJsonObject(
-        input?.responsesApiClientMetadata ?? base.responsesApiClientMetadata,
-      ),
-      additionalContext: normalizeNullableText(input?.additionalContext ?? base.additionalContext),
-      persistExtendedHistory: normalizeNullableBoolean(input?.persistExtendedHistory ?? base.persistExtendedHistory),
-      initialTurnsPage: normalizeCodexJsonObject(input?.initialTurnsPage ?? base.initialTurnsPage),
-      excludeTurns: normalizeUniqueTrimmedStrings(input?.excludeTurns ?? base.excludeTurns),
-    };
-  }
-
   return {
     REASONING_EFFORTS: reasoningEfforts,
     BACKEND_REASONING_EFFORTS: backendReasoningEfforts,
-    CODEX_REASONING_EFFORTS: codexReasoningEfforts,
-    CODEX_SETTINGS_PROFILES: codexSettingsProfiles,
-    DEFAULT_CODEX_PROFILE_SETTINGS: defaultCodexProfileSettings,
+    /** @deprecated Official Codex product removed; empty list. */
+    CODEX_REASONING_EFFORTS: Object.freeze([]),
+    /** @deprecated Official Codex product removed; empty list. */
+    CODEX_SETTINGS_PROFILES: Object.freeze([]),
+    /** @deprecated Official Codex product removed. */
+    DEFAULT_CODEX_PROFILE_SETTINGS: Object.freeze({
+      profile: "default",
+      model: null,
+      reasoningEffort: null,
+      runtimeWorkspaceRoots: [],
+      responsesApiClientMetadata: null,
+      additionalContext: null,
+      persistExtendedHistory: null,
+      initialTurnsPage: null,
+      excludeTurns: [],
+    }),
     isReasoningEffort,
     normalizeReasoningEffort,
     reasoningEffortsForBackend,
     normalizeReasoningEffortForBackend,
-    isCodexReasoningEffort,
-    normalizeCodexReasoningEffort,
-    isCodexSettingsProfile,
-    normalizeCodexSettingsProfile,
+    /** @deprecated Official Codex product removed. */
+    isCodexReasoningEffort: () => false,
+    /** @deprecated Official Codex product removed. */
+    normalizeCodexReasoningEffort: () => null,
+    /** @deprecated Official Codex product removed. */
+    isCodexSettingsProfile: () => false,
+    /** @deprecated Official Codex product removed. */
+    normalizeCodexSettingsProfile: () => "default",
     normalizeUniqueTrimmedStrings,
     normalizeCodexJsonObject,
-    normalizeCodexProfileSettings,
+    /** @deprecated Official Codex product removed. */
+    normalizeCodexProfileSettings: (input, base) => ({
+      profile: "default",
+      model: normalizeNullableText(input?.model ?? base?.model ?? null),
+      reasoningEffort: null,
+      runtimeWorkspaceRoots: normalizeUniqueTrimmedStrings(
+        input?.runtimeWorkspaceRoots ?? base?.runtimeWorkspaceRoots ?? [],
+      ),
+      responsesApiClientMetadata: normalizeCodexJsonObject(
+        input?.responsesApiClientMetadata ?? base?.responsesApiClientMetadata ?? null,
+      ),
+      additionalContext: normalizeNullableText(
+        input?.additionalContext ?? base?.additionalContext ?? null,
+      ),
+      persistExtendedHistory: normalizeNullableBoolean(
+        input?.persistExtendedHistory ?? base?.persistExtendedHistory ?? null,
+      ),
+      initialTurnsPage: normalizeCodexJsonObject(
+        input?.initialTurnsPage ?? base?.initialTurnsPage ?? null,
+      ),
+      excludeTurns: normalizeUniqueTrimmedStrings(
+        input?.excludeTurns ?? base?.excludeTurns ?? [],
+      ),
+    }),
   };
 }
 

@@ -7,13 +7,13 @@
 
 Android 版 Lilia 是远端控制面，不是桌面端运行核心的移动移植。
 
-`v1.0-beta` 当前目标是让用户在竖屏手机上连接一台 PC，查看任务和会话状态，继续聊天，处理 AskUser / 权限审批，并对正在运行的任务做中断、重试等关键操作。Android 端不内置 agent runner、Node.js、Claude / Codex provider adapter、Tauri desktop backend 或本地执行能力。
+`v1.0-beta` 当前目标是让用户在竖屏手机上连接一台 PC，查看任务和会话状态，继续聊天，处理 AskUser / 权限审批，并对正在运行的任务做中断、重试等关键操作。Android 端不内置 AgentKit runtime、Mutsuki Host、Tauri desktop backend 或本地执行能力。
 
-所有会导致 agent 执行、文件访问、终端操作、provider 设置读取或权限变更的操作都必须发送到当前 active PC，由 PC 端沿用既有 Lilia runner、timeline、pending turn、permission 和 interaction 路径处理。PC 是项目、任务、会话、timeline、interaction、provider 状态和持久化的唯一权威源。
+所有会导致 agent 执行、文件访问、终端操作、凭据 / 模型设置读取或权限变更的操作都必须发送到当前 active PC，由 PC 端沿用既有 Lilia 产品协议 → Mutsuki Agent Wire、timeline、pending turn、permission 和 interaction 路径处理。PC 是项目、任务、会话、timeline、interaction、provider 状态和持久化的唯一权威源。
 
 `v1.0-beta` 明确不做：
 
-- Android 本地运行 Claude / Codex 或任何 provider adapter。
+- Android 本地运行 Mutsuki AgentKit 或任何模型 adapter。
 - Android 在多台 PC 之间路由请求。
 - PC 之间同步任务、会话或 timeline。
 - PC A 代理 Android 请求到 PC B。
@@ -32,8 +32,8 @@ flowchart LR
   Client --> Bridge["PC HTTP bridge\nlocalhost/LAN beta transport"]
   Bridge --> Host["PC remote host"]
   Host --> Commands["existing Tauri commands\nand chat services"]
-  Commands --> Runner["existing runner boundary\nturn / workflow / runtimeCommand / runtimeOptions"]
-  Runner --> Timeline["timeline / interaction / task store"]
+  Commands --> Wire["Lilia protocol → Mutsuki Agent Wire\nturn / workflow / runtimeCommand / runtimeOptions"]
+  Wire --> Timeline["timeline / interaction / task store"]
   Timeline --> Host
   Host --> Client
 ```
@@ -138,7 +138,7 @@ request 类型按 Lilia 语义分组，而不是按 Android 页面分组：
 - chat：发送普通 turn、发送 workflow、发送 runtime command、中断、重试。
 - timeline：订阅任务 timeline、补拉最近快照。
 - interaction：读取 pending AskUser / permission approval，提交用户选择。
-- provider：读取 active backend、provider readiness 和账号 / app-server 状态摘要。
+- provider：读取 Native AgentKit readiness 与凭据 / 模型配置状态摘要。
 
 后续稳定 event stream 应支持：
 
@@ -156,7 +156,7 @@ request 类型按 Lilia 语义分组，而不是按 Android 页面分组：
 - unauthorized：设备已配对但权限不足或被撤销。
 - unsupported：PC 端协议版本或 provider 不支持该能力。
 - conflict：任务正在运行、turn 被重置或请求状态过期。
-- unavailable：PC runner、provider、Node、Codex app-server 或项目路径不可用。
+- unavailable：PC Host、Mutsuki AgentKit、凭据未配置或项目路径不可用。
 - transportClosed：iroh 连接断开，Android 可重连后刷新权威状态。
 
 Android 端只允许轻量只读缓存：
@@ -196,7 +196,7 @@ Android 不是桌面布局缩小版。竖屏端按远控任务流重构。
 
 ## Implementation Notes
 
-PC remote host 应作为桌面端后端能力接入，不作为 provider adapter 能力接入。它服务的是 Lilia 远控客户端，而不是 Claude / Codex provider。
+PC remote host 应作为桌面端后端能力接入，不作为模型 adapter 私有通道。它服务的是 Lilia 远控客户端，Agent 执行仍走 PC 上的 Lilia 协议 → Mutsuki Agent Wire。
 
 协议实现时要保持这些边界：
 

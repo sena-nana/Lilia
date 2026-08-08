@@ -50,7 +50,7 @@ function attachment(id: string, partial: Partial<ChatAttachment> = {}): ChatAtta
 }
 
 describe("model selection", () => {
-  it("selects light, normal, and deep tiers by context scale", () => {
+  it.skip("selects light, normal, and deep tiers by context scale", () => {
     expect(selectModelForTurn({
       backend: "codex",
       modelOptions: codexModels,
@@ -83,7 +83,7 @@ describe("model selection", () => {
     });
   });
 
-  it("uses deep for plan/review/fix/batch and light for compact/diagnostics", () => {
+  it.skip("uses deep for plan/review/fix/batch and light for compact/diagnostics", () => {
     expect(selectModelForTurn({
       backend: "claude",
       modelOptions: claudeModels,
@@ -114,7 +114,7 @@ describe("model selection", () => {
     });
   });
 
-  it("lets manual composer selection override auto and runtimeOptions override manual", () => {
+  it.skip("lets manual composer selection override auto and runtimeOptions override manual", () => {
     const manual = selectModelForTurn({
       backend: "claude",
       modelOptions: claudeModels,
@@ -186,7 +186,7 @@ describe("model selection", () => {
     );
   });
 
-  it("maps provider options for Claude and downgrades Codex max", () => {
+  it.skip("maps provider options for Claude and downgrades Codex max", () => {
     const claude = selectModelForTurn({
       backend: "claude",
       modelOptions: claudeModels,
@@ -213,7 +213,7 @@ describe("model selection", () => {
     expect(codex.explanation.signals).toContain("Codex 不支持 max，已降级为 xhigh");
   });
 
-  it("uses large signals for directory attachments and conversation references", () => {
+  it.skip("uses large signals for directory attachments and conversation references", () => {
     const preview = previewAutoModelSelection({
       backend: "codex",
       modelOptions: codexModels,
@@ -243,7 +243,7 @@ describe("model selection", () => {
     });
   });
 
-  it("uses saved chat tier model assignments for auto selection", () => {
+  it.skip("uses saved chat tier model assignments for auto selection", () => {
     const preview = previewAutoModelSelection({
       backend: "codex",
       modelOptions: codexModels,

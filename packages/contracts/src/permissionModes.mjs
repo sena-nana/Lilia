@@ -11,5 +11,5 @@ export const PERMISSION_MODE_DISPLAY_ORDER = helpers.PERMISSION_MODE_DISPLAY_ORD
 export const isRuntimePermissionMode = helpers.isRuntimePermissionMode;
 export const normalizeRuntimePermissionMode = helpers.normalizeRuntimePermissionMode;
 export const runtimePermissionMapping = helpers.runtimePermissionMapping;
-export const claudePermissionRuntime = helpers.claudePermissionRuntime;
-export const codexPermissionRuntime = helpers.codexPermissionRuntime;
+export const nativePermissionRuntime = helpers.nativePermissionRuntime;
+

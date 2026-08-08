@@ -1,7 +1,7 @@
 [package]
 name = "lilia"
 version = "1.0.0-beta.1"
-description = "Lilia · 一个把 Claude Code 会话当作任务管理的桌面客户端"
+description = "Lilia · LiliaCore / Native AgentKit 驱动的工程工作台桌面客户端"
 authors = ["Sena"]
 edition = "2021"
 default-run = "lilia"
@@ -16,9 +16,6 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 
 [features]
 default = []
-# #47 — compile Node agent-runner / Codex Spark Node escape hatch.
-# Default Desktop builds omit this; enable only for explicit legacy compat until 1.0.0.
-legacy-runner = []
 agent-debug-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
 # #43 reference multi-domain assembly + bench; production workspace domain is always on.
 runtime-domain-reference = []

@@ -1,84 +1,46 @@
 use std::collections::HashSet;
-#[cfg(feature = "legacy-runner")]
-use std::env;
 use std::io::Write;
-#[cfg(feature = "legacy-runner")]
-use std::path::PathBuf;
-#[cfg(feature = "legacy-runner")]
-use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::thread;
-use std::time::Duration;
 
 use rusqlite::{params, OptionalExtension};
+#[cfg(test)]
 use serde::Serialize;
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use serde_json::Map as JsonMap;
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
-use crate::agent_events::{
-    runner_quota_usage_result_control_type, AgentEventHost, AgentRuntimeEvent, AgentTurnContext,
-};
-use crate::agent_extensions::TodoMirrorExtension;
-#[cfg(feature = "legacy-runner")]
-use crate::chat::auto_turn_decision::prepare_turn_for_start;
+#[cfg(test)]
+use crate::agent_events::AgentRuntimeEvent;
 use crate::chat::auto_turn_decision::resolve_resume_session_id;
 use crate::chat::contract;
-use crate::chat::process_registry::{JsonlProcessPoll, JsonlProcessRegistry};
-#[cfg(feature = "legacy-runner")]
-use crate::chat::process_registry::JsonlProcessStdinStatus;
+use crate::chat::process_registry::JsonlProcessRegistry;
 #[cfg(test)]
 use crate::chat::state::take_next_pending_turn;
 use crate::chat::state::{
     clear_runtime_state_for_app, clear_task_runtime_state_for_reset, finish_running_turn_handles,
-    is_turn_marked_reset, persist_agent_session_id, persist_and_emit_interrupted_timeline_event,
-    session_key, set_context_usage, set_guide_status_for_app, should_emit_runner_exit_error,
+    persist_agent_session_id, session_key, set_guide_status_for_app,
     should_persist_user_message, take_next_pending_turn_for_app,
     take_next_recoverable_pending_turn, take_pending_finalization_for_app, ChatStore,
-    PersistedRuntimeState,
 };
-#[cfg(feature = "legacy-runner")]
-use crate::chat::state::{persist_runtime_state_for_app, RunningTurn};
 use crate::chat::timeline_sink::{
-    assistant_error_text, log_agent_event_effect, normalize_timeline_text,
     persist_and_emit_error_timeline_event, persist_and_emit_message_timeline_event,
-    timeline_input_from_runtime_event, TimelineThrottle,
 };
-#[cfg(feature = "legacy-runner")]
-use crate::chat::timeline_sink::persist_and_emit_model_selection_timeline_event;
-use crate::chat::title_update::spawn_title_update;
 use crate::chat::types::{
-    AgentInteractionRequestEvent, ChatAttachment, ChatComposerState, ChatContextUsage,
-    ChatConversationReference, ChatRollbackResult, ChatRuntimeCommand, ChatWorkflow, DoneEvent,
-    ProviderRuntimeOptions,
+    ChatAttachment, ChatComposerState, ChatConversationReference, ChatRollbackResult,
+    ChatRuntimeCommand, ChatWorkflow, DoneEvent, ProviderRuntimeOptions,
 };
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use crate::chat::types::conversation_references_payload;
-#[cfg(feature = "legacy-runner")]
-use crate::chat::types::{CodexComposerSettings, TurnStartedEvent};
 use crate::chat::workflow::automation_run_id;
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use crate::chat::workflow::workflow_kind;
-#[cfg(feature = "legacy-runner")]
-use crate::chat::workflow::runtime_command_kind;
-#[cfg(feature = "legacy-runner")]
-use crate::process_command::hide_console_window;
-#[cfg(feature = "legacy-runner")]
-use crate::provider::{
-    build_effective_claude_settings, build_effective_codex_subagent_settings,
-    load_agent_interaction_settings, normalize_codex_settings_profile, normalize_json_object,
-    normalize_optional_string, normalize_reasoning_effort, normalize_runtime_workspace_roots,
-    normalize_string_list, resolve_connection_for, CodexProfileSettings, ConnectionMode,
-};
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use crate::runner_protocol_contract;
 use crate::store::LiliaStore;
-#[cfg(feature = "legacy-runner")]
-use crate::plugins;
-use crate::BACKEND_CLAUDE;
-#[cfg(any(feature = "legacy-runner", test))]
-use crate::BACKEND_CODEX;
+#[cfg(test)]
+use crate::{BACKEND_CLAUDE, BACKEND_CODEX};
 
 pub(crate) struct RunnerInvocation {
     pub(crate) task_id: String,
@@ -93,8 +55,6 @@ pub(crate) struct RunnerInvocation {
     pub(crate) turn_id: String,
     pub(crate) resume_session_id: Option<String>,
     pub(crate) queued_count: usize,
-    #[cfg(feature = "legacy-runner")]
-    pub(crate) script_path: PathBuf,
 }
 
 #[derive(Default)]
@@ -106,11 +66,8 @@ pub(crate) struct RunnerOutput {
     pub(crate) terminal_failed: bool,
 }
 
-pub(crate) enum RunnerSessionPoll {
-    Running,
-    Completed(RunnerOutput),
-}
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RunnerLifecycleEvent {
@@ -118,16 +75,12 @@ pub(crate) struct RunnerLifecycleEvent {
     pub(crate) detail: JsonValue,
 }
 
+#[cfg(test)]
 pub(crate) trait RunnerLifecycleObserver {
     fn record(&mut self, event: RunnerLifecycleEvent);
 }
 
-struct NoopRunnerLifecycleObserver;
-
-impl RunnerLifecycleObserver for NoopRunnerLifecycleObserver {
-    fn record(&mut self, _event: RunnerLifecycleEvent) {}
-}
-
+#[cfg(test)]
 fn record_runner_lifecycle(
     observer: &mut dyn RunnerLifecycleObserver,
     stage: &'static str,
@@ -136,51 +89,6 @@ fn record_runner_lifecycle(
     observer.record(RunnerLifecycleEvent { stage, detail });
 }
 
-pub(crate) struct RunnerSession {
-    task_id: String,
-    turn_id: String,
-    backend: String,
-    pub(crate) process_session_id: String,
-    event_ctx: AgentTurnContext,
-    event_host: AgentEventHost,
-    timeline_throttle: TimelineThrottle,
-    last_assistant_error_text: Option<String>,
-    last_session_id: Option<String>,
-    reset_observed: bool,
-    finished: bool,
-}
-
-pub(crate) fn reattach_runner_session<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    task_id: String,
-    turn_id: String,
-    backend: String,
-    process_session_id: String,
-) -> Result<RunnerSession, String> {
-    if !process_registry().is_active(&process_session_id) {
-        return Err("runner session 已结束，无法恢复接管".to_string());
-    }
-    let mut event_host = AgentEventHost::new();
-    event_host.register(Box::new(TodoMirrorExtension::new(app_handle.clone())));
-    Ok(RunnerSession {
-        task_id: task_id.clone(),
-        turn_id: turn_id.clone(),
-        backend: backend.clone(),
-        process_session_id,
-        event_ctx: AgentTurnContext {
-            task_id,
-            backend,
-            turn_id,
-            automation_run_id: None,
-        },
-        event_host,
-        timeline_throttle: TimelineThrottle::new(),
-        last_assistant_error_text: None,
-        last_session_id: None,
-        reset_observed: false,
-        finished: false,
-    })
-}
 
 fn process_registry() -> &'static JsonlProcessRegistry {
     static REGISTRY: OnceLock<JsonlProcessRegistry> = OnceLock::new();
@@ -253,45 +161,6 @@ pub(crate) fn remove_test_process_session(process_session_id: &str) {
     let _ = process_registry().remove(process_session_id);
 }
 
-// ---------- 子进程定位 ----------
-
-/// Locate legacy Node `agent-runner.mjs` (#47 limited-time compatibility).
-///
-/// Only compiled with Cargo feature `legacy-runner`. Callers must only invoke
-/// this after an explicit `LILIA_AGENT_EXECUTION_BACKEND=node` selection.
-///
-/// Sources live under `apps/desktop/legacy/` (not packaged in default install).
-#[cfg(feature = "legacy-runner")]
-pub(crate) fn locate_agent_runner<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    // 1) Sidecar / resource copy next to binary
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("agent-runner.mjs"));
-            candidates.push(dir.join("legacy").join("agent-runner.mjs"));
-            // 2) Dev: target/debug → apps/desktop/legacy/agent-runner.mjs
-            candidates.push(dir.join("../../../legacy/agent-runner.mjs"));
-        }
-    }
-
-    // 3) Tauri resource_dir (legacy opt-in packaging only)
-    if let Ok(res) = app.path().resource_dir() {
-        candidates.push(res.join("agent-runner.mjs"));
-        candidates.push(res.join("legacy").join("agent-runner.mjs"));
-    }
-
-    for c in &candidates {
-        if c.exists() {
-            return c.clone();
-        }
-    }
-    candidates
-        .into_iter()
-        .last()
-        .unwrap_or_else(|| PathBuf::from("legacy/agent-runner.mjs"))
-}
-
 pub(crate) fn spawn_agent_turn<R: Runtime>(
     app: AppHandle<R>,
     task_id: String,
@@ -308,12 +177,9 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
     let backend = composer.backend.clone();
     let resume_session_id = resolve_resume_session_id(&app, &task_id, &backend);
 
-    // #47: do not locate/start Node `agent-runner` on the default Native path.
-    // `script_path` is resolved lazily only when legacy env forces Node.
+    // Native AgentKit is the only Desktop execution backend.
     let app_handle = app.clone();
     let task_id_for_thread = task_id.clone();
-    #[cfg(feature = "legacy-runner")]
-    let backend_for_thread = backend.clone();
     let invocation = RunnerInvocation {
         task_id,
         content,
@@ -327,8 +193,6 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
         turn_id,
         resume_session_id,
         queued_count: 0,
-        #[cfg(feature = "legacy-runner")]
-        script_path: PathBuf::new(),
     };
 
     thread::spawn(move || {
@@ -355,51 +219,8 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
 
         let turn_id_for_finish = invocation.turn_id.clone();
         let automation_run_id_for_finish = automation_run_id(invocation.workflow.as_ref());
-        let execution_backend = crate::native_agent::resolve_execution_backend();
-        let finish_backend = match execution_backend {
-            crate::native_agent::ExecutionBackend::NativeAgentkit => {
-                crate::native_agent::BACKEND_NATIVE_AGENTKIT.to_string()
-            }
-            #[cfg(feature = "legacy-runner")]
-            crate::native_agent::ExecutionBackend::NodeAgentRunner => backend_for_thread.clone(),
-        };
-        let result = if automation_run_id_for_finish.is_some() && {
-            #[cfg(feature = "legacy-runner")]
-            {
-                matches!(
-                    execution_backend,
-                    crate::native_agent::ExecutionBackend::NodeAgentRunner
-                )
-            }
-            #[cfg(not(feature = "legacy-runner"))]
-            {
-                false
-            }
-        } {
-            Err(
-                crate::native_agent::require_native_for_automation_or_multi_agent(
-                    "Automation 多 Agent 路径",
-                )
-                .err()
-                .unwrap_or_else(|| "Automation 多 Agent 路径: 须走 AgentKit/Native".to_string()),
-            )
-        } else {
-            match execution_backend {
-                crate::native_agent::ExecutionBackend::NativeAgentkit => {
-                    crate::native_agent::run_native_agent_turn(&app_handle, invocation)
-                }
-                #[cfg(feature = "legacy-runner")]
-                crate::native_agent::ExecutionBackend::NodeAgentRunner => {
-                    // Limited-time compatibility only (#47). Never a silent Native fallback.
-                    eprintln!(
-                        "[legacy-agent-runner] using Node agent-runner via explicit env (compat until {})",
-                        crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL
-                    );
-                    invocation.script_path = locate_agent_runner(&app_handle);
-                    run_node_agent_runner(&app_handle, invocation)
-                }
-            }
-        };
+        let finish_backend = crate::native_agent::BACKEND_NATIVE_AGENTKIT.to_string();
+        let result = crate::native_agent::run_native_agent_turn(&app_handle, invocation);
         let mut runner_ok = true;
         let mut output = match result {
             Ok(output) => output,
@@ -418,22 +239,17 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
         if output.waiting_approval {
             return;
         }
-        if matches!(
-            execution_backend,
-            crate::native_agent::ExecutionBackend::NativeAgentkit
-        ) {
-            let finished = {
-                let store = app_handle.state::<ChatStore>();
-                finish_running_turn_handles(
-                    &store,
-                    &task_id_for_thread,
-                    &turn_id_for_finish,
-                    &finish_backend,
-                )
-            };
-            output.interrupted |= finished.interrupted;
-            output.reset |= finished.reset;
-        }
+        let finished = {
+            let store = app_handle.state::<ChatStore>();
+            finish_running_turn_handles(
+                &store,
+                &task_id_for_thread,
+                &turn_id_for_finish,
+                &finish_backend,
+            )
+        };
+        output.interrupted |= finished.interrupted;
+        output.reset |= finished.reset;
         let agent_success =
             runner_ok && !output.interrupted && !output.reset && !output.terminal_failed;
         {
@@ -524,740 +340,12 @@ pub(crate) fn ensure_task_ready_for_agent_turn<R: Runtime>(
     ensure_task_ready_for_agent_turn_with_conn(&conn, task_id)
 }
 
-#[cfg(feature = "legacy-runner")]
-pub(crate) fn run_node_agent_runner<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    invocation: RunnerInvocation,
-) -> Result<RunnerOutput, String> {
-    // #47 limited-time compatibility path. Default Desktop execution must not call this.
-    let mut observer = NoopRunnerLifecycleObserver;
-    run_node_agent_runner_with_observer(app_handle, invocation, &mut observer)
-}
-
-#[cfg(feature = "legacy-runner")]
-pub(crate) fn start_runner_session<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    invocation: RunnerInvocation,
-    observer: &mut dyn RunnerLifecycleObserver,
-) -> Result<RunnerSession, String> {
-    let task_id_for_thread = invocation.task_id;
-    let mut composer_for_thread = invocation.composer;
-    let prompt_for_thread = invocation.content;
-    let project_cwd = invocation.project_cwd;
-    let attachments_for_thread = invocation.attachments;
-    let conversation_references_for_thread = invocation.conversation_references;
-    let workflow_for_thread = invocation.workflow;
-    let runtime_command_for_thread = invocation.runtime_command;
-    let mut runtime_options_for_thread = invocation.runtime_options;
-    let automation_run_id_for_thread = automation_run_id(workflow_for_thread.as_ref());
-    let turn_id_for_thread = invocation.turn_id;
-    let resume_session_id = invocation.resume_session_id;
-    let is_new_session = resume_session_id.is_none();
-    let queued_count = invocation.queued_count;
-    let script_path = invocation.script_path;
-    let prepared = prepare_turn_for_start(
-        app_handle,
-        &task_id_for_thread,
-        &prompt_for_thread,
-        composer_for_thread,
-        &project_cwd,
-        &attachments_for_thread,
-        &conversation_references_for_thread,
-        workflow_for_thread.as_ref(),
-        runtime_command_for_thread.as_ref(),
-        runtime_options_for_thread,
-        resume_session_id.as_deref(),
-    )?;
-    composer_for_thread = prepared.composer;
-    runtime_options_for_thread = prepared.runtime_options;
-    let backend_for_thread = composer_for_thread.backend.clone();
-    persist_and_emit_model_selection_timeline_event(
-        app_handle,
-        &task_id_for_thread,
-        &backend_for_thread,
-        &turn_id_for_thread,
-        runtime_options_for_thread
-            .as_ref()
-            .and_then(|options| options.common.as_ref())
-            .and_then(|common| common.model_selection.as_ref()),
-    );
-    let connection = resolve_connection_for(app_handle, &backend_for_thread);
-    let extensions = plugins::runtime_extensions(app_handle, Some(&project_cwd));
-    let runtime_options = build_provider_runtime_options(
-        app_handle,
-        &backend_for_thread,
-        &composer_for_thread,
-        runtime_command_for_thread.as_ref(),
-        runtime_options_for_thread.as_ref(),
-    );
-    let runtime_options = apply_main_agent_prompt_to_runtime_options(
-        app_handle,
-        &backend_for_thread,
-        runtime_options,
-    );
-    let runtime_options = crate::memory::apply_memory_baseline_to_runtime_options(
-        app_handle,
-        &task_id_for_thread,
-        &project_cwd,
-        &backend_for_thread,
-        runtime_options,
-    );
-    let runtime_options = apply_dependency_context_to_runtime_options(
-        app_handle,
-        &task_id_for_thread,
-        &backend_for_thread,
-        runtime_options,
-        is_new_session,
-    );
-    let mut stdin_payload = build_runner_stdin_payload(
-        &backend_for_thread,
-        &project_cwd,
-        &prompt_for_thread,
-        &attachments_for_thread,
-        &conversation_references_for_thread,
-        workflow_for_thread.as_ref(),
-        runtime_command_for_thread.as_ref(),
-        runtime_options.as_ref(),
-        &composer_for_thread,
-        resume_session_id.as_deref(),
-        &extensions,
-    );
-    if let Some(context) = build_runner_conversation_context(app_handle, &task_id_for_thread) {
-        stdin_payload["conversationContext"] = context;
-    }
-    record_runner_lifecycle(
-        observer,
-        "payload_prepared",
-        serde_json::json!({
-            "backend": backend_for_thread,
-            "cwd": project_cwd,
-            "resumeSessionId": resume_session_id,
-            "queuedCount": queued_count,
-            "attachmentCount": attachments_for_thread.len(),
-            "workflowType": workflow_kind(workflow_for_thread.as_ref()),
-            "runtimeCommandType": runtime_command_kind(runtime_command_for_thread.as_ref()),
-            "hasRuntimeOptions": stdin_payload.get("runtimeOptions").is_some(),
-            "codexRuntimeWorkspaceRootCount": stdin_payload
-                .get("runtimeOptions")
-                .and_then(|options| options.get("provider"))
-                .and_then(|provider| provider.get("codex"))
-                .and_then(|settings| settings.get("runtimeWorkspaceRoots"))
-                .and_then(|roots| roots.as_array())
-                .map(|roots| roots.len()),
-            "hasConversationContext": stdin_payload.get("conversationContext").is_some(),
-        }),
-    );
-
-    let mut cmd = Command::new("node");
-    hide_console_window(&mut cmd);
-    cmd.arg(&script_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let (base_key, key_key) = match backend_for_thread.as_str() {
-        BACKEND_CODEX => ("OPENAI_BASE_URL", "OPENAI_API_KEY"),
-        _ => ("ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY"),
-    };
-    if let Some(url) = &connection.base_url {
-        cmd.env(base_key, url);
-    }
-    if let Some(key) = &connection.api_key {
-        cmd.env(key_key, key);
-    }
-    if backend_for_thread == BACKEND_CODEX {
-        if connection.mode == ConnectionMode::CodexAccount {
-            cmd.env_remove("OPENAI_BASE_URL");
-            cmd.env_remove("OPENAI_API_KEY");
-            cmd.env_remove("CODEX_API_KEY");
-        }
-    }
-    record_runner_lifecycle(
-        observer,
-        "process_configured",
-        serde_json::json!({
-            "scriptPath": script_path.to_string_lossy(),
-            "backend": backend_for_thread,
-            "hasBaseUrl": connection.base_url.is_some(),
-            "hasApiKey": connection.api_key.is_some(),
-        }),
-    );
-
-    let child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(err) => {
-            let msg = format!("无法启动 node 子进程（请确保已安装 Node 18+ 并在 PATH 中）：{err}");
-            record_runner_lifecycle(
-                observer,
-                "process_spawn_failed",
-                serde_json::json!({ "message": msg }),
-            );
-            return Err(msg);
-        }
-    };
-    record_runner_lifecycle(observer, "process_spawned", serde_json::json!({}));
-
-    let process_session_id = process_registry()
-        .start(child, &stdin_payload)
-        .map_err(|err| format!("无法启动 runner session：{err}"))?;
-    {
-        let store = app_handle.state::<ChatStore>();
-        let running_turn = RunningTurn {
-            turn_id: turn_id_for_thread.clone(),
-            backend: backend_for_thread.clone(),
-            native_approval_pause: None,
-        };
-        store
-            .running_process_sessions
-            .lock()
-            .unwrap()
-            .insert(task_id_for_thread.clone(), process_session_id.clone());
-        store
-            .running_turns
-            .lock()
-            .unwrap()
-            .insert(task_id_for_thread.clone(), running_turn.clone());
-        let context_json = runtime_state_context_json(
-            &project_cwd,
-            &prompt_for_thread,
-            &attachments_for_thread,
-            &conversation_references_for_thread,
-            workflow_for_thread.as_ref(),
-            runtime_command_for_thread.as_ref(),
-            &composer_for_thread,
-            resume_session_id.as_deref(),
-        );
-        persist_runtime_state_for_app(
-            app_handle,
-            &store,
-            &task_id_for_thread,
-            &running_turn,
-            "running",
-            Some(&process_session_id),
-            Some(&context_json),
-        );
-    }
-    record_runner_lifecycle(
-        observer,
-        "running_turn_registered",
-        serde_json::json!({
-            "taskId": task_id_for_thread,
-            "turnId": turn_id_for_thread,
-            "backend": backend_for_thread,
-        }),
-    );
-
-    let _ = app_handle.emit(
-        contract::turn_started_event_name(),
-        TurnStartedEvent {
-            task_id: task_id_for_thread.clone(),
-            queued_count,
-        },
-    );
-    record_runner_lifecycle(
-        observer,
-        "turn_started_emitted",
-        serde_json::json!({ "queuedCount": queued_count }),
-    );
-    match process_registry().stdin_status(&process_session_id) {
-        Some(JsonlProcessStdinStatus::Ready { bytes }) => {
-            record_runner_lifecycle(
-                observer,
-                "stdin_ready",
-                serde_json::json!({ "bytes": bytes }),
-            );
-        }
-        Some(JsonlProcessStdinStatus::Unavailable) => {
-            record_runner_lifecycle(observer, "stdin_unavailable", serde_json::json!({}));
-        }
-        Some(JsonlProcessStdinStatus::WriteFailed { bytes }) => {
-            record_runner_lifecycle(
-                observer,
-                "stdin_write_failed",
-                serde_json::json!({ "bytes": bytes }),
-            );
-        }
-        None => {
-            record_runner_lifecycle(observer, "stdin_unavailable", serde_json::json!({}));
-        }
-    }
-    if process_registry().stdout_available(&process_session_id) {
-        record_runner_lifecycle(observer, "stdout_loop_started", serde_json::json!({}));
-    } else {
-        record_runner_lifecycle(observer, "stdout_unavailable", serde_json::json!({}));
-    }
-
-    let mut event_host = AgentEventHost::new();
-    event_host.register(Box::new(TodoMirrorExtension::new(app_handle.clone())));
-    Ok(RunnerSession {
-        task_id: task_id_for_thread.clone(),
-        turn_id: turn_id_for_thread.clone(),
-        backend: backend_for_thread.clone(),
-        process_session_id,
-        event_ctx: AgentTurnContext {
-            task_id: task_id_for_thread,
-            backend: backend_for_thread,
-            turn_id: turn_id_for_thread,
-            automation_run_id: automation_run_id_for_thread,
-        },
-        event_host,
-        timeline_throttle: TimelineThrottle::new(),
-        last_assistant_error_text: None,
-        last_session_id: None,
-        reset_observed: false,
-        finished: false,
-    })
-}
-
-pub(crate) fn poll_runner_session<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    session: &mut RunnerSession,
-    observer: &mut dyn RunnerLifecycleObserver,
-) -> Result<RunnerSessionPoll, String> {
-    if session.finished {
-        return Ok(RunnerSessionPoll::Completed(RunnerOutput {
-            last_session_id: session.last_session_id.clone(),
-            interrupted: false,
-            reset: session.reset_observed,
-            waiting_approval: false,
-            terminal_failed: false,
-        }));
-    }
-
-    loop {
-        if is_turn_marked_reset(
-            &app_handle.state::<ChatStore>(),
-            &session.task_id,
-            &session.turn_id,
-            &session.backend,
-        ) && !session.reset_observed
-        {
-            session.reset_observed = true;
-            observer.record(RunnerLifecycleEvent {
-                stage: "reset_mark_observed",
-                detail: serde_json::json!({
-                    "taskId": session.task_id,
-                    "turnId": session.turn_id,
-                }),
-            });
-        }
-        let Some(poll) = process_registry().poll(&session.process_session_id) else {
-            return Err("runner session 不存在或已被释放".to_string());
-        };
-        match poll {
-            JsonlProcessPoll::Pending => return Ok(RunnerSessionPoll::Running),
-            JsonlProcessPoll::StdoutLine(line) => {
-                let value: JsonValue = match serde_json::from_str(&line) {
-                    Ok(value) => value,
-                    Err(_) => continue,
-                };
-                let Some(event) = AgentRuntimeEvent::from_runner_json(&value) else {
-                    continue;
-                };
-                observer.record(RunnerLifecycleEvent {
-                    stage: "runner_event",
-                    detail: serde_json::json!({ "kind": runner_event_kind(&event) }),
-                });
-                handle_runner_runtime_event(app_handle, session, observer, event);
-            }
-            JsonlProcessPoll::Exited(exit) => {
-                if process_registry().stdout_available(&session.process_session_id) {
-                    observer.record(RunnerLifecycleEvent {
-                        stage: "stdout_loop_finished",
-                        detail: serde_json::json!({}),
-                    });
-                }
-                let output = finalize_runner_session(
-                    app_handle,
-                    session,
-                    observer,
-                    exit.success,
-                    &exit.stderr_text,
-                );
-                session.finished = true;
-                return Ok(RunnerSessionPoll::Completed(output));
-            }
-        }
-    }
-}
-
-fn handle_runner_runtime_event<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    session: &mut RunnerSession,
-    observer: &mut dyn RunnerLifecycleObserver,
-    event: AgentRuntimeEvent,
-) {
-    log_agent_event_effect(session.event_host.dispatch(&session.event_ctx, &event));
-    match &event {
-        AgentRuntimeEvent::ToolUse { .. } | AgentRuntimeEvent::TodoList { .. } => {}
-        AgentRuntimeEvent::Timeline { .. } => {
-            if let Some(input) = timeline_input_from_runtime_event(&session.event_ctx, &event) {
-                if let Some(text) = assistant_error_text(&input) {
-                    session.last_assistant_error_text = Some(text);
-                }
-                session.timeline_throttle.submit(app_handle, input);
-            }
-        }
-        AgentRuntimeEvent::InteractionRequest {
-            id,
-            kind,
-            backend,
-            payload,
-        } => {
-            record_runner_lifecycle(
-                observer,
-                "interaction_requested",
-                serde_json::json!({
-                    "requestId": id,
-                    "kind": kind,
-                    "backend": backend.clone().unwrap_or_else(|| session.backend.clone()),
-                }),
-            );
-            let _ = app_handle.emit(
-                contract::agent_interaction_request_event_name(),
-                AgentInteractionRequestEvent {
-                    task_id: session.task_id.clone(),
-                    turn_id: session.turn_id.clone(),
-                    backend: backend.clone().unwrap_or_else(|| session.backend.clone()),
-                    request_id: id.clone(),
-                    kind: kind.clone(),
-                    payload: payload.clone(),
-                },
-            );
-            crate::remote_control::record_pending_interaction(
-                session.task_id.clone(),
-                session.turn_id.clone(),
-                backend.clone().unwrap_or_else(|| session.backend.clone()),
-                id.clone(),
-                kind.clone(),
-                payload.clone(),
-            );
-            crate::automation::emit_interaction_signal(
-                app_handle,
-                session.task_id.clone(),
-                session.turn_id.clone(),
-                backend.clone().unwrap_or_else(|| session.backend.clone()),
-                id.clone(),
-                kind.clone(),
-                payload.clone(),
-                session.event_ctx.automation_run_id.clone(),
-            );
-        }
-        AgentRuntimeEvent::QuotaUsageRequest { id, payload } => {
-            record_runner_lifecycle(
-                observer,
-                "quota_usage_requested",
-                serde_json::json!({
-                    "requestId": id,
-                }),
-            );
-            let result = handle_quota_usage_request(app_handle, payload.clone());
-            let response = match result {
-                Ok(value) => serde_json::json!({
-                    "type": runner_quota_usage_result_control_type(),
-                    "id": id,
-                    "ok": true,
-                    "result": value,
-                }),
-                Err(err) => serde_json::json!({
-                    "type": runner_quota_usage_result_control_type(),
-                    "id": id,
-                    "ok": false,
-                    "error": err,
-                }),
-            };
-            if let Err(err) = write_runner_stdin_payload(&session.process_session_id, response) {
-                record_runner_lifecycle(
-                    observer,
-                    "quota_usage_response_failed",
-                    serde_json::json!({
-                        "requestId": id,
-                        "error": err,
-                    }),
-                );
-            }
-        }
-        AgentRuntimeEvent::ContextUsage {
-            used_tokens,
-            limit_tokens,
-            used_percent,
-            source,
-            unavailable_reason,
-        } => {
-            let computed_percent = limit_tokens.and_then(|limit| {
-                if limit == 0 {
-                    None
-                } else {
-                    Some(((*used_tokens as f64 / limit as f64) * 100.0).clamp(0.0, 100.0))
-                }
-            });
-            let usage = ChatContextUsage {
-                task_id: session.task_id.clone(),
-                backend: session.backend.clone(),
-                used_tokens: *used_tokens,
-                limit_tokens: *limit_tokens,
-                used_percent: used_percent
-                    .or(computed_percent)
-                    .map(|percent| percent.clamp(0.0, 100.0)),
-                source: source.clone().unwrap_or_else(|| "runtime".to_string()),
-                updated_at: crate::util::now_millis() as u64,
-                unavailable_reason: unavailable_reason.clone(),
-            };
-            record_runner_lifecycle(
-                observer,
-                "context_usage_updated",
-                serde_json::json!({
-                    "usedTokens": usage.used_tokens,
-                    "hasLimit": usage.limit_tokens.is_some(),
-                    "hasPercent": usage.used_percent.is_some(),
-                }),
-            );
-            let store = app_handle.state::<ChatStore>();
-            set_context_usage(&store, usage.clone());
-            let _ = app_handle.emit(contract::context_usage_event_name(), usage);
-        }
-        AgentRuntimeEvent::Done { session_id, .. } => {
-            if let Some(sid) = session_id {
-                session.last_session_id = Some(sid.clone());
-            }
-            record_runner_lifecycle(
-                observer,
-                "runner_done",
-                serde_json::json!({ "hasSessionId": session_id.is_some() }),
-            );
-        }
-        AgentRuntimeEvent::PromptSuggestion { suggestion, uuid } => {
-            if session.backend == BACKEND_CLAUDE {
-                if let Err(err) = crate::conversation_suggestions::save_claude_prompt_suggestion(
-                    app_handle,
-                    &session.task_id,
-                    suggestion,
-                    uuid.as_deref(),
-                ) {
-                    eprintln!(
-                        "[conversation-suggestions] save Claude prompt suggestion failed: {err}"
-                    );
-                }
-            }
-        }
-        AgentRuntimeEvent::Error { message } => {
-            record_runner_lifecycle(
-                observer,
-                "runner_error_event",
-                serde_json::json!({ "message": message }),
-            );
-            session.timeline_throttle.flush_all(app_handle);
-            if session
-                .last_assistant_error_text
-                .as_deref()
-                .is_some_and(|text| normalize_timeline_text(message).contains(text))
-            {
-                return;
-            }
-            persist_and_emit_error_timeline_event(
-                app_handle,
-                &session.task_id,
-                &session.backend,
-                Some(&session.turn_id),
-                message.clone(),
-            );
-        }
-    }
-}
-
-fn finalize_runner_session<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    session: &mut RunnerSession,
-    observer: &mut dyn RunnerLifecycleObserver,
-    process_success: bool,
-    stderr_text: &str,
-) -> RunnerOutput {
-    drop(process_registry().take_stdin_handle(&session.process_session_id));
-    process_registry().release_child_handle(&session.process_session_id);
-    let _ = process_registry().remove(&session.process_session_id);
-    record_runner_lifecycle(observer, "stdin_closed", serde_json::json!({}));
-    let finished = {
-        let store = app_handle.state::<ChatStore>();
-        finish_running_turn_handles(&store, &session.task_id, &session.turn_id, &session.backend)
-    };
-    clear_runtime_state_for_app(app_handle, &session.task_id);
-    record_runner_lifecycle(
-        observer,
-        "stop_marks_consumed",
-        serde_json::json!({
-            "interrupted": finished.interrupted,
-            "reset": finished.reset,
-        }),
-    );
-
-    if finished.reset {
-        session.timeline_throttle.pending.clear();
-        record_runner_lifecycle(
-            observer,
-            "timeline_discarded_for_reset",
-            serde_json::json!({}),
-        );
-    } else {
-        session.timeline_throttle.flush_all(app_handle);
-        record_runner_lifecycle(observer, "timeline_flushed", serde_json::json!({}));
-    }
-
-    record_runner_lifecycle(
-        observer,
-        "process_waited",
-        serde_json::json!({
-            "success": process_success,
-            "stderrLength": stderr_text.len(),
-        }),
-    );
-
-    if finished.interrupted && !finished.reset {
-        record_runner_lifecycle(
-            observer,
-            "interrupted_event_persisted",
-            serde_json::json!({}),
-        );
-        persist_and_emit_interrupted_timeline_event(
-            app_handle,
-            &session.task_id,
-            &session.backend,
-            &session.turn_id,
-        );
-    }
-
-    if !finished.reset
-        && should_emit_runner_exit_error(finished.interrupted, !process_success, stderr_text)
-    {
-        record_runner_lifecycle(
-            observer,
-            "process_exit_error_emitted",
-            serde_json::json!({ "stderrLength": stderr_text.trim().len() }),
-        );
-        persist_and_emit_error_timeline_event(
-            app_handle,
-            &session.task_id,
-            &session.backend,
-            Some(&session.turn_id),
-            format!("agent 进程异常退出：{}", stderr_text.trim()),
-        );
-    }
-
-    if !finished.interrupted && !finished.reset {
-        record_runner_lifecycle(observer, "title_update_spawned", serde_json::json!({}));
-        spawn_title_update(
-            app_handle.clone(),
-            session.task_id.clone(),
-            session.backend.clone(),
-            Some(session.turn_id.clone()),
-        );
-    }
-
-    RunnerOutput {
-        last_session_id: session.last_session_id.clone(),
-        interrupted: finished.interrupted,
-        reset: finished.reset,
-        waiting_approval: false,
-        terminal_failed: false,
-    }
-}
-
-#[cfg(feature = "legacy-runner")]
-pub(crate) fn run_node_agent_runner_with_observer<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    invocation: RunnerInvocation,
-    observer: &mut dyn RunnerLifecycleObserver,
-) -> Result<RunnerOutput, String> {
-    let mut session = start_runner_session(app_handle, invocation, observer)?;
-    loop {
-        match poll_runner_session(app_handle, &mut session, observer)? {
-            RunnerSessionPoll::Running => thread::sleep(Duration::from_millis(16)),
-            RunnerSessionPoll::Completed(output) => return Ok(output),
-        }
-    }
-}
-
-pub(crate) fn resume_node_agent_runner_with_observer<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    task_id: String,
-    turn_id: String,
-    backend: String,
-    process_session_id: String,
-    observer: &mut dyn RunnerLifecycleObserver,
-) -> Result<RunnerOutput, String> {
-    let mut session =
-        reattach_runner_session(app_handle, task_id, turn_id, backend, process_session_id)?;
-    loop {
-        match poll_runner_session(app_handle, &mut session, observer)? {
-            RunnerSessionPoll::Running => thread::sleep(Duration::from_millis(16)),
-            RunnerSessionPoll::Completed(output) => return Ok(output),
-        }
-    }
-}
-
-pub(crate) fn resume_node_agent_runner<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    task_id: String,
-    turn_id: String,
-    backend: String,
-    process_session_id: String,
-) -> Result<RunnerOutput, String> {
-    let mut observer = NoopRunnerLifecycleObserver;
-    resume_node_agent_runner_with_observer(
-        app_handle,
-        task_id,
-        turn_id,
-        backend,
-        process_session_id,
-        &mut observer,
-    )
-}
-
-pub(crate) fn resume_persisted_node_agent_runner<R: Runtime>(
-    app_handle: AppHandle<R>,
-    persisted: PersistedRuntimeState,
-) -> Result<(), String> {
-    let process_session_id = persisted
-        .process_session_id
-        .clone()
-        .ok_or_else(|| "persisted runner session 缺少 process_session_id".to_string())?;
-    let task_id = persisted.task_id.clone();
-    let turn_id = persisted.turn.turn_id.clone();
-    let backend = persisted.turn.backend.clone();
-    let output = resume_node_agent_runner(
-        &app_handle,
-        task_id.clone(),
-        turn_id,
-        backend.clone(),
-        process_session_id,
-    )?;
-    finish_agent_turn(
-        app_handle,
-        task_id,
-        backend,
-        output.last_session_id,
-        !output.interrupted && !output.reset,
-        None,
-    );
-    Ok(())
-}
-
-fn handle_quota_usage_request<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    payload: JsonValue,
-) -> Result<JsonValue, String> {
-    let input: crate::quota_usage::QuotaUsageQueryInput =
-        serde_json::from_value(payload).map_err(|e| e.to_string())?;
-    let store = app_handle
-        .try_state::<LiliaStore>()
-        .ok_or_else(|| "LiliaStore is not available".to_string())?;
-    let conn = store.conn()?;
-    crate::quota_usage::query_usage(&conn, input, crate::util::now_millis())
-}
-
+#[cfg(test)]
 fn runner_event_kind(event: &AgentRuntimeEvent) -> &'static str {
     event.event_type()
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn build_runner_stdin_payload<T: Serialize>(
     backend: &str,
     project_cwd: &str,
@@ -1382,217 +470,11 @@ pub(crate) fn runtime_reference_agent_payload(payload: &JsonValue) -> Result<Jso
     Ok(output)
 }
 
-#[cfg(feature = "legacy-runner")]
-fn runtime_state_context_json(
-    project_cwd: &str,
-    prompt: &str,
-    attachments: &[ChatAttachment],
-    conversation_references: &[ChatConversationReference],
-    workflow: Option<&ChatWorkflow>,
-    runtime_command: Option<&ChatRuntimeCommand>,
-    composer: &ChatComposerState,
-    resume_session_id: Option<&str>,
-) -> String {
-    serde_json::json!({
-        "projectCwd": project_cwd,
-        "promptLength": prompt.chars().count(),
-        "attachmentCount": attachments.len(),
-        "conversationReferenceCount": conversation_references.len(),
-        "workflowType": workflow_kind(workflow),
-        "runtimeCommandType": runtime_command_kind(runtime_command),
-        "automationRunId": automation_run_id(workflow),
-        "resumeSessionId": resume_session_id,
-        "permission": composer.permission,
-        "composerRuntimeWorkspaceRoots": composer
-            .codex_settings
-            .runtime_workspace_roots
-            .clone()
-            .unwrap_or_default(),
-    })
-    .to_string()
-}
 
-#[cfg(feature = "legacy-runner")]
-fn build_provider_runtime_options<R: Runtime>(
-    app: &AppHandle<R>,
-    backend: &str,
-    composer: &ChatComposerState,
-    runtime_command: Option<&ChatRuntimeCommand>,
-    runtime_options: Option<&ProviderRuntimeOptions>,
-) -> Option<JsonValue> {
-    let mut provider = serde_json::Map::new();
-    if backend == BACKEND_CODEX {
-        let mut codex = build_effective_codex_settings(app, composer);
-        if let Some(subagents) = build_effective_codex_subagent_settings(app) {
-            if let (Some(target), Some(source)) = (codex.as_object_mut(), subagents.as_object()) {
-                for (key, value) in source {
-                    if !target.contains_key(key) || target[key].is_null() {
-                        target.insert(key.clone(), value.clone());
-                    }
-                }
-            }
-        }
-        provider.insert("codex".to_string(), codex);
-    }
-    if backend == BACKEND_CLAUDE {
-        if let Some(claude) = build_effective_claude_settings(app) {
-            provider.insert("claude".to_string(), claude);
-        }
-    }
-    if let Some(options) = runtime_options {
-        if let Ok(value) = serde_json::to_value(options) {
-            return Some(merge_runtime_provider_defaults(value, provider));
-        }
-    }
-    if matches!(
-        runtime_command,
-        Some(ChatRuntimeCommand::RuntimeSettings { .. })
-    ) {
-        return Some(merge_runtime_provider_defaults(
-            serde_json::json!({}),
-            provider,
-        ));
-    }
-    if provider.is_empty() {
-        None
-    } else {
-        Some(JsonValue::Object(
-            [("provider".to_string(), JsonValue::Object(provider))]
-                .into_iter()
-                .collect(),
-        ))
-    }
-}
 
-#[cfg(feature = "legacy-runner")]
-fn merge_runtime_provider_defaults(
-    mut value: JsonValue,
-    defaults: serde_json::Map<String, JsonValue>,
-) -> JsonValue {
-    if defaults.is_empty() {
-        return value;
-    }
-    if !value.is_object() {
-        value = serde_json::json!({});
-    }
-    if !value
-        .get("provider")
-        .is_some_and(|provider| provider.is_object())
-    {
-        value["provider"] = serde_json::json!({});
-    }
-    for (key, default_value) in defaults {
-        let existing = value["provider"].get(&key).cloned();
-        match (existing, default_value.as_object()) {
-            (Some(JsonValue::Object(mut current)), Some(default_map)) => {
-                for (inner_key, inner_value) in default_map {
-                    if current.get(inner_key).is_none() || current[inner_key].is_null() {
-                        current.insert(inner_key.clone(), inner_value.clone());
-                    }
-                }
-                value["provider"][&key] = JsonValue::Object(current);
-            }
-            (Some(current), _) if !current.is_null() => {}
-            _ => {
-                value["provider"][key] = default_value;
-            }
-        }
-    }
-    value
-}
 
-#[cfg(feature = "legacy-runner")]
-fn build_effective_codex_settings<R: Runtime>(
-    app: &AppHandle<R>,
-    composer: &ChatComposerState,
-) -> JsonValue {
-    let global = load_agent_interaction_settings(app).codex_profile;
-    let project = crate::project_shell::load_project_settings(app)
-        .codex_defaults
-        .unwrap_or_default();
-    let local = &composer.codex_settings;
-    let fallback_model = composer.model.trim();
-    let default_model = crate::chat::state::default_model_for_backend(BACKEND_CODEX);
-    let model = normalize_optional_string(local.model.clone())
-        .or_else(|| {
-            if !fallback_model.is_empty() && fallback_model != default_model {
-                Some(fallback_model.to_string())
-            } else {
-                normalize_optional_string(project.model.clone())
-                    .or_else(|| normalize_optional_string(global.model.clone()))
-            }
-        })
-        .or_else(|| normalize_optional_string(Some(fallback_model.to_string())));
-    let reasoning_effort = normalize_reasoning_effort(local.reasoning_effort.clone())
-        .or_else(|| normalize_reasoning_effort(project.reasoning_effort.clone()))
-        .or_else(|| normalize_reasoning_effort(global.reasoning_effort.clone()));
-    let runtime_workspace_roots = effective_runtime_workspace_roots(local, &project, &global);
-    let responses_api_client_metadata =
-        normalize_json_object(local.responses_api_client_metadata.clone())
-            .or_else(|| normalize_json_object(project.responses_api_client_metadata.clone()))
-            .or_else(|| normalize_json_object(global.responses_api_client_metadata.clone()));
-    let additional_context = normalize_optional_string(local.additional_context.clone())
-        .or_else(|| normalize_optional_string(project.additional_context.clone()))
-        .or_else(|| normalize_optional_string(global.additional_context.clone()));
-    let persist_extended_history = local
-        .persist_extended_history
-        .or(project.persist_extended_history)
-        .or(global.persist_extended_history);
-    let initial_turns_page = normalize_json_object(local.initial_turns_page.clone())
-        .or_else(|| normalize_json_object(project.initial_turns_page.clone()))
-        .or_else(|| normalize_json_object(global.initial_turns_page.clone()));
-    let exclude_turns = effective_string_list(
-        local.exclude_turns.clone(),
-        &project.exclude_turns,
-        &global.exclude_turns,
-    );
-    let profile = normalize_codex_settings_profile(local.profile.clone())
-        .or_else(|| {
-            let project_profile = normalize_codex_settings_profile(Some(project.profile));
-            project_profile.filter(|value| value != "default")
-        })
-        .unwrap_or_else(|| normalize_codex_settings_profile(Some(global.profile)).unwrap());
 
-    serde_json::json!({
-        "profile": profile,
-        "model": model,
-        "reasoningEffort": reasoning_effort,
-        "runtimeWorkspaceRoots": runtime_workspace_roots,
-        "responsesApiClientMetadata": responses_api_client_metadata,
-        "additionalContext": additional_context,
-        "persistExtendedHistory": persist_extended_history,
-        "initialTurnsPage": initial_turns_page,
-        "excludeTurns": exclude_turns,
-    })
-}
 
-#[cfg(feature = "legacy-runner")]
-fn effective_runtime_workspace_roots(
-    local: &CodexComposerSettings,
-    project: &CodexProfileSettings,
-    global: &CodexProfileSettings,
-) -> Vec<String> {
-    match local.runtime_workspace_roots.clone() {
-        Some(roots) => normalize_runtime_workspace_roots(roots),
-        None if !project.runtime_workspace_roots.is_empty() => {
-            normalize_runtime_workspace_roots(project.runtime_workspace_roots.clone())
-        }
-        None => normalize_runtime_workspace_roots(global.runtime_workspace_roots.clone()),
-    }
-}
-
-#[cfg(feature = "legacy-runner")]
-fn effective_string_list(
-    local: Option<Vec<String>>,
-    project: &[String],
-    global: &[String],
-) -> Vec<String> {
-    match local {
-        Some(values) => normalize_string_list(values),
-        None if !project.is_empty() => normalize_string_list(project.to_vec()),
-        None => normalize_string_list(global.to_vec()),
-    }
-}
 
 pub(crate) fn finish_agent_turn<R: Runtime>(
     app_handle: AppHandle<R>,
@@ -1716,7 +598,7 @@ fn plan_next_turn_dispatch<R: Runtime>(
 const CONVERSATION_CONTEXT_TASK_LIMIT: i64 = 24;
 const CONVERSATION_CONTEXT_MESSAGE_LIMIT: i64 = 24;
 const CONVERSATION_CONTEXT_TEXT_LIMIT: usize = 2_000;
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 const DEPENDENCY_CONTEXT_MESSAGE_SCAN_LIMIT: i64 = 64;
 
 struct DependencyTaskRow {
@@ -1725,7 +607,7 @@ struct DependencyTaskRow {
     status: String,
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 struct DependencyContextItem {
     task_id: String,
     title: String,
@@ -1814,22 +696,8 @@ fn ensure_dependency_chain_done(
     Ok(())
 }
 
-#[cfg(feature = "legacy-runner")]
-fn apply_main_agent_prompt_to_runtime_options<R: Runtime>(
-    app: &AppHandle<R>,
-    backend: &str,
-    runtime_options: Option<JsonValue>,
-) -> Option<JsonValue> {
-    let settings = load_agent_interaction_settings(app);
-    append_main_agent_prompt_to_runtime_options(
-        backend,
-        runtime_options,
-        &settings.main_agent_prompt_mode,
-        &settings.main_agent_custom_prompt,
-    )
-}
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn append_main_agent_prompt_to_runtime_options(
     backend: &str,
     runtime_options: Option<JsonValue>,
@@ -1843,36 +711,8 @@ fn append_main_agent_prompt_to_runtime_options(
     )
 }
 
-#[cfg(feature = "legacy-runner")]
-fn apply_dependency_context_to_runtime_options<R: Runtime>(
-    app: &AppHandle<R>,
-    task_id: &str,
-    backend: &str,
-    runtime_options: Option<JsonValue>,
-    is_new_session: bool,
-) -> Option<JsonValue> {
-    if !is_new_session {
-        return runtime_options;
-    }
-    let Some(store) = app.try_state::<LiliaStore>() else {
-        return runtime_options;
-    };
-    let Ok(conn) = store.conn() else {
-        return runtime_options;
-    };
-    match build_dependency_context_core(&conn, task_id) {
-        Ok(Some(context)) => {
-            crate::memory::append_context_to_runtime_options(backend, runtime_options, &context)
-        }
-        Ok(None) => runtime_options,
-        Err(err) => {
-            eprintln!("[dependency-context] skipped: {err}");
-            runtime_options
-        }
-    }
-}
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn build_dependency_context_core(
     conn: &rusqlite::Connection,
     task_id: &str,
@@ -2008,7 +848,7 @@ fn load_dependency_tasks(
     Ok(out)
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn load_dependency_final_summary(
     conn: &rusqlite::Connection,
     task_id: &str,
@@ -2058,7 +898,7 @@ fn load_dependency_final_summary(
     Ok(None)
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn format_dependency_context(items: &[DependencyContextItem]) -> Option<String> {
     if items.is_empty() {
         return None;
@@ -2080,7 +920,7 @@ fn format_dependency_context(items: &[DependencyContextItem]) -> Option<String> 
     Some(lines.join("\n"))
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn compact_context_line(text: &str) -> String {
     text.lines()
         .map(str::trim)

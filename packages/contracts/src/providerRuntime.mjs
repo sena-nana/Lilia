@@ -1,11 +1,7 @@
 import { CHAT_BACKENDS_CONTRACT } from "./chatBackendsContract.mjs";
 import { createProviderHelpers } from "./providerCore.mjs";
-import providerCodex from "./provider-codex.json" with { type: "json" };
 
-const helpers = createProviderHelpers(
-  providerCodex,
-  CHAT_BACKENDS_CONTRACT,
-);
+const helpers = createProviderHelpers(CHAT_BACKENDS_CONTRACT);
 
 export const CODEX_REASONING_EFFORTS = helpers.CODEX_REASONING_EFFORTS;
 export const REASONING_EFFORTS = helpers.REASONING_EFFORTS;

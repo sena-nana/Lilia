@@ -559,13 +559,6 @@ pub(crate) struct ChatModelOption {
     pub(crate) label: String,
     pub(crate) backend: String,
 }
-#[cfg(feature = "legacy-runner")]
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct TurnStartedEvent {
-    pub(crate) task_id: String,
-    pub(crate) queued_count: usize,
-}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -5,10 +5,6 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
-[[bin]]
-name = "lilia-migrate"
-path = "src/bin/lilia-migrate.rs"
-
 [dependencies]
 lilia-contracts = { workspace = true }
 lilia-core = { workspace = true }

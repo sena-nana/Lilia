@@ -1,22 +1,18 @@
-import type { CodexProfileSettings } from "./providerRuntime.mjs";
 import type { RuntimePermissionMode } from "./permissionModes.mjs";
 
 export type PermissionModeAvailability = Record<RuntimePermissionMode, boolean>;
 
-export interface AgentSubagentBackendSettings {
+export interface AgentSubagentModeSettings {
   enabled: boolean;
-}
-
-export interface ClaudeSubagentModeSettings extends AgentSubagentBackendSettings {
   forwardSubagentText: boolean;
   agentProgressSummaries: boolean;
 }
 
-export interface AgentSubagentModeSettings {
-  enabled: boolean;
-  codex: AgentSubagentBackendSettings;
-  claude: ClaudeSubagentModeSettings;
-}
+/** @deprecated Use AgentSubagentModeSettings; brand backends removed. */
+export type AgentSubagentBackendSettings = Pick<AgentSubagentModeSettings, "enabled">;
+
+/** @deprecated Use AgentSubagentModeSettings; brand backends removed. */
+export type ClaudeSubagentModeSettings = AgentSubagentModeSettings;
 
 export interface AutoTurnDecisionSettings {
   enabled: boolean;
@@ -47,7 +43,6 @@ export interface AgentInteractionSettings {
   permissionModeAvailability: PermissionModeAvailability;
   mainAgentPromptMode: MainAgentPromptMode;
   mainAgentCustomPrompt: string;
-  codexProfile: CodexProfileSettings;
   subagentMode: AgentSubagentModeSettings;
   autoTurnDecision: AutoTurnDecisionSettings;
 }

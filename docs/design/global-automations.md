@@ -33,7 +33,7 @@ Supported node groups:
 
 - Trigger: manual, task changes, timeline events, todo changes, and Agent
   interaction requests.
-- Agent: dispatches to Claude or Codex through the existing chat runner,
+- Agent: dispatches through the Native AgentKit path (Mutsuki Agent Wire),
   composer state, task queue, timeline persistence, and permission flow.
 - Logic: condition, switch, and stop.
 - Tool: create task, update task status, add agent todo, create a Lilia guide,

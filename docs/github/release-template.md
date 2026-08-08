@@ -6,7 +6,7 @@
 
 ## 主要变更
 
-- 内置浏览器：Codex 可打开和导航 IAB 窗口，采集页面标题 / URL / 截图元数据，并把结果送回运行中的 turn 或作为消息附件。
+- 内置浏览器：Native Agent 可打开和导航 IAB 窗口，采集页面标题 / URL / 截图元数据，并把结果送回运行中的 turn 或作为消息附件。
 - 斜杠命令：输入框支持 `/` 命令面板，可执行内置命令和 `.lilia/commands` 项目命令，并把执行结果回写到任务 timeline。
 - 路线图页：项目 Roadmap 页可按当前项目 Task 状态聚合首发 milestone、进度、状态分布、当前重点和最近完成。
 - 首发发布链路：`v*` tag 触发 release workflow，先运行 `yarn verify` 和 `yarn release:check --tag <tag>`，再生成 Windows draft Release 安装包。

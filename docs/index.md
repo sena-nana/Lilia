@@ -1,10 +1,10 @@
----
+﻿---
 layout: home
 
 hero:
   name: LiliaCode
   text: 面向代码工程的 Agent 协同桌面客户端
-  tagline: 将 Claude Code 与 Codex 的工作过程整理为可恢复、可追踪、可调度的本地任务状态。
+  tagline: 将 LiliaCore / Native AgentKit 的工作过程整理为可恢复、可追踪、可调度的本地任务状态。
   image:
     src: /logo.png
     alt: LiliaCode logo
@@ -31,7 +31,7 @@ features:
 
 ## 适合谁
 
-LiliaCode 面向需要长期推进工程项目的开发者。它在 Agent 执行层之外提供项目、任务、会话、权限和过程信息的桌面级组织层，让 Claude Code 与 Codex 的协作过程更容易被恢复、追踪和调度。
+LiliaCode 面向需要长期推进工程项目的开发者。它在 Agent 执行层之外提供项目、任务、会话、权限和过程信息的桌面级组织层，让 LiliaCore / Native AgentKit 的协作过程更容易被恢复、追踪和调度。
 
 ## 当前状态
 

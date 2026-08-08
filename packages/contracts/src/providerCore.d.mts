@@ -1,5 +1,6 @@
 export type CodexJsonObject = Record<string, unknown>;
 
+/** @deprecated Official Codex product removed. */
 export interface CodexProfileSettingsCore {
   profile: string;
   model: string | null;
@@ -13,15 +14,29 @@ export interface CodexProfileSettingsCore {
 }
 
 export interface ProviderHelpers {
+  REASONING_EFFORTS: readonly string[];
+  BACKEND_REASONING_EFFORTS: Record<string, readonly string[]>;
+  /** @deprecated Official Codex product removed. */
   CODEX_REASONING_EFFORTS: readonly string[];
+  /** @deprecated Official Codex product removed. */
   CODEX_SETTINGS_PROFILES: readonly string[];
+  /** @deprecated Official Codex product removed. */
   DEFAULT_CODEX_PROFILE_SETTINGS: CodexProfileSettingsCore;
+  isReasoningEffort(value: unknown): boolean;
+  normalizeReasoningEffort(value: unknown): string | null;
+  reasoningEffortsForBackend(backend: string): readonly string[];
+  normalizeReasoningEffortForBackend(backend: string, value: unknown): string | null;
+  /** @deprecated Official Codex product removed. */
   isCodexReasoningEffort(value: unknown): boolean;
+  /** @deprecated Official Codex product removed. */
   normalizeCodexReasoningEffort(value: unknown): string | null;
+  /** @deprecated Official Codex product removed. */
   isCodexSettingsProfile(value: unknown): boolean;
+  /** @deprecated Official Codex product removed. */
   normalizeCodexSettingsProfile(value: unknown): string;
   normalizeUniqueTrimmedStrings(value: unknown): string[];
   normalizeCodexJsonObject(value: unknown): CodexJsonObject | null;
+  /** @deprecated Official Codex product removed. */
   normalizeCodexProfileSettings(
     input: Partial<CodexProfileSettingsCore> | null | undefined,
     base?: CodexProfileSettingsCore,
@@ -29,7 +44,6 @@ export interface ProviderHelpers {
 }
 
 export function createProviderHelpers(
-  providerCodexJson: unknown,
   chatBackendsJson: unknown,
 ): ProviderHelpers;
 

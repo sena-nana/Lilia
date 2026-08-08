@@ -204,7 +204,7 @@ pub(super) fn materialize_items(
                 source: if task_ids.is_empty() {
                     if github_activities.is_empty() {
                         if local_git_contexts.is_empty() {
-                            SuggestionItemSource::CodexThread
+                            SuggestionItemSource::SessionThread
                         } else {
                             SuggestionItemSource::LocalGit
                         }

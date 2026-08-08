@@ -219,7 +219,7 @@ function applySubmittingStateForResolution(resolution: PendingAgentActionResolut
   const target = pendingAgentActionResolutionSubmittingTarget(resolution);
   if (target === "tool" && resolution.kind === TOOL_CONSENT_INTERACTION_KIND) {
     toolSubmitting.value = resolution.decision;
-  } else if (target === "codex") {
+  } else if (target === "native" || target === "codex") {
     codexSubmitting.value = true;
   }
 }

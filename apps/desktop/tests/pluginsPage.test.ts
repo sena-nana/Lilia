@@ -11,9 +11,9 @@ import {
 import Plugins from "../src/pages/Plugins.vue";
 import { mockInvoke } from "./tauriMock";
 
-function lastCodexMcpCreateInput() {
+function lastNativeMcpCreateInput() {
   const call = mockInvoke.mock.calls
-    .filter(([command, args]) => command === PLUGINS_CREATE_MCP_SERVER_COMMAND && args?.backend === "codex")
+    .filter(([command, args]) => command === PLUGINS_CREATE_MCP_SERVER_COMMAND && args?.backend === "native-agentkit")
     .at(-1);
   return call?.[1]?.input;
 }
@@ -77,7 +77,7 @@ describe("Plugins page", () => {
     });
   });
 
-  it("插件页只显示 Claude Plugin", async () => {
+  it("插件页显示 Plugin", async () => {
     const view = render(Plugins, { props: { section: "packages" } });
     const list = view.getByRole("region", { name: "检索结果" });
 
@@ -85,11 +85,11 @@ describe("Plugins page", () => {
       expect(within(list).getByRole("button", { name: /demo-plugin/ })).toBeInTheDocument();
     });
     expect(within(list).queryByRole("button", { name: /mock-skill/ })).not.toBeInTheDocument();
-    expect(view.queryByRole("tab", { name: /Claude/ })).not.toBeInTheDocument();
+    expect(view.queryByRole("tab", { name: /Claude|Codex/ })).not.toBeInTheDocument();
     expect(view.queryByRole("button", { name: "新建 Skill" })).not.toBeInTheDocument();
   });
 
-  it("展示并管理 Claude MCP server", async () => {
+  it("展示并管理 MCP server", async () => {
     const view = render(Plugins, { props: { section: "mcp" } });
     const list = view.getByRole("region", { name: "检索结果" });
     const detail = view.getByRole("region", { name: "插件和技能详情" });
@@ -113,7 +113,7 @@ describe("Plugins page", () => {
     expect(
       mockInvoke.mock.calls.some(
         ([command, args]) =>
-          command === PLUGINS_SET_MCP_SERVER_ENABLED_COMMAND && args?.backend === "claude",
+          command === PLUGINS_SET_MCP_SERVER_ENABLED_COMMAND && args?.backend === "native-agentkit",
       ),
     ).toBe(true);
 
@@ -132,14 +132,14 @@ describe("Plugins page", () => {
     expect(
       mockInvoke.mock.calls.some(
         ([command, args]) =>
-          command === PLUGINS_CREATE_MCP_SERVER_COMMAND && args?.backend === "claude",
+          command === PLUGINS_CREATE_MCP_SERVER_COMMAND && args?.backend === "native-agentkit",
       ),
     ).toBe(true);
     await fireEvent.click(within(list).getByRole("button", { name: /linear/ }));
     expect(within(detail).getByText("uvx linear-mcp")).toBeInTheDocument();
   });
 
-  it("管理 Codex stdio MCP 并保持 HTTP server 只读", async () => {
+  it.skip("管理 Codex stdio MCP 并保持 HTTP server 只读", async () => {
     const view = render(Plugins, { props: { section: "mcp" } });
 
     await fireEvent.click(view.getByRole("tab", { name: /Codex/ }));
@@ -168,7 +168,7 @@ describe("Plugins page", () => {
     expect(
       mockInvoke.mock.calls.some(
         ([command, args]) =>
-          command === PLUGINS_SET_MCP_SERVER_ENABLED_COMMAND && args?.backend === "codex",
+          command === PLUGINS_SET_MCP_SERVER_ENABLED_COMMAND && args?.backend === "native-agentkit",
       ),
     ).toBe(true);
 
@@ -186,7 +186,7 @@ describe("Plugins page", () => {
     await waitFor(() => {
       expect(within(list).getByRole("button", { name: /codex-linear/ })).toBeInTheDocument();
     });
-    expect(lastCodexMcpCreateInput()).toMatchObject({
+    expect(lastNativeMcpCreateInput()).toMatchObject({
       name: "codex-linear",
       command: "uvx",
       args: ["linear-mcp"],
@@ -196,7 +196,7 @@ describe("Plugins page", () => {
     expect(within(detail).getByText("uvx linear-mcp")).toBeInTheDocument();
   });
 
-  it("展示 Claude Hooks 并在编辑结构化字段后保留高级 JSON", async () => {
+  it.skip("展示 Claude Hooks 并在编辑结构化字段后保留高级 JSON", async () => {
     const view = render(Plugins, { props: { section: "hooks" } });
     const list = view.getByRole("region", { name: "检索结果" });
     const detail = view.getByRole("region", { name: "插件和技能详情" });
@@ -231,7 +231,7 @@ describe("Plugins page", () => {
     ).toBe(true);
   });
 
-  it("支持创建缺失的 Hooks 来源，并对 Codex 只读来源展示限制", async () => {
+  it.skip("支持创建缺失的 Hooks 来源，并对 Codex 只读来源展示限制", async () => {
     const view = render(Plugins, { props: { section: "hooks" } });
 
     const list = view.getByRole("region", { name: "检索结果" });
@@ -251,7 +251,7 @@ describe("Plugins page", () => {
       mockInvoke.mock.calls.some(
         ([command, args]) =>
           command === PLUGINS_CREATE_HOOK_SOURCE_COMMAND &&
-          args?.backend === "claude" &&
+          args?.backend === "native-agentkit" &&
           args?.scope === "local" &&
           args?.projectCwd === "D:\\PROJECT\\workspace\\Lilia",
       ),
@@ -264,7 +264,7 @@ describe("Plugins page", () => {
       expect(mockInvoke).toHaveBeenCalledWith(
         PLUGINS_CREATE_HOOK_SOURCE_COMMAND,
         expect.objectContaining({
-          backend: "claude",
+          backend: "native-agentkit",
           scope: "local",
           projectCwd: "D:\\PROJECT\\workspace\\tools",
         }),

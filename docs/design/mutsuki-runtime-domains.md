@@ -38,10 +38,9 @@ cargo run --release --locked --features runtime-domain-reference `
 ## 与生产迁移的边界
 
 该模块是可执行 reference profile 和性能门禁，不会把空 RuntimeDomain 注入桌面进程，
-也不宣称现有 Node Agent runner、桌面产品数据库或全部 workspace command 已迁移。生产
-Embedded/Service 共用 bootstrap、LiliaCore、AgentKit 和 workspace authority 的迁移
-分别由 LiliaCode #44、#52、#60 推进。迁移时复用这里验证过的 domain ID、路由语义和
-性能场景，不建立第二套产品或 Agent 事实源。
+也不宣称桌面产品数据库或全部 workspace command 已迁入多 RuntimeDomain。生产
+Embedded/Service 共用 bootstrap、LiliaCore、Mutsuki AgentKit 和 workspace authority。
+迁移时复用这里验证过的 domain ID、路由语义和性能场景，不建立第二套产品或 Agent 事实源。
 
 ## 生产切片状态（诚实 partial）
 

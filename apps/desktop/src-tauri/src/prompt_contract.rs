@@ -9,17 +9,18 @@ static PROMPT_CONTRACT: OnceLock<PromptContract> = OnceLock::new();
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PromptContract {
-    #[allow(dead_code)] // legacy-runner / tests
+    #[allow(dead_code)] // tests / native pack consumers
     main_agent: MainAgentPrompts,
-    #[allow(dead_code)] // legacy-runner / tests
-    codex: CodexPrompts,
+    /// Mutsuki / Lilia native prompt pack (subagents, plan, workflows).
+    #[allow(dead_code)]
+    native: NativePrompts,
     assistant: AssistantPrompts,
     suggestion: SuggestionPrompts,
     title: TitlePrompts,
     automation: AutomationPrompts,
 }
 
-#[cfg_attr(not(any(feature = "legacy-runner", test)), allow(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainAgentPrompts {
@@ -30,7 +31,7 @@ pub(crate) struct MainAgentPrompts {
     pub(crate) workflow_order: Vec<String>,
 }
 
-#[cfg_attr(not(any(feature = "legacy-runner", test)), allow(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainAgentWorkflowPrompt {
@@ -39,7 +40,7 @@ pub(crate) struct MainAgentWorkflowPrompt {
     pub(crate) prompt: String,
 }
 
-#[cfg_attr(not(any(feature = "legacy-runner", test)), allow(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct MainAgentModePrompts {
@@ -47,17 +48,17 @@ pub(crate) struct MainAgentModePrompts {
     pub(crate) aggressive: String,
 }
 
-#[cfg_attr(not(any(feature = "legacy-runner", test)), allow(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct CodexPrompts {
-    subagents: CodexSubagentPrompts,
+struct NativePrompts {
+    subagents: NativeSubagentPrompts,
 }
 
-#[cfg_attr(not(any(feature = "legacy-runner", test)), allow(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct CodexSubagentPrompts {
+pub(crate) struct NativeSubagentPrompts {
     pub(crate) delegation_header: String,
     pub(crate) baseline_intro: String,
     pub(crate) baseline_prompt: String,
@@ -68,6 +69,8 @@ pub(crate) struct CodexSubagentPrompts {
     pub(crate) delegation_rules_label: String,
     pub(crate) delegation_rules: Vec<String>,
 }
+
+
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -143,12 +146,12 @@ pub(crate) fn prompt_optimize_system_instruction() -> &'static str {
         .system_instruction
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn main_agent_prompts() -> &'static MainAgentPrompts {
     &prompt_contract().main_agent
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn main_agent_prompt_mode(mode: &str) -> &'static str {
     match mode {
         "aggressive" => &prompt_contract().main_agent.modes.aggressive,
@@ -156,7 +159,7 @@ pub(crate) fn main_agent_prompt_mode(mode: &str) -> &'static str {
     }
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn build_main_agent_prompt(mode: &str, custom_prompt: Option<&str>) -> String {
     let prompts = main_agent_prompts();
     let strategy_prompt = match mode {
@@ -243,9 +246,14 @@ pub(crate) fn auto_turn_decision_tier_policy() -> &'static AutoTurnDecisionTierP
     &prompt_contract().assistant.auto_turn_decision.tier_policy
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
-pub(crate) fn codex_subagent_prompts() -> &'static CodexSubagentPrompts {
-    &prompt_contract().codex.subagents
+#[cfg(test)]
+pub(crate) fn native_subagent_prompts() -> &'static NativeSubagentPrompts {
+    &prompt_contract().native.subagents
+}
+
+#[cfg(test)]
+pub(crate) fn codex_subagent_prompts() -> &'static NativeSubagentPrompts {
+    native_subagent_prompts()
 }
 
 pub(crate) fn suggestion_system_instruction() -> &'static str {

@@ -1,10 +1,10 @@
-<!-- To replace the main window screenshot, keep the file name .github/assets/main-window.png to avoid README changes. -->
+<!-- Replace the main screenshot while keeping .github/assets/main-window.png to avoid README churn -->
 
-> English | [简体中文](README.zh-CN.md) | [Documentation](https://sena-nana.github.io/LiliaCode/)
+> English | [简体中文](README.zh-CN.md) | [Web docs](https://sena-nana.github.io/LiliaCode/)
 
-> **Development Status**
+> **Development status**
 >
-> LiliaCode is still changing quickly. Core features are not fully complete, and the local database schema may change as new features land. Data may be cleared or migrated at any time, so do not rely on it as the only copy of important production work.
+> LiliaCode is still changing quickly; core features are incomplete; local database schemas may change and data may be cleared or migrated. Do not rely on it as the only copy of important work.
 
 <p align="center">
   <img src="./apps/desktop/src-tauri/icons/icon.png" width="128" alt="LiliaCode logo" />
@@ -18,9 +18,9 @@
   </a>
 </p>
 
-<p align="center"><strong>A desktop client for agent-assisted software engineering.</strong></p>
+<p align="center"><strong>An Agent collaboration desktop client for software engineering.</strong></p>
 
-<p align="center">LiliaCode organizes Claude Code and Codex execution behind Lilia workflows, runtime commands, and recoverable local task state, helping developers manage project sessions, context, todos, and execution history.</p>
+<p align="center">LiliaCode uses the Lilia product protocol implemented by Mutsuki AgentKit as the Agent core and persists recoverable local task state, helping developers manage project sessions, context, todos, and execution history.</p>
 
 <p align="center">
   <img src="./.github/assets/main-window.png" alt="LiliaCode main window" />
@@ -28,172 +28,84 @@
 
 ---
 
-## Product Positioning
+## Product positioning
 
-LiliaCode is the software engineering workbench in the Lilia family. It does not simply wrap Claude Code or Codex in a chat window; instead, it adds a desktop-level organization layer for projects, tasks, sessions, permissions, and process state outside the agent execution layer.
+LiliaCode is the software engineering workbench in the Lilia family. Agent execution is driven by the **Lilia product protocol (Mutsuki implementation)**; the desktop layer organizes projects, tasks, sessions, permissions, and process state.
 
-It is built for developers who move engineering projects forward over time. Each conversation can be treated as a manageable task, while agent execution details and pending interactions are saved as local state. This provides the foundation for future task trees, automatic orchestration, and multi-agent collaboration.
+It targets developers who need long-running engineering work: each conversation can be managed as a task, agent execution and pending interactions become local state, and that state supports task trees, automation, and multi-agent collaboration.
 
-## The Lilia Family
+## Lilia family
 
-Lilia is a family of toolchain applications for high-collaboration agent workflows. Its goal is to connect different agents, execution environments, and engineering workflows into one observable, schedulable, and recoverable local workbench.
+Lilia is a toolchain family for high Agent collaboration. The goal is one observable, schedulable, recoverable local workbench for different agents, runtimes, and engineering workflows.
 
-LiliaCode focuses on software engineering. Other applications in the same family may expand into additional agent collaboration workflows while sharing the same ideas around project state, task-based sessions, plugin capabilities, and human-agent collaboration boundaries.
+## Core differences
 
-## What Makes It Different
+- Task-shaped sessions instead of chat-only history
+- Local engineering state for projects, sessions, todos, process, and key interactions
+- Observable timelines for thinking, tools, commands, file changes, and final replies
+- Non-interrupt interactions: permissions, plan approval, and agent questions can wait without hijacking the composer
+- Structure for task trees, dependencies, automation, and helper agents
 
-- Task-based sessions: manage conversations as tasks instead of only saving chat history.
-- Local engineering state: record projects, sessions, todos, process details, and key interactions for easier recovery and continuation.
-- Observable process: use a timeline to show agent reasoning, tool calls, command execution, file changes, and final responses.
-- Non-interruptive interaction: move permission requests, plan confirmations, and agent questions into a pending area so they do not take over the input flow.
-- Collaboration-ready structure: provide a shared shape for task trees, dependencies, orchestration, and helper agents.
+LiliaCode owns its recoverable task model and timeline. It does **not** use Claude Code or Codex official CLI / SDK / app-server as the execution path. Models can still be called through OpenAI-compatible or Anthropic Messages **LLM APIs**.
 
-LiliaCode still prioritizes its own recoverable task structure over upstream CLI or SDK history formats. Raw Claude / Codex history can be imported as a bridge into Lilia tasks, but the local task timeline remains the primary working model.
+## Getting started
 
-## Getting Claude or Codex Running
+- Configure **Native credentials** (OpenAI or Anthropic API key, or a compatible endpoint) in Settings.
+- Agent turns run on **Native AgentKit** (`native-agentkit`); Claude Code / Codex CLI are not required.
+- Compatible proxies: set Base URL on the credential or model settings.
+- After credentials are ready, open a conversation and send the first message.
 
-- Run Claude: make sure Node.js 18+ is available, then choose Claude on the Connection page and enter an Anthropic API key. If Base URL is empty, Lilia uses `https://api.anthropic.com`; you can also enter a local proxy or Anthropic-compatible endpoint.
-- Run Codex: install Codex CLI with `npm i -g @openai/codex`, then make sure Lilia can detect `codex app-server`. Lilia requires Codex CLI `0.128.0+` for the app-server protocol it uses; by default it reuses the official account session from `codex login`.
-- Codex API: to bill through an OpenAI API key, switch Codex to API mode on the Connection page and enter `OPENAI_API_KEY`. If Base URL is empty, Lilia uses `https://api.openai.com/v1`.
-- Compatible APIs / local proxies: enter the service URL directly as Base URL. CC-Switch no longer has dedicated integration and is treated as a normal API source, for example `http://127.0.0.1:15721`.
-- Fix failures: the Connection page maps missing Node, missing Codex CLI, old app-server support, missing Codex login, and missing API keys to concrete repair suggestions. After fixing an item, click Refresh check, then return to a conversation and send the first message.
+## Feature status
 
-## Feature Status
+Checked against the real product surface. Updated 2026-08-08.
 
-The list below tracks the current real integration surface. Only capabilities that are usable as user-facing features are marked complete; partially integrated and not-yet-integrated items remain unchecked. Last checked: 2026-06-25.
+### Shared Agent capabilities
 
-### Shared Agent Capabilities
+- [x] Native AgentKit execution via LiliaCore
+- [x] Permission modes: full access, ask-first, read-only
+- [x] Todo display for the agent task list
+- [x] Process timeline for thinking, tools, commands, plans, and replies
+- [x] Key-node jump on the scrollbar
+- [x] Non-interrupt interactions for permissions, questions, and plan approval
+- [x] Guide queue for user todos
+- [x] Unified interaction protocol for plan / tool / ask-user flows
+- [x] Unified Lilia workflows (review, fix suggestion, batch apply, and built-in task kinds)
+- [x] File context via `@` mentions and paste/drag attachments
+- [x] Model selection with optional manual override
+- [x] Slash commands for built-in and `.lilia/commands` project commands
+- [x] Native credentials for OpenAI / Anthropic API keys
 
-- [x] Permission modes: choose execution scope by risk level, including full access, ask-first, and read-only modes, and map them into Claude / Codex runtime parameters.
-- [x] Todo display: mirror Claude `TodoWrite` and Codex `todo_list` events to show the agent's current task list and progress.
-- [x] Process timeline: distinguish and display agent reasoning, commands, tool calls, file changes, plans, and final replies.
-- [x] Key node navigation: highlight important timeline nodes in the scrollbar and support quick jumps.
-- [x] Non-interruptive interaction mode: move permission requests, agent questions, and plan confirmations into a pending area instead of taking over the input box.
-- [x] Guidance queue: create, queue, and serially dispatch user guidance todos, with queue state recovered during active runs.
-- [x] Basic MCP integration: Claude stdio MCP servers can be managed by Lilia and injected into runtime; Codex stdio MCP servers can be read from and managed in `~/.codex/config.toml`.
-- [x] Unified interaction protocol: unify plan confirmations, tool confirmations, and agent questions across backends.
-- [x] Unified Lilia protocol: built-in task workflows, review, fix suggestion, batch apply, context compact, Goal, memory, config diagnostics, and background-terminal cleanup stay in the user-facing workflow layer; session fork and provider session controls use runtime commands and dispatch internally by backend.
-- [x] File context: mention files, directories, images, and other context with `@`, with pasted or dropped attachments also supported.
-- [x] Intelligent model selection: in the current backend flow, model and thinking intensity are auto-selected by task context and can still be manually overridden before send.
-- [x] Slash commands: open the composer `/` panel, run built-in commands and project commands from `.lilia/commands`, and write command execution results back to the task timeline; full backend-native command proxying is not yet supported.
+### LiliaCode product features
 
-### Claude Code Integration
-
-- [x] Claude conversations: start new turns through Claude Agent SDK `query()` and save the SDK `session_id` so the same task can resume.
-- [x] Claude Plan: mirror `ExitPlanMode`, route approval, cancellation, and revision through unified AskUser, then restore execution-phase permission mode after approval.
-- [x] Claude prompt suggestions: consume native `prompt_suggestion` events and surface them in the composer suggestion area.
-- [x] Claude history: search local Claude JSONL sessions, preview messages / timeline, import them as Lilia tasks, and continue from the attached SDK session.
-- [x] Claude Skills: manage user-level and project-level Skills, and pass enabled skill names into the SDK.
-- [x] Claude tool display: normalize common tools including Bash, Read / Write / Edit / MultiEdit, Glob / Grep, NotebookEdit, WebSearch / WebFetch, TodoWrite, Task / Agent, and ExitPlanMode.
-- [x] Claude Lilia protocol: built-in task workflows and review / fix suggestion / batch apply run through structured Claude prompts, session fork uses runtime command handling backed by the SDK, and Goal plus unsupported native-only actions write Lilia timeline diagnostics.
-- [ ] Claude MCP management (partial): v1.0.0 supports stdio MCP create/edit/delete/enable UI management; HTTP / SSE, OAuth, elicitation, tool policy, and SDK instance MCP are complex and deferred to v2.0.
-- [ ] Claude Plugins (partial): user-level local plugin discovery and enablement are available with SDK path injection; installation, updates, project-level scope, and marketplace scope are complex and deferred to v2.0.
-- [ ] Claude Hooks (partial): a small SDK hook set is displayed; hooks configuration management and execution-result panels are complex and deferred to v2.0.
-- [ ] Claude Subagents (partial): Task / Agent calls, task progress, and notifications are shown; subagent definitions, list management, and proactive scheduling UI are deferred to v2.0.
-
-### Codex Integration
-
-- [x] Codex conversations: start or resume Codex app-server threads and save runtime state by task.
-- [x] Codex process display: show Codex reasoning, commands, file changes, searches, plans, and final replies.
-- [x] Codex environment checks: show whether the Codex CLI, app-server, API, and connection state are available.
-- [x] Codex Plan: enable the app-server experimental API, read the plan preset from `collaborationMode/list`, and pass `collaborationMode` to `turn/start`; after plan approval, Lilia explicitly returns to default mode for execution.
-- [x] Codex approval bridge: command and file-change approvals enter unified tool confirmation with `additionalPermissions` / `availableDecisions`, and Lilia can execute user-edited Codex commands before steering the result back to Codex.
-- [x] Codex MCP management: the UI can view, create, edit, delete, and enable user-level stdio MCP servers in `~/.codex/config.toml`; HTTP / OAuth / unknown transports remain read-only.
-- [x] Codex profiles: support global and project-level profiles, reasoning effort, runtime workspace roots, controlled permissions, and sticky `thread/settings/update`.
-- [x] Codex history: search, preview, import, and continue existing Codex app-server threads from the left sidebar import entry.
-- [x] Codex Lilia adapter: the workflow layer handles built-in task workflows, review, fix suggestion, batch apply, compact, Goal, memory mode / reset, config diagnostics, and background-terminal cleanup; runtime commands handle session fork and session controls through Codex app-server methods.
-- [x] Built-in browser interaction: Codex can open and navigate an IAB window, collect page title / URL / screenshot metadata, and send the result back to the running turn or as a message attachment; screenshot capture is currently Windows-first.
-
-### LiliaCode-Specific Features
-
-- [x] Project management: local projects, GitHub clone projects, dashboards, task status distribution, recent activity, session / task statistics, and known usage cost are available.
-- [x] Task-based conversations: conversations are persisted as tasks, with draft promotion, project conversations, orphan conversations, archiving, pinning, and ordering.
-- [x] Task tree: parent-child relationships, dependency updates, tree drag-and-drop, and blocker status hints are available; automatic scheduling from blockers and dependencies is still not complete.
-- [x] Built-in Lilia workflow types: general task, frontend, refactor, test / verification, docs / prompt, Git / release, and architecture / memory entries route through `lilia_task_workflow.kind` instead of the Plugin / Skill page.
-- [ ] Plugin system (partial): runtime management and injection for Claude Skills / Plugins / MCP and Codex MCP are in place for v1.0; full governance, behavior-policy plugins, and distribution-level plugin surface are deferred to v2/v3.
-- [x] Memory: user-level and project-level memory can be saved manually and injected as the Layer 1 baseline at session start; external model retrieval and opportunity-window guidance are not implemented.
-- [x] Roadmap and milestones: persisted project milestones and task milestone links are available; explanatory metrics and advanced summary views still need polish.
-- [ ] Automatic orchestration (target: `v2.0`): Lilia does not yet schedule multiple agents based on task state, dependencies, or user strategy.
-- [ ] Helper agents (target: `v2.0`): lower-cost agents do not yet run inside a session to supervise or assist the main agent.
-- [x] Built-in Lilia protocol: keep a single built-in runtime path.
+- [x] Project management, GitHub clone, overview stats, and known usage cost
+- [x] Session-as-task persistence: promote drafts, archive, pin, reorder
+- [x] Task tree with parent/child and dependency hints
+- [x] Built-in Lilia workflow kinds (general, frontend, refactor, test, docs, git release, architecture memory)
+- [ ] Plugin system (partial): official Claude/Codex extension management removed; AgentKit-native extension governance is still evolving
+- [x] Memory: user/project memory with Layer 1 injection at session start
+- [x] Roadmap / Milestone data path
+- [ ] Automation orchestration (`v2.0` target)
+- [ ] Helper agents (`v2.0` target)
+- [x] Single built-in Lilia protocol path
 
 ### Android Remote Beta
 
-- [x] Experimental Android companion: PC HTTP bridge, QR pairing, trusted devices, active PC, task inbox, task detail, timeline polling, composer, interrupt / retry, process commands, session fork, and pending interaction responses are wired through the PC runner and task timeline.
-- [x] Remote-control contract baseline: `packages/contracts` owns typed remote-control request / response / event shapes; `remote-control-command-contract.json` remains the Tauri IPC command-name manifest.
-- [ ] v1 beta limits: offline queues, PC-PC routing, multi-device collaboration, Android-local agent execution, a full Android settings surface, push-style event streaming, and full release regression are not promised.
-- [ ] Android release readiness: attach companion APKs only as experimental beta assets with a fresh `yarn android:verify` record.
+See [docs/design/android-remote-control.md](docs/design/android-remote-control.md).
 
-## Project Structure
+## Development
 
-> The repository, package names, protocol names, and local configuration paths still use the `lilia` name to avoid breaking existing protocols and persistence paths.
-
-```text
-Lilia/
-├── apps/
-│   ├── android/                # Experimental Android remote companion
-│   └── desktop/                # Main app: Vue 3 + Tauri 2
-│       ├── src/
-│       │   ├── layouts/        # AppShell / SecondaryPanel / TitleBar
-│       │   ├── components/     # ViewTabs / TodoFloat / ChatComposer, etc.
-│       │   ├── pages/          # project/ProjectShell / TaskDetail / Settings
-│       │   ├── services/       # projectsStore / tasksStore / todos / chat
-│       │   ├── styles/         # Theme tokens, standard components, shell, and lazy page styles
-│       │   ├── router.ts
-│       │   └── mainBootstrap.ts
-│       └── src-tauri/          # Tauri 2 Rust side
-│           └── src/
-│               ├── store.rs    # lilia-store: SQLite + r2d2 + migrations
-│               ├── todos.rs    # Intercepts TodoWrite / todo_list events -> TaskTodo upsert
-│               ├── plugins.rs  # Claude skills / plugins / MCP and Codex MCP management
-│               └── lib.rs      # chat / settings / project / plugin IPC
-└── packages/
-    └── contracts/              # Shared TS types and timeline display rules
-```
-
-## Early Development
-
-LiliaCode contributors use Node.js 26 and Yarn 4.17.1 through an explicitly installed Corepack. Run contributor commands from the repository root through the root `yarn ...` scripts. `npm`, `pnpm`, other Yarn releases, and direct workspace script entrypoints are guarded and not supported as the contributor path. The committed `.env.yarn` enables Node's portable module compile cache for repeated tooling runs.
+Common monorepo commands from the repository root:
 
 ```bash
-# 1) Install Corepack and enable its Yarn shim
-npm install --global corepack@0.35.0
-corepack enable yarn
-
-# 2) Install dependencies
-yarn install
-
-# 3) Start only the Vite frontend
-yarn dev
-
-# 4) Start the Tauri desktop app (requires a local Rust toolchain and WebView2)
 yarn tauri:dev
-
-# 5) Run type checks, unit tests, Rust check, and contracts check
-yarn verify
-
-# 6) Start, build, or preview the documentation site
-yarn docs:dev
-yarn docs:build
-yarn docs:preview
+yarn dev
+yarn verify:desktop:test
+yarn verify:contracts
+yarn verify:tauri
 ```
 
-If `yarn --version` does not report `4.17.1` after enabling Corepack, run commands through Corepack explicitly, for example `corepack yarn install` and `corepack yarn dev`. Repository scripts and workspace scripts enforce Node.js 26 and the pinned Yarn release through the same toolchain check.
+Desktop app lives in `apps/desktop`. Shared contracts live in `packages/contracts`. Agent integration and storage live under `crates/`.
 
-## First Release Packaging
+## License
 
-Windows first-release packaging is driven by the release workflow. Before tagging a release, sync the root `package.json`, `apps/desktop/package.json`, `apps/desktop/src-tauri/Cargo.toml`, and `apps/desktop/src-tauri/tauri.conf.json` versions, then run:
-
-```bash
-yarn release:check --tag vX.Y.Z
-```
-
-Pushing a `v*` tag runs `yarn verify` and `yarn release:check --tag <tag>`, builds the Windows Tauri installer, uploads a draft GitHub Release, and runs `yarn release:smoke:windows --tag <tag>` against the draft installer. Keep the release as a draft until the Windows installer smoke has verified install, launch, `liliacode <test-project-path>`, and uninstall-time CLI cleanup, and the Release verification record has been filled in. Current stable release artifacts are Windows-only, unsigned, do not include the Tauri updater, and are upgraded manually by downloading and installing a newer package.
-
-Android companion APKs are experimental beta assets. Only attach them to a release when `yarn android:verify` has passed for that build, and label the artifact as Android remote beta rather than as a stable full remote-control product.
-
-The Tauri icon source is [apps/desktop/src-tauri/icons/icon.png](apps/desktop/src-tauri/icons/icon.png). To regenerate the desktop PNG / ICO set through the Tauri CLI, run `yarn icons:generate`. `yarn icons:tauri` is kept as the same generation entrypoint.
-
-## Thanks
-
-- Codex provided important references for interface design and interaction organization; LiliaCode continues to iterate on top of those ideas.
+See repository license files.

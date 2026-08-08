@@ -62,9 +62,6 @@ import {
   GITHUB_POLL_DEVICE_FLOW_COMMAND,
   GITHUB_START_DEVICE_FLOW_COMMAND,
   GITHUB_UNBIND_COMMAND,
-  HISTORY_IMPORT_CLEAN_BACKGROUND_TERMINALS_COMMAND,
-  HISTORY_IMPORT_RUNTIME_STATES_COMMAND,
-  HISTORY_IMPORT_SEARCH_COMMAND,
   LILIA_IAB_OPEN_COMMAND,
   LILIA_IAB_SUBMIT_COMMAND,
   MILESTONE_CREATE_COMMAND,
@@ -101,9 +98,6 @@ import {
   PLUGINS_SET_PACKAGE_ENABLED_COMMAND,
   PLUGINS_UPDATE_HOOK_SOURCE_COMMAND,
   PLUGINS_UPDATE_MCP_SERVER_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_CHECK_UPDATE_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_INSTALL_UPDATE_COMMAND,
-  PROVIDER_CODEX_ACCOUNT_START_LOGIN_COMMAND,
   PROVIDER_GET_ACTIVE_BACKEND_COMMAND,
   PROVIDER_GET_CONFIG_COMMAND,
   PROVIDER_SET_ACTIVE_BACKEND_COMMAND,
@@ -115,8 +109,6 @@ import {
   POPUP_OPEN_TASK_COMMAND,
   POPUP_REMEMBER_LAST_PROJECT_COMMAND,
   POPUP_SET_WINDOW_SETTINGS_COMMAND,
-  QUOTA_USAGE_CONSUME_CODEX_RATE_LIMIT_RESET_CREDIT_COMMAND,
-  QUOTA_USAGE_GET_CODEX_ACCOUNT_STATUS_COMMAND,
   QUOTA_USAGE_GET_STATS_COMMAND,
   REMOTE_CONTROL_CANCEL_PAIRING_COMMAND,
   REMOTE_CONTROL_PAIR_DEVICE_COMMAND,
@@ -175,7 +167,6 @@ import {
   normalizeRouterModeForBackend as normalizeContractRouterModeForBackend,
   normalizeAutomationScope,
   normalizeAgentInteractionSettings,
-  routerModeUsesCodexAccount,
   TODO_CHANGED_EVENT_NAME,
   TASKS_CHANGED_EVENT_NAME,
   type AutomationScopeFilter,
@@ -314,7 +305,7 @@ interface AgentTimelineEvent {
   id: string;
   taskId: string;
   turnId: string | null;
-  backend: "claude" | "codex";
+  backend: "native-agentkit";
   kind: string;
   status: string;
   title: string;
@@ -392,7 +383,7 @@ interface AutomationRunRow {
     kind: string;
     projectId?: string | null;
     taskId?: string | null;
-    backend?: "claude" | "codex" | null;
+    backend?: "native-agentkit" | null;
     eventKind?: string | null;
     automationRunId?: string | null;
     payload: Record<string, unknown>;
@@ -424,7 +415,7 @@ interface AutomationRunSummaryRow {
   triggerKind: string;
   projectId?: string | null;
   taskId?: string | null;
-  backend?: "claude" | "codex" | null;
+  backend?: "native-agentkit" | null;
   eventKind?: string | null;
   startedAt: number;
   finishedAt: number | null;
@@ -671,8 +662,8 @@ let clipboardImageSeq = 0;
 let clipboardTextSeq = 0;
 let liliaIabSeq = 0;
 let nextLiliaIabDelivery: "runner" | "message" = "message";
-let activeBackend: "claude" | "codex" = "claude";
-type MockProviderBackend = "claude" | "codex";
+let activeBackend: "native-agentkit" = "native-agentkit";
+type MockProviderBackend = "native-agentkit";
 type MockRouterMode = RouterMode;
 type MockProviderConfig = {
   backend: MockProviderBackend;
@@ -680,12 +671,10 @@ type MockProviderConfig = {
   hasApiKey: boolean;
 };
 let providerConfigs: Record<MockProviderBackend, MockProviderConfig> = {
-  claude: { backend: "claude", baseUrl: null, hasApiKey: false },
-  codex: { backend: "codex", baseUrl: null, hasApiKey: false },
+  "native-agentkit": { backend: "native-agentkit", baseUrl: null, hasApiKey: false },
 };
 let routerModes: Record<MockProviderBackend, MockRouterMode> = {
-  claude: DEFAULT_ROUTER_MODE_BY_BACKEND.claude,
-  codex: DEFAULT_ROUTER_MODE_BY_BACKEND.codex,
+  "native-agentkit": DEFAULT_ROUTER_MODE_BY_BACKEND["native-agentkit"],
 };
 let nodeAvailable = true;
 const remoteControlBridgeUrl = "http://127.0.0.1:41478";
@@ -932,7 +921,7 @@ let composerStateHandler: ((taskId: string) => unknown | Promise<unknown>) | nul
 type MockHookTrustState = "unknown" | "required" | "managed" | "n_a";
 interface MockHookSourceSummary {
   id: string;
-  backend: "claude" | "codex";
+  backend: "native-agentkit";
   scope: "managed" | "user" | "project" | "local" | "plugin" | "system";
   format: string;
   name: string;
@@ -982,7 +971,7 @@ const CODEX_REQUIREMENTS_LIMITATIONS = [
   "requirements.toml 约束 features.hooks = false",
 ];
 const baseClaudePlugins = [{
-  backend: "claude",
+  backend: "native-agentkit",
   scope: "user",
   name: "demo-plugin",
   description: "测试用 Claude plugin",
@@ -991,7 +980,7 @@ const baseClaudePlugins = [{
   path: "C:\\Users\\mock\\.claude\\plugins\\demo-plugin",
 }];
 const baseClaudeMcpServers = [{
-  backend: "claude",
+  backend: "native-agentkit",
   name: "weather",
   command: "node",
   args: ["weather-mcp.js"],
@@ -1002,7 +991,7 @@ const baseClaudeMcpServers = [{
 }];
 const baseCodexMcpServers = [
   {
-    backend: "codex",
+    backend: "native-agentkit",
     name: "mock-mcp",
     command: "node",
     args: ["mock-mcp.js"],
@@ -1012,7 +1001,7 @@ const baseCodexMcpServers = [
     editable: true,
   },
   {
-    backend: "codex",
+    backend: "native-agentkit",
     name: "remote-mcp",
     command: "",
     args: [],
@@ -1130,7 +1119,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const claudeUser = makeHookDocument({
     source: makeHookSource({
       id: "claude-user",
-      backend: "claude",
+      backend: "native-agentkit",
       scope: "user",
       format: "claude_settings_json",
       name: "Claude User Hooks",
@@ -1157,7 +1146,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const claudeProject = makeHookDocument({
     source: makeHookSource({
       id: "claude-project",
-      backend: "claude",
+      backend: "native-agentkit",
       scope: "project",
       format: "claude_settings_json",
       name: "Claude Project Hooks",
@@ -1183,7 +1172,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const claudeLocal = makeHookDocument({
     source: makeHookSource({
       id: "claude-local",
-      backend: "claude",
+      backend: "native-agentkit",
       scope: "local",
       format: "claude_settings_json",
       name: "Claude Local Hooks",
@@ -1200,7 +1189,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const claudeToolsProject = makeHookDocument({
     source: makeHookSource({
       id: "claude-project-tools",
-      backend: "claude",
+      backend: "native-agentkit",
       scope: "project",
       format: "claude_settings_json",
       name: "Claude Project Hooks",
@@ -1225,7 +1214,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const claudeToolsLocal = makeHookDocument({
     source: makeHookSource({
       id: "claude-local-tools",
-      backend: "claude",
+      backend: "native-agentkit",
       scope: "local",
       format: "claude_settings_json",
       name: "Claude Local Hooks",
@@ -1242,7 +1231,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const claudeManaged = makeHookDocument({
     source: makeHookSource({
       id: "claude-managed",
-      backend: "claude",
+      backend: "native-agentkit",
       scope: "managed",
       format: "managed_settings",
       name: "Claude Managed Hooks",
@@ -1270,7 +1259,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const codexUser = makeHookDocument({
     source: makeHookSource({
       id: "codex-user-hooks",
-      backend: "codex",
+      backend: "native-agentkit",
       scope: "user",
       format: "codex_hooks_json",
       name: "Codex User Hooks",
@@ -1299,7 +1288,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const codexUserConfig = makeHookDocument({
     source: makeHookSource({
       id: "codex-user-config",
-      backend: "codex",
+      backend: "native-agentkit",
       scope: "user",
       format: "codex_config_toml",
       name: "Codex User Config Hooks",
@@ -1331,7 +1320,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const codexProject = makeHookDocument({
     source: makeHookSource({
       id: "codex-project-hooks",
-      backend: "codex",
+      backend: "native-agentkit",
       scope: "project",
       format: "codex_hooks_json",
       name: "Codex Project Hooks",
@@ -1348,7 +1337,7 @@ function initialHookDocuments(): Record<string, MockHookDocumentView> {
   const codexRequirements = makeHookDocument({
     source: makeHookSource({
       id: "codex-project-requirements",
-      backend: "codex",
+      backend: "native-agentkit",
       scope: "managed",
       format: "requirements_toml",
       name: "Codex Project Requirements",
@@ -1430,15 +1419,23 @@ function editableHookSourceFor(backend: string, scope: string, projectCwd: strin
 }
 
 function mcpServersForBackend(backend: string) {
-  return backend === "claude" ? claudeMcpServers : codexMcpServers;
+  void backend;
+  return [...claudeMcpServers, ...codexMcpServers];
 }
 
 function updateMcpServersForBackend(
   backend: string,
   updater: (servers: typeof claudeMcpServers) => typeof claudeMcpServers,
 ) {
-  if (backend === "claude") claudeMcpServers = updater(claudeMcpServers);
-  else codexMcpServers = updater(codexMcpServers);
+  void backend;
+  const next = updater([...claudeMcpServers, ...codexMcpServers]);
+  claudeMcpServers = next.filter((server) =>
+    baseClaudeMcpServers.some((base) => base.name === server.name) ||
+    !baseCodexMcpServers.some((base) => base.name === server.name)
+  );
+  codexMcpServers = next.filter((server) =>
+    !claudeMcpServers.some((item) => item.name === server.name)
+  );
 }
 
 function defaultAgentInteractionSettings(): AgentInteractionSettings {
@@ -1460,9 +1457,8 @@ let assistantAIConfig = {
   apiKey: null as string | null,
   model: null as string | null,
   modelPool: [
-    { id: "gpt-5.5", label: "GPT 5.5", source: "remote" as const, backend: "codex" as const },
-  ] as Array<{ id: string; label: string; source: "remote" | "legacy"; backend: "codex" | "claude" }>,
-  codexAccountSparkEnabled: false,
+    { id: "gpt-5.5", label: "GPT 5.5", source: "remote" as const, backend: "native-agentkit" as const },
+  ] as Array<{ id: string; label: string; source: "remote" | "legacy"; backend: "native-agentkit" | "claude" }>,
   hasApiKey: true,
 };
 let modelFeatureSettings = {
@@ -1633,7 +1629,7 @@ function dayStart(timestamp: number) {
 
 function createMockQuotaUsageStats(input: Record<string, unknown> = {}) {
   const days = input.days === 30 ? 30 : 7;
-  const backend = input.backend === "claude" || input.backend === "codex" ? input.backend : "all";
+  const backend = input.backend === "native-agentkit" ? "native-agentkit" : "all";
   const rangeEnd = dayStart(Date.now()) + 86_400_000;
   const rangeStart = rangeEnd - days * 86_400_000;
   const daily = Array.from({ length: days }, (_, index) => {
@@ -1650,8 +1646,8 @@ function createMockQuotaUsageStats(input: Record<string, unknown> = {}) {
       cacheReadTokens,
       cacheCreationTokens,
       totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
-      knownCostUsd: active && backend !== "codex" ? 0.01 * (index + 1) : null,
-      costRecordCount: active && backend !== "codex" ? 1 : 0,
+      knownCostUsd: active ? 0.01 * (index + 1) : null,
+      costRecordCount: active ? 1 : 0,
       recordCount: active ? 1 : 0,
     };
   });
@@ -1667,8 +1663,8 @@ function createMockQuotaUsageStats(input: Record<string, unknown> = {}) {
   );
   const backendRows = backend === "all"
     ? [
-      { backend: "claude", ratio: 0.6, cost: 0.12, costRecords: 2, records: 2 },
-      { backend: "codex", ratio: 0.4, cost: null, costRecords: 0, records: 1 },
+      { backend: "native-agentkit", ratio: 0.6, cost: 0.12, costRecords: 2, records: 2 },
+      { backend: "native-agentkit", ratio: 0.4, cost: null, costRecords: 0, records: 1 },
     ]
     : [{ backend, ratio: 1, cost: backend === "claude" ? 0.12 : null, costRecords: backend === "claude" ? 2 : 0, records: 2 }];
   const backends = backendRows.map((row) => ({
@@ -1706,7 +1702,7 @@ function createMockQuotaUsageStats(input: Record<string, unknown> = {}) {
       taskId: `task-${index + 1}`,
       turnId: `turn-${index + 1}`,
       backend: row.backend,
-      sessionId: row.backend === "codex" ? "thread-1" : "claude-session",
+      sessionId: "native-session",
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
       cacheReadTokens: row.cacheReadTokens,
@@ -1759,89 +1755,6 @@ function createMockQuotaUsageStats(input: Record<string, unknown> = {}) {
         sharePercent: 40,
       },
     ],
-  };
-}
-
-function createMockCodexAccountQuotaStatus() {
-  if (!routerModeUsesCodexAccount(routerModes.codex)) {
-    const codexStatus = mockBackendEnvStatus("codex");
-    return {
-      available: false,
-      connectionMode: codexStatus.connectionMode,
-      limitId: null,
-      limitName: null,
-      planType: null,
-      rateLimitReachedType: null,
-      fiveHour: null,
-      weekly: null,
-      sparkFiveHour: null,
-      sparkWeekly: null,
-      credits: null,
-      sparkCredits: null,
-      rateLimitResetCredits: null,
-      accountUsage: null,
-      usageError: null,
-      fetchedAt: Date.now(),
-      error: null,
-    };
-  }
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  return {
-    available: true,
-    connectionMode: "codex-account",
-    limitId: "codex",
-    limitName: "Codex",
-    planType: "pro",
-    rateLimitReachedType: null,
-    fiveHour: {
-      usedPercent: 25,
-      windowDurationMins: 300,
-      resetsAt: nowSeconds + 3 * 60 * 60,
-    },
-    weekly: {
-      usedPercent: 40,
-      windowDurationMins: 10080,
-      resetsAt: nowSeconds + 4 * 86_400,
-    },
-    sparkFiveHour: {
-      usedPercent: 15,
-      windowDurationMins: 300,
-      resetsAt: nowSeconds + 2 * 60 * 60,
-    },
-    sparkWeekly: {
-      usedPercent: 70,
-      windowDurationMins: 10080,
-      resetsAt: nowSeconds + 2 * 86_400,
-    },
-    credits: {
-      hasCredits: true,
-      unlimited: false,
-      balance: "3",
-    },
-    sparkCredits: {
-      hasCredits: true,
-      unlimited: true,
-      balance: null,
-    },
-    rateLimitResetCredits: {
-      availableCount: 2,
-    },
-    accountUsage: {
-      summary: {
-        lifetimeTokens: 123456,
-        peakDailyTokens: 4567,
-        longestRunningTurnSec: 540,
-        currentStreakDays: 8,
-        longestStreakDays: 14,
-      },
-      dailyUsageBuckets: [
-        { startDate: "2026-06-17", tokens: 1200 },
-        { startDate: "2026-06-18", tokens: 3400 },
-      ],
-    },
-    usageError: null,
-    fetchedAt: Date.now(),
-    error: null,
   };
 }
 
@@ -1975,12 +1888,12 @@ function refreshSessionCounts() {
   }));
 }
 
-function defaultModelForBackend(backend: "claude" | "codex") {
+function defaultModelForBackend(backend: "native-agentkit") {
   return DEFAULT_MODEL_BY_BACKEND[backend];
 }
 
-function normalizeBackend(value: unknown): "claude" | "codex" {
-  return value === "codex" ? "codex" : "claude";
+function normalizeBackend(value: unknown): "native-agentkit" {
+  return "native-agentkit";
 }
 
 function directDefaultUrl(backend: MockProviderBackend) {
@@ -1994,7 +1907,7 @@ function mockApiConnectionMode(hasKey: boolean, hasUrl: boolean): ConnectionMode
 
 function normalizeMockRouterMode(
   backend: MockProviderBackend,
-  mode: "api" | "codex-account" | "direct" | "cc-switch",
+  mode: "api" | "direct" | "cc-switch",
 ): MockRouterMode {
   const normalized = mode === "direct" || mode === "cc-switch" ? "api" : mode;
   return normalizeContractRouterModeForBackend(backend, normalized);
@@ -2005,16 +1918,7 @@ function cloneProviderConfig(backend: MockProviderBackend) {
 }
 
 function mockBackendEnvStatus(backend: MockProviderBackend): BackendEnvStatus {
-  const mode = routerModes[backend];
   const config = providerConfigs[backend];
-  if (routerModeUsesCodexAccount(mode) && backend === "codex") {
-    return {
-      backend,
-      hasApiKey: false,
-      connectionMode: "codex-account",
-      effectiveUrl: null,
-    };
-  }
   const hasUrl = typeof config.baseUrl === "string" && config.baseUrl.trim().length > 0;
   const hasKey = config.hasApiKey;
   return {
@@ -2025,7 +1929,7 @@ function mockBackendEnvStatus(backend: MockProviderBackend): BackendEnvStatus {
   };
 }
 
-function modelBelongsToBackend(model: string, backend: "claude" | "codex") {
+function modelBelongsToBackend(model: string, backend: "native-agentkit") {
   return MODEL_OPTIONS_BY_BACKEND[backend].some((option) => option.id === model);
 }
 
@@ -2143,7 +2047,7 @@ export function resetTauriMockData() {
             position: { x: 360, y: 120 },
             config: {
               taskId: "t-002",
-              backend: "claude",
+              backend: "native-agentkit",
               prompt: "请复盘当前任务。",
               permission: "ask",
             },
@@ -2166,7 +2070,7 @@ export function resetTauriMockData() {
         id: "tl-existing",
         taskId: "t-002",
         turnId: "turn-existing",
-        backend: "claude",
+        backend: "native-agentkit",
         kind: "reasoning",
         status: "info",
         title: "历史思考摘要",
@@ -2191,14 +2095,12 @@ export function resetTauriMockData() {
   clipboardTextSeq = 0;
   liliaIabSeq = 0;
   nextLiliaIabDelivery = "message";
-  activeBackend = "claude";
+  activeBackend = "native-agentkit";
   providerConfigs = {
-    claude: { backend: "claude", baseUrl: null, hasApiKey: false },
-    codex: { backend: "codex", baseUrl: null, hasApiKey: false },
+    "native-agentkit": { backend: "native-agentkit", baseUrl: null, hasApiKey: false },
   };
   routerModes = {
-    claude: DEFAULT_ROUTER_MODE_BY_BACKEND.claude,
-    codex: DEFAULT_ROUTER_MODE_BY_BACKEND.codex,
+    "native-agentkit": DEFAULT_ROUTER_MODE_BY_BACKEND["native-agentkit"],
   };
   nodeAvailable = true;
   remoteControlEnabled = false;
@@ -2252,9 +2154,8 @@ export function resetTauriMockData() {
     apiKey: null,
     model: null,
     modelPool: [
-      { id: "gpt-5.5", label: "GPT 5.5", source: "remote", backend: "codex" },
+      { id: "gpt-5.5", label: "GPT 5.5", source: "remote", backend: "native-agentkit" },
     ],
-    codexAccountSparkEnabled: false,
     hasApiKey: true,
   };
   modelFeatureSettings = {
@@ -2379,7 +2280,7 @@ export function seedMockAutomationRun() {
       kind: "manual",
       projectId: "lilia",
       taskId: "t-002",
-      backend: "claude",
+      backend: "native-agentkit",
       eventKind: "manual",
       automationRunId: null,
       payload: { source: "seed", largePayload: "x".repeat(1_024) },
@@ -2753,7 +2654,7 @@ export function emitMockTurnCompleted(
     status,
     title: "Claude turn completed",
     summary: "",
-    payload: { backend: "claude" },
+    payload: { backend: "native-agentkit" },
     turnId,
     createdAt: at,
     updatedAt: at,
@@ -2775,7 +2676,7 @@ export function seedMockChatMessages(taskId: string, messages: unknown[]) {
         id,
         taskId,
         turnId: null,
-        backend: "claude",
+        backend: "native-agentkit",
         kind: "message",
         status: "success",
         title,
@@ -2803,19 +2704,19 @@ export function setMockClipboardFilePaths(paths: string[]) {
   clipboardFilePaths = [...paths];
 }
 
-export function setMockActiveBackend(backend: "claude" | "codex") {
+export function setMockActiveBackend(backend: "native-agentkit") {
   activeBackend = backend;
 }
 
 export function setMockRouterMode(
-  backend: "claude" | "codex",
-  mode: "api" | "codex-account" | "direct" | "cc-switch",
+  backend: "native-agentkit",
+  mode: "api" | "direct" | "cc-switch",
 ) {
   routerModes[backend] = normalizeMockRouterMode(backend, mode);
 }
 
 export function setMockProviderConfig(
-  backend: "claude" | "codex",
+  backend: "native-agentkit",
   config: Partial<MockProviderConfig>,
 ) {
   providerConfigs[backend] = {
@@ -2829,21 +2730,16 @@ export function setMockQuotaUsageStats(stats: Record<string, unknown> | null) {
   quotaUsageStatsOverride = stats ? { ...stats } : null;
 }
 
-export function setMockCodexAccountQuotaStatus(stats: Record<string, unknown> | null) {
-  codexAccountQuotaStatusOverride = stats ? { ...stats } : null;
+export function setMockCodexAccountQuotaStatus(_stats: Record<string, unknown> | null) {
+  // Official Codex account quota removed.
 }
 
 export function setMockNodeAvailable(available: boolean) {
   nodeAvailable = available;
 }
 
-export function setMockCodexAppServerStatus(status: Partial<typeof codexAppServerStatus>) {
-  codexAppServerStatus = {
-    ...codexAppServerStatus,
-    ...status,
-    issues: status.issues ? [...status.issues] : codexAppServerStatus.issues,
-    releaseNotes: status.releaseNotes ? [...status.releaseNotes] : codexAppServerStatus.releaseNotes,
-  };
+export function setMockCodexAppServerStatus(_status: Record<string, unknown>) {
+  // Official Codex app-server update flow removed.
 }
 
 export function failNextPopupSettingsSave(message: string) {
@@ -4057,54 +3953,13 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
     case CHAT_CHECK_ENV_COMMAND:
       return {
         nodeAvailable,
-        codexCliAvailable: codexAppServerStatus.failureKind !== "missingCli",
-        codexAppServer: {
-          ...codexAppServerStatus,
-          issues: [...codexAppServerStatus.issues],
-        },
         routerModes: {
           ...routerModes,
         },
         backends: {
-          claude: mockBackendEnvStatus("claude"),
-          codex: mockBackendEnvStatus("codex"),
+          "native-agentkit": mockBackendEnvStatus("native-agentkit"),
         },
       };
-
-    case PROVIDER_CODEX_APP_SERVER_CHECK_UPDATE_COMMAND:
-      return {
-        ...codexAppServerStatus,
-        issues: [...codexAppServerStatus.issues],
-        releaseNotes: [...codexAppServerStatus.releaseNotes],
-      };
-
-    case PROVIDER_CODEX_APP_SERVER_INSTALL_UPDATE_COMMAND:
-      if (
-        codexAppServerStatus.updateState !== "ready" &&
-        !(codexAppServerStatus.updateState === "failed" && codexAppServerStatus.preparedVersion)
-      ) {
-        throw new Error("Codex app-server 更新尚未准备好。");
-      }
-      codexAppServerStatus = {
-        ...codexAppServerStatus,
-        managed: true,
-        updateAvailable: false,
-        updateError: null,
-        updateState: "idle",
-        preparedVersion: null,
-        updateProgressPercent: null,
-        installPath: codexAppServerStatus.installPath ?? "C:/Users/me/.lilia/runtime/codex/bin/codex.exe",
-        issues: [...codexAppServerStatus.issues],
-        releaseNotes: [...codexAppServerStatus.releaseNotes],
-      };
-      return {
-        ...codexAppServerStatus,
-        issues: [...codexAppServerStatus.issues],
-        releaseNotes: [...codexAppServerStatus.releaseNotes],
-      };
-
-    case PROVIDER_CODEX_ACCOUNT_START_LOGIN_COMMAND:
-      return undefined;
 
     case PROVIDER_GET_ACTIVE_BACKEND_COMMAND:
       return activeBackend;
@@ -4156,11 +4011,11 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
               id: String(item.id ?? "").trim(),
               label: String(item.label ?? item.id ?? "").trim(),
               source: item.source === "legacy" ? "legacy" as const : "remote" as const,
-              backend: item.backend === "claude" ? "claude" as const : "codex" as const,
+              backend: "native-agentkit" as const,
             }))
             .filter((item) => item.id)
           : assistantAIConfig.modelPool,
-        codexAccountSparkEnabled: config.codexAccountSparkEnabled === true,
+        /* spark removed */
         hasApiKey: config.clearApiKey === true
           ? false
           : typeof config.apiKey === "string" && config.apiKey.trim()
@@ -4175,8 +4030,8 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
         ok: true,
         error: null,
         models: [
-          { id: "remote-mini", label: "remote-mini", source: "remote", backend: "codex" },
-          { id: "remote-pro", label: "remote-pro", source: "remote", backend: "codex" },
+          { id: "remote-mini", label: "remote-mini", source: "remote", backend: "native-agentkit" },
+          { id: "remote-pro", label: "remote-pro", source: "remote", backend: "native-agentkit" },
         ],
       };
 
@@ -4302,70 +4157,6 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
         },
       ];
 
-    case HISTORY_IMPORT_SEARCH_COMMAND: {
-      const input = args.input && typeof args.input === "object" && !Array.isArray(args.input)
-        ? args.input as Record<string, unknown>
-        : {};
-      const provider = input.provider === "claude" ? "claude" : "codex";
-      if (provider === "claude") {
-        return {
-          items: [],
-          nextCursor: null,
-        };
-      }
-      const term = String(input.searchTerm ?? "").trim().toLowerCase();
-      const includeArchived = input.archived === true;
-      const limit = typeof input.limit === "number" ? Math.max(1, input.limit) : 20;
-      const cursor = typeof input.cursor === "string" && input.cursor.startsWith("offset:")
-        ? Number(input.cursor.slice("offset:".length))
-        : 0;
-      const filtered = codexThreads
-        .filter((thread) => includeArchived || !thread.archived)
-        .filter((thread) => {
-          if (!term) return true;
-          return [
-            thread.title,
-            thread.id,
-            thread.preview,
-            thread.model,
-            thread.status,
-          ].some((value) => String(value ?? "").toLowerCase().includes(term));
-        })
-        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-      const page = filtered.slice(cursor, cursor + limit);
-      const nextOffset = cursor + limit;
-      return {
-        items: page.map((thread) => ({ ...thread, provider: "codex" })),
-        nextCursor: nextOffset < filtered.length ? `offset:${nextOffset}` : null,
-      };
-    }
-
-    case HISTORY_IMPORT_RUNTIME_STATES_COMMAND: {
-      return Object.entries(codexTaskSessions).flatMap(([taskId, threadId]) => {
-        const task = tasks.find((row) => row.id === taskId && !row.archived);
-        if (!task) return [];
-        const queuedCount = chatQueued[taskId]?.length ?? 0;
-        const running = chatRunning[taskId] === true;
-        return [{
-          itemId: threadId,
-          taskId,
-          taskTitle: task.title,
-          projectId: task.projectId,
-          running,
-          queued: queuedCount > 0,
-          pending: running || queuedCount > 0,
-          queuedCount,
-        }];
-      });
-    }
-
-    case HISTORY_IMPORT_CLEAN_BACKGROUND_TERMINALS_COMMAND: {
-      const itemId = String(args.itemId ?? "").trim();
-      if (!itemId) throw new Error("Codex threadId 不能为空");
-      cleanedCodexThreads.push(itemId);
-      return undefined;
-    }
-
     case ROUTER_GET_MODE_COMMAND: {
       const backend = normalizeBackend(args.backend);
       return routerModes[backend];
@@ -4373,9 +4164,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
 
     case ROUTER_SET_MODE_COMMAND: {
       const backend = normalizeBackend(args.backend);
-      const mode = args.mode === "codex-account" ||
-        args.mode === "direct" ||
-        args.mode === "cc-switch"
+      const mode = args.mode === "direct" || args.mode === "cc-switch"
         ? args.mode
         : "api";
       routerModes[backend] = normalizeMockRouterMode(backend, mode);
@@ -4404,27 +4193,13 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
           : {},
       );
 
-    case QUOTA_USAGE_GET_CODEX_ACCOUNT_STATUS_COMMAND:
-      return codexAccountQuotaStatusOverride ?? createMockCodexAccountQuotaStatus();
-
-    case QUOTA_USAGE_CONSUME_CODEX_RATE_LIMIT_RESET_CREDIT_COMMAND: {
-      const status = codexAccountQuotaStatusOverride ?? createMockCodexAccountQuotaStatus();
-      return {
-        outcome: "reset",
-        status: {
-          ...status,
-          rateLimitResetCredits: { availableCount: 1 },
-        },
-      };
-    }
-
     case CHAT_GET_COMPOSER_STATE_COMMAND: {
       const taskId = String(args.taskId);
       if (composerStateHandler) return composerStateHandler(taskId);
       return {
         taskId,
-        backend: "claude",
-        model: "claude-sonnet-4-6",
+        backend: "native-agentkit",
+        model: DEFAULT_MODEL_BY_BACKEND["native-agentkit"],
         planMode: false,
         goalMode: false,
         permission: "ask",
@@ -4469,7 +4244,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       return {
         skills: [
           {
-            backend: "claude",
+            backend: "native-agentkit",
             scope: "user",
             name: "mock-skill",
             description: "测试用 Skill",
@@ -4478,7 +4253,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
           },
           ...(projectSkillPath
             ? [{
-                backend: "claude",
+                backend: "native-agentkit",
                 scope: "project",
                 name: projectSkillName,
                 description: "项目 Skill",
@@ -4501,8 +4276,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
           })),
         ],
         configPaths: {
-          claude: "C:\\Users\\mock\\.lilia\\config\\claude-mcp-servers.json",
-          codex: "C:\\Users\\mock\\.codex\\config.toml",
+          "native-agentkit": "C:\\Users\\mock\\.lilia\\config\\mcp-servers.json",
         },
         warnings: [],
       };
@@ -4545,7 +4319,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       document.handlers = Array.isArray(input.handlers)
         ? input.handlers.map((handler, index) => {
           const type = String(handler.type ?? "");
-          const supported = document.source.backend !== "codex" || type === "command";
+          const supported = true || type === "command";
           const executable = supported;
           return makeHookHandler({
             id: String(handler.id ?? `${document.source.id}:${index}`),
@@ -4613,7 +4387,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
     }
 
     case PLUGINS_SET_PACKAGE_ENABLED_COMMAND: {
-      if (args.backend !== "claude") throw new Error("unsupported package backend");
+      if (args.backend !== "native-agentkit") throw new Error("unsupported package backend");
       const name = String(args.name);
       const enabled = args.enabled === true;
       claudePlugins = claudePlugins.map((plugin) =>
@@ -4657,7 +4431,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       const servers = mcpServersForBackend(backend);
       let updated = servers.find((server) => server.name === name);
       if (!updated) return undefined;
-      if (backend === "codex" && !updated.editable) return undefined;
+      if (!updated.editable) return undefined;
       const removed = new Set(
         Array.isArray(input.removeEnvKeys) ? input.removeEnvKeys.map(String) : [],
       );
@@ -4684,7 +4458,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       const backend = String(args.backend);
       const name = String(args.name);
       updateMcpServersForBackend(backend, (servers) =>
-        servers.filter((server) => server.name !== name || (backend === "codex" && !server.editable)),
+        servers.filter((server) => server.name !== name || (!server.editable)),
       );
       return undefined;
     }
@@ -4754,7 +4528,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
     case CHAT_LIST_MODELS_COMMAND: {
       const backend = normalizeBackend(args.backend);
       const options = MODEL_OPTIONS_BY_BACKEND[backend].map((option) => ({ ...option, backend }));
-      if (backend !== "codex") return options;
+      if (false) return options;
       const seen = new Set(options.map((option) => option.id));
       return [
         ...options,
@@ -4790,7 +4564,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
           projectId: graph.projectId,
           taskId: String(input.taskId ?? ""),
           turnId: typeof input.turnId === "string" ? input.turnId : null,
-          backend: input.backend === "codex" ? "codex" : "claude",
+          backend: "native-agentkit",
           permission: typeof input.permission === "string" ? input.permission : "ask",
           status: "applied",
           reason: typeof input.reason === "string" ? input.reason : "",

@@ -4,8 +4,7 @@
     "project"
   ],
   "pluginBackends": [
-    "claude",
-    "codex"
+    "native-agentkit"
   ],
   "pluginMcpTransports": [
     "stdio",
@@ -22,8 +21,7 @@
     "disable": "停用"
   },
   "pluginBackendLabels": {
-    "claude": "Claude",
-    "codex": "Codex"
+    "native-agentkit": "Native AgentKit"
   },
   "pluginMcpTransportLabels": {
     "stdio": "stdio",

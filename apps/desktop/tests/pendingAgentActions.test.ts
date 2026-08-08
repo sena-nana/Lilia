@@ -379,8 +379,8 @@ describe("pending agent actions", () => {
   it("classifies which resolutions should enter a submitting state", () => {
     for (const [resolution, target] of [
       [{ kind: TOOL_CONSENT_INTERACTION_KIND, requestId: "tool-1", decision: "allow" }, "tool"],
-      [{ kind: MCP_ELICITATION_INTERACTION_KIND, requestId: "mcp-1", action: "accept", content: {} }, "codex"],
-      [{ kind: ARCHITECTURE_INTERACTION_KIND, requestId: "architecture-1", decision: "allow" }, "codex"],
+      [{ kind: MCP_ELICITATION_INTERACTION_KIND, requestId: "mcp-1", action: "accept", content: {} }, "native"],
+      [{ kind: ARCHITECTURE_INTERACTION_KIND, requestId: "architecture-1", decision: "allow" }, "native"],
       [{ kind: TITLE_UPDATE_ACTION_KIND, requestId: "title-1", decision: "accept" }, null],
     ] as const) {
       expect(pendingAgentActionResolutionSubmittingTarget(resolution)).toBe(target);

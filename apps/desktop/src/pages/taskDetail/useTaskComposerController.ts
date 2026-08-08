@@ -409,33 +409,19 @@ export function useTaskComposerController(options: {
 
   function mergeAdditionalContext(
     runtimeOptions: ProviderRuntimeOptions | null,
-    backend: ChatBackendKind,
+    _backend: ChatBackendKind,
     contextText: string,
   ): ProviderRuntimeOptions {
     const current = runtimeOptions ?? {};
     const provider = current.provider ?? {};
-    if (backend === "codex") {
-      const codex = provider.codex ?? {};
-      const previous = codex.additionalContext?.trim();
-      return {
-        ...current,
-        provider: {
-          ...provider,
-          codex: {
-            ...codex,
-            additionalContext: previous ? `${previous}\n\n${contextText}` : contextText,
-          },
-        },
-      };
-    }
-    const claude = provider.claude ?? {};
-    const previous = claude.additionalContext?.trim();
+    const native = provider["native-agentkit"] ?? {};
+    const previous = native.additionalContext?.trim();
     return {
       ...current,
       provider: {
         ...provider,
-        claude: {
-          ...claude,
+        "native-agentkit": {
+          ...native,
           additionalContext: previous ? `${previous}\n\n${contextText}` : contextText,
         },
       },

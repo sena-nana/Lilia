@@ -4,7 +4,6 @@ use super::contract;
 
 pub(super) const SETTINGS_KEY: &str = "conversation-suggestions.settings";
 pub(super) const CACHE_KEY: &str = "conversation-suggestions.cache";
-pub(super) const CLAUDE_NATIVE_CACHE_KEY: &str = "conversation-suggestions.claude-native";
 pub(super) const CACHE_TTL_MS: i64 = 24 * 60 * 60 * 1000;
 pub(super) const MAX_TASKS_PER_SCOPE: usize = 3;
 pub(super) const TASK_CANDIDATE_LIMIT: usize = 12;
@@ -18,8 +17,6 @@ pub(super) const GITHUB_EVENT_FETCH_LIMIT: usize = 30;
 pub(super) const GITHUB_ACTIVITY_LIMIT: usize = 6;
 pub(super) const LOCAL_GIT_COMMIT_LIMIT: usize = 3;
 pub(super) const LOCAL_GIT_FILE_LIMIT: usize = 12;
-pub(super) const CODEX_THREAD_FETCH_LIMIT: i64 = 12;
-pub(super) const CODEX_THREAD_LIMIT: usize = 5;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -77,8 +74,10 @@ pub(crate) enum SuggestionItemSource {
     Task,
     Github,
     LocalGit,
-    CodexThread,
-    Claude,
+    #[serde(alias = "codex-thread")]
+    SessionThread,
+    #[serde(alias = "claude")]
+    Provider,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

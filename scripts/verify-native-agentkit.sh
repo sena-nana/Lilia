@@ -9,12 +9,11 @@ cargo test -p lilia-contracts -p lilia-core -p lilia-client -p lilia-storage -p 
 cargo check -p lilia-service-bin -p lilia-cli --locked
 # #58 / #60 — Desktop/CLI same LiliaClient + Shared Runtime use case.
 cargo test -p lilia-cli --locked desktop_and_cli_clients_share_runtime
-# Focused migration / shared-path suites (#47 / #56).
-cargo test -p lilia-storage --locked migration::
+# Focused shared-path / registry / policy suites (#47 / #56).
 cargo test -p lilia-storage --locked paths::
 cargo test -p lilia-storage --locked artifact_policy::
 cargo test -p lilia-service --locked service_and_desktop_share_projection_db_path
-# Desktop host status / projection / legacy-compat unit tests (no full app launch).
+# Desktop host status / projection unit tests (no full app launch).
 cargo test -p lilia --lib --locked native_agent::
 cargo test -p lilia --lib --locked product_core::
 # #47: default package must not declare official Agent Server / Node runner resources.
@@ -27,6 +26,3 @@ node scripts/check-legacy-default-unreachable.mjs
 cargo check -p lilia --features legacy-runner --locked
 # Default Desktop build (no legacy-runner feature) still typechecks.
 cargo check -p lilia --locked
-# Migration apply + first Native turn (binding → submit → projection).
-cargo test -p lilia-cli --locked migration_apply_then_first_native_turn
-cargo test -p lilia-storage --locked migration::compat_apply::

@@ -44,7 +44,7 @@ import {
 import {
   normalizeChatBackendKind,
   type ChatBackendKind,
-  type CodexToolConsentDecision,
+  type ToolConsentDecisionKind,
   type ToolConsentResponsePayload,
   type ToolConsentRequest,
   type ToolConsentUpdatedInput,
@@ -114,7 +114,7 @@ export interface ToolConsentInteractionPayload {
   toolUseID?: string | null;
   backend?: ChatBackendKind;
   additionalPermissions?: unknown;
-  availableDecisions?: CodexToolConsentDecision[];
+  availableDecisions?: ToolConsentDecisionKind[];
   proposedExecpolicyAmendment?: unknown;
   proposedNetworkPolicyAmendments?: unknown;
   networkApprovalContext?: unknown;
@@ -148,14 +148,6 @@ export interface PermissionApprovalPayload {
   requestedAccess: unknown;
   scopeSuggestion?: unknown;
   providerContext?: {
-    codex?: {
-      threadId: string;
-      turnId: string;
-      itemId: string;
-      startedAtMs: number;
-      cwd: string;
-      permissions: unknown;
-    };
     [provider: string]: unknown;
   };
 }

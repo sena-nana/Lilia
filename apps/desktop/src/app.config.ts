@@ -26,7 +26,6 @@ const settingsTabs = [
   { key: "plugin-packages", label: "插件", icon: "puzzle", props: { section: "packages" } },
   { key: "plugin-hooks", label: "Hooks", icon: "workflow", props: { section: "hooks" } },
   { key: "plugin-mcp", label: "MCP", icon: "server", props: { section: "mcp" } },
-  { key: "import", label: "导入对话", icon: "download" },
   { key: "project", label: "项目", icon: "folder-cog" },
   { key: "about", label: "关于", icon: "info" },
 ] satisfies readonly AppSettingsTab[];
@@ -42,7 +41,6 @@ export const settingsModel = createLiliaSettingsModel({
     "plugin-packages",
     "plugin-hooks",
     "plugin-mcp",
-    "import",
   ],
   hideHeader: true,
   tabs: settingsTabs.map((tab) => ({
@@ -63,7 +61,6 @@ export const settingsModel = createLiliaSettingsModel({
     "plugin-packages": () => import("./pages/Plugins.vue"),
     "plugin-hooks": () => import("./pages/Plugins.vue"),
     "plugin-mcp": () => import("./pages/Plugins.vue"),
-    import: () => import("./pages/ConversationImport.vue"),
     project: () => import("./pages/settings/ProjectPreferencesSection.vue"),
     about: () => import("./pages/settings/AboutSection.vue"),
   },

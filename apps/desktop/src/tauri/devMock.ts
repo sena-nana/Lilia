@@ -52,9 +52,6 @@ import {
   GITHUB_POLL_DEVICE_FLOW_COMMAND,
   GITHUB_START_DEVICE_FLOW_COMMAND,
   GITHUB_UNBIND_COMMAND,
-  HISTORY_IMPORT_CLEAN_BACKGROUND_TERMINALS_COMMAND,
-  HISTORY_IMPORT_RUNTIME_STATES_COMMAND,
-  HISTORY_IMPORT_SEARCH_COMMAND,
   MILESTONE_CREATE_COMMAND,
   MILESTONE_DELETE_COMMAND,
   MILESTONE_LIST_COMMAND,
@@ -100,9 +97,6 @@ import {
   PLUGINS_SET_PACKAGE_ENABLED_COMMAND,
   PLUGINS_SET_SKILL_ENABLED_COMMAND,
   PLUGINS_UPDATE_HOOK_SOURCE_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_CHECK_UPDATE_COMMAND,
-  PROVIDER_CODEX_APP_SERVER_INSTALL_UPDATE_COMMAND,
-  PROVIDER_CODEX_ACCOUNT_START_LOGIN_COMMAND,
   PROVIDER_GET_ACTIVE_BACKEND_COMMAND,
   PROVIDER_GET_CONFIG_COMMAND,
   PROVIDER_SET_ACTIVE_BACKEND_COMMAND,
@@ -114,8 +108,6 @@ import {
   POPUP_OPEN_TASK_COMMAND,
   POPUP_REMEMBER_LAST_PROJECT_COMMAND,
   POPUP_SET_WINDOW_SETTINGS_COMMAND,
-  QUOTA_USAGE_CONSUME_CODEX_RATE_LIMIT_RESET_CREDIT_COMMAND,
-  QUOTA_USAGE_GET_CODEX_ACCOUNT_STATUS_COMMAND,
   QUOTA_USAGE_GET_STATS_COMMAND,
   REMOTE_CONTROL_CANCEL_PAIRING_COMMAND,
   REMOTE_CONTROL_PAIR_DEVICE_COMMAND,
@@ -161,7 +153,6 @@ import {
   normalizeAgentInteractionSettings,
   normalizeMemorySettings,
   normalizePermissionMode,
-  routerModeUsesCodexAccount,
   type AgentInteractionSettings,
   type BackendEnvStatus,
   type ChatBackendKind,
@@ -346,8 +337,6 @@ const emptyLists = new Set<string>([
   CHAT_READ_CLIPBOARD_FILE_PATHS_COMMAND,
   CHAT_SEARCH_CONTEXT_ATTACHMENTS_COMMAND,
   CONVERSATION_SUGGESTIONS_GET_COMMAND,
-  HISTORY_IMPORT_RUNTIME_STATES_COMMAND,
-  HISTORY_IMPORT_SEARCH_COMMAND,
   PROJECT_ARCHITECTURE_LIST_CHANGES_COMMAND,
   TODO_LIST_COMMAND,
 ]);
@@ -361,7 +350,6 @@ const noops = new Set<string>([
   CHAT_SET_COMPOSER_STATE_COMMAND,
   CONVERSATION_SUGGESTIONS_SET_SETTINGS_COMMAND,
   GITHUB_UNBIND_COMMAND,
-  HISTORY_IMPORT_CLEAN_BACKGROUND_TERMINALS_COMMAND,
   LILIA_IAB_OPEN_COMMAND,
   MILESTONE_DELETE_COMMAND,
   MILESTONE_REORDER_COMMAND,
@@ -459,7 +447,6 @@ let memories: Memory[] = [
 ];
 
 let memorySettings: MemorySettings = { ...DEFAULT_MEMORY_SETTINGS };
-let devResetCreditAvailableCount = 2;
 
 const providerBackends = CHAT_BACKENDS as readonly ChatBackendKind[];
 
@@ -679,15 +666,6 @@ function defaultDevRouterModes(): Record<ChatBackendKind, RouterMode> {
 }
 
 function defaultDevBackendEnvStatus(backend: ChatBackendKind): BackendEnvStatus {
-  const routerMode = defaultRouterModeForBackend(backend);
-  if (routerModeUsesCodexAccount(routerMode)) {
-    return {
-      backend,
-      hasApiKey: false,
-      connectionMode: "codex-account",
-      effectiveUrl: null,
-    };
-  }
   return {
     backend,
     hasApiKey: false,
@@ -796,12 +774,11 @@ function createDevQuotaUsageStats(args: Args = {}) {
   const rangeEnd = dayStart(Date.now()) + dayMs;
   const rangeStart = rangeEnd - days * dayMs;
   const backendNames: ChatBackendKind[] = backend === "all"
-    ? ["claude", "codex"]
-    : [CHAT_BACKENDS.includes(backend as ChatBackendKind) ? backend as ChatBackendKind : "codex"];
+    ? [...CHAT_BACKENDS]
+    : [CHAT_BACKENDS.includes(backend as ChatBackendKind) ? backend as ChatBackendKind : "native-agentkit"];
   const daily = Array.from({ length: days }, (_, index) => {
     const active = index >= Math.max(0, days - 6);
-    const scale = backend === "codex" ? 0.72 : backend === "claude" ? 0.94 : 1;
-    const base = active ? Math.round((index + 3) * 420 * scale) : 0;
+    const base = active ? Math.round((index + 3) * 420) : 0;
     const inputTokens = base * 3;
     const outputTokens = base;
     const cacheReadTokens = active ? Math.round(base * 0.42) : 0;
@@ -813,27 +790,24 @@ function createDevQuotaUsageStats(args: Args = {}) {
       cacheReadTokens,
       cacheCreationTokens,
       totalTokens: inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens,
-      knownCostUsd: active && backend !== "codex" ? Number((0.012 * (index + 1)).toFixed(4)) : null,
-      costRecordCount: active && backend !== "codex" ? 1 : 0,
+      knownCostUsd: active ? Number((0.012 * (index + 1)).toFixed(4)) : null,
+      costRecordCount: active ? 1 : 0,
       recordCount: active ? 1 : 0,
     };
   });
   const totals = sumQuotaTokens(daily);
   const cost = quotaCostSummary(daily);
-  const backends = backendNames.map((name, index) => {
-    const ratio = backend === "all" && name === "claude" ? 0.55 : backend === "all" ? 0.45 : 1;
-    return {
-      backend: name,
-      inputTokens: Math.round(totals.inputTokens * ratio),
-      outputTokens: Math.round(totals.outputTokens * ratio),
-      cacheReadTokens: Math.round(totals.cacheReadTokens * ratio),
-      cacheCreationTokens: Math.round(totals.cacheCreationTokens * ratio),
-      totalTokens: Math.round(totals.totalTokens * ratio),
-      knownCostUsd: name === "claude" ? Number((0.12 + index * 0.03).toFixed(2)) : null,
-      costRecordCount: name === "claude" ? 3 : 0,
-      recordCount: Math.max(1, cost.totalRecordCount),
-    };
-  });
+  const backends = backendNames.map((name) => ({
+    backend: name,
+    inputTokens: totals.inputTokens,
+    outputTokens: totals.outputTokens,
+    cacheReadTokens: totals.cacheReadTokens,
+    cacheCreationTokens: totals.cacheCreationTokens,
+    totalTokens: totals.totalTokens,
+    knownCostUsd: Number((0.12).toFixed(2)),
+    costRecordCount: 3,
+    recordCount: Math.max(1, cost.totalRecordCount),
+  }));
   const summary = {
     ...totals,
     knownCostUsd: cost.knownCostUsd,
@@ -854,7 +828,7 @@ function createDevQuotaUsageStats(args: Args = {}) {
       taskId: `dev-quota-task-${index + 1}`,
       turnId: `dev-quota-turn-${index + 1}`,
       backend: row.backend,
-      sessionId: row.backend === "codex" ? "dev-codex-thread" : "dev-claude-session",
+      sessionId: "dev-native-session",
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
       cacheReadTokens: row.cacheReadTokens,
@@ -897,68 +871,6 @@ function createDevQuotaUsageStats(args: Args = {}) {
         sharePercent: 38,
       },
     ],
-  };
-}
-
-function createDevCodexAccountUsageBuckets() {
-  const end = dayStart(Date.now());
-  return Array.from({ length: 70 }, (_, index) => {
-    const timestamp = end - (69 - index) * dayMs;
-    const wave = (index % 9) + 1;
-    const sprint = index >= 56 ? 2 : 1;
-    return {
-      startDate: dateOnly(timestamp),
-      tokens: sprint * wave * 38_000_000 + (index % 4) * 7_500_000,
-    };
-  });
-}
-
-function createDevCodexAccountQuotaStatus() {
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  const buckets = createDevCodexAccountUsageBuckets();
-  const peakDailyTokens = Math.max(...buckets.map((bucket) => bucket.tokens));
-  const lifetimeTokens = buckets.reduce((sum, bucket) => sum + bucket.tokens, 0);
-  return {
-    available: true,
-    connectionMode: "codex-account",
-    limitId: "codex",
-    limitName: null,
-    planType: "dev",
-    rateLimitReachedType: null,
-    fiveHour: {
-      usedPercent: 18,
-      windowDurationMins: 300,
-      resetsAt: nowSeconds + 7_200,
-    },
-    weekly: {
-      usedPercent: 42,
-      windowDurationMins: 10_080,
-      resetsAt: nowSeconds + 2 * 86_400,
-    },
-    sparkFiveHour: null,
-    sparkWeekly: null,
-    credits: {
-      hasCredits: true,
-      unlimited: false,
-      balance: "3",
-    },
-    sparkCredits: null,
-    rateLimitResetCredits: {
-      availableCount: devResetCreditAvailableCount,
-    },
-    accountUsage: {
-      summary: {
-        lifetimeTokens,
-        peakDailyTokens,
-        longestRunningTurnSec: 13_380,
-        currentStreakDays: 16,
-        longestStreakDays: 31,
-      },
-      dailyUsageBuckets: buckets,
-    },
-    usageError: null,
-    fetchedAt: Date.now(),
-    error: null,
   };
 }
 
@@ -1461,53 +1373,23 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case CHAT_CHECK_ENV_COMMAND:
       return {
         nodeAvailable: true,
-        codexCliAvailable: true,
-        codexAppServer: {
-          version: "dev-mock",
-          installPath: null,
-          managed: false,
-          available: true,
-          supportsRequiredProtocol: true,
-          failureKind: null,
-          issues: [],
-          latestVersion: null,
-          updateAvailable: false,
-          releaseNotes: [],
-          updateError: null,
-          updateState: "idle",
-          preparedVersion: null,
-        },
         routerModes: defaultDevRouterModes(),
         backends: defaultDevBackendEnvStatuses(),
       } as T;
-    case PROVIDER_CODEX_APP_SERVER_CHECK_UPDATE_COMMAND:
-    case PROVIDER_CODEX_APP_SERVER_INSTALL_UPDATE_COMMAND:
-      return {
-        version: "dev-mock",
-        installPath: null,
-        managed: false,
-        available: true,
-        supportsRequiredProtocol: true,
-        failureKind: null,
-        issues: [],
-        latestVersion: null,
-        updateAvailable: false,
-        releaseNotes: [],
-        updateError: null,
-        updateState: "idle",
-        preparedVersion: null,
-      } as T;
-    case PROVIDER_CODEX_ACCOUNT_START_LOGIN_COMMAND:
-      return undefined as T;
     case PROVIDER_GET_ACTIVE_BACKEND_COMMAND:
-      return "codex" as T;
+      return "native-agentkit" as T;
     case PROVIDER_GET_CONFIG_COMMAND:
-      return { backend: text(args, "backend") || "codex", baseUrl: null, apiKey: null, hasApiKey: false } as T;
+      return {
+        backend: text(args, "backend") || "native-agentkit",
+        baseUrl: null,
+        apiKey: null,
+        hasApiKey: false,
+      } as T;
     case ROUTER_GET_MODE_COMMAND:
       return defaultRouterModeForBackend(
         providerBackends.includes(text(args, "backend") as ChatBackendKind)
           ? text(args, "backend") as ChatBackendKind
-          : "codex",
+          : "native-agentkit",
       ) as T;
     case ASSISTANT_AI_GET_CONFIG_COMMAND:
       return {
@@ -1515,7 +1397,6 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
         apiKey: null,
         model: null,
         modelPool: [],
-        codexAccountSparkEnabled: false,
         hasApiKey: false,
       } as T;
     case ASSISTANT_AI_FETCH_MODELS_COMMAND:
@@ -1523,14 +1404,14 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
         ok: true,
         error: null,
         models: [
-          { id: "mock-assistant", label: "mock-assistant", source: "remote", backend: "codex" },
-          { id: "mock-assistant-pro", label: "mock-assistant-pro", source: "remote", backend: "codex" },
+          { id: "mock-assistant", label: "mock-assistant", source: "remote", backend: "native-agentkit" },
+          { id: "mock-assistant-pro", label: "mock-assistant-pro", source: "remote", backend: "native-agentkit" },
         ],
       } as T;
     case MODEL_FEATURE_LIST_MODEL_OPTIONS_COMMAND:
       return [
-        { id: "mock-assistant", label: "mock-assistant", source: "remote", backend: "codex" },
-        { id: "mock-assistant-pro", label: "mock-assistant-pro", source: "remote", backend: "codex" },
+        { id: "mock-assistant", label: "mock-assistant", source: "remote", backend: "native-agentkit" },
+        { id: "mock-assistant-pro", label: "mock-assistant-pro", source: "remote", backend: "native-agentkit" },
       ] as T;
     case MODEL_FEATURE_GET_SETTINGS_COMMAND:
       return {
@@ -1559,14 +1440,14 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case CHAT_LIST_MODELS_COMMAND: {
       const backend = providerBackends.includes(text(args, "backend") as ChatBackendKind)
         ? text(args, "backend") as ChatBackendKind
-        : "codex";
+        : "native-agentkit";
       return MODEL_OPTIONS_BY_BACKEND[backend].map((option) => ({ ...option, backend })) as T;
     }
     case CHAT_GET_COMPOSER_STATE_COMMAND:
       return {
         taskId: text(args, "taskId"),
-        backend: "codex",
-        model: DEFAULT_MODEL_BY_BACKEND.codex,
+        backend: "native-agentkit",
+        model: DEFAULT_MODEL_BY_BACKEND["native-agentkit"],
         planMode: false,
         goalMode: false,
         permission: normalizePermissionMode(null),
@@ -1616,45 +1497,16 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case PROJECT_ARCHITECTURE_ROLLBACK_COMMAND:
       return { graph: architecture(text(args, "projectId")), event: null } as T;
     case PLUGINS_OVERVIEW_COMMAND:
-      return { skills: [], packages: [], mcpServers: [], configPaths: { claude: null, codex: null }, warnings: [] } as T;
+      return {
+        skills: [],
+        packages: [],
+        mcpServers: [],
+        configPaths: { "native-agentkit": null },
+        warnings: [],
+      } as T;
     case PLUGINS_HOOKS_OVERVIEW_COMMAND:
       return {
-        sources: [
-          {
-            id: "dev-claude-hooks",
-            backend: "claude",
-            scope: "user",
-            format: "claude_settings_json",
-            name: "Claude User Hooks",
-            path: "C:\\Users\\dev\\.claude\\settings.json",
-            exists: true,
-            editable: true,
-            managed: false,
-            enabled: true,
-            handlerCount: 1,
-            warnings: [],
-            limitations: [],
-            trustState: "unknown",
-            description: "~/.claude/settings.json 中的 hooks",
-          },
-          {
-            id: "dev-codex-hooks",
-            backend: "codex",
-            scope: "user",
-            format: "codex_hooks_json",
-            name: "Codex User Hooks",
-            path: "C:\\Users\\dev\\.codex\\hooks.json",
-            exists: true,
-            editable: true,
-            managed: false,
-            enabled: true,
-            handlerCount: 1,
-            warnings: ["同一层同时存在 hooks.json 与 inline [hooks]；Codex 会同时加载两者。"],
-            limitations: [],
-            trustState: "required",
-            description: "~/.codex/hooks.json",
-          },
-        ],
+        sources: [],
         warnings: [],
       } as T;
     case PLUGINS_READ_HOOK_SOURCE_COMMAND:
@@ -1677,14 +1529,12 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
       } as T;
     case PLUGINS_CREATE_HOOK_SOURCE_COMMAND:
       return {
-        id: `${text(args, "backend")}-${text(args, "scope")}`,
-        backend: text(args, "backend"),
-        scope: text(args, "scope"),
-        format: text(args, "backend") === "codex" ? "codex_hooks_json" : "claude_settings_json",
+        id: `${text(args, "backend") || "native-agentkit"}-${text(args, "scope") || "user"}`,
+        backend: text(args, "backend") || "native-agentkit",
+        scope: text(args, "scope") || "user",
+        format: "hooks_json",
         name: "Mock Hooks",
-        path: text(args, "backend") === "codex"
-          ? "C:\\Users\\dev\\.codex\\hooks.json"
-          : "C:\\Users\\dev\\.claude\\settings.json",
+        path: "C:\\Users\\dev\\.lilia\\hooks.json",
         exists: true,
         editable: true,
         managed: false,
@@ -1692,7 +1542,7 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
         handlerCount: 0,
         warnings: [],
         limitations: [],
-        trustState: text(args, "backend") === "codex" ? "required" : "unknown",
+        trustState: "unknown",
         description: null,
       } as T;
     case PLUGINS_DELETE_HOOK_SOURCE_COMMAND:
@@ -1716,20 +1566,6 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
       return "C:\\Files\\workspace\\mock-clone" as T;
     case QUOTA_USAGE_GET_STATS_COMMAND:
       return createDevQuotaUsageStats(args) as T;
-    case QUOTA_USAGE_GET_CODEX_ACCOUNT_STATUS_COMMAND:
-      return createDevCodexAccountQuotaStatus() as T;
-    case QUOTA_USAGE_CONSUME_CODEX_RATE_LIMIT_RESET_CREDIT_COMMAND:
-      if (devResetCreditAvailableCount > 0) {
-        devResetCreditAvailableCount -= 1;
-        return {
-          outcome: "reset",
-          status: createDevCodexAccountQuotaStatus(),
-        } as T;
-      }
-      return {
-        outcome: "noCredit",
-        status: createDevCodexAccountQuotaStatus(),
-      } as T;
     default:
       console.warn(`[lilia:dev-mock] Unhandled Tauri command: ${cmd}`, args);
       return undefined as T;

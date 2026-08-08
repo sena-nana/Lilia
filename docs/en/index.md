@@ -4,7 +4,7 @@ layout: home
 hero:
   name: LiliaCode
   text: A desktop client for agent-assisted software engineering
-  tagline: Organize Claude Code and Codex workflows into recoverable, traceable, and schedulable local task state.
+  tagline: Organize LiliaCore / Mutsuki AgentKit workflows into recoverable, traceable, and schedulable local task state.
   image:
     src: /logo.png
     alt: LiliaCode logo
@@ -31,7 +31,7 @@ features:
 
 ## Who It Is For
 
-LiliaCode is built for developers who move engineering projects forward over time. It adds a desktop-level organization layer for projects, tasks, sessions, permissions, and process state outside the agent execution layer, making Claude Code and Codex workflows easier to recover, trace, and schedule.
+LiliaCode is built for developers who move engineering projects forward over time. It adds a desktop-level organization layer for projects, tasks, sessions, permissions, and process state on top of the Lilia protocol implemented by Mutsuki AgentKit.
 
 ## Current Status
 

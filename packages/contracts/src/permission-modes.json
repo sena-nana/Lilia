@@ -31,52 +31,22 @@
     "free"
   ],
   "runtimeMappings": {
-    "claude": {
+    "native-agentkit": {
       "full": {
-        "permissionMode": "bypassPermissions",
-        "allowDangerouslySkipPermissions": true
+        "mode": "full_access",
+        "requireApproval": false
       },
       "ask": {
-        "permissionMode": "default",
-        "allowDangerouslySkipPermissions": false
+        "mode": "default",
+        "requireApproval": true
       },
       "readonly": {
-        "permissionMode": "default",
-        "allowDangerouslySkipPermissions": false
+        "mode": "readonly",
+        "requireApproval": true
       },
       "free": {
-        "permissionMode": "bypassPermissions",
-        "allowDangerouslySkipPermissions": true
-      }
-    },
-    "codex": {
-      "full": {
-        "sandboxMode": "danger-full-access",
-        "sandboxPolicy": "dangerFullAccess",
-        "approvalPolicy": "never",
-        "permissionProfile": "dangerFullAccess",
-        "permissionProfileId": ":danger-no-sandbox"
-      },
-      "ask": {
-        "sandboxMode": "read-only",
-        "sandboxPolicy": "readOnly",
-        "approvalPolicy": "on-request",
-        "permissionProfile": "readOnly",
-        "permissionProfileId": ":read-only"
-      },
-      "readonly": {
-        "sandboxMode": "read-only",
-        "sandboxPolicy": "readOnly",
-        "approvalPolicy": "on-request",
-        "permissionProfile": "readOnly",
-        "permissionProfileId": ":read-only"
-      },
-      "free": {
-        "sandboxMode": "danger-full-access",
-        "sandboxPolicy": "dangerFullAccess",
-        "approvalPolicy": "never",
-        "permissionProfile": "dangerFullAccess",
-        "permissionProfileId": ":danger-no-sandbox"
+        "mode": "full_access",
+        "requireApproval": false
       }
     }
   }

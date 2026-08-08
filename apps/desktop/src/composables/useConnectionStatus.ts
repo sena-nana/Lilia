@@ -5,17 +5,14 @@
 
 import { computed, ref } from "vue";
 import {
-  checkCodexAppServerUpdate as requestCodexAppServerUpdate,
   checkEnv,
   getActiveBackend,
-  installCodexAppServerUpdate as requestCodexAppServerInstall,
   setActiveBackend as persistActiveBackend,
   type EnvStatusReport,
 } from "../services/chat";
 import type {
   BackendEnvStatus,
   ChatBackendKind,
-  CodexAppServerStatus,
   RouterMode,
 } from "@lilia/contracts";
 import {
@@ -26,16 +23,9 @@ import {
 const report = ref<EnvStatusReport | null>(null);
 const activeBackend = ref<ChatBackendKind>(DEFAULT_CHAT_BACKEND);
 const probing = ref(false);
-const codexAppServerUpdateChecking = ref(false);
-const codexAppServerUpdating = ref(false);
-const codexAppServerUpdateError = ref<string | null>(null);
-const CODEX_UPDATE_POLL_MS = 1_200;
 let inflight: Promise<void> | null = null;
 let backendInflight: Promise<ChatBackendKind> | null = null;
-let codexUpdateCheckInflight: Promise<void> | null = null;
-let codexUpdateInstallInflight: Promise<void> | null = null;
 let activeBackendLoaded = false;
-let codexUpdatePollTimer: ReturnType<typeof setTimeout> | null = null;
 const CHAT_BACKEND_SET = new Set<string>(CHAT_BACKENDS);
 
 function normalizeChatBackendKind(
@@ -88,72 +78,6 @@ async function refreshAll(forceRefresh = true) {
   await Promise.all([probeOnce(forceRefresh), loadActiveBackend(true)]);
 }
 
-function mergeCodexAppServerStatus(status: CodexAppServerStatus) {
-  if (!report.value) return;
-  report.value = {
-    ...report.value,
-    codexAppServer: status,
-  };
-}
-
-function clearCodexUpdatePoll() {
-  if (codexUpdatePollTimer === null) return;
-  clearTimeout(codexUpdatePollTimer);
-  codexUpdatePollTimer = null;
-}
-
-function scheduleCodexUpdatePoll(status: CodexAppServerStatus) {
-  if (status.updateState !== "downloading") {
-    clearCodexUpdatePoll();
-    return;
-  }
-  if (codexUpdatePollTimer !== null) return;
-  codexUpdatePollTimer = setTimeout(() => {
-    codexUpdatePollTimer = null;
-    void checkCodexAppServerUpdate();
-  }, CODEX_UPDATE_POLL_MS);
-}
-
-async function checkCodexAppServerUpdate() {
-  if (codexUpdateCheckInflight) return codexUpdateCheckInflight;
-  codexAppServerUpdateChecking.value = true;
-  codexUpdateCheckInflight = (async () => {
-    try {
-      const status = await requestCodexAppServerUpdate();
-      mergeCodexAppServerStatus(status);
-      codexAppServerUpdateError.value = status.updateError;
-      scheduleCodexUpdatePoll(status);
-    } catch (err) {
-      codexAppServerUpdateError.value = String(err);
-      clearCodexUpdatePoll();
-    } finally {
-      codexAppServerUpdateChecking.value = false;
-      codexUpdateCheckInflight = null;
-    }
-  })();
-  return codexUpdateCheckInflight;
-}
-
-async function installCodexAppServerUpdate() {
-  if (codexUpdateInstallInflight) return codexUpdateInstallInflight;
-  codexAppServerUpdating.value = true;
-  codexAppServerUpdateError.value = null;
-  codexUpdateInstallInflight = (async () => {
-    try {
-      const status = await requestCodexAppServerInstall();
-      mergeCodexAppServerStatus(status);
-      await refreshAll(true);
-      await checkCodexAppServerUpdate();
-    } catch (err) {
-      codexAppServerUpdateError.value = String(err);
-    } finally {
-      codexAppServerUpdating.value = false;
-      codexUpdateInstallInflight = null;
-    }
-  })();
-  return codexUpdateInstallInflight;
-}
-
 async function setActiveBackend(backend: ChatBackendKind): Promise<ChatBackendKind> {
   const next = normalizeChatBackendKind(backend);
   const previous = activeBackend.value;
@@ -185,8 +109,6 @@ export function useConnectionStatus(options: UseConnectionStatusOptions = {}) {
   }
 
   const nodeAvailable = computed(() => report.value?.nodeAvailable ?? false);
-  const codexCliAvailable = computed(() => report.value?.codexCliAvailable ?? false);
-  const codexAppServer = computed(() => report.value?.codexAppServer ?? null);
 
   function statusFor(backend: ChatBackendKind): BackendEnvStatus | null {
     return report.value?.backends?.[backend] ?? null;
@@ -201,16 +123,8 @@ export function useConnectionStatus(options: UseConnectionStatusOptions = {}) {
     probing,
     refresh: refreshAll,
     setActiveBackend,
-    checkCodexAppServerUpdate,
-    installCodexAppServerUpdate,
     nodeAvailable,
-    codexCliAvailable,
-    codexAppServer,
-    codexAppServerUpdateChecking,
-    codexAppServerUpdating,
-    codexAppServerUpdateError,
     statusFor,
     routerFor,
   };
 }
-

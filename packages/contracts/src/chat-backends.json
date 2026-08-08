@@ -1,33 +1,16 @@
 {
   "chatBackends": [
-    "claude",
-    "codex"
+    "native-agentkit"
   ],
-  "defaultBackend": "claude",
+  "defaultBackend": "native-agentkit",
   "backendLabels": {
-    "claude": "Claude",
-    "codex": "Codex"
+    "native-agentkit": "Native AgentKit"
   },
   "defaultModels": {
-    "claude": "claude-sonnet-4-6",
-    "codex": "gpt-5.5"
+    "native-agentkit": "gpt-5.4"
   },
   "backendModels": {
-    "claude": [
-      {
-        "id": "claude-opus-4-7",
-        "label": "Opus 4.7"
-      },
-      {
-        "id": "claude-sonnet-4-6",
-        "label": "Sonnet 4.6"
-      },
-      {
-        "id": "claude-haiku-4-5",
-        "label": "Haiku 4.5"
-      }
-    ],
-    "codex": [
+    "native-agentkit": [
       {
         "id": "gpt-5.5",
         "label": "GPT-5.5"
@@ -39,65 +22,60 @@
       {
         "id": "gpt-5.4-mini",
         "label": "GPT-5.4 Mini"
+      },
+      {
+        "id": "claude-opus-4-7",
+        "label": "Claude Opus 4.7"
+      },
+      {
+        "id": "claude-sonnet-4-6",
+        "label": "Claude Sonnet 4.6"
+      },
+      {
+        "id": "claude-haiku-4-5",
+        "label": "Claude Haiku 4.5"
       }
     ]
   },
   "allowedModelPrefixes": {
-    "claude": [
-      "claude-"
-    ],
-    "codex": [
+    "native-agentkit": [
       "gpt-",
-      "o"
+      "o",
+      "claude-"
     ]
   },
   "directUrls": {
-    "claude": "https://api.anthropic.com",
-    "codex": "https://api.openai.com/v1"
+    "native-agentkit": "https://api.openai.com/v1"
   },
   "apiKeyEnv": {
-    "claude": "ANTHROPIC_API_KEY",
-    "codex": "OPENAI_API_KEY"
+    "native-agentkit": "OPENAI_API_KEY"
   },
   "providerStoreKeys": {
-    "claude": "provider.claude",
-    "codex": "provider.codex"
+    "native-agentkit": "provider.native-agentkit"
   },
   "routerStoreKeys": {
-    "claude": "router.claude",
-    "codex": "router.codex"
+    "native-agentkit": "router.native-agentkit"
   },
   "backendRouterModes": {
-    "claude": [
+    "native-agentkit": [
       "api"
-    ],
-    "codex": [
-      "api",
-      "codex-account"
     ]
   },
   "defaultRouterModes": {
-    "claude": "api",
-    "codex": "codex-account"
+    "native-agentkit": "api"
   },
   "routerModeLabels": {
-    "api": "API",
-    "codex-account": "官方账号"
+    "api": "API"
   },
   "routerModesUsingApiConfig": [
     "api"
   ],
-  "routerModesUsingCodexAccount": [
-    "codex-account"
-  ],
   "apiDescriptions": {
-    "claude": "Base URL 留空时使用 Anthropic API；也可填写本地代理或 Anthropic 兼容端点。",
-    "codex": "Base URL 留空时使用 OpenAI API；也可填写本地代理或 OpenAI 兼容端点。"
+    "native-agentkit": "Base URL 留空时使用默认 OpenAI 兼容 API；也可填写本地代理或 OpenAI/Anthropic 兼容端点。"
   },
   "connectionModes": [
     "api",
     "custom",
-    "codex-account",
     "unconfigured"
   ],
   "connectionModesUsingApiKey": [
@@ -110,9 +88,6 @@
   "connectionModesUsingCustomUrl": [
     "custom"
   ],
-  "connectionModesUsingCodexAccount": [
-    "codex-account"
-  ],
   "unconfiguredConnectionModes": [
     "unconfigured"
   ],
@@ -124,18 +99,12 @@
     "max"
   ],
   "backendReasoningEfforts": {
-    "claude": [
+    "native-agentkit": [
       "low",
       "medium",
       "high",
       "xhigh",
       "max"
-    ],
-    "codex": [
-      "low",
-      "medium",
-      "high",
-      "xhigh"
     ]
   }
 }

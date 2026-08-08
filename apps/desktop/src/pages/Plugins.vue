@@ -100,20 +100,14 @@ const McpServerEditorDialog = defineAsyncComponent({
   loader: loadMcpServerEditorDialog,
 });
 
-const backend = ref<"claude" | "codex">("claude");
-const showBackendSwitch = computed(() => props.section === "hooks" || props.section === "mcp");
-
 const {
   projectOptions,
   userSkills,
   projectSkills,
-  claudePlugins,
-  claudeMcpServers,
-  claudeMcpConfigPath,
-  claudeHookSources,
-  codexServers,
-  codexConfigPath,
-  codexHookSources,
+  packages,
+  mcpServers,
+  mcpConfigPath,
+  hookSources,
   warnings,
   loading,
   errorText,
@@ -139,24 +133,11 @@ const hookDocumentError = ref<string | null>(null);
 let hookDocumentRequestId = 0;
 let disposed = false;
 
-const showTopbar = computed(() => props.section === "skills" || showBackendSwitch.value);
-const backendSwitchLabel = computed(() => props.section === "mcp" ? "MCP 后端" : "Hooks 后端");
-const claudeBackendCount = computed(() =>
-  props.section === "mcp" ? claudeMcpServers.value.length : claudeHookSources.value.length,
-);
-const codexBackendCount = computed(() =>
-  props.section === "mcp" ? codexServers.value.length : codexHookSources.value.length,
-);
+const showTopbar = computed(() => props.section === "skills");
 
 const mcpEditor = useMcpServerEditor<PluginMcpServer>({
-  backend: "claude",
-  label: "Claude MCP",
-  refresh,
-  isDisposed: () => disposed,
-});
-const codexMcpEditor = useMcpServerEditor<PluginMcpServer>({
-  backend: "codex",
-  label: "Codex MCP",
+  backend: "native-agentkit",
+  label: "Native MCP",
   refresh,
   isDisposed: () => disposed,
 });
@@ -169,13 +150,13 @@ const hookEditor = useHookSourceEditor({
     hookDocumentError.value = null;
   },
 });
-const USER_SKILLS_ROOT = "~/.claude/skills/";
+const USER_SKILLS_ROOT = "~/.lilia/skills/";
 
 type PluginEntry =
   | { kind: "skill"; key: string; title: string; meta: string; searchText: string; item: PluginSkill }
   | { kind: "plugin"; key: string; title: string; meta: string; searchText: string; item: PluginPackage }
   | {
-      kind: "claude-mcp";
+      kind: "mcp";
       key: string;
       title: string;
       meta: string;
@@ -183,23 +164,7 @@ type PluginEntry =
       item: PluginMcpServer;
     }
   | {
-      kind: "codex-mcp";
-      key: string;
-      title: string;
-      meta: string;
-      searchText: string;
-      item: PluginMcpServer;
-    }
-  | {
-      kind: "claude-hook";
-      key: string;
-      title: string;
-      meta: string;
-      searchText: string;
-      item: HookSourceSummary;
-    }
-  | {
-      kind: "codex-hook";
+      kind: "hook";
       key: string;
       title: string;
       meta: string;
@@ -213,18 +178,20 @@ interface DetailRow {
   code?: boolean;
 }
 
-type HookEntry = Extract<PluginEntry, { kind: "claude-hook" | "codex-hook" }>;
+type HookEntry = Extract<PluginEntry, { kind: "hook" }>;
 
 function commandLine(command: string, args: string[]) {
   return [command, ...args].filter(Boolean).join(" ").trim();
 }
 
-function codexServerSummary(server: PluginMcpServer) {
+function mcpServerSummary(server: PluginMcpServer) {
   return commandLine(server.command, server.args) || `${pluginMcpTransportLabel(server.transport)} MCP server`;
 }
 
-const SKILL_PROJECT_MARKERS = ["/.claude/skills/"];
+const SKILL_PROJECT_MARKERS = ["/.lilia/skills/", "/.claude/skills/"];
 const HOOK_PROJECT_MARKERS = [
+  "/.lilia/hooks.json",
+  "/.lilia/settings.json",
   "/.claude/settings.json",
   "/.claude/settings.local.json",
   "/.codex/hooks.json",
@@ -292,7 +259,7 @@ function projectFolderFromCwd(cwd: string | null) {
 
 function projectSkillsRootFromPath(path: string) {
   const projectCwd = projectCwdFromPath(path, SKILL_PROJECT_MARKERS);
-  return projectCwd ? `${projectCwd}\\.claude\\skills\\` : "";
+  return projectCwd ? `${projectCwd}\\.lilia\\skills\\` : "";
 }
 
 function projectLabelForSkill(skill: PluginSkill) {
@@ -306,7 +273,7 @@ function skillLocation(skill: PluginSkill) {
   if (skill.scope === "user") return USER_SKILLS_ROOT;
   const project = projectOptionForPath(skill.path);
   return project
-    ? `${project.value}\\.claude\\skills\\`
+    ? `${project.value}\\.lilia\\skills\\`
     : projectSkillsRootFromPath(skill.path) || "未选择项目";
 }
 
@@ -352,7 +319,7 @@ function buildHookEntry(kind: HookEntry["kind"], source: HookSourceSummary): Hoo
 function isHookEntry(
   entry: PluginEntry | null,
 ): entry is HookEntry {
-  return !!entry && (entry.kind === "claude-hook" || entry.kind === "codex-hook");
+  return !!entry && entry.kind === "hook";
 }
 
 function hookDocumentFor(source: HookSourceSummary | null) {
@@ -381,7 +348,7 @@ const allEntries = computed<PluginEntry[]>(() => {
   }
 
   if (props.section === "packages") {
-    return claudePlugins.value.map((plugin) => ({
+    return packages.value.map((plugin) => ({
       kind: "plugin",
       key: `plugin:${plugin.path}`,
       title: plugin.name,
@@ -394,27 +361,12 @@ const allEntries = computed<PluginEntry[]>(() => {
   }
 
   if (props.section === "hooks") {
-    return backend.value === "codex"
-      ? codexHookSources.value.map((source) => buildHookEntry("codex-hook", source))
-      : claudeHookSources.value.map((source) => buildHookEntry("claude-hook", source));
+    return hookSources.value.map((source) => buildHookEntry("hook", source));
   }
 
-  if (backend.value === "claude") {
-    return claudeMcpServers.value.map((server) => ({
-      kind: "claude-mcp",
-      key: `claude-mcp:${server.name}`,
-      title: server.name,
-      meta: pluginEnabledLabel(server.enabled),
-      searchText: [server.name, server.command, server.args.join(" "), server.envKeys.join(" ")].join(
-        "\n",
-      ),
-      item: server,
-    }));
-  }
-
-  return codexServers.value.map((server) => ({
-    kind: "codex-mcp",
-    key: `codex-mcp:${server.name}`,
+  return mcpServers.value.map((server) => ({
+    kind: "mcp",
+    key: `mcp:${server.name}`,
     title: server.name,
     meta: [
       server.editable ? pluginEnabledLabel(server.enabled) : "只读",
@@ -474,11 +426,9 @@ const selectedMeta = computed(() => {
   const entry = selectedEntry.value;
   if (!entry) return "";
   if (entry.kind === "skill") return `${entry.item.scope === "user" ? "全局" : "项目"} · ${entry.meta}`;
-  if (entry.kind === "plugin") return `Claude Plugin · ${entry.meta}`;
-  if (entry.kind === "claude-mcp") return `${pluginMcpBackendLabel(entry.item.backend)} · ${entry.meta}`;
-  if (entry.kind === "codex-mcp") return `${pluginMcpBackendLabel(entry.item.backend)} · ${entry.meta}`;
-  const backendLabel = entry.kind === "claude-hook" ? "Claude Hooks" : "Codex Hooks";
-  return `${backendLabel} · ${entry.meta}`;
+  if (entry.kind === "plugin") return `Plugin · ${entry.meta}`;
+  if (entry.kind === "mcp") return `${pluginMcpBackendLabel(entry.item.backend)} · ${entry.meta}`;
+  return `Hooks · ${entry.meta}`;
 });
 
 const detailRows = computed<DetailRow[]>(() => {
@@ -502,24 +452,17 @@ const detailRows = computed<DetailRow[]>(() => {
       { label: "路径", value: entry.item.path, code: true },
     ];
   }
-  if (entry.kind === "claude-mcp") {
-    return [
-      { label: "命令", value: commandLine(entry.item.command, entry.item.args) || "-", code: true },
-      { label: "环境变量", value: entry.item.envKeys.join(", ") || "-" },
-      {
-        label: "配置",
-        value: claudeMcpConfigPath.value || "~/.lilia/config/claude-mcp-servers.json",
-        code: true,
-      },
-    ];
-  }
-  if (entry.kind === "codex-mcp") {
+  if (entry.kind === "mcp") {
     return [
       { label: "Transport", value: pluginMcpTransportLabel(entry.item.transport) },
-      { label: "命令", value: codexServerSummary(entry.item), code: true },
+      { label: "命令", value: mcpServerSummary(entry.item), code: true },
       { label: "环境变量", value: entry.item.envKeys.join(", ") || "-" },
       { label: "权限", value: entry.item.editable ? "可编辑" : "只读" },
-      { label: "配置", value: codexConfigPath.value || "~/.codex/config.toml", code: true },
+      {
+        label: "配置",
+        value: mcpConfigPath.value || "~/.lilia/config/mcp-servers.json",
+        code: true,
+      },
     ];
   }
   const source = selectedHookSourceData.value ?? entry.item;
@@ -565,7 +508,6 @@ watch(
 watch(
   () => props.section,
   () => {
-    backend.value = "claude";
     query.value = "";
     selectedKey.value = null;
   },
@@ -761,8 +703,7 @@ function selectEntry(entry: PluginEntry) {
 function openMcpCreate() {
   if (disposed) return;
   void loadMcpServerEditorDialog();
-  if (backend.value === "claude") mcpEditor.openCreateMcp();
-  else codexMcpEditor.openCreateMcp();
+  mcpEditor.openCreateMcp();
 }
 
 function canCreateInDetail() {
@@ -785,33 +726,27 @@ function openDetailCreate() {
 function toggleSelected(entry: PluginEntry) {
   if (entry.kind === "skill") void toggleSkill(entry.item);
   else if (entry.kind === "plugin") void togglePlugin(entry.item);
-  else if (entry.kind === "claude-mcp" || entry.kind === "codex-mcp") void toggleMcp(entry.item);
+  else if (entry.kind === "mcp") void toggleMcp(entry.item);
 }
 
 function editSelected(entry: PluginEntry) {
-  if (entry.kind === "claude-mcp") {
+  if (entry.kind === "mcp" && entry.item.editable) {
     void loadMcpServerEditorDialog();
     mcpEditor.openEditMcp(entry.item);
-  } else if (entry.kind === "codex-mcp" && entry.item.editable) {
-    void loadMcpServerEditorDialog();
-    codexMcpEditor.openEditMcp(entry.item);
+  } else if (isHookEntry(entry)) {
+    void openSelectedHookEditor(entry);
   }
-  else if (isHookEntry(entry)) void openSelectedHookEditor(entry);
 }
 
 function removeSelected(entry: PluginEntry) {
   if (disposed) return;
   if (entry.kind === "skill") pendingRemoveSkill.value = entry.item;
-  else if (entry.kind === "claude-mcp") pendingRemoveMcp.value = entry.item;
-  else if (entry.kind === "codex-mcp" && entry.item.editable) {
-    pendingRemoveMcp.value = entry.item;
-  } else if (isHookEntry(entry)) {
-    pendingRemoveHook.value = entry.item;
-  }
+  else if (entry.kind === "mcp" && entry.item.editable) pendingRemoveMcp.value = entry.item;
+  else if (isHookEntry(entry)) pendingRemoveHook.value = entry.item;
 }
 
 function openSelectedConfig(entry: PluginEntry) {
-  if (entry.kind === "claude-mcp" || entry.kind === "codex-mcp") void openMcp(entry.item);
+  if (entry.kind === "mcp") void openMcp(entry.item);
   else if (isHookEntry(entry)) void openHookSourceConfig(entry.item);
 }
 
@@ -826,21 +761,21 @@ function actionLabel(entry: PluginEntry) {
 
 function canToggle(entry: PluginEntry) {
   if (isHookEntry(entry)) return false;
-  return entry.kind !== "codex-mcp" || entry.item.editable;
+  return entry.kind !== "mcp" || entry.item.editable;
 }
 
 function canEdit(entry: PluginEntry) {
   if (isHookEntry(entry)) return entry.item.editable && entry.item.exists;
-  return entry.kind === "claude-mcp" || (entry.kind === "codex-mcp" && entry.item.editable);
+  return entry.kind === "mcp" && entry.item.editable;
 }
 
 function canRemove(entry: PluginEntry) {
   if (isHookEntry(entry)) return entry.item.editable && entry.item.exists;
-  return entry.kind === "skill" || entry.kind === "claude-mcp" || (entry.kind === "codex-mcp" && entry.item.editable);
+  return entry.kind === "skill" || (entry.kind === "mcp" && entry.item.editable);
 }
 
 function canOpenConfig(entry: PluginEntry) {
-  return entry.kind === "claude-mcp" || entry.kind === "codex-mcp" || isHookEntry(entry);
+  return entry.kind === "mcp" || isHookEntry(entry);
 }
 </script>
 
@@ -866,38 +801,7 @@ function canOpenConfig(entry: PluginEntry) {
       </div>
 
       <div v-if="showTopbar" class="plugins-browser__topbar">
-        <div
-          v-if="showBackendSwitch"
-          class="plugins-backend-tabs ui-tabs ui-tabs--pill"
-          role="tablist"
-          :aria-label="backendSwitchLabel"
-        >
-          <button
-            type="button"
-            role="tab"
-            class="ui-tabs__tab"
-            :aria-selected="backend === 'claude'"
-            :class="{ 'is-active': backend === 'claude' }"
-            data-agent-id="plugins.backend.claude"
-            @click="backend = 'claude'"
-          >
-            Claude
-            <span class="ui-tabs__count">{{ claudeBackendCount }}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            class="ui-tabs__tab"
-            :aria-selected="backend === 'codex'"
-            :class="{ 'is-active': backend === 'codex' }"
-            data-agent-id="plugins.backend.codex"
-            @click="backend = 'codex'"
-          >
-            Codex
-            <span class="ui-tabs__count">{{ codexBackendCount }}</span>
-          </button>
-        </div>
-        <div v-else class="plugins-browser__topbar-spacer" aria-hidden="true" />
+        <div class="plugins-browser__topbar-spacer" aria-hidden="true" />
         <div class="plugins-browser__topbar-actions">
           <button
             v-if="props.section === 'skills'"
@@ -1152,31 +1056,13 @@ function canOpenConfig(entry: PluginEntry) {
       :env-rows="mcpEditor.mcpEnvRows.value"
       :editing-mcp="mcpEditor.editingMcp.value"
       :title="mcpEditor.mcpEditorTitle.value"
-      server-label="Claude MCP"
+      server-label="Native MCP"
       :saving="mcpEditor.mcpSaving.value"
       :error="mcpEditor.mcpError.value"
-      :config-path="claudeMcpConfigPath || '~/.lilia/config/claude-mcp-servers.json'"
+      :config-path="mcpConfigPath || '~/.lilia/config/mcp-servers.json'"
       @add-env-row="mcpEditor.addMcpEnvRow"
       @remove-env-row="mcpEditor.removeMcpEnvRow"
       @confirm="mcpEditor.saveMcpServer"
-    />
-
-    <McpServerEditorDialog
-      v-if="codexMcpEditor.showMcpEditor.value"
-      v-model:open="codexMcpEditor.showMcpEditor.value"
-      v-model:name="codexMcpEditor.mcpName.value"
-      v-model:command="codexMcpEditor.mcpCommand.value"
-      v-model:args-text="codexMcpEditor.mcpArgsText.value"
-      :env-rows="codexMcpEditor.mcpEnvRows.value"
-      :editing-mcp="codexMcpEditor.editingMcp.value"
-      :title="codexMcpEditor.mcpEditorTitle.value"
-      server-label="Codex MCP"
-      :saving="codexMcpEditor.mcpSaving.value"
-      :error="codexMcpEditor.mcpError.value"
-      :config-path="codexConfigPath || '~/.codex/config.toml'"
-      @add-env-row="codexMcpEditor.addMcpEnvRow"
-      @remove-env-row="codexMcpEditor.removeMcpEnvRow"
-      @confirm="codexMcpEditor.saveMcpServer"
     />
 
     <ConfirmDialog
@@ -1189,9 +1075,7 @@ function canOpenConfig(entry: PluginEntry) {
       :message="pendingRemoveSkill
         ? '该 skill 目录会被整体删除，不可恢复。'
         : pendingRemoveMcp
-          ? pendingRemoveMcp.backend === 'claude'
-            ? '该 MCP server 会从 Lilia 配置中删除，不可恢复。'
-            : '该 stdio MCP server 会从 Codex config.toml 中删除，不可恢复。'
+          ? '该 MCP server 会从 Lilia 配置中删除，不可恢复。'
           : '该 hooks 来源会从对应配置文件中移除，不可恢复。'"
       confirm-text="删除"
       busy-text="删除中…"

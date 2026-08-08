@@ -16,7 +16,6 @@ import type {
   LiliaIabSnapshot,
   LiliaIabSubmitResult,
   LiliaReviewTarget,
-  CodexProfileSettings,
   ProjectRoadmap,
   SuggestionItem,
   TaskTodo,
@@ -28,8 +27,6 @@ import type {
   ProjectArchitectureInteractionPayload,
   PermissionMode,
   ProviderRuntimeOptions,
-  CodexAccountQuotaStatus,
-  CodexRateLimitResetCreditConsumeResult,
   QuotaUsageStats,
   AutomationRunSummary,
   HookDocumentUpdateInput,
@@ -471,12 +468,12 @@ export type HooksOverviewShapeTypeTest = Assert<
     {
       sources: [
         {
-          id: "claude-user";
-          backend: "claude";
+          id: "native-user";
+          backend: "native-agentkit";
           scope: "user";
-          format: "claude_settings_json";
-          name: "Claude User Hooks";
-          path: "C:/Users/mock/.claude/settings.json";
+          format: "settings_json";
+          name: "Native User Hooks";
+          path: "C:/Users/mock/.lilia/settings.json";
           exists: true;
           editable: true;
           managed: false;
@@ -485,7 +482,7 @@ export type HooksOverviewShapeTypeTest = Assert<
           warnings: [];
           limitations: [];
           trustState: "unknown";
-          description: "~/.claude/settings.json 中的 hooks";
+          description: "用户 hooks 配置";
         },
       ];
       warnings: [];
@@ -525,7 +522,7 @@ export type ProviderRuntimeOptionsTypeTest = Assert<
         runtimeWorkspaceRoots: ["D:/PROJECT/workspace/Lilia"];
       };
       provider: {
-        codex: {
+        "native-agentkit": {
           profile: "deep";
           reasoningEffort: "high";
           runtimeWorkspaceRoots: ["D:/PROJECT/workspace/Lilia"];
@@ -533,16 +530,14 @@ export type ProviderRuntimeOptionsTypeTest = Assert<
           environments: [{ id: "env-1" }];
           experimentalRawEvents: true;
           responsesApiClientMetadata: { surface: "lilia" };
-        };
-        claude: {
           allowedTools: ["Read"];
           disallowedTools: ["Bash"];
           additionalDirectories: ["D:/PROJECT/workspace/Lilia/docs"];
           maxTurns: 8;
           maxBudgetUsd: 1.5;
-          tools: { type: "preset"; preset: "claude_code" };
+          tools: { type: "preset"; preset: "default" };
           permissionPromptToolName: "mcp__lilia__permission_prompt";
-          settings: { model: "claude-opus-4-5" };
+          settings: { model: "claude-sonnet-4-6" };
           managedSettings: { sandbox: { enabled: true } };
           settingSources: ["user", "project"];
           sandbox: { enabled: true };
@@ -558,7 +553,7 @@ export type ProviderRuntimeOptionsTypeTest = Assert<
         };
       };
       experimentalProviderOptions: [{
-        provider: "codex";
+        provider: "native-agentkit";
         capability: "raw-events";
         payload: { enabled: true };
         fallback: "diagnostic";
@@ -573,7 +568,7 @@ export type ChatRuntimeSnapshotContextUsageTypeTest = Assert<
     {
       taskId: "task-1";
       phase: "running";
-      backend: "codex";
+      backend: "native-agentkit";
       turnId: "turn-1";
       processSessionId: "jsonl-process-1";
       queuedCount: 0;
@@ -581,7 +576,7 @@ export type ChatRuntimeSnapshotContextUsageTypeTest = Assert<
       pendingResetCleanup: false;
       contextUsage: {
         taskId: "task-1";
-        backend: "codex";
+        backend: "native-agentkit";
         usedTokens: 1024;
         limitTokens: 8192;
         usedPercent: 12.5;
@@ -643,7 +638,7 @@ export type QuotaUsageStatsTypeTest = Assert<
         recordCount: 2;
       }];
       backends: [{
-        backend: "claude";
+        backend: "native-agentkit";
         inputTokens: 100;
         outputTokens: 50;
         cacheReadTokens: 10;
@@ -657,7 +652,7 @@ export type QuotaUsageStatsTypeTest = Assert<
         eventId: "event-1";
         taskId: "task-1";
         turnId: "turn-1";
-        backend: "claude";
+        backend: "native-agentkit";
         sessionId: "session-1";
         inputTokens: 100;
         outputTokens: 50;
@@ -709,79 +704,6 @@ export type QuotaUsageStatsTypeTest = Assert<
   >
 >;
 
-export type CodexAccountQuotaStatusTypeTest = Assert<
-  Extends<
-    {
-      available: true;
-      connectionMode: "codex-account";
-      limitId: "codex";
-      limitName: "Codex";
-      planType: "pro";
-      rateLimitReachedType: null;
-      fiveHour: {
-        usedPercent: 25;
-        windowDurationMins: 300;
-        resetsAt: 1;
-      };
-      weekly: {
-        usedPercent: 40;
-        windowDurationMins: 10080;
-        resetsAt: 2;
-      };
-      sparkFiveHour: {
-        usedPercent: 15;
-        windowDurationMins: 300;
-        resetsAt: 4;
-      };
-      sparkWeekly: {
-        usedPercent: 70;
-        windowDurationMins: 10080;
-        resetsAt: 5;
-      };
-      credits: {
-        hasCredits: true;
-        unlimited: false;
-        balance: "3";
-      };
-      sparkCredits: {
-        hasCredits: true;
-        unlimited: true;
-        balance: null;
-      };
-      rateLimitResetCredits: {
-        availableCount: 2;
-      };
-      accountUsage: {
-        summary: {
-          lifetimeTokens: 123456;
-          peakDailyTokens: 4567;
-          longestRunningTurnSec: 540;
-          currentStreakDays: 8;
-          longestStreakDays: 14;
-        };
-        dailyUsageBuckets: [{
-          startDate: "2026-06-18";
-          tokens: 1234;
-        }];
-      };
-      usageError: null;
-      fetchedAt: 3;
-      error: null;
-    },
-    CodexAccountQuotaStatus
-  >
->;
-
-export type CodexRateLimitResetCreditConsumeResultTypeTest = Assert<
-  Extends<
-    {
-      outcome: "reset";
-      status: CodexAccountQuotaStatus;
-    },
-    CodexRateLimitResetCreditConsumeResult
-  >
->;
-
 export type AutomationRunWorkflowTypeTest = Assert<
   Extends<
     {
@@ -802,7 +724,7 @@ export type AutomationRunSummaryTypeTest = Assert<
       triggerKind: "manual";
       projectId: null;
       taskId: "task-1";
-      backend: "claude";
+      backend: "native-agentkit";
       eventKind: "timeline_event";
       startedAt: 1;
       finishedAt: 2;
@@ -908,42 +830,42 @@ export type SuggestionItemIncludesLocalGitContextTypeTest = Assert<
   >
 >;
 
-export type SuggestionItemIncludesClaudeNativeSourceTypeTest = Assert<
+export type SuggestionItemIncludesProviderSourceTypeTest = Assert<
   Extends<
     {
-      id: "claude-suggestion-1";
+      id: "provider-suggestion-1";
       projectId: "project-1";
       taskIds: ["task-1"];
-      source: "claude";
+      source: "provider";
       githubActivities: [];
       localGitContexts: [];
       codexThreads: [];
       summary: "继续检查建议展示";
-      reason: "Claude 根据上一轮对话预测的下一条提示。";
-      prompt: "请继续检查 Claude 原生建议展示。";
+      reason: "根据上一轮对话预测的下一条提示。";
+      prompt: "请继续检查 Provider 建议展示。";
       generatedAt: 1;
     },
     SuggestionItem
   >
 >;
 
-export type SuggestionItemIncludesCodexThreadSourceTypeTest = Assert<
+export type SuggestionItemIncludesSessionThreadSourceTypeTest = Assert<
   Extends<
     {
-      id: "sg-codex-thread-1";
+      id: "sg-session-thread-1";
       projectId: "project-1";
       taskIds: [];
-      source: "codex-thread";
+      source: "session-thread";
       githubActivities: [];
       localGitContexts: [];
       codexThreads: [{
         id: "thread-1";
-        title: "补齐 Codex 建议";
+        title: "补齐会话建议";
         updatedAt: 2000;
         preview: "继续补齐 conversation suggestions";
       }];
-      summary: "继续 Codex thread";
-      reason: "最近 Codex thread 显示建议来源还没补完。";
+      summary: "继续会话线程";
+      reason: "最近会话线程显示建议来源还没补完。";
       prompt: "请基于 thread-1 继续处理。";
       generatedAt: 1;
     },
@@ -951,37 +873,19 @@ export type SuggestionItemIncludesCodexThreadSourceTypeTest = Assert<
   >
 >;
 
-export type CodexProfileSettingsShapeTypeTest = Assert<
-  Extends<
-    {
-      profile: "balanced";
-      model: "gpt-5.5";
-      reasoningEffort: "high";
-      runtimeWorkspaceRoots: ["C:/repo", "D:/shared"];
-      responsesApiClientMetadata: { surface: "lilia" };
-      additionalContext: "本轮额外上下文";
-      persistExtendedHistory: true;
-      initialTurnsPage: { limit: 20 };
-      excludeTurns: ["turn-old"];
-    },
-    CodexProfileSettings
-  >
->;
-
-export type AssistantAIConfigIncludesCodexSparkSwitchTypeTest = Assert<
+export type AssistantAIConfigShapeTypeTest = Assert<
   Extends<
     {
       baseUrl: "https://api.example.com/v1";
       apiKey: null;
       model: "gpt-4o-mini";
-      codexAccountSparkEnabled: true;
       hasApiKey: false;
     },
     import("./provider").AssistantAIConfig
   >
 >;
 
-export type AgentInteractionSettingsIncludesCodexProfileTypeTest = Assert<
+export type AgentInteractionSettingsNativeTypeTest = Assert<
   Extends<
     {
       nonInterruptMode: false;
@@ -995,17 +899,10 @@ export type AgentInteractionSettingsIncludesCodexProfileTypeTest = Assert<
       };
       mainAgentPromptMode: "aggressive";
       mainAgentCustomPrompt: "Prefer direct implementation.";
-      codexProfile: CodexProfileSettings;
       subagentMode: {
         enabled: false;
-        codex: {
-          enabled: true;
-        };
-        claude: {
-          enabled: true;
-          forwardSubagentText: true;
-          agentProgressSummaries: true;
-        };
+        forwardSubagentText: true;
+        agentProgressSummaries: true;
       };
       autoTurnDecision: {
         enabled: true;
@@ -1120,7 +1017,7 @@ export type ToolConsentRequestTypeTest = Assert<
     {
       taskId: "task-1";
       turnId: "turn-1";
-      backend: "claude";
+      backend: "native-agentkit";
       requestId: "tool-1";
       toolName: "Bash";
       input: { command: "pwd" };
@@ -1162,11 +1059,11 @@ export type AgentInteractionAskRequestTypeTest = Assert<
     {
       taskId: "task-1";
       turnId: "turn-1";
-      backend: "codex";
+      backend: "native-agentkit";
       requestId: "ask-1";
       kind: "ask_user";
       payload: {
-        title: "Codex 想确认一下";
+        title: "需要确认一下";
         questions: [{
           id: "q-1";
           question: "选哪个方案？";
@@ -1184,14 +1081,14 @@ export type AgentInteractionToolRequestTypeTest = Assert<
     {
       taskId: "task-1";
       turnId: "turn-1";
-      backend: "codex";
+      backend: "native-agentkit";
       requestId: "tool-1";
       kind: "tool_consent";
       payload: {
         toolName: "commandExecution";
         input: { command: "yarn test" };
         title: "Run command";
-        backend: "codex";
+        backend: "native-agentkit";
         additionalPermissions: [{ permission: "network" }];
         availableDecisions: ["accept", "decline", "cancel"];
         proposedExecpolicyAmendment: { sandbox: "workspace-write" };
@@ -1211,12 +1108,12 @@ export type AgentInteractionPlanApprovalRequestTypeTest = Assert<
     {
       taskId: "task-1";
       turnId: "turn-1";
-      backend: "codex";
+      backend: "native-agentkit";
       requestId: "plan-1";
       kind: "plan_approval";
       payload: {
-        title: "确认 Codex 计划";
-        source: "Codex Plan";
+        title: "确认计划";
+        source: "Plan";
         intent: "plan_approval";
         questions: [{
           id: "approve-plan";
@@ -1235,7 +1132,7 @@ export type AgentInteractionArchitectureRequestTypeTest = Assert<
     {
       taskId: "task-1";
       turnId: "turn-1";
-      backend: "claude";
+      backend: "native-agentkit";
       requestId: "arch-1";
       kind: "architecture_change";
       payload: ProjectArchitectureInteractionPayload;

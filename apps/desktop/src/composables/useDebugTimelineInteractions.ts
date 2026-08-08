@@ -49,7 +49,7 @@ function createDebugEvent(input: {
     id: input.id,
     taskId: input.taskId,
     turnId: input.turnId,
-    backend: "claude",
+    backend: "native-agentkit",
     kind: input.kind,
     status: input.status,
     title: input.title,
@@ -398,7 +398,7 @@ export function useDebugTimelineInteractions(taskId: string) {
     const request: ToolConsentRequest = {
       taskId,
       turnId: ids.turnId,
-      backend: "claude",
+      backend: "native-agentkit",
       requestId: ids.requestId,
       toolName: "Write",
       input: {

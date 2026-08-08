@@ -53,7 +53,7 @@
     "askUserHeader": 40,
     "askUserQuestionPreview": 240,
     "allowedPrompt": 400,
-    "claudePlan": 12000,
+    "planText": 12000,
     "commandInlineThreshold": 180,
     "fileChangePath": 600
   },

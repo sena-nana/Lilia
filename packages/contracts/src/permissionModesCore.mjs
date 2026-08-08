@@ -19,12 +19,8 @@ export function createPermissionModeHelpers(permissionModesJson) {
       null;
   }
 
-  function claudePermissionRuntime(permission) {
-    return runtimePermissionMapping("claude", permission);
-  }
-
-  function codexPermissionRuntime(permission) {
-    return runtimePermissionMapping("codex", permission);
+  function nativePermissionRuntime(permission) {
+    return runtimePermissionMapping("native-agentkit", permission);
   }
 
   return {
@@ -36,8 +32,7 @@ export function createPermissionModeHelpers(permissionModesJson) {
     isRuntimePermissionMode,
     normalizeRuntimePermissionMode,
     runtimePermissionMapping,
-    claudePermissionRuntime,
-    codexPermissionRuntime,
+    nativePermissionRuntime,
   };
 }
 

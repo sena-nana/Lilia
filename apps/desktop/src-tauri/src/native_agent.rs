@@ -1,8 +1,6 @@
 //! Desktop Embedded Native AgentKit host wiring (#44 / #50 / #46 / #47).
 //!
-//! Default execution backend is Native AgentKit. Node `agent-runner` is a
-//! limited-time compatibility escape hatch only
-//! (`LILIA_AGENT_EXECUTION_BACKEND=node`, until [`LEGACY_NODE_RUNNER_COMPAT_UNTIL`]).
+//! Execution backend is Native AgentKit only.
 //!
 //! Task timeline product facts come from AgentKit event projections in
 //! `lilia-storage`. Desktop SQLite is a rebuildable UI cache, not an execution
@@ -43,35 +41,26 @@ use crate::util::now_millis;
 pub const BACKEND_NATIVE_AGENTKIT: &str = "native-agentkit";
 const ENV_EXECUTION_BACKEND: &str = "LILIA_AGENT_EXECUTION_BACKEND";
 
-/// #47 — Node `agent-runner` limited-time compatibility identity.
-#[cfg(feature = "legacy-runner")]
-pub const LEGACY_NODE_AGENT_RUNNER_ID: &str = "node-agent-runner";
-/// Product version after which Node runner must not return as a default path.
+/// Historical product cut-off label retained for host/status API honesty fields.
 pub const LEGACY_NODE_RUNNER_COMPAT_UNTIL: &str = "1.0.0";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ExecutionBackend {
     NativeAgentkit,
-    /// Limited-time compatibility only (#47). Requires `legacy-runner` Cargo feature + env.
-    #[cfg(feature = "legacy-runner")]
-    NodeAgentRunner,
 }
 
 impl ExecutionBackend {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::NativeAgentkit => BACKEND_NATIVE_AGENTKIT,
-            #[cfg(feature = "legacy-runner")]
-            Self::NodeAgentRunner => LEGACY_NODE_AGENT_RUNNER_ID,
         }
     }
 }
 
-/// Resolve default Desktop execution backend.
+/// Resolve Desktop execution backend. Always Native AgentKit.
 ///
-/// Default: Native AgentKit. Escape hatch (only when built with `legacy-runner`):
-/// `LILIA_AGENT_EXECUTION_BACKEND=node`. Never silently falls back to Node when Native fails.
+/// `LILIA_AGENT_EXECUTION_BACKEND=node` is ignored (Node agent-runner removed).
 pub fn resolve_execution_backend() -> ExecutionBackend {
     match std::env::var(ENV_EXECUTION_BACKEND)
         .unwrap_or_default()
@@ -80,19 +69,11 @@ pub fn resolve_execution_backend() -> ExecutionBackend {
         .as_str()
     {
         "node" | "node-agent-runner" | "agent-runner" | "legacy" => {
-            #[cfg(feature = "legacy-runner")]
-            {
-                ExecutionBackend::NodeAgentRunner
-            }
-            #[cfg(not(feature = "legacy-runner"))]
-            {
-                eprintln!(
-                    "[native-agent] {ENV_EXECUTION_BACKEND}=node ignored: this binary was built \
-                     without the `legacy-runner` feature (sources under apps/desktop/legacy/; \
-                     compat until {LEGACY_NODE_RUNNER_COMPAT_UNTIL})"
-                );
-                ExecutionBackend::NativeAgentkit
-            }
+            eprintln!(
+                "[native-agent] {ENV_EXECUTION_BACKEND}=node ignored: Native AgentKit only \
+                 (Node agent-runner removed)"
+            );
+            ExecutionBackend::NativeAgentkit
         }
         "" | "native" | "native-agentkit" | "agentkit" => ExecutionBackend::NativeAgentkit,
         other => {
@@ -104,23 +85,16 @@ pub fn resolve_execution_backend() -> ExecutionBackend {
     }
 }
 
-/// Automation / multi-Agent new tasks must not call Claude/Codex official Server
-/// or Node `agent-runner` directly — only AgentKit/Native (or an explicit refuse).
+/// Automation / multi-Agent new tasks must use AgentKit/Native only.
 pub fn require_native_for_automation_or_multi_agent(context: &str) -> Result<(), String> {
+    let _ = context;
     match resolve_execution_backend() {
-        ExecutionBackend::NativeAgentkit => {
-            let _ = context;
-            Ok(())
-        }
-        #[cfg(feature = "legacy-runner")]
-        ExecutionBackend::NodeAgentRunner => Err(format!(
-            "{context}: 新任务不得直调 Claude/Codex 官方 Server 或 Node runner，须走 AgentKit/Native（请取消 {ENV_EXECUTION_BACKEND}=node）"
-        )),
+        ExecutionBackend::NativeAgentkit => Ok(()),
     }
 }
 
-/// #47 honesty: whether this binary compiled the Node legacy-runner feature gate.
-pub const LEGACY_RUNNER_FEATURE_COMPILED: bool = cfg!(feature = "legacy-runner");
+/// Honesty field: Node legacy-runner feature is permanently removed (always false).
+pub const LEGACY_RUNNER_FEATURE_COMPILED: bool = false;
 
 fn shared_runtime() -> Result<&'static SharedNativeAgentKitRuntime, String> {
     static RUNTIME: OnceLock<Result<SharedNativeAgentKitRuntime, String>> = OnceLock::new();
@@ -334,7 +308,7 @@ pub struct NativeAgentHostStatus {
     pub default_bundle_includes_official_agent_server: bool,
     /// #47 honesty: default NSIS/resources must not ship Node `agent-runner.mjs`.
     pub default_bundle_includes_node_agent_runner: bool,
-    /// #47 honesty: `legacy-runner` Cargo feature compiled into this binary.
+    /// Always false: Node legacy-runner feature permanently removed.
     pub legacy_runner_feature_compiled: bool,
     /// Honest: true when product profile binds openai-compatible or anthropic-messages
     /// CredentialRef and turns are driven by protocol HTTP Model Adapter (not reference-only).
@@ -353,17 +327,7 @@ pub fn host_status() -> NativeAgentHostStatus {
             backend: "unavailable".into(),
             bundle_id: String::new(),
             official_agent_server: false,
-            node_runner_default: {
-                #[cfg(feature = "legacy-runner")]
-                {
-                    active == ExecutionBackend::NodeAgentRunner
-                }
-                #[cfg(not(feature = "legacy-runner"))]
-                {
-                    let _ = active;
-                    false
-                }
-            },
+            node_runner_default: false,
             supports_session: false,
             supports_stream: false,
             supports_approval: false,
@@ -388,8 +352,8 @@ pub fn host_status() -> NativeAgentHostStatus {
         timeline_is_agentkit_projection: true,
         product_timeline_store: PRODUCT_TIMELINE_STORE_ID,
         desktop_sqlite_is_ui_cache_only: true,
-        // Compat window still open until product version cut-off; not "Node is active".
-        node_runner_legacy_compatibility: true,
+        // Node runner feature removed; flag kept false for honesty API stability.
+        node_runner_legacy_compatibility: false,
         node_runner_compat_until: LEGACY_NODE_RUNNER_COMPAT_UNTIL,
         default_bundle_includes_official_agent_server: false,
         default_bundle_includes_node_agent_runner: false,
@@ -731,6 +695,12 @@ pub fn native_rebuild_ui_timeline_cache<R: Runtime>(
     }
 
     let mirrored = mirror_product_timeline_to_ui_cache(&app_handle, &projected)?;
+    // Rebuild product todo checklist into Desktop task_todos when present.
+    if let Err(err) =
+        crate::native_projection_hooks::mirror_product_todos_for_task(&app_handle, &task_id)
+    {
+        eprintln!("[native-agent] rebuild todo mirror skipped: {err}");
+    }
     Ok(json!({
         "taskId": task_id,
         "productRows": projected.len(),
@@ -866,6 +836,14 @@ pub fn run_native_agent_turn<R: Runtime>(
         Some(&page),
     );
 
+    if !waiting_approval {
+        crate::chat::title_update::spawn_title_update(
+            app_handle.clone(),
+            invocation.task_id.clone(),
+            Some(invocation.turn_id.clone()),
+        );
+    }
+
     Ok(RunnerOutput {
         last_session_id: Some(page.session_id.clone()),
         interrupted: false,
@@ -971,6 +949,13 @@ fn finish_native_approval_turn<R: Runtime>(
         success,
         None,
     );
+    if !interrupted && !reset {
+        crate::chat::title_update::spawn_title_update(
+            app_handle.clone(),
+            task_id.to_string(),
+            Some(page.turn_id.clone()),
+        );
+    }
     Ok(())
 }
 
@@ -1046,15 +1031,18 @@ fn mirror_agent_events_to_ui_cache<R: Runtime>(
     task_id: &str,
     events: &[AgentEventEnvelope],
 ) -> Result<(), String> {
+    // Product-side effects (todos / context ring) consume raw AgentKit envelopes.
+    crate::native_projection_hooks::apply_projection_side_effects(app_handle, task_id, events);
+
     let runtime = native_runtime()?;
-    let task_id = TaskId::new(task_id.to_string()).map_err(|e| e.to_string())?;
+    let projected_task_id = TaskId::new(task_id.to_string()).map_err(|e| e.to_string())?;
     let sequences: HashSet<u64> = events.iter().map(|event| event.sequence).collect();
-    let events = runtime
-        .product_timeline_for_task(&task_id)
+    let projected = runtime
+        .product_timeline_for_task(&projected_task_id)
         .into_iter()
         .filter(|event| sequences.contains(&event.sequence))
         .collect::<Vec<_>>();
-    let _ = mirror_product_timeline_to_ui_cache(app_handle, &events)?;
+    let _ = mirror_product_timeline_to_ui_cache(app_handle, &projected)?;
     Ok(())
 }
 
@@ -1162,27 +1150,13 @@ mod tests {
         );
         assert!(require_native_for_automation_or_multi_agent("test").is_ok());
         std::env::set_var(ENV_EXECUTION_BACKEND, "node");
-        #[cfg(feature = "legacy-runner")]
-        {
-            assert_eq!(
-                resolve_execution_backend(),
-                ExecutionBackend::NodeAgentRunner
-            );
-            let err =
-                require_native_for_automation_or_multi_agent("Automation Agent 节点").unwrap_err();
-            assert!(err.contains("不得直调"));
-            assert!(err.contains("AgentKit/Native"));
-        }
-        #[cfg(not(feature = "legacy-runner"))]
-        {
-            // Default build: Node env is ignored; binary does not link Node path.
-            assert_eq!(
-                resolve_execution_backend(),
-                ExecutionBackend::NativeAgentkit
-            );
-            assert!(!LEGACY_RUNNER_FEATURE_COMPILED);
-            assert!(require_native_for_automation_or_multi_agent("Automation Agent 节点").is_ok());
-        }
+        // Default build: Node env is ignored; binary does not link Node path.
+        assert_eq!(
+            resolve_execution_backend(),
+            ExecutionBackend::NativeAgentkit
+        );
+        assert!(!LEGACY_RUNNER_FEATURE_COMPILED);
+        assert!(require_native_for_automation_or_multi_agent("Automation Agent 节点").is_ok());
         std::env::set_var(ENV_EXECUTION_BACKEND, "native");
         assert_eq!(
             resolve_execution_backend(),
@@ -1207,7 +1181,7 @@ mod tests {
         assert!(status.timeline_is_agentkit_projection);
         assert_eq!(status.product_timeline_store, PRODUCT_TIMELINE_STORE_ID);
         assert!(status.desktop_sqlite_is_ui_cache_only);
-        assert!(status.node_runner_legacy_compatibility);
+        assert!(!status.node_runner_legacy_compatibility);
         assert_eq!(
             status.node_runner_compat_until,
             LEGACY_NODE_RUNNER_COMPAT_UNTIL

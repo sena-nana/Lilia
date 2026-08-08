@@ -10,7 +10,7 @@ static CHAT_EVENTS_CONTRACT: OnceLock<ChatEventsContract> = OnceLock::new();
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ChatEventsContract {
-    #[allow(dead_code)] // legacy-runner emits; native path does not yet
+    #[allow(dead_code)] // contract field retained; native path does not emit yet
     chat_turn_started_event_name: String,
     chat_done_event_name: String,
     chat_context_usage_event_name: String,
@@ -28,7 +28,7 @@ fn chat_events_contract() -> &'static ChatEventsContract {
     })
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn turn_started_event_name() -> &'static str {
     &chat_events_contract().chat_turn_started_event_name
 }

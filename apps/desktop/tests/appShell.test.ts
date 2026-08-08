@@ -138,16 +138,13 @@ describe("AppShell left sidebar collapse", () => {
     });
   });
 
-  it("导入和插件资源入口收敛到设置分类", async () => {
+  it("插件资源入口收敛到设置分类，且不再提供对话导入", async () => {
     const view = await renderAppShell("/settings");
 
     expect(view.queryByRole("link", { name: "从 Claude / Codex 导入对话" })).not.toBeInTheDocument();
     expect(view.queryByRole("link", { name: "插件 / 技能" })).not.toBeInTheDocument();
+    expect(view.queryByRole("button", { name: /导入对话/ })).not.toBeInTheDocument();
 
-    await fireEvent.click(view.getByRole("button", { name: /导入对话/ }));
-    await waitFor(() => {
-      expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=import");
-    });
     await fireEvent.click(view.getByRole("button", { name: "技能" }));
     await waitFor(() => {
       expect(view.router.currentRoute.value.fullPath).toBe("/settings?tab=plugin-skills");

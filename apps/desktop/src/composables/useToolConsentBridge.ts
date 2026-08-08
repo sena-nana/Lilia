@@ -104,7 +104,7 @@ export async function respondConsent(
   decision: ToolConsentDecision,
   message?: string,
   updatedInput?: ToolConsentUpdatedInput,
-  codexDecision?: string,
+  decisionKind?: string,
 ): Promise<void> {
   const localResolve = localResolvers.get(requestId);
   if (localResolve) {
@@ -126,7 +126,9 @@ export async function respondConsent(
       decision,
       message: message ?? null,
       ...(updatedInput ? { updatedInput } : {}),
-      ...(codexDecision ? { codexDecision } : {}),
+      ...(decisionKind
+        ? { decisionKind, codexDecision: decisionKind }
+        : {}),
     },
   } satisfies AgentInteractionResponse);
   if (pending[taskId]?.requestId === requestId) {

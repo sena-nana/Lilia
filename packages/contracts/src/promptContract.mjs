@@ -10,8 +10,8 @@ const manifest = Object.freeze(promptText);
 export const PROMPT_CONTRACT = manifest;
 export const PROMPT_RUNNER = manifest.runner;
 export const PROMPT_MAIN_AGENT = manifest.mainAgent;
-export const PROMPT_CLAUDE = manifest.claude;
-export const PROMPT_CODEX = manifest.codex;
+/** Native / Mutsuki AgentKit prompt pack (Lilia product protocol). */
+export const PROMPT_NATIVE = manifest.native;
 export const PROMPT_ASSISTANT = manifest.assistant;
 export const PROMPT_SUGGESTION = manifest.suggestion;
 export const PROMPT_TITLE = manifest.title;

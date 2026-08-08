@@ -83,7 +83,7 @@ function mergeFetchedModels(models: AssistantAIModelPoolItem[]) {
       id,
       label: existing?.label?.trim() || item.label.trim() || id,
       source: "remote",
-      backend: "codex",
+      backend: "native-agentkit",
     });
   }
   assistantAIForm.value.modelPool = [...byId.values()];
@@ -155,7 +155,7 @@ function addModelToPool() {
     id,
     label,
     source: "remote",
-    backend: "codex",
+    backend: "native-agentkit",
   };
   const next = [...modelPool()];
   const index = next.findIndex((candidate) => candidate.id === id);

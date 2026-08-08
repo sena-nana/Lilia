@@ -1,17 +1,11 @@
 use std::collections::HashMap;
-use std::process::Command;
 
 use tauri::AppHandle;
 
 use crate::chat::state::{chat_backend_supported, chat_backends};
-use crate::process_command::hide_console_window;
 use crate::settings_store::save_store_value;
 
 use super::assistant_ai;
-use super::codex_probe::{build_codex_app_server_probe_status_cached, cli_available};
-use super::codex_update::{
-    check_codex_app_server_update_status, install_or_update_codex_app_server,
-};
 use super::config::{
     known_provider_key_for_backend, load_active_backend, load_agent_interaction_settings,
     load_model_feature_settings, load_router_mode, normalize_agent_interaction_settings,
@@ -32,49 +26,26 @@ use super::types::{
     ModelFeatureSettings, ProviderConfig,
 };
 
-fn powershell_single_quoted(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
-fn start_codex_login_process(program: &str) -> Result<(), String> {
-    if cfg!(windows) {
-        let script = format!(
-            "Start-Process -FilePath {} -ArgumentList 'login'",
-            powershell_single_quoted(program)
-        );
-        let mut command = Command::new("powershell.exe");
-        hide_console_window(&mut command);
-        let status = command
-            .args([
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &script,
-            ])
-            .status()
-            .map_err(|err| format!("启动 Codex 登录窗口失败：{err}"))?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err(format!("启动 Codex 登录窗口失败：{status}"))
-        }
-    } else {
-        let mut command = Command::new(program);
-        hide_console_window(&mut command);
-        command
-            .arg("login")
-            .spawn()
-            .map(|_| ())
-            .map_err(|err| format!("启动 Codex 登录流程失败：{err}"))
+fn removed_codex_app_server_status() -> CodexAppServerStatus {
+    CodexAppServerStatus {
+        version: None,
+        install_path: None,
+        managed: false,
+        available: false,
+        supports_required_protocol: false,
+        failure_kind: Some("removed".to_string()),
+        issues: vec!["官方 Codex app-server 已移除".to_string()],
+        latest_version: None,
+        update_available: false,
+        release_notes: Vec::new(),
+        update_error: Some("官方 Codex app-server 已移除".to_string()),
+        update_state: "idle".to_string(),
+        prepared_version: None,
+        update_progress_percent: None,
     }
 }
 
-fn chat_check_env_sync(app: AppHandle, force_refresh: bool) -> EnvStatusReport {
-    let node_available = cli_available("node");
-    let codex_app_server = build_codex_app_server_probe_status_cached(force_refresh);
-    let codex_cli_available = codex_app_server.path.is_some();
-
+fn chat_check_env_sync(app: AppHandle, _force_refresh: bool) -> EnvStatusReport {
     let mut backends = HashMap::new();
     for backend in chat_backends() {
         backends.insert(backend.clone(), build_backend_env_status(&app, backend));
@@ -86,9 +57,9 @@ fn chat_check_env_sync(app: AppHandle, force_refresh: bool) -> EnvStatusReport {
     }
 
     EnvStatusReport {
-        node_available,
-        codex_cli_available,
-        codex_app_server: codex_app_server.public,
+        node_available: false,
+        codex_cli_available: false,
+        codex_app_server: removed_codex_app_server_status(),
         router_modes,
         backends,
     }
@@ -100,32 +71,6 @@ pub async fn chat_check_env(app: AppHandle, force_refresh: Option<bool>) -> EnvS
     tauri::async_runtime::spawn_blocking(move || chat_check_env_sync(app, force_refresh))
         .await
         .expect("chat_check_env blocking task panicked")
-}
-
-#[tauri::command]
-pub async fn provider_codex_app_server_check_update() -> CodexAppServerStatus {
-    tauri::async_runtime::spawn_blocking(check_codex_app_server_update_status)
-        .await
-        .expect("provider_codex_app_server_check_update blocking task panicked")
-}
-
-#[tauri::command]
-pub fn provider_codex_app_server_install_update() -> Result<CodexAppServerStatus, String> {
-    install_or_update_codex_app_server()
-}
-
-#[tauri::command]
-pub fn provider_codex_account_start_login() -> Result<(), String> {
-    let probe = build_codex_app_server_probe_status_cached(true);
-    if !probe.public.supports_required_protocol {
-        return Err(
-            "Lilia 内置 Codex app-server 不可用，请先安装或更新 Codex app-server。".to_string(),
-        );
-    }
-    let program = probe
-        .path
-        .ok_or_else(|| "未找到 Lilia 内置 Codex app-server。".to_string())?;
-    start_codex_login_process(&program)
 }
 
 #[tauri::command]

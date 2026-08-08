@@ -12,7 +12,6 @@ export const ALLOWED_MODEL_PREFIXES_BY_BACKEND =
 export const REASONING_EFFORTS = CHAT_BACKENDS_CONTRACT.reasoningEfforts;
 export const BACKEND_REASONING_EFFORTS =
   CHAT_BACKENDS_CONTRACT.backendReasoningEfforts;
-export const CODEX_REASONING_EFFORTS = BACKEND_REASONING_EFFORTS.codex;
 export const DIRECT_DEFAULT_URLS = CHAT_BACKENDS_CONTRACT.directUrls;
 export const API_KEY_ENV_BY_BACKEND = CHAT_BACKENDS_CONTRACT.apiKeyEnv;
 export const PROVIDER_STORE_KEY_BY_BACKEND =
@@ -26,8 +25,6 @@ export const DEFAULT_ROUTER_MODE_BY_BACKEND =
 export const ROUTER_MODE_LABELS = CHAT_BACKENDS_CONTRACT.routerModeLabels;
 export const ROUTER_MODES_USING_API_CONFIG =
   CHAT_BACKENDS_CONTRACT.routerModesUsingApiConfig;
-export const ROUTER_MODES_USING_CODEX_ACCOUNT =
-  CHAT_BACKENDS_CONTRACT.routerModesUsingCodexAccount;
 export const API_DESCRIPTION_BY_BACKEND =
   CHAT_BACKENDS_CONTRACT.apiDescriptions;
 export const CONNECTION_MODES = CHAT_BACKENDS_CONTRACT.connectionModes;
@@ -37,10 +34,13 @@ export const CONNECTION_MODES_USING_DEFAULT_API =
   CHAT_BACKENDS_CONTRACT.connectionModesUsingDefaultApi;
 export const CONNECTION_MODES_USING_CUSTOM_URL =
   CHAT_BACKENDS_CONTRACT.connectionModesUsingCustomUrl;
-export const CONNECTION_MODES_USING_CODEX_ACCOUNT =
-  CHAT_BACKENDS_CONTRACT.connectionModesUsingCodexAccount;
 export const UNCONFIGURED_CONNECTION_MODES =
   CHAT_BACKENDS_CONTRACT.unconfiguredConnectionModes;
+
+/** Empty stubs kept for type/export stability until callers drop brand account modes. */
+export const ROUTER_MODES_USING_CODEX_ACCOUNT = Object.freeze([]);
+export const CONNECTION_MODES_USING_CODEX_ACCOUNT = Object.freeze([]);
+export const CODEX_REASONING_EFFORTS = Object.freeze([]);
 
 function deepFreeze(value) {
   if (!value || typeof value !== "object") return value;

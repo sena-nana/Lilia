@@ -1,22 +1,18 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { RouterLink } from "vue-router";
 import AlertTriangle from "@lucide/vue/dist/esm/icons/triangle-alert.mjs";
-import Download from "@lucide/vue/dist/esm/icons/download.mjs";
 import KeyRound from "@lucide/vue/dist/esm/icons/key-round.mjs";
-import LogIn from "@lucide/vue/dist/esm/icons/log-in.mjs";
 import Loader2 from "@lucide/vue/dist/esm/icons/loader-circle.mjs";
 import Network from "@lucide/vue/dist/esm/icons/network.mjs";
 import Pencil from "@lucide/vue/dist/esm/icons/pencil.mjs";
-import RefreshCw from "@lucide/vue/dist/esm/icons/refresh-cw.mjs";
 import RotateCw from "@lucide/vue/dist/esm/icons/rotate-cw.mjs";
 import Save from "@lucide/vue/dist/esm/icons/save.mjs";
 import Trash2 from "@lucide/vue/dist/esm/icons/trash-2.mjs";
-import UserRound from "@lucide/vue/dist/esm/icons/user-round.mjs";
 import X from "@lucide/vue/dist/esm/icons/x.mjs";
 import {
   API_KEY_ENV_BY_BACKEND,
   CHAT_BACKENDS,
-  DEFAULT_ROUTER_MODE_BY_BACKEND,
   DIRECT_DEFAULT_URLS,
   apiDescriptionForBackend,
   chatBackendLabel,
@@ -24,11 +20,8 @@ import {
   createChatBackendRecord,
   defaultRouterModeForBackend,
   normalizeRouterModeForBackend,
-  routerModeLabel,
   routerModeUsesApiConfig,
-  routerModesForBackend,
   runtimeDiagnostic,
-  type CodexAccountQuotaStatus,
   type ChatBackendKind,
   type ProviderConfig,
   type RouterMode,
@@ -36,13 +29,10 @@ import {
 import { useConnectionStatus } from "../../composables/useConnectionStatus";
 import {
   getProviderConfig,
-  getCodexAccountQuotaStatus,
   getRouterMode,
   setProviderConfig,
   setRouterMode,
-  startCodexAccountLogin,
 } from "../../services/chat";
-import { codexAccountNeedsLogin, codexQuotaUnavailableStatus } from "../../utils/quotaDisplay";
 
 const {
   report,
@@ -51,24 +41,11 @@ const {
   statusFor,
   probing,
   refresh,
-  checkCodexAppServerUpdate,
-  installCodexAppServerUpdate,
-  codexAppServerUpdating,
-  codexAppServerUpdateChecking,
-  codexAppServerUpdateError,
 } = useConnectionStatus();
 
 const backendOptions: { value: ChatBackendKind; label: string }[] = CHAT_BACKENDS.map((backend) => ({
   value: backend,
   label: chatBackendLabel(backend),
-}));
-const codexRouterModes = [
-  DEFAULT_ROUTER_MODE_BY_BACKEND.codex,
-  ...routerModesForBackend("codex").filter((mode) => mode !== DEFAULT_ROUTER_MODE_BY_BACKEND.codex),
-];
-const codexModeOptions: { value: RouterMode; label: string }[] = codexRouterModes.map((mode) => ({
-  value: mode,
-  label: routerModeLabel(mode),
 }));
 
 function emptyProviderConfig(backend: ChatBackendKind): ProviderConfig {
@@ -85,7 +62,6 @@ function routerModeMapFromBackends(): Record<ChatBackendKind, RouterMode> {
 
 const switchingBackend = ref<ChatBackendKind | null>(null);
 const savingProvider = ref(false);
-const savingRouter = ref(false);
 const editingProvider = ref(false);
 const providerForms = ref<Record<ChatBackendKind, ProviderConfig>>(providerConfigMapFromBackends());
 const routerModes = ref<Record<ChatBackendKind, RouterMode>>(routerModeMapFromBackends());
@@ -116,93 +92,6 @@ const apiDescription = computed(() => apiDescriptionForBackend(selectedBackend.v
 const showApiConfig = computed(() => routerModeUsesApiConfig(selectedRouterMode.value));
 const providerConfigState = computed(() =>
   selectedProviderForm.value.hasApiKey ? "密钥已保存" : "未保存密钥"
-);
-const codexAppServerStatus = computed(() => report.value?.codexAppServer ?? null);
-const codexUpdateState = computed(() => codexAppServerStatus.value?.updateState ?? "idle");
-const codexUpdateDownloading = computed(() => codexUpdateState.value === "downloading");
-const codexUpdateReady = computed(() => codexUpdateState.value === "ready");
-const codexUpdateProgressPercent = computed(() =>
-  codexAppServerStatus.value?.updateProgressPercent ?? null
-);
-const codexUpdateProgressStyle = computed(() => ({
-  "--quota-progress": String(codexUpdateProgressPercent.value ?? 0),
-}));
-const codexUpdateTarget = computed(() =>
-  codexAppServerStatus.value?.preparedVersion ??
-  codexAppServerStatus.value?.latestVersion ??
-  null,
-);
-const codexUpdateRetryMode = computed<"prepare" | "switch" | null>(() => {
-  if (codexUpdateState.value !== "failed") return null;
-  return codexAppServerStatus.value?.preparedVersion ? "switch" : codexUpdateTarget.value ? "prepare" : null;
-});
-const showCodexUpdateAction = computed(() =>
-  selectedBackend.value === "codex" &&
-  selectedRouterMode.value === "codex-account" &&
-  (
-    Boolean(codexAppServerStatus.value?.updateAvailable) ||
-    codexUpdateDownloading.value ||
-    codexUpdateReady.value ||
-    codexUpdateRetryMode.value !== null ||
-    codexAppServerUpdating.value
-  ),
-);
-const codexUpdateErrorText = computed(() =>
-  codexAppServerStatus.value?.updateError ?? codexAppServerUpdateError.value ?? null
-);
-const codexUpdateActionEnabled = computed(() =>
-  codexUpdateReady.value ||
-  codexUpdateRetryMode.value !== null
-);
-const codexUpdateLabel = computed(() => {
-  if (codexAppServerUpdating.value || codexUpdateState.value === "switching") return "切换中...";
-  if (codexUpdateDownloading.value) {
-    return codexUpdateProgressPercent.value === null
-      ? "下载中..."
-      : `下载中 ${codexUpdateProgressPercent.value}%`;
-  }
-  if (codexAppServerUpdateChecking.value) return "下载中...";
-  if (codexUpdateRetryMode.value === "switch" && codexUpdateTarget.value) {
-    return `重试切换到 ${codexUpdateTarget.value}`;
-  }
-  if (codexUpdateRetryMode.value === "prepare" && codexUpdateTarget.value) {
-    return `重新准备 ${codexUpdateTarget.value}`;
-  }
-  if (codexUpdateReady.value && codexUpdateTarget.value) return `切换到 ${codexUpdateTarget.value}`;
-  return codexUpdateTarget.value ? `准备 ${codexUpdateTarget.value}` : "准备更新";
-});
-const codexVersionText = computed(() => {
-  const current = codexAppServerStatus.value?.version ?? "未安装";
-  const latest = codexAppServerStatus.value?.latestVersion;
-  return latest ? `${current} / latest ${latest}` : current;
-});
-const codexAccountStatus = ref<CodexAccountQuotaStatus | null>(null);
-const codexAccountLoading = ref(false);
-const codexLoginStarting = ref(false);
-let codexAccountRequestSeq = 0;
-const showCodexRuntimeStatus = computed(() =>
-  selectedBackend.value === "codex" && selectedRouterMode.value === "codex-account",
-);
-const codexRuntimeStatusText = computed(() =>
-  codexAppServerStatus.value?.supportsRequiredProtocol
-    ? "app-server 可用"
-    : "app-server 不可用",
-);
-const codexLoginNeedsAction = computed(() => {
-  return codexAccountNeedsLogin(
-    codexAccountStatus.value,
-    codexAppServerStatus.value?.supportsRequiredProtocol ?? false,
-  );
-});
-const codexLoginStatusText = computed(() => {
-  if (codexAccountLoading.value) return "登录状态：检查中";
-  if (codexAccountStatus.value?.available) return "登录状态：已登录";
-  if (codexLoginNeedsAction.value) return "登录状态：未登录";
-  if (codexAccountStatus.value) return "登录状态：无法确认";
-  return "登录状态：待检测";
-});
-const codexLoginStatusDetail = computed(() =>
-  codexAccountStatus.value?.available ? null : codexAccountStatus.value?.error,
 );
 let disposed = false;
 
@@ -297,94 +186,23 @@ async function cancelProviderEdit() {
   await loadProvider(backend);
 }
 
-async function selectRouterMode(mode: RouterMode) {
+async function ensureApiRouterMode() {
   if (disposed) return;
-  const backend = selectedBackend.value;
-  if (
-    savingRouter.value ||
-    routerModes.value[backend] === mode ||
-    normalizeRouterModeForBackend(backend, mode) !== mode
-  ) {
-    return;
-  }
-  const previous = routerModes.value[backend];
-  routerModes.value = { ...routerModes.value, [backend]: mode };
-  savingRouter.value = true;
-  try {
-    await setRouterMode(backend, mode);
-    if (disposed) return;
-    await refresh();
-  } catch (err) {
-    if (!disposed) routerModes.value = { ...routerModes.value, [backend]: previous };
-    console.error("[settings] set router mode failed", err);
-  } finally {
-    if (!disposed) savingRouter.value = false;
-  }
-}
-
-async function ensureClaudeApiMode() {
-  if (disposed) return;
-  const defaultMode = defaultRouterModeForBackend("claude");
-  if (routerModes.value.claude === defaultMode) return;
-  routerModes.value = { ...routerModes.value, claude: defaultMode };
-  try {
-    await setRouterMode("claude", defaultMode);
-  } catch (err) {
-    console.error("[settings] set Claude API mode failed", err);
-  }
+  await Promise.all(CHAT_BACKENDS.map(async (backend) => {
+    const defaultMode = defaultRouterModeForBackend(backend);
+    if (routerModes.value[backend] === defaultMode) return;
+    routerModes.value = { ...routerModes.value, [backend]: defaultMode };
+    try {
+      await setRouterMode(backend, defaultMode);
+    } catch (err) {
+      console.error("[settings] set API router mode failed", err);
+    }
+  }));
 }
 
 async function probe() {
   if (disposed) return;
   await refresh();
-  if (disposed) return;
-  await Promise.all([checkCodexAppServerUpdate(), loadCodexAccountStatus()]);
-}
-
-async function installCodexUpdate() {
-  if (disposed) return;
-  if (codexUpdateRetryMode.value === "prepare") {
-    await checkCodexAppServerUpdate();
-    return;
-  }
-  await installCodexAppServerUpdate();
-}
-
-function clearCodexAccountStatus() {
-  codexAccountRequestSeq += 1;
-  codexAccountStatus.value = null;
-  codexAccountLoading.value = false;
-}
-
-async function loadCodexAccountStatus() {
-  if (!showCodexRuntimeStatus.value) {
-    clearCodexAccountStatus();
-    return;
-  }
-  const seq = ++codexAccountRequestSeq;
-  codexAccountLoading.value = true;
-  try {
-    const result = await getCodexAccountQuotaStatus();
-    if (!disposed && seq === codexAccountRequestSeq) codexAccountStatus.value = result;
-  } catch (err) {
-    if (!disposed && seq === codexAccountRequestSeq) {
-      codexAccountStatus.value = codexQuotaUnavailableStatus(err);
-    }
-  } finally {
-    if (!disposed && seq === codexAccountRequestSeq) codexAccountLoading.value = false;
-  }
-}
-
-async function startCodexLogin() {
-  if (disposed || codexLoginStarting.value) return;
-  codexLoginStarting.value = true;
-  try {
-    await startCodexAccountLogin();
-  } catch (err) {
-    if (!disposed) codexAccountStatus.value = codexQuotaUnavailableStatus(err);
-  } finally {
-    if (!disposed) codexLoginStarting.value = false;
-  }
 }
 
 async function selectBackend(backend: ChatBackendKind) {
@@ -406,22 +224,11 @@ onMounted(async () => {
   disposed = false;
   await Promise.all([loadAllConfig(), refresh()]);
   if (disposed) return;
-  await Promise.all([checkCodexAppServerUpdate(), loadCodexAccountStatus()]);
-  if (disposed) return;
-  await ensureClaudeApiMode();
+  await ensureApiRouterMode();
 });
 
 onBeforeUnmount(() => {
   disposed = true;
-  codexAccountRequestSeq += 1;
-});
-
-watch(showCodexRuntimeStatus, (enabled) => {
-  if (enabled) {
-    void loadCodexAccountStatus();
-  } else {
-    clearCodexAccountStatus();
-  }
 });
 </script>
 
@@ -440,11 +247,11 @@ watch(showCodexRuntimeStatus, (enabled) => {
         <button
           v-for="opt in backendOptions"
           :key="opt.value"
-            type="button"
-            role="radio"
-            :aria-checked="selectedBackend === opt.value"
-            :data-agent-id="`settings.provider.backend.${opt.value}`"
-            :class="{ 'is-active': selectedBackend === opt.value }"
+          type="button"
+          role="radio"
+          :aria-checked="selectedBackend === opt.value"
+          :data-agent-id="`settings.provider.backend.${opt.value}`"
+          :class="{ 'is-active': selectedBackend === opt.value }"
           :disabled="switchingBackend !== null"
           @click="selectBackend(opt.value)"
         >
@@ -453,108 +260,28 @@ watch(showCodexRuntimeStatus, (enabled) => {
       </div>
     </div>
 
-    <div class="settings-row">
-      <div class="settings-row__label">接入方式</div>
-      <div class="settings-row__control settings-row__control--loose">
-        <div
-          v-if="selectedBackend === 'codex'"
-          class="ui-segmented"
-          role="radiogroup"
-          aria-label="Codex 接入方式"
+    <div class="settings-row settings-row--stacked">
+      <div class="settings-row__label">接入说明</div>
+      <div class="settings-row__status muted">
+        LiliaCore / native-agentkit 使用 OpenAI 兼容 API 或凭据代理。
+        OpenAI / Anthropic 官方凭据请到
+        <RouterLink
+          class="inline-link"
+          to="/settings?tab=credentials"
+          data-agent-id="settings.provider.open-credentials"
         >
-          <button
-            v-for="opt in codexModeOptions"
-            :key="opt.value"
-            type="button"
-            role="radio"
-            :aria-checked="selectedRouterMode === opt.value"
-            :data-agent-id="`settings.provider.codex-mode.${opt.value}`"
-            :class="{ 'is-active': selectedRouterMode === opt.value }"
-            :disabled="savingRouter"
-            @click="selectRouterMode(opt.value)"
-          >
-            {{ opt.label }}
-          </button>
-        </div>
-        <span v-else class="settings-row__status-text muted">Claude 使用 API 接入</span>
+          凭据
+        </RouterLink>
+        配置；Claude Code / Codex 官方产品已移除，不再提供品牌后端选择。
       </div>
     </div>
 
-    <template v-if="showCodexRuntimeStatus">
-      <div class="settings-row">
-        <span class="settings-row__status muted">
-          <UserRound :size="12" aria-hidden="true" />
-          {{ codexRuntimeStatusText }}
-        </span>
-        <div class="settings-row__control settings-row__control--loose">
-          <span class="settings-row__status-text muted">当前版本：{{ codexVersionText }}</span>
-          <span class="settings-row__status-text muted">{{ codexLoginStatusText }}</span>
-          <button
-            v-if="codexLoginNeedsAction"
-            type="button"
-            class="ui-button ui-button--ghost"
-            data-agent-id="settings.provider.codex-login"
-            :disabled="codexLoginStarting"
-            @click="startCodexLogin"
-          >
-            <Loader2
-              v-if="codexLoginStarting"
-              :size="12"
-              class="is-spinning"
-              aria-hidden="true"
-            />
-            <LogIn v-else :size="12" aria-hidden="true" />
-            {{ codexLoginStarting ? "启动中..." : "登录" }}
-          </button>
-          <button
-            v-if="showCodexUpdateAction || codexAppServerUpdating"
-            type="button"
-            class="ui-button ui-button--ghost"
-            data-agent-id="settings.provider.codex-update"
-            :disabled="
-              codexAppServerUpdating ||
-              codexAppServerUpdateChecking ||
-              codexUpdateDownloading ||
-              !codexUpdateActionEnabled
-            "
-            @click="installCodexUpdate"
-          >
-            <Loader2
-              v-if="codexAppServerUpdating || codexAppServerUpdateChecking"
-              :size="12"
-              class="is-spinning"
-              aria-hidden="true"
-            />
-            <span
-              v-else-if="codexUpdateDownloading"
-              class="sb-quota-ring"
-              :class="{ 'sb-quota-ring--empty': codexUpdateProgressPercent === null }"
-              :style="codexUpdateProgressStyle"
-              aria-hidden="true"
-            >
-              <svg viewBox="0 0 16 16" focusable="false" aria-hidden="true">
-                <circle class="sb-quota-ring__track" cx="8" cy="8" r="6" pathLength="100" />
-                <circle class="sb-quota-ring__value" cx="8" cy="8" r="6" pathLength="100" />
-              </svg>
-            </span>
-            <RefreshCw v-else-if="codexUpdateReady" :size="12" aria-hidden="true" />
-            <RefreshCw v-else-if="codexUpdateRetryMode === 'switch'" :size="12" aria-hidden="true" />
-            <RotateCw v-else-if="codexUpdateRetryMode === 'prepare'" :size="12" aria-hidden="true" />
-            <Download v-else :size="12" aria-hidden="true" />
-            {{ codexAppServerUpdating ? "更新中..." : codexUpdateLabel }}
-          </button>
-        </div>
+    <div class="settings-row">
+      <div class="settings-row__label">接入方式</div>
+      <div class="settings-row__control settings-row__control--loose">
+        <span class="settings-row__status-text muted">API</span>
       </div>
-      <div
-        v-if="codexLoginStatusDetail || codexUpdateErrorText"
-        class="settings-row settings-row--stacked"
-      >
-        <div class="settings-row__status muted">
-          <span v-if="codexLoginStatusDetail">{{ codexLoginStatusDetail }}</span>
-          <span v-if="codexUpdateErrorText">{{ codexUpdateErrorText }}</span>
-        </div>
-      </div>
-    </template>
+    </div>
 
     <template v-if="showApiConfig">
       <div class="settings-row">
@@ -674,7 +401,7 @@ watch(showCodexRuntimeStatus, (enabled) => {
         <div class="conn-banner__title">{{ selectedDiagnostic.title }}</div>
         <div class="conn-banner__hint">
           {{ selectedDiagnostic.hint }}
-        <button type="button" class="inline-link" data-agent-id="settings.provider.retry-probe" :disabled="probing" @click="probe">
+          <button type="button" class="inline-link" data-agent-id="settings.provider.retry-probe" :disabled="probing" @click="probe">
             <RotateCw :size="11" aria-hidden="true" />
             重新检测
           </button>
@@ -691,4 +418,3 @@ watch(showCodexRuntimeStatus, (enabled) => {
   gap: 4px;
 }
 </style>
-

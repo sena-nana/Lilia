@@ -1,13 +1,7 @@
 import { chatBackendLabel, type ChatBackendKind } from "./chat";
-import type { ConnectionMode } from "./provider";
 import {
-  CODEX_RATE_LIMIT_RESET_CREDIT_CONSUME_OUTCOMES,
-  CODEX_RATE_LIMIT_RESET_CREDIT_CONSUME_OUTCOME_LABELS,
-  codexRateLimitResetCreditConsumeOutcomeLabel as codexRateLimitResetCreditConsumeOutcomeLabelImpl,
-  DEFAULT_CODEX_RATE_LIMIT_RESET_CREDIT_CONSUME_OUTCOME_LABEL,
   DEFAULT_QUOTA_USAGE_QUERY_SCOPE,
   DEFAULT_QUOTA_USAGE_STATS_DAYS,
-  isCodexRateLimitResetCreditConsumeOutcome as isCodexRateLimitResetCreditConsumeOutcomeImpl,
   isLiliaQuotaTool as isLiliaQuotaToolImpl,
   isQuotaUsageQueryScope as isQuotaUsageQueryScopeImpl,
   isQuotaUsageStatsBackendExtraFilter as isQuotaUsageStatsBackendExtraFilterImpl,
@@ -16,8 +10,6 @@ import {
   normalizeQuotaUsageQueryScope as normalizeQuotaUsageQueryScopeImpl,
   QUOTA_CONTRACT,
   QUOTA_USAGE_CLAUDE_TOOL_NAME,
-  QUOTA_USAGE_CONSUME_CODEX_RATE_LIMIT_RESET_CREDIT_COMMAND,
-  QUOTA_USAGE_GET_CODEX_ACCOUNT_STATUS_COMMAND,
   QUOTA_USAGE_GET_STATS_COMMAND,
   QUOTA_USAGE_MCP_TOOL_NAME,
   QUOTA_USAGE_QUERY_SCOPES,
@@ -28,7 +20,6 @@ import {
   QUOTA_USAGE_TOOL_NAME,
   QUOTA_USAGE_TOOL_NAMES,
   QUERY_QUOTA_USAGE_INPUT_SCHEMA,
-  type CodexRateLimitResetCreditConsumeOutcome as ContractCodexRateLimitResetCreditConsumeOutcome,
   type QuotaUsageQueryScope as ContractQuotaUsageQueryScope,
   type QuotaUsageStatsBackendFilter as ContractQuotaUsageStatsBackendFilter,
   type QuotaUsageStatsDays as ContractQuotaUsageStatsDays,
@@ -36,15 +27,10 @@ import {
 } from "./quotaContract.mjs";
 
 export {
-  CODEX_RATE_LIMIT_RESET_CREDIT_CONSUME_OUTCOMES,
-  CODEX_RATE_LIMIT_RESET_CREDIT_CONSUME_OUTCOME_LABELS,
-  DEFAULT_CODEX_RATE_LIMIT_RESET_CREDIT_CONSUME_OUTCOME_LABEL,
   DEFAULT_QUOTA_USAGE_QUERY_SCOPE,
   DEFAULT_QUOTA_USAGE_STATS_DAYS,
   QUOTA_CONTRACT,
   QUOTA_USAGE_CLAUDE_TOOL_NAME,
-  QUOTA_USAGE_CONSUME_CODEX_RATE_LIMIT_RESET_CREDIT_COMMAND,
-  QUOTA_USAGE_GET_CODEX_ACCOUNT_STATUS_COMMAND,
   QUOTA_USAGE_GET_STATS_COMMAND,
   QUOTA_USAGE_MCP_TOOL_NAME,
   QUOTA_USAGE_QUERY_SCOPES,
@@ -62,8 +48,6 @@ export type QuotaUsageStatsBackendExtraFilter =
   (typeof QUOTA_USAGE_STATS_BACKEND_EXTRA_FILTERS)[number];
 export type QuotaUsageStatsBackendFilter = ContractQuotaUsageStatsBackendFilter;
 export type QuotaUsageToolName = ContractQuotaUsageToolName;
-export type CodexRateLimitResetCreditConsumeOutcome =
-  ContractCodexRateLimitResetCreditConsumeOutcome;
 
 export const isQuotaUsageStatsDays = isQuotaUsageStatsDaysImpl as (
   value: unknown,
@@ -193,127 +177,7 @@ export interface QuotaUsageStats {
   tools: QuotaUsageToolSummary[];
 }
 
-export interface CodexAccountQuotaWindow {
-  usedPercent: number;
-  windowDurationMins: number | null;
-  resetsAt: number | null;
-}
-
-export function codexAccountQuotaWindowShortLabel(
-  window: Pick<CodexAccountQuotaWindow, "windowDurationMins"> | null | undefined,
-): string {
-  const mins = window?.windowDurationMins;
-  if (!mins || mins <= 0) return "额度";
-  if (mins % 1440 === 0) return `${mins / 1440}d`;
-  if (mins % 60 === 0) return `${mins / 60}h`;
-  return `${mins}m`;
-}
-
-export function codexAccountQuotaPercentLabel(value: number): string {
-  return `${new Intl.NumberFormat("zh-CN", {
-    maximumFractionDigits: value >= 10 ? 0 : 1,
-  }).format(clampPercent(value))}%`;
-}
-
-export function codexAccountQuotaWindowRemainingPercent(
-  window: Pick<CodexAccountQuotaWindow, "usedPercent"> | null | undefined,
-): number {
-  return clampPercent(100 - (window?.usedPercent ?? 0));
-}
-
-export function codexAccountQuotaWindowRemainingLabel(
-  window: Pick<CodexAccountQuotaWindow, "usedPercent"> | null | undefined,
-): string {
-  if (!window) return "暂无数据";
-  return `剩余 ${codexAccountQuotaPercentLabel(codexAccountQuotaWindowRemainingPercent(window))}`;
-}
-
-export function codexAccountQuotaWindowRemainingLine(
-  window: Pick<CodexAccountQuotaWindow, "usedPercent" | "windowDurationMins"> | null | undefined,
-  suffix = "",
-): string {
-  if (!window) return "额度 · 暂无数据";
-  const base = `${codexAccountQuotaWindowShortLabel(window)} · ${codexAccountQuotaWindowRemainingLabel(window)}`;
-  return suffix ? `${base} · ${suffix}` : base;
-}
-
-export interface CodexAccountQuotaCredits {
-  hasCredits: boolean;
-  unlimited: boolean;
-  balance: string | null;
-}
-
-export function codexAccountQuotaCreditsLabel(
-  credits: CodexAccountQuotaCredits | null | undefined,
-): string {
-  if (!credits || !credits.hasCredits) return "暂无 credit 数据";
-  if (credits.unlimited) return "不限";
-  if (credits.balance) return `剩余 ${credits.balance}`;
-  return "可用";
-}
-
 export function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, value));
-}
-
-export interface CodexRateLimitResetCredits {
-  availableCount: number;
-}
-
-export interface CodexAccountUsageSummary {
-  lifetimeTokens: number | null;
-  peakDailyTokens: number | null;
-  longestRunningTurnSec: number | null;
-  currentStreakDays: number | null;
-  longestStreakDays: number | null;
-}
-
-export interface CodexAccountUsageDailyBucket {
-  startDate: string;
-  tokens: number;
-}
-
-export interface CodexAccountUsage {
-  summary: CodexAccountUsageSummary;
-  dailyUsageBuckets: CodexAccountUsageDailyBucket[] | null;
-}
-
-export interface CodexAccountQuotaStatus {
-  available: boolean;
-  connectionMode: ConnectionMode;
-  limitId: string | null;
-  limitName: string | null;
-  planType: string | null;
-  rateLimitReachedType: string | null;
-  fiveHour: CodexAccountQuotaWindow | null;
-  weekly: CodexAccountQuotaWindow | null;
-  sparkFiveHour: CodexAccountQuotaWindow | null;
-  sparkWeekly: CodexAccountQuotaWindow | null;
-  credits: CodexAccountQuotaCredits | null;
-  sparkCredits: CodexAccountQuotaCredits | null;
-  rateLimitResetCredits: CodexRateLimitResetCredits | null;
-  accountUsage: CodexAccountUsage | null;
-  usageError: string | null;
-  fetchedAt: number;
-  error: string | null;
-}
-
-export interface CodexRateLimitResetCreditConsumeInput {
-  idempotencyKey: string;
-}
-
-export const isCodexRateLimitResetCreditConsumeOutcome =
-  isCodexRateLimitResetCreditConsumeOutcomeImpl as (
-    value: unknown,
-  ) => value is CodexRateLimitResetCreditConsumeOutcome;
-
-export const codexRateLimitResetCreditConsumeOutcomeLabel =
-  codexRateLimitResetCreditConsumeOutcomeLabelImpl as (
-    outcome: CodexRateLimitResetCreditConsumeOutcome | string,
-  ) => string;
-
-export interface CodexRateLimitResetCreditConsumeResult {
-  outcome: CodexRateLimitResetCreditConsumeOutcome;
-  status: CodexAccountQuotaStatus;
 }

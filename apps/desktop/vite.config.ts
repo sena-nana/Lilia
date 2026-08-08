@@ -95,20 +95,11 @@ export default defineConfig(async ({ command, mode }) => ({
       "@lilia/contracts/chatEventsContract.mjs": fileURLToPath(
         new URL("../../packages/contracts/src/chatEventsContract.mjs", import.meta.url),
       ),
-      "@lilia/contracts/claudePlanContract.mjs": fileURLToPath(
-        new URL("../../packages/contracts/src/claudePlanContract.mjs", import.meta.url),
-      ),
-      "@lilia/contracts/claudeTools.mjs": fileURLToPath(
-        new URL("../../packages/contracts/src/claudeTools.mjs", import.meta.url),
-      ),
       "@lilia/contracts/conversationContextContract.mjs": fileURLToPath(
         new URL("../../packages/contracts/src/conversationContextContract.mjs", import.meta.url),
       ),
       "@lilia/contracts/githubCommandsContract.mjs": fileURLToPath(
         new URL("../../packages/contracts/src/githubCommandsContract.mjs", import.meta.url),
-      ),
-      "@lilia/contracts/historyImportContract.mjs": fileURLToPath(
-        new URL("../../packages/contracts/src/historyImportContract.mjs", import.meta.url),
       ),
       "@lilia/contracts/liliaAgentProtocol.mjs": fileURLToPath(
         new URL("../../packages/contracts/src/liliaAgentProtocol.mjs", import.meta.url),

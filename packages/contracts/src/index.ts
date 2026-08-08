@@ -11,7 +11,6 @@ export * from "./lilia-code-core";
 export * from "./providerDiagnostics";
 export * from "./plugins";
 export * from "./hooks";
-export * from "./history-import";
 export * from "./quota";
 export * from "./conversation-context";
 export * from "./ask-user";

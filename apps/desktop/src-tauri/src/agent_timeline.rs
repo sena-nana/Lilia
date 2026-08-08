@@ -64,7 +64,7 @@ pub struct AgentTimelineEvent {
     pub id: String,
     pub task_id: String,
     pub turn_id: Option<String>,
-    /// backend：`"claude" | "codex" | "native-agentkit"`（Native 行为 UI cache）
+    /// backend：产品 chat backend，当前写入 `"native-agentkit"`；历史行可能仍为 brand 字符串
     pub backend: String,
     /// "reasoning" | "plan" | "todo_list" | "tool" | ...
     pub kind: String,

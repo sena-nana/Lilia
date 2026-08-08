@@ -2,18 +2,16 @@ use std::collections::HashSet;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use tauri::{AppHandle, Runtime, State};
-#[cfg(feature = "legacy-runner")]
-use tauri::Manager;
 use uuid::Uuid;
 
 use crate::settings_store::{load_store_value, save_store_value};
 use crate::store::LiliaStore;
 use crate::task_contract::{self, MemorySettingsDefaults};
 use crate::util::now_millis;
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use crate::{BACKEND_CLAUDE, BACKEND_CODEX};
 
 const MEMORY_SETTINGS_KEY: &str = "memory.settings";
@@ -393,7 +391,7 @@ pub(crate) fn reset_task_memory_cooldown_core(
     get_injection_state_core(conn, task_id)
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn current_turn_seq(conn: &Connection, task_id: &str) -> Result<i64, String> {
     conn.query_row(
         "SELECT MAX(turn_seq) FROM agent_timeline_events WHERE task_id = ?1",
@@ -404,7 +402,7 @@ fn current_turn_seq(conn: &Connection, task_id: &str) -> Result<i64, String> {
     .map_err(|e| format!("memory_baseline: 查询当前 turn 失败：{e}"))
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn resolve_project_id(
     conn: &Connection,
     task_id: &str,
@@ -436,7 +434,7 @@ fn resolve_project_id(
     .map_err(|e| format!("memory_baseline: 按 cwd 查询项目失败：{e}"))
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn enabled_memories_for_baseline(
     conn: &Connection,
     project_id: Option<&str>,
@@ -450,7 +448,7 @@ fn enabled_memories_for_baseline(
     Ok((user, project))
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn list_enabled_memories(
     conn: &Connection,
     scope: &str,
@@ -493,7 +491,7 @@ fn list_enabled_memories(
     Ok(out)
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn compact_body(body: &str) -> String {
     body.lines()
         .map(str::trim)
@@ -502,7 +500,7 @@ fn compact_body(body: &str) -> String {
         .join(" ")
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn format_memory_baseline(
     user: &[MemoryRecord],
     project: &[MemoryRecord],
@@ -536,7 +534,7 @@ pub(crate) fn format_memory_baseline(
     Some(lines.join("\n"))
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn build_memory_baseline_core(
     conn: &Connection,
     task_id: &str,
@@ -566,7 +564,7 @@ pub(crate) fn build_memory_baseline_core(
     Ok(baseline)
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn record_memory_injection_core(
     conn: &Connection,
     task_id: &str,
@@ -586,7 +584,7 @@ fn record_memory_injection_core(
     .map_err(|e| format!("memory_baseline: 记录注入状态失败：{e}"))
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn ensure_runtime_options_object(runtime_options: Option<JsonValue>) -> JsonValue {
     match runtime_options {
         Some(value @ JsonValue::Object(_)) => value,
@@ -594,7 +592,7 @@ fn ensure_runtime_options_object(runtime_options: Option<JsonValue>) -> JsonValu
     }
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn append_context(existing: Option<&JsonValue>, baseline: &str) -> String {
     let existing = existing
         .and_then(JsonValue::as_str)
@@ -606,7 +604,7 @@ fn append_context(existing: Option<&JsonValue>, baseline: &str) -> String {
     }
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn append_context_to_runtime_options(
     backend: &str,
     runtime_options: Option<JsonValue>,
@@ -641,32 +639,6 @@ pub(crate) fn append_context_to_runtime_options(
     Some(value)
 }
 
-#[cfg(feature = "legacy-runner")]
-pub(crate) fn apply_memory_baseline_to_runtime_options<R: Runtime>(
-    app: &AppHandle<R>,
-    task_id: &str,
-    project_cwd: &str,
-    backend: &str,
-    runtime_options: Option<JsonValue>,
-) -> Option<JsonValue> {
-    let Some(store) = app.try_state::<LiliaStore>() else {
-        return runtime_options;
-    };
-    let Ok(conn) = store.conn() else {
-        return runtime_options;
-    };
-    let settings = load_memory_settings(app);
-    match build_memory_baseline_core(&conn, task_id, project_cwd, &settings) {
-        Ok(Some(baseline)) => {
-            append_context_to_runtime_options(backend, runtime_options, &baseline)
-        }
-        Ok(None) => runtime_options,
-        Err(err) => {
-            eprintln!("[memory] baseline skipped: {err}");
-            runtime_options
-        }
-    }
-}
 
 #[tauri::command]
 pub fn memory_list(

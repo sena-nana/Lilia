@@ -1,4 +1,4 @@
-# 开发启动
+﻿# 开发启动
 
 LiliaCode 当前仓库、包名、协议名和本地配置路径仍沿用 `lilia` 命名，以避免破坏既有协议和持久化路径。
 
@@ -7,24 +7,25 @@ LiliaCode 当前仓库、包名、协议名和本地配置路径仍沿用 `lilia
 ```text
 Lilia/
 ├── apps/
-│   └── desktop/                # 主应用：Vue 3 + Tauri 2
-│       ├── src/
-│       │   ├── layouts/        # AppShell / SecondaryPanel / TitleBar
-│       │   ├── components/     # ViewTabs / TodoFloat / ChatComposer 等
-│       │   ├── pages/          # project/ProjectShell / TaskDetail / Settings
-│       │   ├── services/       # projectsStore / tasksStore / todos / chat
-│       │   ├── styles/         # 主题令牌、标准组件样式、壳层样式和按需页面样式
-│       │   ├── router.ts
-│       │   └── mainBootstrap.ts
-│       └── src-tauri/          # Tauri 2 Rust 端
-│           └── src/
-│               ├── store.rs    # lilia-store：SQLite + r2d2 + 迁移
-│               ├── todos.rs    # TodoWrite / todo_list 事件拦截 -> TaskTodo upsert
-│               ├── plugins.rs  # Claude skills / plugins / MCP 与 Codex MCP 发现
-│               └── lib.rs      # chat / settings / project / plugin IPC
-└── packages/
-    └── contracts/              # 跨端共享 TS 类型与 timeline display 规则
+│   ├── desktop/                # 主应用：Vue 3 + Tauri 2
+│   │   ├── src/                # UI、services、composables
+│   │   └── src-tauri/src/      # Tauri IPC：chat / project / plugins / remote
+│   ├── service/                # 共享 LiliaCore + AgentKit 的 Service 入口
+│   └── cli/                    # Agent Wire turn 等 CLI
+├── crates/
+│   ├── lilia-core/             # 产品核心端口与任务绑定
+│   ├── lilia-agent-integration/# Mutsuki AgentKit 防腐层（Wire / profile / projection）
+│   ├── lilia-storage/          # 产品 SQLite 与路径
+│   └── lilia-contracts/        # Rust 侧产品契约
+├── packages/
+│   └── contracts/              # 跨端 TS 契约（Lilia 协议 + timeline display）
+└── docs/
+    └── design/
+        ├── lilia-agent-interface.md   # 产品协议 ↔ Mutsuki 边界
+        └── mutsuki-dependency-pin.md  # mutsuki-* 依赖 pin
 ```
+
+Agent 执行只走 **Mutsuki Native AgentKit**（`native-agentkit`）。模型侧通过 OpenAI-compatible / Anthropic Messages adapter 配置 API Key 或兼容端点；不要安装或对接 Claude Code / Codex 官方 CLI 作为后端。
 
 ## 本地运行
 

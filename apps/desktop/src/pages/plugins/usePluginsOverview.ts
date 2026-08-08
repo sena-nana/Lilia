@@ -9,6 +9,8 @@ import {
 } from "../../services/plugins";
 import { ensureProjectsLoaded, listProjects } from "../../services/projectsStore";
 
+const NATIVE_BACKEND = "native-agentkit" as const;
+
 function uniqueBy<T>(items: T[], keyFor: (item: T) => string): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
@@ -59,13 +61,10 @@ export function usePluginsOverview(options: {
 
   const userSkills = ref<PluginSkill[]>([]);
   const projectSkills = ref<PluginSkill[]>([]);
-  const claudePlugins = ref<PluginPackage[]>([]);
-  const claudeMcpServers = ref<PluginMcpServer[]>([]);
-  const claudeMcpConfigPath = ref<string | null>(null);
-  const claudeHookSources = ref<HookSourceSummary[]>([]);
-  const codexServers = ref<PluginMcpServer[]>([]);
-  const codexConfigPath = ref<string | null>(null);
-  const codexHookSources = ref<HookSourceSummary[]>([]);
+  const packages = ref<PluginPackage[]>([]);
+  const mcpServers = ref<PluginMcpServer[]>([]);
+  const mcpConfigPath = ref<string | null>(null);
+  const hookSources = ref<HookSourceSummary[]>([]);
   const warnings = ref<string[]>([]);
   const loading = ref(false);
   const errorText = ref<string | null>(null);
@@ -92,18 +91,24 @@ export function usePluginsOverview(options: {
       const allMcpServers = pluginOverviews.flatMap((data) => data.mcpServers);
       const allHookSources = hookOverviews.flatMap((data) => data.sources);
       userSkills.value = uniqueBy(allSkills.filter(
-        (skill) => skill.backend === "claude" && skill.scope === "user",
+        (skill) => skill.backend === NATIVE_BACKEND && skill.scope === "user",
       ), skillKey);
       projectSkills.value = uniqueBy(allSkills.filter(
-        (skill) => skill.backend === "claude" && skill.scope === "project",
+        (skill) => skill.backend === NATIVE_BACKEND && skill.scope === "project",
       ), skillKey);
-      claudePlugins.value = uniqueBy(allPackages.filter((plugin) => plugin.backend === "claude"), packageKey);
-      claudeMcpServers.value = uniqueBy(allMcpServers.filter((server) => server.backend === "claude"), mcpServerKey);
-      claudeMcpConfigPath.value = pluginOverviews[0]?.configPaths.claude ?? null;
-      claudeHookSources.value = uniqueBy(allHookSources.filter((source) => source.backend === "claude"), hookSourceKey);
-      codexServers.value = uniqueBy(allMcpServers.filter((server) => server.backend === "codex"), mcpServerKey);
-      codexConfigPath.value = pluginOverviews[0]?.configPaths.codex ?? null;
-      codexHookSources.value = uniqueBy(allHookSources.filter((source) => source.backend === "codex"), hookSourceKey);
+      packages.value = uniqueBy(
+        allPackages.filter((plugin) => plugin.backend === NATIVE_BACKEND),
+        packageKey,
+      );
+      mcpServers.value = uniqueBy(
+        allMcpServers.filter((server) => server.backend === NATIVE_BACKEND),
+        mcpServerKey,
+      );
+      mcpConfigPath.value = pluginOverviews[0]?.configPaths?.[NATIVE_BACKEND] ?? null;
+      hookSources.value = uniqueBy(
+        allHookSources.filter((source) => source.backend === NATIVE_BACKEND),
+        hookSourceKey,
+      );
       warnings.value = Array.from(new Set([
         ...pluginOverviews.flatMap((data) => data.warnings),
         ...hookOverviews.flatMap((data) => data.warnings),
@@ -129,17 +134,13 @@ export function usePluginsOverview(options: {
     projectOptions,
     userSkills,
     projectSkills,
-    claudePlugins,
-    claudeMcpServers,
-    claudeMcpConfigPath,
-    claudeHookSources,
-    codexServers,
-    codexConfigPath,
-    codexHookSources,
+    packages,
+    mcpServers,
+    mcpConfigPath,
+    hookSources,
     warnings,
     loading,
     errorText,
     refresh,
   };
 }
-

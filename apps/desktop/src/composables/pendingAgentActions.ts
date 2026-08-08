@@ -92,7 +92,7 @@ export type PendingAgentActionResolution =
       decision: "accept" | "decline";
     };
 
-export type PendingAgentActionSubmittingTarget = "tool" | "codex" | null;
+export type PendingAgentActionSubmittingTarget = "tool" | "native" | null;
 
 export interface PendingAgentActionResolutionInput {
   architectureDecision?: "allow" | "deny" | null;
@@ -248,7 +248,7 @@ export function pendingAgentActionResolutionSubmittingTarget(
     case MCP_ELICITATION_INTERACTION_KIND:
     case PERMISSION_APPROVAL_INTERACTION_KIND:
     case ARCHITECTURE_INTERACTION_KIND:
-      return "codex";
+      return "native";
     default:
       return null;
   }

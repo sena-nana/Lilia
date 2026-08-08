@@ -1,8 +1,10 @@
-//! Lilia ↔ AgentKit anticorruption layer.
+//! Lilia ↔ Mutsuki AgentKit anticorruption layer.
 //!
-//! Owns Native Coding Agent bootstrap, Credential Broker bridge, product profile
-//! assembly, and AgentKit → product timeline projection commands.
+//! Implements the Lilia product protocol on Mutsuki: Native Coding Agent bootstrap,
+//! Credential Broker bridge, product profile assembly, Agent Wire service, and
+//! AgentKit → product timeline projection.
 //! Does not store product SQLite rows or Agent Runtime private coordinator state.
+//! Does not talk to Claude Code / Codex official products.
 
 mod agentkit_host;
 mod anthropic_adapter;

@@ -12,9 +12,9 @@ static RUNNER_PROTOCOL_CONTRACT: OnceLock<RunnerProtocolContract> = OnceLock::ne
 struct RunnerProtocolContract {
     runtime_event_types: RunnerRuntimeEventTypes,
     control_message_types: RunnerControlMessageTypes,
-    #[allow(dead_code)] // legacy-runner / tests
+    #[allow(dead_code)] // tests / protocol manifest completeness
     stdin_payload_keys: RunnerStdinPayloadKeys,
-    #[allow(dead_code)] // legacy-runner / tests
+    #[allow(dead_code)] // tests / protocol manifest completeness
     stdin_turn_keys: RunnerStdinTurnKeys,
 }
 
@@ -42,7 +42,7 @@ pub(crate) struct RunnerControlMessageTypes {
     pub(crate) lilia_iab_result: String,
 }
 
-#[cfg_attr(not(any(feature = "legacy-runner", test)), allow(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RunnerStdinPayloadKeys {
@@ -54,7 +54,7 @@ pub(crate) struct RunnerStdinPayloadKeys {
     pub(crate) extensions: String,
 }
 
-#[cfg_attr(not(any(feature = "legacy-runner", test)), allow(dead_code))]
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RunnerStdinTurnKeys {
@@ -86,12 +86,12 @@ pub(crate) fn runner_control_message_types() -> &'static RunnerControlMessageTyp
     &runner_protocol_contract().control_message_types
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn runner_stdin_payload_keys() -> &'static RunnerStdinPayloadKeys {
     &runner_protocol_contract().stdin_payload_keys
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn runner_stdin_turn_keys() -> &'static RunnerStdinTurnKeys {
     &runner_protocol_contract().stdin_turn_keys
 }

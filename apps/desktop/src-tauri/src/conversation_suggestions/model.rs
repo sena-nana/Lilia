@@ -7,13 +7,11 @@ use tauri::AppHandle;
 use crate::chat::state::default_model_for_backend;
 use crate::prompt_contract;
 use crate::provider::{
-    assistant_ai_secret, backend_api_key_env, backend_direct_url, codex_account_spark_enabled,
-    is_codex_account_spark_request, load_active_backend, load_assistant_ai_config,
-    load_model_feature_settings, request_codex_account_spark, resolve_connection_for,
-    AssistantAIConfig, BackendConnectionPlan, ConnectionMode, CODEX_SPARK_BASE_URL,
-    CODEX_SPARK_MODEL,
+    assistant_ai_secret, backend_api_key_env, backend_direct_url, load_active_backend,
+    load_assistant_ai_config, load_model_feature_settings, resolve_connection_for,
+    AssistantAIConfig, BackendConnectionPlan, ConnectionMode,
 };
-use crate::{BACKEND_CLAUDE, BACKEND_CODEX};
+use crate::BACKEND_CLAUDE;
 
 use super::types::{ModelRequest, SuggestionSettings, SuggestionSource};
 
@@ -22,9 +20,6 @@ pub(super) fn resolve_model_requests(
     settings: &SuggestionSettings,
 ) -> Vec<ModelRequest> {
     let mut requests = Vec::new();
-    if let Some(request) = codex_spark_model_request(app, settings.source.clone()) {
-        requests.push(request);
-    }
     match &settings.source {
         SuggestionSource::AssistantAi => {
             requests.extend(assistant_ai_model_request(app));
@@ -34,23 +29,6 @@ pub(super) fn resolve_model_requests(
         }
     }
     requests
-}
-
-fn codex_spark_model_request(app: &AppHandle, source: SuggestionSource) -> Option<ModelRequest> {
-    if !codex_account_spark_enabled(app) {
-        return None;
-    }
-    Some(ModelRequest {
-        source,
-        backend: Some(BACKEND_CODEX.to_string()),
-        model: CODEX_SPARK_MODEL.to_string(),
-        base_url: CODEX_SPARK_BASE_URL.to_string(),
-        api_key: String::new(),
-    })
-}
-
-fn is_codex_spark_request(model: &ModelRequest) -> bool {
-    is_codex_account_spark_request(model.backend.as_deref(), &model.model, &model.base_url)
 }
 
 fn assistant_ai_model_request(app: &AppHandle) -> Option<ModelRequest> {
@@ -99,18 +77,24 @@ fn provider_api_key(backend: &str, plan_api_key: Option<&str>) -> Option<String>
         .or_else(|| {
             std::env::var(backend_api_key_env(backend))
                 .ok()
-                .map(|key| key.trim().to_string())
+                .map(|value| value.trim().to_string())
                 .filter(|key| !key.is_empty())
         })
 }
 
 fn effective_base_url(backend: &str, plan: &BackendConnectionPlan) -> Option<String> {
-    let base = plan
+    let base_url = plan
         .base_url
         .clone()
-        .or_else(|| Some(backend_direct_url(backend).to_string()))?;
-    let trimmed = base.trim().trim_end_matches('/').to_string();
-    (!trimmed.is_empty()).then_some(trimmed)
+        .unwrap_or_else(|| backend_direct_url(backend).to_string())
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    if base_url.is_empty() {
+        None
+    } else {
+        Some(base_url)
+    }
 }
 
 pub(super) fn request_model(
@@ -118,18 +102,11 @@ pub(super) fn request_model(
     model: &ModelRequest,
     prompt: &str,
 ) -> Result<String, String> {
-    if is_codex_spark_request(model) {
-        return request_codex_account_spark(
-            app,
-            prompt,
-            prompt_contract::suggestion_system_instruction(),
-        )
-        .map_err(|err| format!("Codex Spark 请求失败：{err}"));
-    }
+    let _ = app;
     let client = Client::builder()
-        .timeout(Duration::from_secs(12))
+        .timeout(Duration::from_secs(20))
         .build()
-        .map_err(|e| format!("HTTP 客户端构造失败：{e}"))?;
+        .map_err(|e| format!("HTTP client failed: {e}"))?;
     if model.backend.as_deref() == Some(BACKEND_CLAUDE) {
         request_anthropic(&client, model, prompt)
     } else {
@@ -153,25 +130,27 @@ fn request_openai_compatible(
                 { "role": "user", "content": prompt }
             ],
             "temperature": 0.2,
-            "max_tokens": 700
+            "max_tokens": 400
         }))
         .send()
-        .map_err(|e| format!("OpenAI 兼容请求失败：{e}"))?;
+        .map_err(|e| format!("suggestion request failed: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("OpenAI 兼容 HTTP {}", resp.status()));
+        return Err(format!("suggestion request HTTP {}", resp.status()));
     }
     let value = resp
         .json::<JsonValue>()
-        .map_err(|e| format!("OpenAI 响应解析失败：{e}"))?;
+        .map_err(|e| format!("suggestion response parse failed: {e}"))?;
     value
         .get("choices")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first())
+        .and_then(|value| value.as_array())
+        .and_then(|items| items.first())
         .and_then(|choice| choice.get("message"))
         .and_then(|message| message.get("content"))
-        .and_then(|v| v.as_str())
+        .and_then(|content| content.as_str())
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| "OpenAI 响应缺少 message.content".to_string())
+        .ok_or_else(|| "suggestion response missing content".to_string())
 }
 
 fn request_anthropic(
@@ -179,38 +158,41 @@ fn request_anthropic(
     model: &ModelRequest,
     prompt: &str,
 ) -> Result<String, String> {
-    let base = model.base_url.trim_end_matches('/');
-    let url = if base.ends_with("/v1") {
-        format!("{base}/messages")
-    } else {
-        format!("{base}/v1/messages")
-    };
+    let url = format!("{}/v1/messages", model.base_url.trim_end_matches('/'));
     let resp = client
         .post(&url)
         .header("x-api-key", &model.api_key)
         .header("anthropic-version", "2023-06-01")
         .json(&json!({
             "model": model.model,
-            "max_tokens": 700,
-            "temperature": 0.2,
+            "max_tokens": 400,
             "system": prompt_contract::suggestion_system_instruction(),
-            "messages": [{ "role": "user", "content": prompt }]
+            "messages": [
+                { "role": "user", "content": prompt }
+            ]
         }))
         .send()
-        .map_err(|e| format!("Anthropic 请求失败：{e}"))?;
+        .map_err(|e| format!("suggestion request failed: {e}"))?;
     if !resp.status().is_success() {
-        return Err(format!("Anthropic HTTP {}", resp.status()));
+        return Err(format!("suggestion request HTTP {}", resp.status()));
     }
     let value = resp
         .json::<JsonValue>()
-        .map_err(|e| format!("Anthropic 响应解析失败：{e}"))?;
+        .map_err(|e| format!("suggestion response parse failed: {e}"))?;
     value
         .get("content")
-        .and_then(|v| v.as_array())
-        .and_then(|arr| {
-            arr.iter()
-                .find_map(|item| item.get("text").and_then(|v| v.as_str()))
+        .and_then(|value| value.as_array())
+        .and_then(|items| {
+            items.iter().find_map(|item| {
+                if item.get("type").and_then(|v| v.as_str()) == Some("text") {
+                    item.get("text").and_then(|v| v.as_str())
+                } else {
+                    None
+                }
+            })
         })
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
         .map(str::to_string)
-        .ok_or_else(|| "Anthropic 响应缺少 text".to_string())
+        .ok_or_else(|| "suggestion response missing content".to_string())
 }

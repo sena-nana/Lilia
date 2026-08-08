@@ -537,41 +537,7 @@ impl SqliteProductStore {
         })
     }
 
-    pub fn record_legacy_session_provenance(
-        &self,
-        id: &str,
-        task_id: &TaskId,
-        legacy_backend: &str,
-        legacy_session_id: &str,
-        disposition: &str,
-        compat_until: Option<&str>,
-        notes: Option<&str>,
-    ) -> ProductResult<()> {
-        self.with_conn(|conn| {
-            conn.execute(
-                r#"INSERT INTO legacy_session_provenance
-                   (id, task_id, legacy_backend, legacy_session_id, disposition, compat_until, notes)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                   ON CONFLICT(task_id, legacy_backend) DO UPDATE SET
-                     legacy_session_id=excluded.legacy_session_id,
-                     disposition=excluded.disposition,
-                     compat_until=excluded.compat_until,
-                     notes=excluded.notes"#,
-                params![
-                    id,
-                    task_id.as_str(),
-                    legacy_backend,
-                    legacy_session_id,
-                    disposition,
-                    compat_until,
-                    notes,
-                ],
-            )
-            .map_err(db_err)?;
-            Ok(())
-        })
-    }
-
+    /// Read legacy session provenance rows (schema retained for existing product.db).
     pub fn list_legacy_session_provenance(&self) -> ProductResult<Vec<LegacySessionProvenance>> {
         self.with_conn(|conn| {
             let mut stmt = conn
@@ -599,90 +565,6 @@ impl SqliteProductStore {
                 out.push(row.map_err(db_err)?);
             }
             Ok(out)
-        })
-    }
-
-    pub fn record_migration_run(
-        &self,
-        id: &str,
-        mode: &str,
-        legacy_db: &str,
-        product_db: &str,
-        status: &str,
-        started_at: &str,
-        finished_at: Option<&str>,
-        backup_path: Option<&str>,
-        report_json: &str,
-    ) -> ProductResult<()> {
-        self.with_conn(|conn| {
-            conn.execute(
-                r#"INSERT INTO migration_runs
-                   (id, mode, legacy_db, product_db, status, started_at, finished_at, backup_path, report_json)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-                   ON CONFLICT(id) DO UPDATE SET
-                     status=excluded.status,
-                     finished_at=excluded.finished_at,
-                     backup_path=excluded.backup_path,
-                     report_json=excluded.report_json"#,
-                params![
-                    id,
-                    mode,
-                    legacy_db,
-                    product_db,
-                    status,
-                    started_at,
-                    finished_at,
-                    backup_path,
-                    report_json,
-                ],
-            )
-            .map_err(db_err)?;
-            Ok(())
-        })
-    }
-
-    pub fn latest_migration_run(&self) -> ProductResult<Option<MigrationRunRecord>> {
-        self.with_conn(|conn| {
-            conn.query_row(
-                r#"SELECT id, mode, legacy_db, product_db, status, started_at, finished_at, backup_path, report_json
-                   FROM migration_runs
-                   ORDER BY started_at DESC
-                   LIMIT 1"#,
-                [],
-                |row| {
-                    Ok(MigrationRunRecord {
-                        id: row.get(0)?,
-                        mode: row.get(1)?,
-                        legacy_db: row.get(2)?,
-                        product_db: row.get(3)?,
-                        status: row.get(4)?,
-                        started_at: row.get(5)?,
-                        finished_at: row.get(6)?,
-                        backup_path: row.get(7)?,
-                        report_json: row.get(8)?,
-                    })
-                },
-            )
-            .optional()
-            .map_err(db_err)
-        })
-    }
-
-    /// Wipe product domain tables (used by rollback after restore from backup file).
-    pub fn clear_all_product_rows(&self) -> ProductResult<()> {
-        self.with_conn(|conn| {
-            conn.execute_batch(
-                "DELETE FROM agent_session_bindings;\
-                 DELETE FROM task_dependencies;\
-                 DELETE FROM legacy_session_provenance;\
-                 DELETE FROM product_command_results;\
-                 DELETE FROM product_events;\
-                 DELETE FROM product_entities;\
-                 DELETE FROM tasks;\
-                 DELETE FROM projects;",
-            )
-            .map_err(db_err)?;
-            Ok(())
         })
     }
 }
@@ -1031,19 +913,6 @@ pub struct LegacySessionProvenance {
     pub disposition: String,
     pub compat_until: Option<String>,
     pub notes: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct MigrationRunRecord {
-    pub id: String,
-    pub mode: String,
-    pub legacy_db: String,
-    pub product_db: String,
-    pub status: String,
-    pub started_at: String,
-    pub finished_at: Option<String>,
-    pub backup_path: Option<String>,
-    pub report_json: String,
 }
 
 fn load_command_result_on(

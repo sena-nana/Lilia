@@ -71,6 +71,8 @@ export const ASK_USER_MULTI_SELECT_MODE: "multi";
 export const MAX_ASK_USER_TOOL_QUESTIONS: number;
 export const MIN_ASK_USER_TOOL_OPTIONS: number;
 export const MAX_ASK_USER_TOOL_OPTIONS: number;
+export const MAX_REQUEST_USER_INPUT_OPTIONS: number;
+/** @deprecated Use MAX_REQUEST_USER_INPUT_OPTIONS. */
 export const MAX_CODEX_REQUEST_USER_INPUT_OPTIONS: number;
 export const MAX_ASK_USER_HEADER_TEXT: number;
 export const MAX_ASK_USER_QUESTION_TEXT: number;

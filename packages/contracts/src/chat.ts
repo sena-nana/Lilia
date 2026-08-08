@@ -265,20 +265,27 @@ export function createChatBackendRecord<T>(
   ) as Record<ChatBackendKind, T>;
 }
 
+function resolveKnownBackend(backend: string): ChatBackendKind {
+  if ((CHAT_BACKENDS as readonly string[]).includes(backend)) {
+    return backend as ChatBackendKind;
+  }
+  return DEFAULT_CHAT_BACKEND;
+}
+
 export function defaultModelForBackend(backend: ChatBackendKind): string {
-  return DEFAULT_MODEL_BY_BACKEND[backend];
+  return DEFAULT_MODEL_BY_BACKEND[resolveKnownBackend(backend)];
 }
 
 export function chatBackendLabel(backend: ChatBackendKind): string {
-  return CHAT_BACKEND_LABELS[backend];
+  return CHAT_BACKEND_LABELS[resolveKnownBackend(backend)] ?? String(backend);
 }
 
 export function modelOptionsForBackend(backend: ChatBackendKind): readonly ChatModelOption[] {
-  return MODEL_OPTIONS_BY_BACKEND[backend];
+  return MODEL_OPTIONS_BY_BACKEND[resolveKnownBackend(backend)] ?? [];
 }
 
 export function allowedModelPrefixesForBackend(backend: ChatBackendKind): readonly string[] {
-  return ALLOWED_MODEL_PREFIXES_BY_BACKEND[backend];
+  return ALLOWED_MODEL_PREFIXES_BY_BACKEND[resolveKnownBackend(backend)] ?? [];
 }
 
 export function modelBelongsToBackend(backend: ChatBackendKind, model: string): boolean {
@@ -291,7 +298,7 @@ export function modelBelongsToBackend(backend: ChatBackendKind, model: string): 
 }
 
 export function reasoningEffortsForBackend(backend: ChatBackendKind): readonly ReasoningEffort[] {
-  return BACKEND_REASONING_EFFORTS[backend];
+  return BACKEND_REASONING_EFFORTS[resolveKnownBackend(backend)] ?? REASONING_EFFORTS;
 }
 
 export type ChatRole = "user" | "assistant" | "system";
@@ -1241,14 +1248,6 @@ export function normalizeReasoningEffort(value: unknown): ReasoningEffort | null
 }
 
 export function normalizeReasoningEffortForBackend(
-  backend: "codex",
-  value: unknown,
-): Exclude<ReasoningEffort, "max"> | null;
-export function normalizeReasoningEffortForBackend(
-  backend: ChatBackendKind,
-  value: unknown,
-): ReasoningEffort | null;
-export function normalizeReasoningEffortForBackend(
   backend: ChatBackendKind,
   value: unknown,
 ): ReasoningEffort | null {
@@ -1302,28 +1301,18 @@ export const autoTierForRuntimeCommandType = autoTierForRuntimeCommandTypeImpl;
 export const autoRuntimeCommandSignalLabel = autoRuntimeCommandSignalLabelImpl;
 export const autoContextThresholdsForScale = autoContextThresholdsForScaleImpl;
 
+/** Anthropic-compatible thinking config (LLM provider concept, not a chat backend). */
 export type ClaudeThinkingConfig =
   | { type: "adaptive" }
   | { type: "enabled"; budgetTokens: number }
   | { type: "disabled" };
 
-export interface ProviderRuntimeOptionsCodex {
-  profile?: string;
-  model?: string | null;
-  reasoningEffort?: Exclude<ReasoningEffort, "max">;
-  runtimeWorkspaceRoots?: string[];
-  additionalContext?: string | null;
-  persistExtendedHistory?: boolean;
-  initialTurnsPage?: Record<string, unknown> | null;
-  excludeTurns?: string[];
-  environments?: unknown[];
-  experimentalRawEvents?: boolean;
-  responsesApiClientMetadata?: Record<string, unknown>;
-}
+export type ThinkingConfig = ClaudeThinkingConfig;
 
-export interface ProviderRuntimeOptionsClaude {
+export interface ProviderRuntimeOptionsNative {
+  model?: string | null;
   reasoningEffort?: ReasoningEffort;
-  thinking?: ClaudeThinkingConfig;
+  thinking?: ThinkingConfig;
   allowedTools?: string[];
   disallowedTools?: string[];
   additionalDirectories?: string[];
@@ -1345,7 +1334,20 @@ export interface ProviderRuntimeOptionsClaude {
   sessionId?: string;
   abortAfterMs?: number;
   sessionStore?: Record<string, unknown>;
+  runtimeWorkspaceRoots?: string[];
+  excludeTurns?: string[];
+  environments?: unknown[];
+  experimentalRawEvents?: boolean;
+  responsesApiClientMetadata?: Record<string, unknown>;
+  profile?: string;
+  persistExtendedHistory?: boolean;
+  initialTurnsPage?: Record<string, unknown> | null;
 }
+
+/** @deprecated Use ProviderRuntimeOptionsNative. */
+export type ProviderRuntimeOptionsCodex = ProviderRuntimeOptionsNative;
+/** @deprecated Use ProviderRuntimeOptionsNative. */
+export type ProviderRuntimeOptionsClaude = ProviderRuntimeOptionsNative;
 
 export interface ExperimentalProviderOptions {
   provider: ChatBackendKind;
@@ -1357,22 +1359,19 @@ export interface ExperimentalProviderOptions {
 export interface ProviderRuntimeOptions {
   common?: LiliaRuntimeSettingsCommon;
   provider?: {
-    codex?: ProviderRuntimeOptionsCodex;
-    claude?: ProviderRuntimeOptionsClaude;
+    "native-agentkit"?: ProviderRuntimeOptionsNative;
   };
   experimentalProviderOptions?: ExperimentalProviderOptions[];
 }
 
 export function runtimeOptionsModelForBackend(
-  backend: ChatBackendKind,
+  _backend: ChatBackendKind,
   runtimeOptions: ProviderRuntimeOptions | null | undefined,
 ): string | null {
   const commonModel = runtimeOptions?.common?.model?.trim();
   if (commonModel) return commonModel;
-  if (backend === "codex") {
-    const codexModel = runtimeOptions?.provider?.codex?.model?.trim();
-    if (codexModel) return codexModel;
-  }
+  const nativeModel = runtimeOptions?.provider?.["native-agentkit"]?.model?.trim();
+  if (nativeModel) return nativeModel;
   return null;
 }
 
@@ -1380,10 +1379,9 @@ export function runtimeOptionsReasoningEffortForBackend(
   backend: ChatBackendKind,
   runtimeOptions: ProviderRuntimeOptions | null | undefined,
 ): ReasoningEffort | null {
-  const provider = runtimeOptions?.provider;
-  const providerEffort = backend === "codex"
-    ? normalizeReasoningEffort(provider?.codex?.reasoningEffort)
-    : normalizeReasoningEffort(provider?.claude?.reasoningEffort);
+  const providerEffort = normalizeReasoningEffort(
+    runtimeOptions?.provider?.["native-agentkit"]?.reasoningEffort,
+  );
   return normalizeReasoningEffortForBackend(
     backend,
     providerEffort ?? runtimeOptions?.common?.reasoningEffort,
@@ -1397,39 +1395,27 @@ export function mergeModelSelectionRuntimeOptions(
   effort: ReasoningEffort | null,
   explanation: ModelSelectionExplanation,
 ): ProviderRuntimeOptions {
-  const next: ProviderRuntimeOptions = {
+  const nextEffort = normalizeReasoningEffortForBackend(backend, effort);
+  return {
     ...(runtimeOptions ?? {}),
     common: {
       ...(runtimeOptions?.common ?? {}),
       model,
-      reasoningEffort: effort ?? undefined,
+      reasoningEffort: nextEffort ?? undefined,
       modelSelection: explanation,
     },
     provider: {
       ...(runtimeOptions?.provider ?? {}),
+      "native-agentkit": {
+        ...(runtimeOptions?.provider?.["native-agentkit"] ?? {}),
+        model,
+        reasoningEffort: nextEffort ?? undefined,
+        thinking:
+          runtimeOptions?.provider?.["native-agentkit"]?.thinking ??
+          (nextEffort ? { type: "adaptive" } : undefined),
+      },
     },
   };
-  if (backend === "codex") {
-    const codexEffort = normalizeReasoningEffortForBackend(backend, effort);
-    next.provider = {
-      ...next.provider,
-      codex: {
-        ...(runtimeOptions?.provider?.codex ?? {}),
-        model,
-        reasoningEffort: codexEffort ?? undefined,
-      },
-    };
-  } else {
-    next.provider = {
-      ...next.provider,
-      claude: {
-        ...(runtimeOptions?.provider?.claude ?? {}),
-        reasoningEffort: effort ?? undefined,
-        thinking: runtimeOptions?.provider?.claude?.thinking ?? (effort ? { type: "adaptive" } : undefined),
-      },
-    };
-  }
-  return next;
 }
 
 export {
@@ -1762,7 +1748,10 @@ export interface ChatModelOption {
 }
 
 export type ToolConsentDecision = "allow" | "deny";
-export type CodexToolConsentDecision = "accept" | "decline" | "cancel" | (string & {});
+/** Provider-neutral extended tool consent decisions (Mutsuki / Lilia interaction). */
+export type ToolConsentDecisionKind = "accept" | "decline" | "cancel" | (string & {});
+/** @deprecated Use ToolConsentDecisionKind. */
+export type CodexToolConsentDecision = ToolConsentDecisionKind;
 export type ToolConsentUpdatedInput = Record<string, unknown>;
 
 export interface ToolConsentRequest {
@@ -1779,7 +1768,7 @@ export interface ToolConsentRequest {
   decisionReason: string | null;
   toolUseId: string | null;
   additionalPermissions?: unknown;
-  availableDecisions?: CodexToolConsentDecision[];
+  availableDecisions?: ToolConsentDecisionKind[];
   proposedExecpolicyAmendment?: unknown;
   proposedNetworkPolicyAmendments?: unknown;
   networkApprovalContext?: unknown;
@@ -1794,7 +1783,10 @@ export interface ToolConsentResponsePayload {
   decision: ToolConsentDecision;
   message: string | null;
   updatedInput?: ToolConsentUpdatedInput;
-  codexDecision?: CodexToolConsentDecision;
+  /** Extended decision for native tool consent round-trip. */
+  decisionKind?: ToolConsentDecisionKind;
+  /** @deprecated Use decisionKind. */
+  codexDecision?: ToolConsentDecisionKind;
 }
 
 function stringValue(value: unknown): string {
@@ -1835,15 +1827,8 @@ export function readEditableToolConsentCommand(
   request: ToolConsentRequest | null | undefined,
 ): string {
   if (!request) return "";
-  if (request.toolName === "Bash" && typeof request.input.command === "string") {
+  if (typeof request.input.command === "string") {
     return request.input.command;
-  }
-  if (request.backend !== "codex") return "";
-  if (
-    request.toolName !== "item/commandExecution/requestApproval" &&
-    request.toolName !== "commandExecution"
-  ) {
-    return "";
   }
   return stringifyCodexToolCommand(
     request.input.parsedCmd ||

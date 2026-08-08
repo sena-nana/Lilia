@@ -11,6 +11,7 @@
   "maxAskUserToolQuestions": 4,
   "minAskUserToolOptions": 2,
   "maxAskUserToolOptions": 4,
+  "maxRequestUserInputOptions": 10,
   "maxCodexRequestUserInputOptions": 10,
   "maxAskUserHeaderText": 12,
   "maxAskUserQuestionText": 1200,

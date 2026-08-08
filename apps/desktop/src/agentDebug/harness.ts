@@ -120,14 +120,17 @@ async function recordBackendLog(entry: AgentDebugLogEntry): Promise<void> {
   }
 }
 
+function safeCssEscape(value: string): string {
+  // jsdom's CSS.escape is not a free function; always use a local escaper.
+  return value.replace(/["\\]/g, "\\$&");
+}
+
 function selectorFor(id: string): string {
-  const escape = globalThis.CSS?.escape ?? ((value: string) => value.replace(/["\\]/g, "\\$&"));
-  return `[data-agent-id="${escape(id)}"]`;
+  return `[data-agent-id="${safeCssEscape(id)}"]`;
 }
 
 function cssEscape(value: string): string {
-  const escape = globalThis.CSS?.escape ?? ((item: string) => item.replace(/["\\]/g, "\\$&"));
-  return escape(value);
+  return safeCssEscape(value);
 }
 
 function readableText(element: HTMLElement): string {

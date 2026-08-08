@@ -1,7 +1,6 @@
 {
   "hookBackends": [
-    "claude",
-    "codex"
+    "native-agentkit"
   ],
   "hookScopes": [
     "managed",
@@ -12,9 +11,9 @@
     "system"
   ],
   "hookSourceFormats": [
-    "claude_settings_json",
-    "codex_hooks_json",
-    "codex_config_toml",
+    "settings_json",
+    "hooks_json",
+    "config_toml",
     "managed_settings",
     "requirements_toml",
     "plugin_manifest"
@@ -34,9 +33,9 @@
     "system": "System"
   },
   "hookSourceFormatLabels": {
-    "claude_settings_json": "settings.json",
-    "codex_hooks_json": "hooks.json",
-    "codex_config_toml": "config.toml [hooks]",
+    "settings_json": "settings.json",
+    "hooks_json": "hooks.json",
+    "config_toml": "config.toml [hooks]",
     "managed_settings": "managed settings",
     "requirements_toml": "requirements.toml",
     "plugin_manifest": "plugin.json"

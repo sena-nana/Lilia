@@ -22,14 +22,14 @@
     "task",
     "github",
     "local-git",
-    "codex-thread",
-    "claude"
+    "session-thread",
+    "provider"
   ],
   "suggestionLoadingSourceLabels": {
     "task": "历史任务",
     "github": "GitHub 活动",
-    "codex-thread": "Codex thread",
-    "claude": "Claude 建议"
+    "session-thread": "会话线程",
+    "provider": "Provider 建议"
   },
   "suggestionLocalGitLoadingLabels": {
     "recentCommitsAndChangedFiles": "本地提交和未提交变更",

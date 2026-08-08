@@ -160,26 +160,26 @@ describe("TaskDetail conversation suggestions", () => {
     expect(getComposerTextbox(view)).toHaveTextContent("请继续跟进 PR #12 的建议来源展示。");
   });
 
-  it("Codex thread 建议会展示 thread 来源且点击填入 prompt", async () => {
+  it("会话线程建议会展示 thread 来源且点击填入 prompt", async () => {
     setMockConversationSuggestions([
       {
-        id: "sg-codex-thread",
+        id: "sg-session-thread",
         projectId: "lilia",
         taskIds: [],
-        source: "codex-thread",
+        source: "session-thread",
         githubActivities: [],
         localGitContexts: [],
         codexThreads: [
           {
             id: "thread-1",
-            title: "补齐 Codex 建议来源",
+            title: "补齐会话建议来源",
             updatedAt: Date.now(),
             preview: "继续扩展 conversation suggestions",
           },
         ],
-        summary: "继续 Codex thread",
-        reason: "最近 Codex thread 还有可继续处理的上下文。",
-        prompt: "请基于 Codex thread 继续补齐 conversation suggestions。",
+        summary: "继续会话线程",
+        reason: "最近会话线程还有可继续处理的上下文。",
+        prompt: "请基于会话线程继续补齐 conversation suggestions。",
         generatedAt: Date.now(),
       },
     ]);
@@ -187,13 +187,13 @@ describe("TaskDetail conversation suggestions", () => {
     const view = await renderProjectDraftTaskDetail(draft.id);
 
     await waitFor(() => {
-      expect(view.getByText("继续 Codex thread")).toBeInTheDocument();
-      expect(view.getByText("Codex thread · 补齐 Codex 建议来源")).toBeInTheDocument();
+      expect(view.getByText("继续会话线程")).toBeInTheDocument();
+      expect(view.getByText("会话线程 · 补齐会话建议来源")).toBeInTheDocument();
     });
 
-    await fireEvent.click(view.getByText("继续 Codex thread"));
+    await fireEvent.click(view.getByText("继续会话线程"));
 
-    expect(getComposerTextbox(view)).toHaveTextContent("请基于 Codex thread 继续补齐 conversation suggestions。");
+    expect(getComposerTextbox(view)).toHaveTextContent("请基于会话线程继续补齐 conversation suggestions。");
   });
 
   it("点击来点灵感会强制刷新新对话建议并显示来源加载文案", async () => {

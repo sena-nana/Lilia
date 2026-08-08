@@ -1,17 +1,23 @@
+//! Optional Node JSONL process session registry.
+//!
+//! Production Native AgentKit turns do not spawn Node children. These helpers
+//! only no-op when no process session is registered (legacy leftover sessions
+//! or unit tests that start a child).
+
 use std::collections::HashMap;
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use std::io::{BufRead, BufReader, Write};
-use std::io::Read;
 use std::process::{Child, ChildStdin};
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use std::process::ChildStdout;
 use std::sync::{mpsc, Arc, Mutex};
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use std::thread;
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 use serde_json::Value as JsonValue;
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) enum JsonlProcessPoll {
     Pending,
@@ -19,25 +25,21 @@ pub(crate) enum JsonlProcessPoll {
     Exited(JsonlProcessExit),
 }
 
+#[cfg(test)]
 #[derive(Debug)]
 pub(crate) struct JsonlProcessExit {
     pub(crate) success: bool,
     pub(crate) stderr_text: String,
 }
 
-#[cfg(feature = "legacy-runner")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum JsonlProcessStdinStatus {
-    Ready { bytes: usize },
-    Unavailable,
-    WriteFailed { bytes: usize },
-}
-
 struct JsonlProcessSession {
     child: Child,
+    #[cfg(test)]
     stdout_lines: Option<mpsc::Receiver<String>>,
+    #[cfg(test)]
     stdout_available: bool,
     stdin: Option<Arc<Mutex<ChildStdin>>>,
+    #[cfg(test)]
     stderr: Option<std::process::ChildStderr>,
     termination_requested: bool,
     finished: bool,
@@ -45,7 +47,7 @@ struct JsonlProcessSession {
 
 pub(crate) struct JsonlProcessRegistry {
     sessions: Mutex<HashMap<String, JsonlProcessSession>>,
-    #[cfg(any(feature = "legacy-runner", test))]
+    #[cfg(test)]
     next_id: Mutex<u64>,
 }
 
@@ -53,12 +55,12 @@ impl JsonlProcessRegistry {
     pub(crate) fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
-            #[cfg(any(feature = "legacy-runner", test))]
+            #[cfg(test)]
             next_id: Mutex::new(0),
         }
     }
 
-    #[cfg(any(feature = "legacy-runner", test))]
+    #[cfg(test)]
     pub(crate) fn start(
         &self,
         mut child: Child,
@@ -103,84 +105,6 @@ impl JsonlProcessRegistry {
             .and_then(|session| session.stdin.clone())
     }
 
-    pub(crate) fn take_stdin_handle(&self, session_id: &str) -> Option<Arc<Mutex<ChildStdin>>> {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get_mut(session_id)
-            .and_then(|session| session.stdin.take())
-    }
-
-    pub(crate) fn release_child_handle(&self, session_id: &str) {
-        let mut sessions = self.sessions.lock().unwrap();
-        let Some(session) = sessions.get_mut(session_id) else {
-            return;
-        };
-        if session.finished {
-            return;
-        }
-        if matches!(session.child.try_wait(), Ok(None)) {
-            let _ = session.child.kill();
-        }
-        let _ = session.child.wait();
-        session.finished = true;
-    }
-
-    #[cfg(feature = "legacy-runner")]
-    pub(crate) fn stdin_status(&self, session_id: &str) -> Option<JsonlProcessStdinStatus> {
-        let handle = self.stdin_handle(session_id)?;
-        let status = match handle.lock() {
-            Ok(mut stdin) => match stdin.flush() {
-                Ok(()) => Some(JsonlProcessStdinStatus::Ready { bytes: 0 }),
-                Err(_) => Some(JsonlProcessStdinStatus::WriteFailed { bytes: 0 }),
-            },
-            Err(_) => Some(JsonlProcessStdinStatus::Unavailable),
-        };
-        status
-    }
-
-    pub(crate) fn stdout_available(&self, session_id: &str) -> bool {
-        self.sessions
-            .lock()
-            .unwrap()
-            .get(session_id)
-            .is_some_and(|session| session.stdout_available)
-    }
-
-    pub(crate) fn poll(&self, session_id: &str) -> Option<JsonlProcessPoll> {
-        let mut sessions = self.sessions.lock().unwrap();
-        let session = sessions.get_mut(session_id)?;
-        if session.finished {
-            return Some(JsonlProcessPoll::Pending);
-        }
-        if let Some(stdout_lines) = session.stdout_lines.as_ref() {
-            match stdout_lines.try_recv() {
-                Ok(line) => return Some(JsonlProcessPoll::StdoutLine(line)),
-                Err(mpsc::TryRecvError::Empty) => {}
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    session.stdout_lines = None;
-                }
-            }
-        }
-        match session.child.try_wait() {
-            Ok(Some(status)) => {
-                session.finished = true;
-                Some(JsonlProcessPoll::Exited(JsonlProcessExit {
-                    success: status.success(),
-                    stderr_text: read_stderr(session.stderr.take()),
-                }))
-            }
-            Ok(None) => Some(JsonlProcessPoll::Pending),
-            Err(_) => {
-                session.finished = true;
-                Some(JsonlProcessPoll::Exited(JsonlProcessExit {
-                    success: false,
-                    stderr_text: "failed to poll child process".to_string(),
-                }))
-            }
-        }
-    }
-
     pub(crate) fn terminate(&self, session_id: &str) -> Result<bool, String> {
         let mut sessions = self.sessions.lock().unwrap();
         let Some(session) = sessions.get_mut(session_id) else {
@@ -216,6 +140,41 @@ impl JsonlProcessRegistry {
     pub(crate) fn remove(&self, session_id: &str) -> Option<()> {
         self.sessions.lock().unwrap().remove(session_id).map(|_| ())
     }
+
+    #[cfg(test)]
+    pub(crate) fn poll(&self, session_id: &str) -> Option<JsonlProcessPoll> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let session = sessions.get_mut(session_id)?;
+        if session.finished {
+            return Some(JsonlProcessPoll::Pending);
+        }
+        if let Some(stdout_lines) = session.stdout_lines.as_ref() {
+            match stdout_lines.try_recv() {
+                Ok(line) => return Some(JsonlProcessPoll::StdoutLine(line)),
+                Err(mpsc::TryRecvError::Empty) => {}
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    session.stdout_lines = None;
+                }
+            }
+        }
+        match session.child.try_wait() {
+            Ok(Some(status)) => {
+                session.finished = true;
+                Some(JsonlProcessPoll::Exited(JsonlProcessExit {
+                    success: status.success(),
+                    stderr_text: read_stderr(session.stderr.take()),
+                }))
+            }
+            Ok(None) => Some(JsonlProcessPoll::Pending),
+            Err(_) => {
+                session.finished = true;
+                Some(JsonlProcessPoll::Exited(JsonlProcessExit {
+                    success: false,
+                    stderr_text: "failed to poll child process".to_string(),
+                }))
+            }
+        }
+    }
 }
 
 impl Default for JsonlProcessRegistry {
@@ -224,7 +183,9 @@ impl Default for JsonlProcessRegistry {
     }
 }
 
+#[cfg(test)]
 fn read_stderr(stderr: Option<std::process::ChildStderr>) -> String {
+    use std::io::Read;
     let Some(mut stderr) = stderr else {
         return String::new();
     };
@@ -233,7 +194,7 @@ fn read_stderr(stderr: Option<std::process::ChildStderr>) -> String {
     text
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 fn spawn_stdout_reader(stdout: ChildStdout) -> mpsc::Receiver<String> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
@@ -256,7 +217,6 @@ mod tests {
     use super::{JsonlProcessPoll, JsonlProcessRegistry};
     use serde_json::json;
     use std::process::{Command, Stdio};
-    use std::sync::Arc;
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -297,39 +257,6 @@ mod tests {
 
         wait_for_exit(&registry, &session_id);
 
-        registry.remove(&session_id);
-    }
-
-    #[test]
-    fn poll_silent_child_returns_pending_without_blocking() {
-        let registry = JsonlProcessRegistry::new();
-        let session_id = start_silent_child(&registry);
-
-        let started = Instant::now();
-        let poll = registry.poll(&session_id);
-
-        assert!(matches!(poll, Some(JsonlProcessPoll::Pending)));
-        assert!(started.elapsed() < Duration::from_millis(100));
-        assert!(registry.terminate(&session_id).unwrap());
-        wait_for_exit(&registry, &session_id);
-        registry.remove(&session_id);
-    }
-
-    #[test]
-    fn terminate_is_not_blocked_by_polling_silent_child() {
-        let registry = Arc::new(JsonlProcessRegistry::new());
-        let session_id = start_silent_child(&registry);
-
-        let poll_registry = Arc::clone(&registry);
-        let poll_session_id = session_id.clone();
-        let poll_thread = thread::spawn(move || poll_registry.poll(&poll_session_id));
-        let poll_result = poll_thread.join().unwrap();
-        assert!(matches!(poll_result, Some(JsonlProcessPoll::Pending)));
-
-        let started = Instant::now();
-        assert!(registry.terminate(&session_id).unwrap());
-        assert!(started.elapsed() < Duration::from_millis(100));
-        wait_for_exit(&registry, &session_id);
         registry.remove(&session_id);
     }
 }

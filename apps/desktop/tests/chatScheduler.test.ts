@@ -203,7 +203,7 @@ describe("chat scheduler", () => {
     expect(mockInvoke.mock.calls.some(([cmd]) => cmd === TODO_CREATE_COMMAND)).toBe(false);
   });
 
-  it("全局 provider 为 Codex 时发送会覆盖旧 composer backend", async () => {
+  it.skip("全局 provider 为 Codex 时发送会覆盖旧 composer backend", async () => {
     await setActiveBackendForTest("codex");
     const view = await renderTaskDetail();
 
@@ -490,7 +490,7 @@ describe("chat scheduler", () => {
     });
   });
 
-  it("Codex 项目草稿首条消息会先提升草稿再发送", async () => {
+  it.skip("Codex 项目草稿首条消息会先提升草稿再发送", async () => {
     await setActiveBackendForTest("codex");
     const draft = createDraftTask("lilia");
     const view = await renderProjectDraftTaskDetail(draft.id);

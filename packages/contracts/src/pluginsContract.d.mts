@@ -1,5 +1,5 @@
 type PluginScope = "user" | "project";
-type PluginBackendKind = "claude" | "codex";
+type PluginBackendKind = "native-agentkit";
 type PluginKnownMcpTransport = "stdio" | "http" | "oauth" | "unknown";
 
 export const PLUGINS_CONTRACT: Record<string, unknown>;

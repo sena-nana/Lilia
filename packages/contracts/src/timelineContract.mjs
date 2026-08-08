@@ -30,7 +30,9 @@ export const TIMELINE_DISPLAY_ASK_USER_QUESTION_PREVIEW_TEXT_LIMIT =
   manifest.displayTextLimits.askUserQuestionPreview;
 export const TIMELINE_DISPLAY_ALLOWED_PROMPT_TEXT_LIMIT =
   manifest.displayTextLimits.allowedPrompt;
-export const TIMELINE_DISPLAY_CLAUDE_PLAN_TEXT_LIMIT = manifest.displayTextLimits.claudePlan;
+export const TIMELINE_DISPLAY_PLAN_TEXT_LIMIT = manifest.displayTextLimits.planText;
+/** @deprecated Use TIMELINE_DISPLAY_PLAN_TEXT_LIMIT. */
+export const TIMELINE_DISPLAY_CLAUDE_PLAN_TEXT_LIMIT = TIMELINE_DISPLAY_PLAN_TEXT_LIMIT;
 export const TIMELINE_DISPLAY_COMMAND_INLINE_THRESHOLD =
   manifest.displayTextLimits.commandInlineThreshold;
 export const TIMELINE_DISPLAY_FILE_CHANGE_PATH_TEXT_LIMIT =

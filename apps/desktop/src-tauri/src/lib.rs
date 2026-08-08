@@ -3,6 +3,7 @@ use tauri_plugin_global_shortcut::ShortcutState;
 
 mod agent_debug;
 pub mod agent_events;
+#[cfg(test)]
 mod agent_extensions;
 mod agent_interaction_contract;
 pub mod agent_timeline;
@@ -13,17 +14,12 @@ mod app_events_contract;
 mod automation;
 mod chat;
 mod chat_backends_contract;
-mod claude_history;
 mod cli_project;
-mod codex_history;
 mod contract_manifest;
 mod conversation_suggestions;
 mod github;
 #[cfg(test)]
 mod github_command_contract;
-mod history_import;
-#[cfg(test)]
-mod history_import_contract;
 mod lilia_iab;
 mod memory;
 #[cfg(test)]
@@ -32,6 +28,7 @@ mod memory_command_contract;
 mod milestone_command_contract;
 mod native_agent;
 mod native_agent_contract;
+mod native_projection_hooks;
 mod native_shared_services;
 mod plugins;
 #[cfg(test)]
@@ -76,9 +73,9 @@ pub(crate) const MAIN_WINDOW_LABEL: &str = "main";
 // 露出 WebView 之外的默认白底。
 pub(crate) const BG: Color = Color(0x18, 0x18, 0x18, 0xFF);
 
+/// Legacy brand labels retained only for reading old local rows / fixtures.
 pub(crate) const BACKEND_CLAUDE: &str = "claude";
 pub(crate) const BACKEND_CODEX: &str = "codex";
-pub(crate) const MIN_CODEX_APP_SERVER_VERSION: (u32, u32, u32) = (0, 136, 0);
 
 #[tauri::command]
 fn ping() -> &'static str {
@@ -112,17 +109,15 @@ fn restore_runtime_sessions_on_startup<R: Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(chat_store) = app.try_state::<chat::state::ChatStore>() {
         if let Some(lilia_store) = app.try_state::<store::LiliaStore>() {
             if let Ok(conn) = lilia_store.conn() {
+                // Legacy Node agent-runner sessions cannot be resumed; Native AgentKit only.
                 let restored = chat::state::restore_active_runtime_sessions(&conn, &chat_store);
                 for persisted in restored {
-                    let app_handle = app.clone();
-                    std::thread::spawn(move || {
-                        if let Err(err) = chat::runner::resume_persisted_node_agent_runner(
-                            app_handle.clone(),
-                            persisted.clone(),
-                        ) {
-                            handle_runtime_restore_failure(&app_handle, &persisted, "builtin", err);
-                        }
-                    });
+                    handle_runtime_restore_failure(
+                        app,
+                        &persisted,
+                        "legacy-node",
+                        "Node agent-runner 已移除；仅支持 Native AgentKit".to_string(),
+                    );
                 }
                 if let Err(err) = automation::recover_abandoned_agent_runs(app, &chat_store) {
                     eprintln!("[automation] recover abandoned agent runs failed: {err}");
@@ -226,17 +221,6 @@ pub fn run() {
             let home = store::resolve_lilia_home();
             let legacy_store = store::LiliaStore::new(&home)
                 .map_err(|err| std::io::Error::other(format!("legacy store init failed: {err}")))?;
-            let migration = lilia_storage::LegacyMigrationTool::from_paths(
-                lilia_storage::LiliaDataPaths::from_home(home.clone()),
-            );
-            if let Some(report) = migration.apply_if_needed().map_err(|err| {
-                std::io::Error::other(format!("product core migration failed: {err}"))
-            })? {
-                eprintln!(
-                    "[product-core] migrated projects={} tasks={} sessions={}",
-                    report.projects_seen, report.tasks_seen, report.agentkit_bindings_planned
-                );
-            }
             let product_core = product_core::EmbeddedProductCore::open(&home)
                 .map_err(|err| std::io::Error::other(format!("product core init failed: {err}")))?;
             app.manage(product_core);
@@ -291,11 +275,6 @@ pub fn run() {
             chat::commands::chat_get_runtime_snapshot,
             chat::commands::chat_ack_restored_rollback,
             chat::commands::chat_set_composer_state,
-            history_import::history_import_search,
-            history_import::history_import_preview,
-            history_import::history_import_attach,
-            history_import::history_import_runtime_states,
-            history_import::history_import_clean_background_terminals,
             lilia_iab::lilia_iab_open,
             lilia_iab::lilia_iab_submit,
             memory::memory_list,
@@ -312,9 +291,6 @@ pub fn run() {
             provider::provider_set_config,
             provider::provider_get_active_backend,
             provider::provider_set_active_backend,
-            provider::provider_codex_app_server_check_update,
-            provider::provider_codex_app_server_install_update,
-            provider::provider_codex_account_start_login,
             provider::assistant_ai_get_config,
             provider::assistant_ai_set_config,
             provider::assistant_ai_fetch_models,
@@ -420,8 +396,6 @@ pub fn run() {
             agent_timeline::agent_timeline_list,
             agent_timeline::agent_timeline_clear_task,
             quota_usage::quota_usage_get_stats,
-            quota_usage::quota_usage_get_codex_account_status,
-            quota_usage::quota_usage_consume_codex_rate_limit_reset_credit,
             remote_control::remote_control_status,
             remote_control::remote_control_set_host_enabled,
             remote_control::remote_control_set_pc_name,

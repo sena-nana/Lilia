@@ -1,8 +1,4 @@
 use super::cache::{build_cache_key, cache_entry_is_valid, SuggestionCacheEntry};
-use super::claude_native::{
-    filter_claude_native_suggestions, should_use_claude_native_suggestions,
-    ClaudeNativeSuggestionCache,
-};
 use super::generation::{
     build_generation_prompt, materialize_items, parse_model_suggestions, RawSuggestion,
 };
@@ -487,7 +483,7 @@ fn source_probe_reports_codex_thread_source() {
 
     let probe = summarize_scope_sources(&scope);
 
-    assert_eq!(probe.sources, vec![SuggestionItemSource::CodexThread]);
+    assert_eq!(probe.sources, vec![SuggestionItemSource::SessionThread]);
     assert!(probe.local_git.is_none());
 }
 
@@ -702,71 +698,11 @@ fn materialize_allows_codex_thread_only_suggestions() {
     let items = materialize_items(raw, &scope);
 
     assert_eq!(items.len(), 1);
-    assert_eq!(items[0].source, SuggestionItemSource::CodexThread);
+    assert_eq!(items[0].source, SuggestionItemSource::SessionThread);
     assert!(items[0].task_ids.is_empty());
     assert!(items[0].github_activities.is_empty());
     assert!(items[0].local_git_contexts.is_empty());
     assert_eq!(items[0].codex_threads[0].id, "thread-1");
-}
-
-#[test]
-fn claude_native_suggestions_are_project_scoped_and_ttl_limited() {
-    let now = 10_000;
-    let item = SuggestionItem {
-        id: "claude-suggestion-1".to_string(),
-        project_id: Some("p1".to_string()),
-        task_ids: vec!["task-1".to_string()],
-        source: SuggestionItemSource::Claude,
-        github_activities: Vec::new(),
-        local_git_contexts: Vec::new(),
-        codex_threads: Vec::new(),
-        summary: "继续检查建议展示".to_string(),
-        reason: "Claude 根据上一轮对话预测的下一条提示。".to_string(),
-        prompt: "请继续检查 Claude 原生建议展示。".to_string(),
-        generated_at: now,
-    };
-    let mismatched = SuggestionItem {
-        project_id: Some("p2".to_string()),
-        ..item.clone()
-    };
-    let mut cache = ClaudeNativeSuggestionCache::new();
-    cache.insert("p1".to_string(), item.clone());
-    cache.insert("p2".to_string(), mismatched);
-    cache.insert("mismatch".to_string(), item.clone());
-    cache.insert(
-        "old".to_string(),
-        SuggestionItem {
-            project_id: Some("old".to_string()),
-            generated_at: now - CACHE_TTL_MS - 1,
-            ..item.clone()
-        },
-    );
-
-    let items = filter_claude_native_suggestions(&cache, "p1", now).unwrap();
-    assert_eq!(items.len(), 1);
-    assert_eq!(items[0].source, SuggestionItemSource::Claude);
-    assert_eq!(items[0].prompt, "请继续检查 Claude 原生建议展示。");
-    assert!(filter_claude_native_suggestions(&cache, "mismatch", now).is_none());
-    assert!(filter_claude_native_suggestions(&cache, "old", now).is_none());
-}
-
-#[test]
-fn claude_native_suggestions_are_skipped_for_provider_source_or_force_refresh() {
-    for (source, force_refresh, expected) in [
-        (SuggestionSource::AssistantAi, None, true),
-        (SuggestionSource::AssistantAi, Some(true), false),
-        (SuggestionSource::Provider, None, false),
-        (SuggestionSource::Provider, Some(false), false),
-    ] {
-        let settings = SuggestionSettings {
-            enabled: true,
-            source,
-        };
-        assert_eq!(
-            should_use_claude_native_suggestions(&settings, force_refresh),
-            expected
-        );
-    }
 }
 
 #[test]

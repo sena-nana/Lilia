@@ -1,9 +1,3 @@
-import {
-  type ConnectionMode,
-  type CodexAccountQuotaStatus,
-} from "@lilia/contracts";
-import { createCodexQuotaUnavailableStatus } from "@lilia/contracts/liliaCodeCore.mjs";
-
 export function clampPercent(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, value));
@@ -72,21 +66,3 @@ export function quotaWindowLine(
   const base = `${quotaWindowShortLabel(window)} · ${quotaWindowLabel(window)}`;
   return suffix ? `${base} · ${suffix}` : base;
 }
-
-export function codexQuotaUnavailableStatus(
-  error: unknown,
-  connectionMode: ConnectionMode = "codex-account",
-): CodexAccountQuotaStatus {
-  return createCodexQuotaUnavailableStatus({ error, connectionMode });
-}
-
-export function codexAccountNeedsLogin(
-  status: CodexAccountQuotaStatus | null | undefined,
-  supportsRequiredProtocol = false,
-): boolean {
-  if (!status || status.available) return false;
-  const text = (status.error ?? "").toLowerCase();
-  if (!text.trim()) return supportsRequiredProtocol;
-  return /未登录|not logged|login|auth/.test(text);
-}
-

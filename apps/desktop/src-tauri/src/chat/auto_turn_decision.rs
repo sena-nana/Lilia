@@ -18,9 +18,8 @@ use crate::chat::types::{
 use crate::chat::workflow::{runtime_command_kind, workflow_kind};
 use crate::prompt_contract;
 use crate::provider::{
-    assistant_ai_secret, codex_account_spark_enabled, load_agent_interaction_settings,
-    load_assistant_ai_config, load_model_feature_settings, request_codex_account_spark,
-    AssistantAIConfig, AutoTurnDecisionSettings,
+    assistant_ai_secret, load_agent_interaction_settings, load_assistant_ai_config,
+    load_model_feature_settings, AssistantAIConfig, AutoTurnDecisionSettings,
 };
 use crate::store::LiliaStore;
 use crate::BACKEND_CODEX;
@@ -505,18 +504,9 @@ fn request_auto_turn_decision<R: Runtime>(
         runtime_command,
         context_usage.as_ref(),
     );
-    let text = if codex_account_spark_enabled(app) {
-        request_codex_account_spark(
-            app,
-            &prompt,
-            prompt_contract::auto_turn_decision_system_instruction(),
-        )
-        .map_err(|err| format!("辅助模型决策失败：{err}"))?
-    } else {
-        let model =
-            assistant_ai_model_request(app, load_model_feature_settings(app).auto_turn_decision)?;
-        request_openai_compatible(&model, &prompt)?
-    };
+    let model =
+        assistant_ai_model_request(app, load_model_feature_settings(app).auto_turn_decision)?;
+    let text = request_openai_compatible(&model, &prompt)?;
     let json_text = extract_json_object(&text)?;
     serde_json::from_str::<RawAutoTurnDecision>(&json_text)
         .map_err(|err| format!("辅助模型决策 JSON 解析失败：{err}"))

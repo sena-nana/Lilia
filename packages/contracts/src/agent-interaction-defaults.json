@@ -10,27 +10,10 @@
   },
   "mainAgentPromptMode": "conservative",
   "mainAgentCustomPrompt": "",
-  "codexProfile": {
-    "profile": "default",
-    "model": null,
-    "reasoningEffort": null,
-    "runtimeWorkspaceRoots": [],
-    "responsesApiClientMetadata": null,
-    "additionalContext": null,
-    "persistExtendedHistory": null,
-    "initialTurnsPage": null,
-    "excludeTurns": []
-  },
   "subagentMode": {
     "enabled": false,
-    "codex": {
-      "enabled": true
-    },
-    "claude": {
-      "enabled": true,
-      "forwardSubagentText": true,
-      "agentProgressSummaries": true
-    }
+    "forwardSubagentText": true,
+    "agentProgressSummaries": true
   },
   "autoTurnDecision": {
     "enabled": true,

@@ -763,15 +763,6 @@ mod tests {
         }
 
         std::env::set_var("LILIA_AGENT_EXECUTION_BACKEND", "node");
-        #[cfg(feature = "legacy-runner")]
-        {
-            let err = crate::native_agent::require_native_for_automation_or_multi_agent(
-                "Automation 多 Agent 路径",
-            )
-            .unwrap_err();
-            assert!(err.contains("不得直调"));
-        }
-        #[cfg(not(feature = "legacy-runner"))]
         assert!(
             crate::native_agent::require_native_for_automation_or_multi_agent(
                 "Automation 多 Agent 路径"

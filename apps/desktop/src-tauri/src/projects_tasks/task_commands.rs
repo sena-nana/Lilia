@@ -5,11 +5,9 @@ use uuid::Uuid;
 use crate::automation::{
     task_created_event_kind, task_status_changed_event_kind, task_updated_event_kind,
 };
-use crate::codex_history::spawn_codex_thread_archive_sync;
 use crate::store::LiliaStore;
 use crate::task_contract;
 use crate::util::now_millis;
-use crate::BACKEND_CODEX;
 
 use super::events::emit_tasks_changed;
 use super::ordering::next_task_sort_order;
@@ -428,10 +426,9 @@ pub fn task_update_dependencies(
 pub fn task_archive_project(
     project_id: String,
     store: State<'_, LiliaStore>,
-    app: AppHandle,
+    _app: AppHandle,
 ) -> Result<i64, String> {
     let conn = store.conn()?;
-    let thread_ids = codex_thread_ids_for_project_archive(&conn, &project_id)?;
     let count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM tasks WHERE project_id = ?1 AND archived = 0",
@@ -444,9 +441,6 @@ pub fn task_archive_project(
         params![project_id],
     )
     .map_err(|e| format!("task_archive_project: update 失败：{e}"))?;
-    if count > 0 {
-        spawn_codex_thread_archive_sync(app, thread_ids);
-    }
     Ok(count)
 }
 
@@ -454,78 +448,16 @@ pub fn task_archive_project(
 pub fn task_archive(
     id: String,
     store: State<'_, LiliaStore>,
-    app: AppHandle,
+    _app: AppHandle,
 ) -> Result<bool, String> {
     let conn = store.conn()?;
-    let thread_ids = codex_thread_ids_for_task_archive(&conn, &id)?;
     let changed = conn
         .execute(
             "UPDATE tasks SET archived = 1 WHERE id = ?1 AND archived = 0",
             params![id],
         )
         .map_err(|e| format!("task_archive: {e}"))?;
-    if changed > 0 {
-        spawn_codex_thread_archive_sync(app, thread_ids);
-    }
     Ok(changed > 0)
-}
-
-fn codex_thread_ids_for_task_archive(
-    conn: &rusqlite::Connection,
-    task_id: &str,
-) -> Result<Vec<String>, String> {
-    codex_thread_ids_for_archive(
-        conn,
-        r#"SELECT s.session_id
-           FROM task_agent_sessions s
-           JOIN tasks t ON t.id = s.task_id
-           WHERE t.id = ?1
-             AND t.archived = 0
-             AND s.backend = ?2"#,
-        task_id,
-        "task_archive: 查询 Codex thread 失败",
-    )
-}
-
-fn codex_thread_ids_for_project_archive(
-    conn: &rusqlite::Connection,
-    project_id: &str,
-) -> Result<Vec<String>, String> {
-    codex_thread_ids_for_archive(
-        conn,
-        r#"SELECT s.session_id
-           FROM task_agent_sessions s
-           JOIN tasks t ON t.id = s.task_id
-           WHERE t.project_id = ?1
-             AND t.archived = 0
-             AND s.backend = ?2
-           ORDER BY t.sort_order ASC, t.created_at ASC"#,
-        project_id,
-        "task_archive_project: 查询 Codex thread 失败",
-    )
-}
-
-fn codex_thread_ids_for_archive(
-    conn: &rusqlite::Connection,
-    sql: &str,
-    id: &str,
-    context: &str,
-) -> Result<Vec<String>, String> {
-    let mut stmt = conn
-        .prepare(sql)
-        .map_err(|e| format!("{context}：prepare 失败：{e}"))?;
-    let rows = stmt
-        .query_map(params![id, BACKEND_CODEX], |row| row.get::<_, String>(0))
-        .map_err(|e| format!("{context}：query 失败：{e}"))?;
-    let mut out = Vec::new();
-    for row in rows {
-        let thread_id = row.map_err(|e| format!("{context}：row 失败：{e}"))?;
-        let trimmed = thread_id.trim();
-        if !trimmed.is_empty() {
-            out.push(trimmed.to_string());
-        }
-    }
-    Ok(out)
 }
 
 #[tauri::command]

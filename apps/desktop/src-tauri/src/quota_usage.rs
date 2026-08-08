@@ -1,26 +1,19 @@
 use std::collections::BTreeMap;
-use std::env;
-use std::path::PathBuf;
-use std::process::Command;
 
 use rusqlite::{params, Connection, OptionalExtension, Row, ToSql};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::State;
 
 use crate::agent_interaction_contract;
 use crate::agent_timeline::AgentTimelineEvent;
 use crate::agent_timeline_contract;
 use crate::chat::state::try_normalize_backend;
-use crate::process_command::hide_console_window;
-use crate::provider::{resolve_connection_for, validate_backend_ready_for_send, ConnectionMode};
 use crate::quota_usage_contract::{
-    default_usage_stats_days, is_rate_limit_reset_credit_consume_outcome,
-    usage_stats_backend_filters, usage_stats_days,
+    default_usage_stats_days, usage_stats_backend_filters, usage_stats_days,
 };
 use crate::store::LiliaStore;
 use crate::util::now_millis;
-use crate::BACKEND_CODEX;
 
 const DAY_MS: i64 = 86_400_000;
 const RECENT_LIMIT: i64 = 20;
@@ -184,87 +177,6 @@ pub struct QuotaUsageStats {
     pub tools: Vec<QuotaUsageToolSummary>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexAccountQuotaWindow {
-    pub used_percent: f64,
-    pub window_duration_mins: Option<f64>,
-    pub resets_at: Option<f64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexAccountQuotaCredits {
-    pub has_credits: bool,
-    pub unlimited: bool,
-    pub balance: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexRateLimitResetCredits {
-    pub available_count: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexAccountUsageSummary {
-    pub lifetime_tokens: Option<i64>,
-    pub peak_daily_tokens: Option<i64>,
-    pub longest_running_turn_sec: Option<i64>,
-    pub current_streak_days: Option<i64>,
-    pub longest_streak_days: Option<i64>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexAccountUsageDailyBucket {
-    pub start_date: String,
-    pub tokens: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexAccountUsage {
-    pub summary: CodexAccountUsageSummary,
-    pub daily_usage_buckets: Option<Vec<CodexAccountUsageDailyBucket>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexAccountQuotaStatus {
-    pub available: bool,
-    pub connection_mode: ConnectionMode,
-    pub limit_id: Option<String>,
-    pub limit_name: Option<String>,
-    pub plan_type: Option<String>,
-    pub rate_limit_reached_type: Option<String>,
-    pub five_hour: Option<CodexAccountQuotaWindow>,
-    pub weekly: Option<CodexAccountQuotaWindow>,
-    pub spark_five_hour: Option<CodexAccountQuotaWindow>,
-    pub spark_weekly: Option<CodexAccountQuotaWindow>,
-    pub credits: Option<CodexAccountQuotaCredits>,
-    pub spark_credits: Option<CodexAccountQuotaCredits>,
-    pub rate_limit_reset_credits: Option<CodexRateLimitResetCredits>,
-    pub account_usage: Option<CodexAccountUsage>,
-    pub usage_error: Option<String>,
-    pub fetched_at: i64,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexRateLimitResetCreditConsumeInput {
-    pub idempotency_key: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CodexRateLimitResetCreditConsumeResult {
-    pub outcome: String,
-    pub status: CodexAccountQuotaStatus,
-}
-
 #[derive(Default)]
 struct AggregatedUsage {
     totals: QuotaUsageTokenTotals,
@@ -294,148 +206,6 @@ impl AggregatedUsage {
     fn token_totals(&self) -> QuotaUsageTokenTotals {
         self.totals.clone()
     }
-}
-
-fn codex_account_quota_unavailable(
-    connection_mode: ConnectionMode,
-    error: Option<String>,
-) -> CodexAccountQuotaStatus {
-    CodexAccountQuotaStatus {
-        available: false,
-        connection_mode,
-        limit_id: None,
-        limit_name: None,
-        plan_type: None,
-        rate_limit_reached_type: None,
-        five_hour: None,
-        weekly: None,
-        spark_five_hour: None,
-        spark_weekly: None,
-        credits: None,
-        spark_credits: None,
-        rate_limit_reset_credits: None,
-        account_usage: None,
-        usage_error: None,
-        fetched_at: now_millis(),
-        error,
-    }
-}
-
-fn locate_codex_account_quota_utility<R: Runtime>(app: &AppHandle<R>) -> PathBuf {
-    if cfg!(debug_assertions) {
-        if let Some(path) = env::var_os("LILIA_CODEX_ACCOUNT_QUOTA_UTILITY") {
-            return PathBuf::from(path);
-        }
-    }
-
-    let mut candidates: Vec<PathBuf> = Vec::new();
-
-    if let Ok(exe) = env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("codex-account-quota.mjs"));
-            candidates.push(dir.join("legacy").join("codex-account-quota.mjs"));
-            candidates.push(dir.join("../../../legacy/codex-account-quota.mjs"));
-        }
-    }
-
-    if let Ok(res) = app.path().resource_dir() {
-        candidates.push(res.join("codex-account-quota.mjs"));
-        candidates.push(res.join("legacy").join("codex-account-quota.mjs"));
-    }
-
-    for candidate in &candidates {
-        if candidate.exists() {
-            return candidate.clone();
-        }
-    }
-
-    candidates
-        .into_iter()
-        .last()
-        .unwrap_or_else(|| PathBuf::from("legacy/codex-account-quota.mjs"))
-}
-
-fn run_codex_account_quota_utility_output<R: Runtime>(
-    app: &AppHandle<R>,
-    args: &[String],
-) -> Result<String, String> {
-    let script = locate_codex_account_quota_utility(app);
-    let mut command = Command::new("node");
-    hide_console_window(&mut command);
-    let output = command
-        .arg(script)
-        .args(args)
-        .env_remove("OPENAI_BASE_URL")
-        .env_remove("OPENAI_API_KEY")
-        .env_remove("CODEX_API_KEY")
-        .output()
-        .map_err(|err| format!("无法启动 Codex 官方额度查询：{err}"))?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let Some(line) = stdout.lines().find(|line| !line.trim().is_empty()) else {
-        let detail = stderr.trim();
-        return Err(if detail.is_empty() {
-            "Codex 官方额度查询没有返回数据。".to_string()
-        } else {
-            format!("Codex 官方额度查询没有返回数据：{detail}")
-        });
-    };
-    Ok(line.to_string())
-}
-
-fn run_codex_account_quota_utility<R: Runtime>(app: &AppHandle<R>) -> CodexAccountQuotaStatus {
-    let line = match run_codex_account_quota_utility_output(app, &[]) {
-        Ok(line) => line,
-        Err(err) => {
-            return codex_account_quota_unavailable(ConnectionMode::CodexAccount, Some(err));
-        }
-    };
-
-    match serde_json::from_str::<CodexAccountQuotaStatus>(&line) {
-        Ok(mut status) => {
-            status.connection_mode = ConnectionMode::CodexAccount;
-            if status.fetched_at <= 0 {
-                status.fetched_at = now_millis();
-            }
-            status
-        }
-        Err(err) => codex_account_quota_unavailable(
-            ConnectionMode::CodexAccount,
-            Some(format!("解析 Codex 官方额度查询输出失败：{err}")),
-        ),
-    }
-}
-
-fn run_codex_account_quota_reset_utility<R: Runtime>(
-    app: &AppHandle<R>,
-    input: CodexRateLimitResetCreditConsumeInput,
-) -> Result<CodexRateLimitResetCreditConsumeResult, String> {
-    let idempotency_key = input.idempotency_key.trim();
-    if idempotency_key.is_empty() {
-        return Err("重置次数消耗需要非空 idempotencyKey。".to_string());
-    }
-    let line = run_codex_account_quota_utility_output(
-        app,
-        &[
-            "--consume-reset-credit".to_string(),
-            idempotency_key.to_string(),
-        ],
-    )?;
-    parse_codex_rate_limit_reset_credit_consume_result(&line)
-}
-
-fn parse_codex_rate_limit_reset_credit_consume_result(
-    line: &str,
-) -> Result<CodexRateLimitResetCreditConsumeResult, String> {
-    let result = serde_json::from_str::<CodexRateLimitResetCreditConsumeResult>(line)
-        .map_err(|err| format!("解析 Codex 官方额度重置输出失败：{err}"))?;
-    if !is_rate_limit_reset_credit_consume_outcome(&result.outcome) {
-        return Err(format!(
-            "Codex 官方额度重置输出包含未知 outcome：{}",
-            result.outcome
-        ));
-    }
-    Ok(result)
 }
 
 fn usage_daily_bucket(day_start: i64, bucket: AggregatedUsage) -> QuotaUsageDailyBucket {
@@ -1280,48 +1050,6 @@ pub fn quota_usage_get_stats(
         }),
         now_millis(),
     )
-}
-
-#[tauri::command]
-pub async fn quota_usage_get_codex_account_status(app: AppHandle) -> CodexAccountQuotaStatus {
-    tauri::async_runtime::spawn_blocking(move || quota_usage_get_codex_account_status_sync(app))
-        .await
-        .expect("quota_usage_get_codex_account_status blocking task panicked")
-}
-
-fn quota_usage_get_codex_account_status_sync(app: AppHandle) -> CodexAccountQuotaStatus {
-    let connection = resolve_connection_for(&app, BACKEND_CODEX);
-    if connection.mode != ConnectionMode::CodexAccount {
-        return codex_account_quota_unavailable(connection.mode, None);
-    }
-    if let Err(err) = validate_backend_ready_for_send(BACKEND_CODEX) {
-        return codex_account_quota_unavailable(ConnectionMode::CodexAccount, Some(err));
-    }
-    run_codex_account_quota_utility(&app)
-}
-
-#[tauri::command]
-pub async fn quota_usage_consume_codex_rate_limit_reset_credit(
-    input: CodexRateLimitResetCreditConsumeInput,
-    app: AppHandle,
-) -> Result<CodexRateLimitResetCreditConsumeResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        quota_usage_consume_codex_rate_limit_reset_credit_sync(input, app)
-    })
-    .await
-    .expect("quota_usage_consume_codex_rate_limit_reset_credit blocking task panicked")
-}
-
-fn quota_usage_consume_codex_rate_limit_reset_credit_sync(
-    input: CodexRateLimitResetCreditConsumeInput,
-    app: AppHandle,
-) -> Result<CodexRateLimitResetCreditConsumeResult, String> {
-    let connection = resolve_connection_for(&app, BACKEND_CODEX);
-    if connection.mode != ConnectionMode::CodexAccount {
-        return Err("Codex 官方账号模式才支持使用重置次数。".to_string());
-    }
-    validate_backend_ready_for_send(BACKEND_CODEX)?;
-    run_codex_account_quota_reset_utility(&app, input)
 }
 
 #[cfg(test)]

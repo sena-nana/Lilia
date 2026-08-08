@@ -1,8 +1,6 @@
 use std::collections::HashMap;
 
 use serde::Serialize;
-#[cfg(feature = "legacy-runner")]
-use serde_json::Map as JsonMap;
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Runtime};
 
@@ -15,8 +13,6 @@ use super::config_contract;
 use super::credentials::{
     assistant_ai_account, has_secret, normalize_secret, provider_account, read_secret, write_secret,
 };
-#[cfg(feature = "legacy-runner")]
-use super::subagents::{claude_managed_subagents, codex_subagent_instructions};
 use super::types::{
     AgentInteractionSettings, AssistantAIConfig, AssistantAIModelPoolItem, CodexProfileSettings,
     ConnectionMode, ModelFeatureChatSettings, ModelFeatureSettings, ProviderConfig,
@@ -467,7 +463,7 @@ pub(crate) fn normalize_reasoning_effort(value: Option<String>) -> Option<String
     }
 }
 
-#[cfg(any(feature = "legacy-runner", test))]
+#[cfg(test)]
 pub(crate) fn normalize_codex_settings_profile(value: Option<String>) -> Option<String> {
     let value = normalize_optional_string(value)?;
     manifest_contains(config_contract::codex_settings_profiles(), &value).then_some(value)
@@ -489,52 +485,7 @@ pub(crate) fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     normalized
 }
 
-#[cfg(feature = "legacy-runner")]
-pub(crate) fn build_effective_claude_settings<R: Runtime>(app: &AppHandle<R>) -> Option<JsonValue> {
-    let settings = load_agent_interaction_settings(app).subagent_mode;
-    if !settings.enabled || !settings.claude.enabled {
-        return None;
-    }
-    let mut claude = JsonMap::new();
-    claude.insert(
-        "forwardSubagentText".to_string(),
-        JsonValue::Bool(settings.claude.forward_subagent_text),
-    );
-    claude.insert(
-        "agentProgressSummaries".to_string(),
-        JsonValue::Bool(settings.claude.agent_progress_summaries),
-    );
-    match claude_managed_subagents() {
-        Ok(Some(managed)) => {
-            claude.insert("managedSettings".to_string(), managed);
-        }
-        Ok(None) => {}
-        Err(err) => {
-            eprintln!("[provider] load Claude subagents failed: {err}");
-        }
-    }
-    Some(JsonValue::Object(claude))
-}
 
-#[cfg(feature = "legacy-runner")]
-pub(crate) fn build_effective_codex_subagent_settings<R: Runtime>(
-    app: &AppHandle<R>,
-) -> Option<JsonValue> {
-    let settings = load_agent_interaction_settings(app).subagent_mode;
-    if !settings.enabled || !settings.codex.enabled {
-        return None;
-    }
-    match codex_subagent_instructions() {
-        Ok(Some(instructions)) => Some(serde_json::json!({
-            "subagentInstructions": instructions,
-        })),
-        Ok(None) => None,
-        Err(err) => {
-            eprintln!("[provider] load Codex subagents failed: {err}");
-            None
-        }
-    }
-}
 
 pub(crate) fn load_router_mode<R: Runtime>(app: &AppHandle<R>, backend: &str) -> String {
     let backend = normalize_backend(backend);

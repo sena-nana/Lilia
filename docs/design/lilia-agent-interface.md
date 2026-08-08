@@ -1,30 +1,36 @@
-# Lilia Agent 三层协议
+# Lilia Agent 三层协议（Mutsuki 实现）
 
-> 状态：本文是 Lilia 应用层到 Claude / Codex provider adapter 的协议边界文档。
-> 核对时间：2026-06-19。
+> 状态：Lilia 产品层协议边界。唯一执行实现是 **Mutsuki AgentKit / Agent Wire**；不再对接 Claude Code / Codex 官方产品。
+> 核对时间：2026-08-08。
 
-## 协议分层
+## 总览
 
-Lilia 不再把所有 agent 行为都塞进 `ChatWorkflow`。当前协议分为三层：
+Lilia 拥有面向用户与桌面的 **产品协议**（工作流、运行时命令、交互、timeline）。  
+Mutsuki 提供 **Agent 运行时与跨端 Wire**：session / turn / approval / model adapter / plugin。  
+LiliaCore 与 `lilia-agent-integration` 是防腐层：把产品协议落到 Mutsuki，不把 Mutsuki 内部枚举泄漏到 UI。
 
 ```mermaid
-flowchart LR
-  UI["UI / task surface"] --> Intent["ChatWorkflow\n用户可见意图"]
-  UI --> Runtime["ChatRuntimeCommand\n运行时控制"]
-  Runtime --> Options["ProviderRuntimeOptions\nadapter 输入"]
-  Intent --> Runner["runner stdin payload"]
-  Runtime --> Runner
-  Options --> Runner
-  Runner --> Registry["provider adapter registry"]
-  Registry --> Codex["Codex adapter"]
-  Registry --> Claude["Claude adapter"]
+flowchart TB
+  UI["UI / Task surface"] --> Product["Lilia product protocol\nChatWorkflow · ChatRuntimeCommand\nRuntimeOptions · Interaction"]
+  Product --> Host["Lilia host\nTauri / Service / CLI"]
+  Host --> Wire["Mutsuki Agent Wire\nAgentClient / AgentWireAuthority"]
+  Wire --> Runtime["Mutsuki AgentKit Runtime\nsession · turn · approval · profile"]
+  Runtime --> Adapter["Model protocol adapters\nopenai-compatible · anthropic.messages"]
+  Runtime --> Plugins["AgentKit plugins\ntools · MCP · memory · git · LSP"]
+  Runtime --> Timeline["Lilia product projection\ntimeline · todos · pending"]
 ```
 
-`ChatWorkflow` 表达用户在 Lilia 里可见、可解释、可持久化的 agent 意图。`ChatRuntimeCommand` 表达会话、设置和未来 realtime / remote / process / file-search 这类运行时控制面。`ProviderRuntimeOptions` 只允许 runner 到 provider adapter 内部消费，不能作为 UI workflow。
+| 层 | 所有者 | 职责 |
+| --- | --- | --- |
+| 产品协议 | Lilia `packages/contracts` | 用户可见 workflow、runtime command、权限交互、composer 状态 |
+| 产品 Host | `apps/desktop` · `apps/service` · `apps/cli` | 任务、SQLite、UI 事件、远程观察 |
+| 防腐层 | `crates/lilia-agent-integration` · `crates/lilia-core` | profile 装配、Wire 服务、事件投影 |
+| Agent 实现 | Mutsuki AgentKit | session/turn、审批、budget、plugin、model gateway |
+| 模型协议 | Mutsuki adapters | OpenAI-compatible / Anthropic Messages 等 **LLM API**，不是官方 Agent 产品 |
 
-## 输入形状
+## 产品输入形状
 
-runner stdin 的稳定形状是：
+桌面发送 turn 时，产品侧稳定形状仍为：
 
 ```ts
 {
@@ -43,145 +49,154 @@ runner stdin 的稳定形状是：
 }
 ```
 
-旧输入 `lilia_session_fork`、`lilia_session_management`、`lilia_provider_settings` 不再作为 `workflow` 或 `runtimeCommand` 接收。调用方必须发送当前 `runtimeCommand`，provider 字段必须进入 `runtimeOptions.provider`。
+- `workflow` / `runtimeCommand` 只使用 Lilia 协议名（见 `liliaAgentProtocol.mjs` manifest）。
+- `runtimeOptions.provider` **仅**允许 `"native-agentkit"` 键；不得再出现 `provider.claude` / `provider.codex`。
+- chat backend 唯一合法值：`native-agentkit`（`chat-backends.json`）。
 
-## ChatWorkflow
+进入 Mutsuki 时，防腐层将上述内容编译为：
 
-`ChatWorkflow` 只保留用户可见工作流：
+1. **AgentRuntimeProfile**（`lilia.product.native-coding[.workflowKind]`）
+2. **AgentMessage** + turn metadata（含 Lilia workflow 语义的产品侧 prompt / control 片段）
+3. **Agent Wire** 请求（`AgentWireRequestEnvelope`），经 `NativeAgentWireService` / `AgentWireAuthority`
+
+CLI / 远程路径直接消费 **未改动的 Mutsuki Wire envelope**；HTTP 只做传输，不另起一套 Agent 协议。
+
+## ChatWorkflow（用户可见意图）
+
+`ChatWorkflow` 表达用户在 Lilia 里可见、可解释、可持久化的 agent 意图。  
+它 **不是** Mutsuki 公共枚举，也不会写入 AgentKit 协议 id。
 
 | workflow | 含义 | 空 prompt |
-|---|---|---|
-| `lilia_task_workflow` | Lilia 内置工作流类型目录，用 `kind` 指向 `generalTask`、`frontend`、`refactor` 等内置工作流。 | 支持 |
-| `lilia_review` | 对指定代码范围做审查。 | 支持 |
-| `lilia_fix_suggestion` | 生成修复建议或按模式应用修复。 | 支持 |
-| `lilia_batch_apply` | 批量应用 review / fix suggestion 的结果。 | 支持 |
-| `lilia_goal` | 设置、刷新或清除当前线程目标。 | 支持 |
-| `lilia_compact` | 压缩当前 provider 会话上下文。 | 支持 |
-| `lilia_background_terminals_clean` | 清理当前会话相关后台终端。 | 支持 |
-| `lilia_memory_mode` | 启用或关闭 provider 记忆模式。 | 支持 |
-| `lilia_memory_reset` | 重置 provider 记忆。 | 支持 |
-| `lilia_config_diagnostics` | 读取 provider 配置和要求的诊断摘要。 | 支持 |
-| `automation` | 自动化触发 agent turn。 | 支持 |
-| `slash_command` | 执行 Lilia native / project slash command。 | 支持 |
+| --- | --- | --- |
+| `lilia_task_workflow` | 内置工作流目录（`generalTask`、`frontend`、`refactor` 等） | 支持 |
+| `lilia_review` | 对指定代码范围做审查 | 支持 |
+| `lilia_fix_suggestion` | 生成或按模式应用修复建议 | 支持 |
+| `lilia_batch_apply` | 批量应用 review / fix 结果 | 支持 |
+| `lilia_goal` | 设置 / 刷新 / 清除线程目标 | 支持 |
+| `lilia_compact` | 压缩当前会话上下文 | 支持 |
+| `lilia_background_terminals_clean` | 清理会话相关后台终端 | 支持 |
+| `lilia_memory_mode` | 启用或关闭记忆模式 | 支持 |
+| `lilia_memory_reset` | 重置记忆 | 支持 |
+| `lilia_config_diagnostics` | 读取配置诊断摘要 | 支持 |
+| `automation` | 自动化触发 agent turn | 支持 |
+| `slash_command` | 执行 Lilia native / 项目斜杠命令 | 支持 |
 
-空 prompt 规则由 `packages/contracts/src/liliaAgentProtocol.mjs` 从拆分后的 workflow / runtime command contract manifest 生成。不要再新增散落字符串集合维护空 prompt workflow。
+空 prompt 规则由 `packages/contracts/src/liliaAgentProtocol.mjs` 从 workflow / runtime command manifest 生成。
 
-`lilia_task_workflow` 是 Lilia 自己的用户可见 `ChatWorkflow`。它不是 runtime command，也不是 Claude / Codex provider plugin skill；插件 / 技能页仍只管理外部 Claude Skill、Plugin、MCP 和 Hook。结构化 `lilia_review`、`lilia_fix_suggestion`、`lilia_batch_apply` 继续承载有专用数据结构的场景，不折叠进通用 task workflow。
+`lilia_task_workflow` 是 Lilia 自己的用户可见工作流，**不是**外部 Skill 管理对象。结构化 `lilia_review` / `lilia_fix_suggestion` / `lilia_batch_apply` 继续承载专用数据结构。
 
-## ChatRuntimeCommand
+## ChatRuntimeCommand（运行时控制）
 
-`ChatRuntimeCommand` 是运行时控制入口：
+`ChatRuntimeCommand` 是运行时控制入口，不是 UI workflow。  
+实现侧由 **Mutsuki session / host 能力** 兑现；不支持时写 Lilia diagnostic / unsupported，禁止静默吞掉。
 
-| runtime command | 含义 | provider 映射 |
-|---|---|---|
-| `session_fork` | 从当前 provider session 分叉新 session。 | Codex 使用 thread fork；Claude 使用 session resume / transcript 能力时由 adapter 映射或 diagnostic。 |
-| `session_management` | list / info / messages / rename / tag / delete / archive / history search / turn item list 等 provider session 管理。 | Codex 接 `thread/list`、`thread/search`、`thread/read`、`thread/turns/list`、`thread/turns/items/list`、`thread/archive`、`thread/name/set`；Claude 接 SDK session APIs。 |
-| `runtime_settings` | diagnose / update provider runtime 设置。 | 设置值必须进入顶层 `runtimeOptions.common` / `runtimeOptions.provider`；Claude 写本地诊断并把 update 映射到 SDK query options；Codex 接 `thread/settings/update`，并消费 `thread/settings/updated` 作为状态同步。 |
-| `remote_environment` | 注册或选择 provider 远程执行环境。 | Codex 接 `environment/add`；Claude 无等价能力时写 diagnostic。 |
-| `process_session` | 管理 provider 独立进程 session，包括启动、stdin、终止、PTY resize、输出和退出事件。 | Codex 接 `process/spawn`、`process/writeStdin`、`process/kill`、`process/resizePty`，并消费 `process/outputDelta`、`process/exited`；Claude 无等价能力时写 diagnostic。 |
-| `remote_control` | 管理 provider 远程控制启停和状态读取。 | Codex 接 `remoteControl/enable`、`remoteControl/disable`、`remoteControl/status/read`；Claude 无等价能力时写 diagnostic。 |
-| `sandbox_diagnostics` | 读取 provider sandbox readiness / diagnostic。 | Codex 接 `windowsSandbox/readiness`；Claude 无等价能力时写 diagnostic。 |
+| runtime command | 含义 | Mutsuki / Lilia 落点 |
+| --- | --- | --- |
+| `session_fork` | 分叉当前 agent session | `mutsuki.agent.session/fork@1` 语义；产品侧绑定新 task/session |
+| `session_management` | list / info / rename / archive 等 | Lilia 产品 SQLite + AgentKit session snapshot，不读官方 CLI 历史库 |
+| `runtime_settings` | 诊断 / 更新本轮 runtime 设置 | 写入 `runtimeOptions.common` 与 `provider.native-agentkit`；经 profile / turn metadata |
+| `remote_environment` | 注册或选择远程执行环境 | Host / Distributed 边界；未实现时 diagnostic |
+| `process_session` | 独立进程 session（spawn / stdin / kill / PTY） | Host 能力；非模型 adapter 私有通道 |
+| `remote_control` | 远控启停与状态 | Lilia remote-control 契约 + PC host，**不是**官方 app-server |
+| `sandbox_diagnostics` | sandbox readiness | Host 诊断；未实现时 diagnostic |
 
-预留 runtime command 边界包括 realtime 和 file search session。接入这些能力时必须先在本文定义 Lilia 协议名、层级和 fallback，再实现 provider 映射，不得扩大 `ChatWorkflow` union。
+预留：realtime、file-search session。接入前必须先在本文定义 Lilia 协议名与 fallback。
 
 ## ProviderRuntimeOptions
 
 `ProviderRuntimeOptions.common` 只保存稳定 Lilia 字段：
 
 | 字段 | 含义 |
-|---|---|
-| `model` | 模型选择。 |
-| `permission` | Lilia 权限模式。 |
-| `reasoningEffort` | 通用 reasoning / effort 意图。 |
-| `runtimeWorkspaceRoots` | 运行时工作区根目录。 |
-| `modelSelection` | Lilia 智能模型选择解释，只用于诊断和持久化，不作为 provider 原生命令参数。 |
+| --- | --- |
+| `model` | 模型选择 |
+| `permission` | Lilia 权限模式（`full` / `ask` / `readonly` / `free`） |
+| `reasoningEffort` | 通用思考强度意图 |
+| `runtimeWorkspaceRoots` | 运行时工作区根目录 |
+| `modelSelection` | 智能模型选择解释（诊断与持久化） |
 
-provider 专属字段只能在 adapter 边界出现：
+`provider["native-agentkit"]` 仅承载 **Native / Mutsuki 本轮选项**（model、thinking、tools allowlist、workspace roots 等）。  
+模型 **协议家族** 由凭据与 profile 决定（`openai.chat-completions` / `anthropic.messages`），UI 不暴露 adapter 内部 id 作为 chat backend。
 
-| provider | 字段示例 | 消费方 |
-|---|---|---|
-| `provider.codex` | `profile`、`reasoningEffort`、`runtimeWorkspaceRoots`、`persistExtendedHistory`、`initialTurnsPage`、`excludeTurns`、`environments`、`experimentalRawEvents`、`responsesApiClientMetadata` | `apps/desktop/agent-runner/codex/runCodex.mjs` |
-| `provider.claude` | `reasoningEffort`、`thinking`、`allowedTools`、`disallowedTools`、`additionalDirectories`、`maxTurns`、`maxBudgetUsd`、`tools`、`settings`、`managedSettings`、`sandbox`、`outputFormat`、`sessionStore` | `apps/desktop/agent-runner/claude/runClaude.mjs` |
-
-智能模型选择在发送前合并这些字段：显式 `runtimeOptions.common` / `runtimeOptions.provider.<provider>` 优先，其次是 composer 手动覆盖，最后才由自动策略填补缺省值。Claude `reasoningEffort` 会映射到 SDK `options.effort`，并在未显式传入 `provider.claude.thinking` 时补 `thinking: { type: "adaptive" }`；Codex `max` 会降级为 `xhigh` 并写入 `common.modelSelection.signals`。
-
-高变动能力放入 `experimentalProviderOptions[]`。每项必须包含：
+高变动能力进入 `experimentalProviderOptions[]`：
 
 | 字段 | 规则 |
-|---|---|
-| `provider` | 目标 provider。 |
-| `capability` | 稳定能力名，不使用 provider 方法名。 |
-| `payload` | provider adapter 内部解释的输入。 |
-| `fallback` | adapter 不认识时写 diagnostic / unsupported / ignore 中一种明确行为。 |
+| --- | --- |
+| `provider` | 必须是 `native-agentkit` |
+| `capability` | 稳定 Lilia 能力名，不使用上游方法名 |
+| `payload` | 防腐层 / AgentKit 内部解释 |
+| `fallback` | `diagnostic` / `unsupported` / `ignore` |
 
-UI 禁止直接构造 provider 专属 payload。高级能力必须通过 `ChatRuntimeCommand` 或 `experimentalProviderOptions` 进入 adapter。
+UI 禁止直接构造 Mutsuki 内部 DTO 或模型厂商私有字段作为 public workflow。
 
-### Runtime Extensions
+## Mutsuki 实现边界
 
-runtime extensions 是 provider 扩展能力的 Lilia 层入口，能力名必须稳定，不使用 provider 方法名：
+### Agent Wire
 
-| capability | Lilia 语义 | Codex 映射 |
-|---|---|---|
-| `permission_profiles` | 列出当前 cwd 可用的权限配置档案。 | `permissionProfile/list`。 |
-| `plugin_inventory` | 读取 provider 已安装 plugin 清单。 | `plugin/installed`。 |
-| `plugin_skill_read` | 读取远端 plugin 中某个 skill 的内容。 | `plugin/skill/read`。 |
-| `plugin_share` | 保存、更新目标、列出、checkout 或删除 plugin share。 | `plugin/share/save`、`plugin/share/updateTargets`、`plugin/share/list`、`plugin/share/checkout`、`plugin/share/delete`。 |
-| `skills_extra_roots` | 设置 provider skill 额外搜索根目录。 | `skills/extraRoots/set`。 |
-| `account_quota_status` | 读取 provider 官方账号额度 / rate limit 状态，供连接状态、设置页和内部 quota 工具展示。 | `account/rateLimits/read`。 |
+- 权威：`AgentWireAuthority`（version、idempotency、approval/cancel replay、fork、reconnect）。
+- 产品实现：`AgentWireRuntime` + 持久化（`NativeAgentWireService` / `NativeAgentKitRuntime`）。
+- 进程内：`InProcessAgentClient`；跨进程 / CLI：`AgentClient` + 未改 envelope 的 HTTP 或 Link。
 
-这些能力只允许从 runtime extensions 管理面或 `experimentalProviderOptions[]` 进入 adapter。UI 不直接拼 provider payload；adapter 不支持时按 `fallback` 写 diagnostic / unsupported / ignore。
+### Session / Turn / Approval
 
-## Adapter Registry
+- Session 语义由 AgentKit Session Runner 拥有；Host 注入 persistence，不复制 transcript 序号语义。
+- `permission_mode` 对齐 Lilia：`ask` / `full` / `read_only`（产品 `readonly` 映射到 runtime）。
+- 权限审批使用 **provider-neutral** interaction；`providerContext.native` 供 round-trip，UI 只渲染公共字段。
 
-agent-runner 以 provider adapter registry 分发：
+### Model adapters
 
-| registry 字段 | 要求 |
-|---|---|
-| `kind` | 声明 workflow 或 runtime command 类型。 |
-| `supportsEmptyPrompt` | 来自协议 metadata。 |
-| `handler` | 处理 Lilia 落点，不暴露 provider 方法名给 UI。 |
-| `fallback` | provider 不支持时写 diagnostic / unsupported result。 |
+| Adapter id | Protocol family | 用途 |
+| --- | --- | --- |
+| `openai-compatible` | `openai.chat-completions` | OpenAI 兼容 API / 本地代理 |
+| `anthropic-messages` | `anthropic.messages` | Anthropic Messages API |
 
-公共 task / review / fix / batch / goal validation 放在共享模块。Codex / Claude adapter 只做 provider 映射和降级，不重复解析相同 Lilia workflow。
+二者是 **LLM 协议适配**，不是 Claude Code / Codex 产品后端。  
+禁止再引入官方 Agent Server、CLI app-server 或 Node legacy runner 作为执行路径。
+
+### Profile
+
+产品 profile 由 `build_product_coding_profile` 装配：
+
+- 稳定 hint：`lilia.product.native-coding`
+- workflow kind 仅作 **profile id 后缀**，不进入 AgentKit 公共 enum
+- Provider instance 只绑定 `CredentialRef`；密钥留在 Credential Broker
+
+### 事件投影
+
+AgentKit 事件经 `project_agent_event(s)` 写入 Lilia timeline / todos / pending。  
+`source` / `backend` 字段对用户与持久化统一为 `native-agentkit`（历史行可能仍带旧 brand 字符串，仅作只读兼容）。
 
 ## Interaction 契约
 
-`permission_approval` 使用 provider-neutral payload：
+| kind | 语义 |
+| --- | --- |
+| `permission_approval` | 权限扩展审批；公共字段 + `providerContext.native` |
+| `tool_consent` | 工具确认；决策枚举为 Lilia 中性名（`accept` / `decline` / `cancel` 等） |
+| `ask_user` / `plan_approval` | 用户提问与计划确认 |
+| `mcp_elicitation` | MCP elicitation form / url |
+| `architecture` | 架构图变更确认 |
 
-| 字段 | 含义 |
-|---|---|
-| `reason` | 向用户展示的权限扩展原因。 |
-| `requestedAccess` | UI 可渲染的公共访问请求。 |
-| `scopeSuggestion` | 可选的公共 scope 建议。 |
-| `providerContext` | adapter round-trip 上下文，UI 不依赖其内部字段。 |
-
-Codex 的 `threadId`、`turnId`、`itemId`、`strictAutoReview`、原始 permissions 等只放在 `providerContext.codex`，UI 只依赖公共字段渲染，提交时把 `providerContext` 原样传回 adapter。
-
-用户编辑 Codex 命令后的 Lilia-owned 执行仍属于 `permission_approval` 的后续处理，timeline 使用 `command` / `subkind: "lilia_edit_exec"`。即使 Codex adapter 内部使用 `process/spawn` 兜底执行编辑后的命令，也不能把这个已实现功能改名或迁移成通用 `process_session`；只有独立进程控制 UI / API 才使用 `process_session`。
-
-`attestation_request` 是 provider-initiated interaction，不属于用户可见 workflow。Codex 可把 `attestation/generate` 映射到该 interaction；当前 Lilia 若未实现，adapter 必须写明确 unsupported diagnostic，不能静默吞掉 request。
+旧字段名（如历史 payload 中的 brand 专属键）只允许 **读兼容**，新写入必须使用 Lilia / native 键名。
 
 ## 落点表
 
 | 落点 | 层级 | Lilia 语义 | 不支持时 |
-|---|---|---|---|
-| 普通 turn | turn | 启动一轮 agent 输入，写 timeline 和 session checkpoint。 | 写 error timeline。 |
-| task / review / fix / batch / goal | workflow | 用户可见 agent 工作流。 | 构造 Lilia prompt 或写错误。 |
-| compact / memory / diagnostics | workflow | 用户触发的会话维护和诊断。 | 写 diagnostic。 |
-| automation / slash command | workflow | 自动化或命令触发的 Lilia 行为。 | 拒绝启动并保留状态。 |
-| session fork / management | runtime command | provider session 控制，不是 UI workflow。 | 写 unsupported diagnostic。 |
-| provider settings | runtime command + runtime options | 诊断或更新 adapter runtime 设置，不污染 workflow；timeline payload 统一使用 `backend`、`subkind: "provider_settings"`、`action`、`settingsKeys`。 | 无有效字段时拒绝；未知 experimental capability 按 fallback。 |
-| remote environment / process / remote control / sandbox diagnostics | runtime command | provider 运行时控制，不是 UI workflow。 | 写 unsupported diagnostic。 |
-| permission approval | interaction | provider-neutral 权限审批。 | provider 无等价能力时走 `PermissionMode` / `tool_consent`。 |
-| attestation request | interaction | provider 发起的 attestation 请求。 | 写 unsupported diagnostic。 |
-| plugins / extensions / account quota | runtime extensions | 当前 turn 可用扩展集合、扩展管理和 provider 账号额度状态。 | 单项 warning，不阻塞其他扩展。 |
+| --- | --- | --- | --- |
+| 普通 turn | turn | 启动一轮 agent 输入，写 timeline 与 session | error timeline |
+| task / review / fix / batch / goal | workflow | 用户可见工作流 | 构造 prompt 或写错误 |
+| compact / memory / diagnostics | workflow | 会话维护 | diagnostic |
+| automation / slash | workflow | 自动化或命令 | 拒绝启动并保留状态 |
+| session fork / management | runtime command | session 控制 | unsupported diagnostic |
+| runtime settings | runtime command + options | 本轮设置 | 无有效字段则拒绝 |
+| remote / process / sandbox | runtime command | Host 运行时控制 | unsupported diagnostic |
+| permission / tool consent | interaction | 中性交互 | 按 `PermissionMode` 降级 |
+| MCP / memory / git / LSP | AgentKit plugins + shared services | 工具与共享服务 | 单项 warning |
 
 ## 升级复核清单
 
-1. 用户可见 agent 意图先判断是否属于 `ChatWorkflow`；session / settings / remote / realtime / process / file-search 默认属于 `ChatRuntimeCommand`。
-2. 升级 Claude SDK 或 Codex CLI 后，先判断 provider 能力是否能落到已有 Lilia 协议；不能落地时，先在本文定义 Lilia 协议名、层级和 fallback，再实现 provider 映射。
-3. provider 字段先放入 `ProviderRuntimeOptions.provider.<provider>` 或 `experimentalProviderOptions`，不得加到 public workflow。
-4. runner payload 必须保持 `{ turn, workflow?, runtimeCommand?, runtimeOptions? }` 分层。
-5. provider adapter 不认识 runtime command 或 experimental capability 时必须写 diagnostic / unsupported result。
-6. UI 不直接读取或构造 providerContext 内部字段；只 round-trip 给 adapter。
-7. 旧 provider 专属 flow 不是 Lilia 协议来源；升级后以本文的 Lilia 协议名为准，不按上游历史方法名倒推 UI contract。
+1. 用户可见意图先判断是否属于 `ChatWorkflow`；session / settings / remote / process 默认 `ChatRuntimeCommand`。
+2. 新增能力先定义 **Lilia 协议名** 与 fallback，再落到 Mutsuki protocol id 或 Host 能力；不得按上游方法名倒推 UI。
+3. `runtimeOptions.provider` 只允许 `native-agentkit`；模型厂商差异只出现在 adapter / credential 层。
+4. 升级 Mutsuki pin（见 `docs/design/mutsuki-dependency-pin.md`）后，核对 Wire、session、approval、projection 兼容性。
+5. 不认识的 runtime command 或 experimental capability 必须写 diagnostic / unsupported。
+6. UI 不解析 `providerContext` 内部字段，只 round-trip。
+7. 禁止恢复 Claude Code SDK、Codex CLI/app-server、Node legacy agent-runner 作为默认或可选执行后端。

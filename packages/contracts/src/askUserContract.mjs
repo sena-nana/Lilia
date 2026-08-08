@@ -12,7 +12,10 @@ export const ASK_USER_MULTI_SELECT_MODE = manifest.multiSelectAskUserMode;
 export const MAX_ASK_USER_TOOL_QUESTIONS = manifest.maxAskUserToolQuestions;
 export const MIN_ASK_USER_TOOL_OPTIONS = manifest.minAskUserToolOptions;
 export const MAX_ASK_USER_TOOL_OPTIONS = manifest.maxAskUserToolOptions;
-export const MAX_CODEX_REQUEST_USER_INPUT_OPTIONS = manifest.maxCodexRequestUserInputOptions;
+export const MAX_REQUEST_USER_INPUT_OPTIONS =
+  manifest.maxRequestUserInputOptions ?? manifest.maxCodexRequestUserInputOptions;
+/** @deprecated Use MAX_REQUEST_USER_INPUT_OPTIONS. */
+export const MAX_CODEX_REQUEST_USER_INPUT_OPTIONS = MAX_REQUEST_USER_INPUT_OPTIONS;
 export const MAX_ASK_USER_HEADER_TEXT = manifest.maxAskUserHeaderText;
 export const MAX_ASK_USER_QUESTION_TEXT = manifest.maxAskUserQuestionText;
 export const ASK_USER_TOOL_NAMES = manifest.askUserToolNames;

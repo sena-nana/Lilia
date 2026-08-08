@@ -83,10 +83,7 @@ const permissionAvailabilityOptions: PermissionAvailabilityOption[] = [
     })),
 ];
 
-type SubagentModePatch = Partial<Omit<AgentInteractionSettings["subagentMode"], "codex" | "claude">> & {
-  codex?: Partial<AgentInteractionSettings["subagentMode"]["codex"]>;
-  claude?: Partial<AgentInteractionSettings["subagentMode"]["claude"]>;
-};
+
 
 const autoTurnDecisionPermissionOptions = AUTO_TURN_DECISION_PERMISSION_OPTIONS;
 const mainAgentWorkflowsPrompt = PROMPT_MAIN_AGENT.workflowOrder
@@ -214,20 +211,11 @@ async function saveMainAgentCustomPrompt() {
 }
 
 function nextSubagentMode(
-  patch: SubagentModePatch,
+  patch: Partial<AgentInteractionSettings["subagentMode"]>,
 ): AgentInteractionSettings["subagentMode"] {
-  const current = agentInteraction.value.subagentMode;
   return {
-    ...current,
+    ...agentInteraction.value.subagentMode,
     ...patch,
-    codex: {
-      ...current.codex,
-      ...patch.codex,
-    },
-    claude: {
-      ...current.claude,
-      ...patch.claude,
-    },
   };
 }
 
@@ -237,22 +225,12 @@ async function setSubagentModeEnabled(enabled: boolean) {
   });
 }
 
-async function setCodexSubagentEnabled(enabled: boolean) {
-  await setAgentInteraction({
-    subagentMode: nextSubagentMode({
-      codex: { enabled },
-    }),
-  });
-}
-
-async function setClaudeSubagentField(
-  key: "enabled" | "forwardSubagentText" | "agentProgressSummaries",
+async function setSubagentModeField(
+  key: "forwardSubagentText" | "agentProgressSummaries",
   value: boolean,
 ) {
   await setAgentInteraction({
-    subagentMode: nextSubagentMode({
-      claude: { ...agentInteraction.value.subagentMode.claude, [key]: value },
-    }),
+    subagentMode: nextSubagentMode({ [key]: value }),
   });
 }
 
@@ -592,29 +570,29 @@ onBeforeUnmount(() => {
       <template #summary>
         <div>
           <div class="settings-row__label">Subagent 模式</div>
-          <p class="agent-collapsible-hint">启用后可展开配置 Codex 与 Claude 的子代理行为。</p>
+          <p class="agent-collapsible-hint">启用后可展开配置 native-agentkit 子代理行为。</p>
         </div>
       </template>
 
       <template #switch>
         <div class="ui-segmented" role="radiogroup" aria-label="Subagent 模式">
           <button
-          type="button"
-          role="radio"
-          :aria-checked="!agentInteraction.subagentMode.enabled"
-          data-agent-id="settings.agent.subagent.off"
-          :class="{ 'is-active': !agentInteraction.subagentMode.enabled }"
+            type="button"
+            role="radio"
+            :aria-checked="!agentInteraction.subagentMode.enabled"
+            data-agent-id="settings.agent.subagent.off"
+            :class="{ 'is-active': !agentInteraction.subagentMode.enabled }"
             :disabled="savingAgentInteraction"
             @click="setSubagentModeEnabled(false)"
           >
             关闭
           </button>
           <button
-          type="button"
-          role="radio"
-          :aria-checked="agentInteraction.subagentMode.enabled"
-          data-agent-id="settings.agent.subagent.on"
-          :class="{ 'is-active': agentInteraction.subagentMode.enabled }"
+            type="button"
+            role="radio"
+            :aria-checked="agentInteraction.subagentMode.enabled"
+            data-agent-id="settings.agent.subagent.on"
+            :class="{ 'is-active': agentInteraction.subagentMode.enabled }"
             :disabled="savingAgentInteraction"
             @click="setSubagentModeEnabled(true)"
           >
@@ -624,116 +602,60 @@ onBeforeUnmount(() => {
       </template>
 
       <div class="settings-row settings-row--nested">
-          <div class="settings-row__label">Codex Subagent</div>
-          <div class="ui-segmented" role="radiogroup" aria-label="Codex Subagent">
-            <button
-          type="button"
-          role="radio"
-          :aria-checked="!agentInteraction.subagentMode.codex.enabled"
-          data-agent-id="settings.agent.subagent.codex.off"
-          :class="{ 'is-active': !agentInteraction.subagentMode.codex.enabled }"
-              :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled"
-              @click="setCodexSubagentEnabled(false)"
-            >
-              关闭
-            </button>
-            <button
-          type="button"
-          role="radio"
-          :aria-checked="agentInteraction.subagentMode.codex.enabled"
-          data-agent-id="settings.agent.subagent.codex.on"
-          :class="{ 'is-active': agentInteraction.subagentMode.codex.enabled }"
-              :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled"
-              @click="setCodexSubagentEnabled(true)"
-            >
-              开启
-            </button>
-          </div>
+        <div class="settings-row__label">转发子代理文本</div>
+        <div class="ui-segmented" role="radiogroup" aria-label="转发子代理文本">
+          <button
+            type="button"
+            role="radio"
+            :aria-checked="!agentInteraction.subagentMode.forwardSubagentText"
+            data-agent-id="settings.agent.subagent.forward-text.off"
+            :class="{ 'is-active': !agentInteraction.subagentMode.forwardSubagentText }"
+            :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled"
+            @click="setSubagentModeField('forwardSubagentText', false)"
+          >
+            关闭
+          </button>
+          <button
+            type="button"
+            role="radio"
+            :aria-checked="agentInteraction.subagentMode.forwardSubagentText"
+            data-agent-id="settings.agent.subagent.forward-text.on"
+            :class="{ 'is-active': agentInteraction.subagentMode.forwardSubagentText }"
+            :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled"
+            @click="setSubagentModeField('forwardSubagentText', true)"
+          >
+            开启
+          </button>
         </div>
+      </div>
 
-        <div class="settings-row settings-row--nested">
-          <div class="settings-row__label">Claude Subagent</div>
-          <div class="ui-segmented" role="radiogroup" aria-label="Claude Subagent">
-            <button
-          type="button"
-          role="radio"
-          :aria-checked="!agentInteraction.subagentMode.claude.enabled"
-          data-agent-id="settings.agent.subagent.claude.off"
-          :class="{ 'is-active': !agentInteraction.subagentMode.claude.enabled }"
-              :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled"
-              @click="setClaudeSubagentField('enabled', false)"
-            >
-              关闭
-            </button>
-            <button
-          type="button"
-          role="radio"
-          :aria-checked="agentInteraction.subagentMode.claude.enabled"
-          data-agent-id="settings.agent.subagent.claude.on"
-          :class="{ 'is-active': agentInteraction.subagentMode.claude.enabled }"
-              :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled"
-              @click="setClaudeSubagentField('enabled', true)"
-            >
-              开启
-            </button>
-          </div>
+      <div class="settings-row settings-row--nested">
+        <div class="settings-row__label">进度摘要</div>
+        <div class="ui-segmented" role="radiogroup" aria-label="进度摘要">
+          <button
+            type="button"
+            role="radio"
+            :aria-checked="!agentInteraction.subagentMode.agentProgressSummaries"
+            data-agent-id="settings.agent.subagent.progress-summary.off"
+            :class="{ 'is-active': !agentInteraction.subagentMode.agentProgressSummaries }"
+            :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled"
+            @click="setSubagentModeField('agentProgressSummaries', false)"
+          >
+            关闭
+          </button>
+          <button
+            type="button"
+            role="radio"
+            :aria-checked="agentInteraction.subagentMode.agentProgressSummaries"
+            data-agent-id="settings.agent.subagent.progress-summary.on"
+            :class="{ 'is-active': agentInteraction.subagentMode.agentProgressSummaries }"
+            :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled"
+            @click="setSubagentModeField('agentProgressSummaries', true)"
+          >
+            开启
+          </button>
         </div>
-
-        <div class="settings-row settings-row--nested">
-          <div class="settings-row__label">Claude 转发子代理文本</div>
-          <div class="ui-segmented" role="radiogroup" aria-label="Claude 转发子代理文本">
-            <button
-          type="button"
-          role="radio"
-          :aria-checked="!agentInteraction.subagentMode.claude.forwardSubagentText"
-          data-agent-id="settings.agent.subagent.claude.forward-text.off"
-          :class="{ 'is-active': !agentInteraction.subagentMode.claude.forwardSubagentText }"
-              :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled || !agentInteraction.subagentMode.claude.enabled"
-              @click="setClaudeSubagentField('forwardSubagentText', false)"
-            >
-              关闭
-            </button>
-            <button
-          type="button"
-          role="radio"
-          :aria-checked="agentInteraction.subagentMode.claude.forwardSubagentText"
-          data-agent-id="settings.agent.subagent.claude.forward-text.on"
-          :class="{ 'is-active': agentInteraction.subagentMode.claude.forwardSubagentText }"
-              :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled || !agentInteraction.subagentMode.claude.enabled"
-              @click="setClaudeSubagentField('forwardSubagentText', true)"
-            >
-              开启
-            </button>
-          </div>
-        </div>
-
-        <div class="settings-row settings-row--nested">
-          <div class="settings-row__label">Claude 进度摘要</div>
-          <div class="ui-segmented" role="radiogroup" aria-label="Claude 进度摘要">
-            <button
-          type="button"
-          role="radio"
-          :aria-checked="!agentInteraction.subagentMode.claude.agentProgressSummaries"
-          data-agent-id="settings.agent.subagent.claude.progress-summary.off"
-          :class="{ 'is-active': !agentInteraction.subagentMode.claude.agentProgressSummaries }"
-              :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled || !agentInteraction.subagentMode.claude.enabled"
-              @click="setClaudeSubagentField('agentProgressSummaries', false)"
-            >
-              关闭
-            </button>
-            <button
-          type="button"
-          role="radio"
-          :aria-checked="agentInteraction.subagentMode.claude.agentProgressSummaries"
-          data-agent-id="settings.agent.subagent.claude.progress-summary.on"
-          :class="{ 'is-active': agentInteraction.subagentMode.claude.agentProgressSummaries }"
-              :disabled="savingAgentInteraction || !agentInteraction.subagentMode.enabled || !agentInteraction.subagentMode.claude.enabled"
-              @click="setClaudeSubagentField('agentProgressSummaries', true)"
-            >
-              开启
-            </button>
-          </div>
-        </div>
+      </div>
     </SettingsCollapsibleCard>
 
     <Suspense v-if="subagentCatalogReady">

@@ -52,7 +52,7 @@ impl LiliaDataPaths {
         self.db_dir().join(PRODUCT_PROJECTIONS_DB_FILE)
     }
 
-    /// Product domain store (Project / Task / Binding / migration ledger).
+    /// Product domain store (Project / Task / Binding).
     pub fn product_db(&self) -> PathBuf {
         self.db_dir().join(PRODUCT_DB_FILE)
     }
@@ -62,13 +62,9 @@ impl LiliaDataPaths {
         self.db_dir().join(AGENT_RUNTIME_DB_FILE)
     }
 
-    /// Legacy Desktop SQLite (`apps/desktop` historical fact source).
+    /// Legacy Desktop SQLite (`apps/desktop` historical cache / UI store).
     pub fn legacy_desktop_db(&self) -> PathBuf {
         self.db_dir().join(LEGACY_DESKTOP_DB_FILE)
-    }
-
-    pub fn migration_backup_dir(&self) -> PathBuf {
-        self.db_dir().join("migration_backups")
     }
 
     pub fn ensure_layout(&self) -> std::io::Result<()> {
@@ -76,7 +72,6 @@ impl LiliaDataPaths {
         for sub in ["config", "db", "cache"] {
             std::fs::create_dir_all(self.home.join(sub))?;
         }
-        std::fs::create_dir_all(self.migration_backup_dir())?;
         Ok(())
     }
 }
@@ -136,7 +131,7 @@ mod tests {
         }
     }
 
-    /// #46 / #56 — legacy `lilia.db` is migration/cache only; product facts live elsewhere.
+    /// #46 / #56 — legacy `lilia.db` is Desktop cache only; product facts live elsewhere.
     #[test]
     fn legacy_desktop_db_is_not_product_fact_store() {
         let home = std::env::temp_dir().join("lilia-paths-legacy-isolation");

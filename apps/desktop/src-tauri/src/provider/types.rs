@@ -384,12 +384,6 @@ pub(crate) struct BackendConnectionPlan {
     pub(crate) api_key: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct CodexAppServerProbeStatus {
-    pub(crate) public: CodexAppServerStatus,
-    pub(crate) path: Option<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
