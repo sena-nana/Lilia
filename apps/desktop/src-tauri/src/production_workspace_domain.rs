@@ -74,10 +74,6 @@ impl ProductionWorkspaceDomain {
             .map_err(|error| error.to_string())?;
         wait_completed(&self.group, &handle)
     }
-
-    pub fn domain_id(&self) -> &RuntimeDomainId {
-        &self.domain_id
-    }
 }
 
 fn global_workspace_domain() -> Result<&'static ProductionWorkspaceDomain, String> {
@@ -241,7 +237,7 @@ mod tests {
             .expect("git available");
         assert!(status.success());
         let domain = ProductionWorkspaceDomain::start().unwrap();
-        assert_eq!(domain.domain_id().as_str(), WORKSPACE_DOMAIN_ID);
+        assert_eq!(domain.domain_id.as_str(), WORKSPACE_DOMAIN_ID);
         let output = domain.list_worktrees(&root).unwrap();
         let worktrees = output
             .get("worktrees")
