@@ -12,7 +12,6 @@ import type {
   ChatBackendKind,
   CodexAccountQuotaStatus,
   CodexAccountQuotaWindow,
-  CodexAppServerStatus,
   RouterMode,
 } from "@lilia/contracts";
 import {
@@ -58,24 +57,6 @@ function routerModeUsesCodexAccount(mode: RouterMode): boolean {
   return ROUTER_MODES_USING_CODEX_ACCOUNT_SET.has(mode);
 }
 
-function codexRuntimeIssue(status: CodexAppServerStatus | null): string {
-  const issue = status?.issues.join(" ") ||
-    "Codex app-server 不满足 Lilia 所需的流式事件、工具审批和 AskUser 协议能力。";
-  if (status?.failureKind === "providerIncompatible") {
-    return `${issue} 请确认当前 API 来源支持 OpenAI Responses API 与 Codex 模型白名单。`;
-  }
-  if (status?.failureKind === "missingCli") {
-    return `${issue} 请在 Provider 设置中安装或更新 Lilia 内置 Codex app-server。`;
-  }
-  if (
-    status?.failureKind === "appServerUnavailable" ||
-    status?.failureKind === "experimentalApiUnsupported"
-  ) {
-    return `${issue} 请在 Provider 设置中更新 Lilia 内置 Codex app-server 后重新检测。`;
-  }
-  return issue;
-}
-
 const props = withDefaults(defineProps<{
   to?: RouteLocationRaw | null;
   popoverId?: string;
@@ -91,8 +72,6 @@ const {
   activeBackend,
   statusFor,
   routerFor,
-  nodeAvailable,
-  codexCliAvailable,
   codexAppServer,
   refresh,
   checkCodexAppServerUpdate,
@@ -152,26 +131,6 @@ const backendLabel = computed(() => chatBackendLabel(activeBackend.value));
 const badgeTag = computed(() => props.to ? RouterLink : "button");
 const badgeAttrs = computed(() => props.to ? { to: props.to } : { type: "button" });
 
-function codexRuntimeIssueText(): string {
-  return `${codexRuntimeIssue(codexAppServer.value)} 点击进入设置。`;
-}
-
-const runtimeIssue = computed(() => {
-  if (report.value === null) return null;
-  if (!nodeAvailable.value) return "未找到 node（v18+）。点击进入设置。";
-  if (activeBackend.value === "codex" && !codexCliAvailable.value) {
-    return "未找到 Lilia 内置 Codex app-server。点击进入设置。";
-  }
-  if (
-    activeBackend.value === "codex" &&
-    codexAppServer.value &&
-    !codexAppServer.value.supportsRequiredProtocol
-  ) {
-    return codexRuntimeIssueText();
-  }
-  return null;
-});
-
 const hasConnectionIssue = computed(
   () => connectionModeIsUnconfigured(activeStatus.value?.connectionMode) ||
     activeStatus.value === null,
@@ -179,13 +138,11 @@ const hasConnectionIssue = computed(
 
 const connectionTone = computed(() => {
   if (report.value === null) return "probing";
-  if (runtimeIssue.value) return "error";
   if (hasConnectionIssue.value) return "warn";
   return "ok";
 });
 
 const connectionTooltip = computed(() => {
-  if (runtimeIssue.value) return runtimeIssue.value;
   const s = activeStatus.value;
   if (!s) return "正在检测 agent 连接…";
   if (connectionModeIsUnconfigured(s.connectionMode)) {

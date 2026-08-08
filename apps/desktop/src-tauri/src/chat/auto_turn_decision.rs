@@ -65,18 +65,48 @@ pub(crate) fn resolve_resume_session_id<R: Runtime>(
     task_id: &str,
     backend: &str,
 ) -> Option<String> {
-    let in_memory = app.try_state::<ChatStore>().and_then(|store| {
-        store
-            .sdk_sessions
-            .lock()
-            .unwrap()
-            .get(&session_key(backend, task_id))
-            .cloned()
-    });
-    in_memory.or_else(|| {
-        let store = app.try_state::<LiliaStore>()?;
-        let conn = store.conn().ok()?;
-        load_persisted_resume_session_id(&conn, task_id, backend)
+    // Brand labels are provider scope; Native stores sessions under native-agentkit.
+    let on_native = crate::native_agent::resolve_execution_backend()
+        == crate::native_agent::ExecutionBackend::NativeAgentkit;
+    let native = crate::native_agent::BACKEND_NATIVE_AGENTKIT;
+    let lookup = |key: &str| {
+        app.try_state::<ChatStore>().and_then(|store| {
+            store
+                .sdk_sessions
+                .lock()
+                .ok()?
+                .get(&session_key(key, task_id))
+                .cloned()
+        })
+    };
+    if on_native {
+        if let Some(session) = lookup(native) {
+            return Some(session);
+        }
+        if let Some(session) = app
+            .try_state::<crate::product_core::EmbeddedProductCore>()
+            .and_then(|core| {
+                let task = lilia_contracts::TaskId::new(task_id.to_string()).ok()?;
+                core.binding_for_task(&task)
+                    .ok()
+                    .flatten()
+                    .map(|binding| binding.agent_session.as_str().to_string())
+            })
+        {
+            return Some(session);
+        }
+        if let Some(session) = app.try_state::<LiliaStore>().and_then(|store| {
+            let conn = store.conn().ok()?;
+            load_persisted_resume_session_id(&conn, task_id, native)
+        }) {
+            return Some(session);
+        }
+    }
+    lookup(backend).or_else(|| {
+        app.try_state::<LiliaStore>().and_then(|store| {
+            let conn = store.conn().ok()?;
+            load_persisted_resume_session_id(&conn, task_id, backend)
+        })
     })
 }
 

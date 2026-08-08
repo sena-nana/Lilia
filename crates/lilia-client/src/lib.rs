@@ -167,6 +167,10 @@ impl<P: AgentKitClientPort> LiliaClient<P> {
         self.products.list_bindings_for_task(task_id)
     }
 
+    pub fn clear_bindings(&self, task_id: &TaskId) -> ProductResult<usize> {
+        self.products.clear_bindings_for_task(task_id)
+    }
+
     /// Submit a turn through the shared AgentKit client port (Desktop / CLI / Service).
     pub fn submit_turn(
         &self,

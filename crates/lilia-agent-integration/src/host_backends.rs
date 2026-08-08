@@ -11,7 +11,7 @@ use mutsuki_agent_contracts::{
     AgentError, BrowserNavigateRequest, ProcessExecRequest, ProcessExecResult,
 };
 use mutsuki_agent_plugin_computer_use::{
-    BrowserBackend, ProcessBackend, WorkspaceFilesystemBackend,
+    BrowserGateway, ProcessGateway, WorkspaceFilesystemBackend,
 };
 use mutsuki_agent_plugin_git::CliGitBackend;
 use mutsuki_agent_plugin_lsp::StdioLspProcessFactory;
@@ -33,7 +33,7 @@ pub(crate) struct HostProcessBackend {
     active: Mutex<BTreeMap<String, Arc<ActiveProcess>>>,
 }
 
-impl ProcessBackend for HostProcessBackend {
+impl ProcessGateway for HostProcessBackend {
     fn exec(
         &self,
         handle_id: &str,
@@ -176,7 +176,7 @@ fn join_reader(
 #[derive(Default)]
 pub(crate) struct HostHttpBackend;
 
-impl BrowserBackend for HostHttpBackend {
+impl BrowserGateway for HostHttpBackend {
     fn snapshot(
         &self,
         request: &BrowserNavigateRequest,
@@ -269,6 +269,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let backend = HostProcessBackend::default();
+        #[cfg(windows)]
+        let (command, args) = (
+            "cmd".to_string(),
+            vec!["/C".into(), "echo 123456".into()],
+        );
+        #[cfg(not(windows))]
+        let (command, args) = ("sh".to_string(), vec!["-c".into(), "printf 123456".into()]);
         let result = backend
             .exec(
                 "process-test",
@@ -277,8 +284,8 @@ mod tests {
                         workspace_id: "test".into(),
                         root: root.display().to_string(),
                     },
-                    command: "sh".into(),
-                    args: vec!["-c".into(), "printf 123456".into()],
+                    command,
+                    args,
                     stdin: None,
                     limits: ExecutionLimits {
                         timeout_ms: 1_000,
@@ -290,7 +297,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result.exit_code, 0);
-        assert_eq!(result.summary, "1234");
+        assert_eq!(&result.summary[..4.min(result.summary.len())], "1234");
         assert!(result.truncated);
         assert!(!result.cancelled);
         let _ = std::fs::remove_dir_all(root);

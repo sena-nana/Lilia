@@ -38,7 +38,18 @@ cargo run --release --locked --features runtime-domain-reference `
 ## 与生产迁移的边界
 
 该模块是可执行 reference profile 和性能门禁，不会把空 RuntimeDomain 注入桌面进程，
-也不宣称现有 Node Agent runner、桌面产品数据库或 workspace command 已迁移。生产
+也不宣称现有 Node Agent runner、桌面产品数据库或全部 workspace command 已迁移。生产
 Embedded/Service 共用 bootstrap、LiliaCore、AgentKit 和 workspace authority 的迁移
 分别由 LiliaCode #44、#52、#60 推进。迁移时复用这里验证过的 domain ID、路由语义和
 性能场景，不建立第二套产品或 Agent 事实源。
+
+## 生产切片状态（诚实 partial）
+
+| 面 | 状态 |
+| --- | --- |
+| `lilia-workspace-domain` | **已**在 Desktop 生产路径挂载：`worktree_list` 经 `production_workspace_domain` 提交真实 `git worktree list` |
+| AgentKit turns | 仍为单 `HostRuntime`（`native_agent` / AgentKitHost），**未**迁入 agent domain |
+| Product SQLite / LiliaCore | 仍为 Embedded/Service bootstrap，**未**迁入 product domain |
+| 空域注入 | **禁止**：不在 setup 里插入无 runner 的 product/agent domain |
+
+生产协议 ID：`lilia.workspace.worktree.list.v1`（与 reference 的 `lilia.reference.workspace.*` 区分）。

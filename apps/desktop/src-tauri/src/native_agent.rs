@@ -376,8 +376,9 @@ pub fn host_status() -> NativeAgentHostStatus {
         .as_ref()
         .map(|d| d.live_model_adapter_drives_turn)
         .unwrap_or(false);
+    let wired = runtime.is_some();
     NativeAgentHostStatus {
-        wired: true,
+        wired,
         default_backend: BACKEND_NATIVE_AGENTKIT,
         active_backend: active.as_str(),
         profile_hint: PRODUCT_NATIVE_CODING_PROFILE_HINT,
@@ -387,6 +388,7 @@ pub fn host_status() -> NativeAgentHostStatus {
         timeline_is_agentkit_projection: true,
         product_timeline_store: PRODUCT_TIMELINE_STORE_ID,
         desktop_sqlite_is_ui_cache_only: true,
+        // Compat window still open until product version cut-off; not "Node is active".
         node_runner_legacy_compatibility: true,
         node_runner_compat_until: LEGACY_NODE_RUNNER_COMPAT_UNTIL,
         default_bundle_includes_official_agent_server: false,

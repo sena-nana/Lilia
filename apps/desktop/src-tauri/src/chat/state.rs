@@ -516,7 +516,21 @@ pub(crate) fn clear_task_runtime_state_for_reset<R: Runtime>(
     for backend in chat_backends() {
         sessions.remove(&session_key(backend, task_id));
     }
+    // Native execution sessions are stored under native-agentkit, not brand labels.
+    sessions.remove(&session_key(
+        crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+        task_id,
+    ));
     drop(sessions);
+
+    // Product binding is the real Native resume source; drop it on reset.
+    if let Some(core) = app.try_state::<crate::product_core::EmbeddedProductCore>() {
+        if let Ok(task) = lilia_contracts::TaskId::new(task_id.to_string()) {
+            if let Err(err) = core.clear_bindings_for_task(&task) {
+                eprintln!("[product-core] clear agent bindings on reset failed: {err}");
+            }
+        }
+    }
 
     if let Some(store) = app.try_state::<LiliaStore>() {
         if let Err(err) = store.conn().and_then(|conn| {

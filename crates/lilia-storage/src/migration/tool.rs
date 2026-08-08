@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lilia_contracts::{
-    AgentSessionBinding, AgentSessionRef, BindingId, ConversationId, ProductConversation,
-    ProductEntity, ProductError, ProductResult, ProductRevision, ProductTask, ProductTaskStatus,
-    Project, ProjectArchiveState, ProjectId, ProjectionEventId, TaskId, TimelineProjectionCommand,
-    TimelineProjectionEvent,
+    AgentSessionBinding, AgentSessionRef, BindingId, ConversationId, MilestoneId,
+    ProductConversation, ProductEntity, ProductError, ProductMilestone, ProductMilestoneStatus,
+    ProductResult, ProductRevision, ProductTask, ProductTaskStatus, Project, ProjectArchiveState,
+    ProjectId, ProjectionEventId, TaskId, TimelineProjectionCommand, TimelineProjectionEvent,
 };
 use lilia_core::ProductRepository;
 use rusqlite::{params, Connection};
@@ -80,10 +80,31 @@ struct LegacyTimelineRow {
 }
 
 #[derive(Clone, Debug)]
+struct LegacyMilestoneRow {
+    id: String,
+    project_id: String,
+    title: String,
+    description: Option<String>,
+    status: String,
+    sort_order: i64,
+    start_date: Option<String>,
+    due_date: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct LegacyTaskMilestoneLink {
+    task_id: String,
+    milestone_id: String,
+    milestone_sort_order: i64,
+}
+
+#[derive(Clone, Debug)]
 struct LegacySnapshot {
     projects: Vec<LegacyProjectRow>,
     tasks: Vec<LegacyTaskRow>,
     dependencies: Vec<LegacyDependencyRow>,
+    milestones: Vec<LegacyMilestoneRow>,
+    task_milestone_links: Vec<LegacyTaskMilestoneLink>,
     sessions: Vec<LegacySessionRow>,
     timeline: Vec<LegacyTimelineRow>,
 }
@@ -108,12 +129,16 @@ fn inspect_legacy_db(path: impl AsRef<Path>) -> ProductResult<LegacySnapshot> {
     let projects = query_projects(&conn)?;
     let tasks = query_tasks(&conn)?;
     let dependencies = query_dependencies(&conn)?;
+    let milestones = query_milestones(&conn)?;
+    let task_milestone_links = query_task_milestone_links(&conn)?;
     let sessions = query_sessions(&conn)?;
     let timeline = query_timeline(&conn)?;
     Ok(LegacySnapshot {
         projects,
         tasks,
         dependencies,
+        milestones,
+        task_milestone_links,
         sessions,
         timeline,
     })
@@ -236,6 +261,73 @@ fn query_timeline(conn: &Connection) -> ProductResult<Vec<LegacyTimelineRow>> {
     collect_rows(rows)
 }
 
+fn query_milestones(conn: &Connection) -> ProductResult<Vec<LegacyMilestoneRow>> {
+    if !table_exists(conn, "milestones")? {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, project_id, title, description, status, sort_order, start_date, due_date \
+             FROM milestones ORDER BY project_id, sort_order, id",
+        )
+        .map_err(map_sql)?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(LegacyMilestoneRow {
+                id: row.get(0)?,
+                project_id: row.get(1)?,
+                title: row.get(2)?,
+                description: row.get(3)?,
+                status: row.get(4)?,
+                sort_order: row.get(5)?,
+                start_date: row.get(6)?,
+                due_date: row.get(7)?,
+            })
+        })
+        .map_err(map_sql)?;
+    collect_rows(rows)
+}
+
+fn query_task_milestone_links(conn: &Connection) -> ProductResult<Vec<LegacyTaskMilestoneLink>> {
+    if !table_exists(conn, "task_milestone_links")? {
+        return Ok(Vec::new());
+    }
+    // Prefer milestone.sort_order when join is possible; fall back to 0 without milestones table.
+    if table_exists(conn, "milestones")? {
+        let mut stmt = conn
+            .prepare(
+                "SELECT l.task_id, l.milestone_id, COALESCE(m.sort_order, 0) \
+                 FROM task_milestone_links l \
+                 LEFT JOIN milestones m ON m.id = l.milestone_id \
+                 ORDER BY l.task_id, COALESCE(m.sort_order, 0), l.milestone_id",
+            )
+            .map_err(map_sql)?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(LegacyTaskMilestoneLink {
+                    task_id: row.get(0)?,
+                    milestone_id: row.get(1)?,
+                    milestone_sort_order: row.get(2)?,
+                })
+            })
+            .map_err(map_sql)?;
+        return collect_rows(rows);
+    }
+    let mut stmt = conn
+        .prepare("SELECT task_id, milestone_id FROM task_milestone_links ORDER BY task_id, milestone_id")
+        .map_err(map_sql)?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(LegacyTaskMilestoneLink {
+                task_id: row.get(0)?,
+                milestone_id: row.get(1)?,
+                milestone_sort_order: 0,
+            })
+        })
+        .map_err(map_sql)?;
+    collect_rows(rows)
+}
+
 fn table_exists(conn: &Connection, name: &str) -> ProductResult<bool> {
     let count: i64 = conn
         .query_row(
@@ -275,6 +367,31 @@ fn map_status(value: &str, archived: bool) -> ProductTaskStatus {
         "cancelled" => ProductTaskStatus::Cancelled,
         _ => ProductTaskStatus::Draft,
     }
+}
+
+fn map_milestone_status(value: &str) -> ProductMilestoneStatus {
+    match value {
+        "in-progress" | "in_progress" | "active" => ProductMilestoneStatus::Active,
+        "done" | "completed" => ProductMilestoneStatus::Completed,
+        "abandoned" | "cancelled" => ProductMilestoneStatus::Cancelled,
+        _ => ProductMilestoneStatus::Planned,
+    }
+}
+
+/// Deterministic single FK when legacy M:N links exist: lowest sort_order, then id.
+fn primary_milestone_for_task(
+    task_id: &str,
+    links: &[LegacyTaskMilestoneLink],
+) -> Option<String> {
+    links
+        .iter()
+        .filter(|link| link.task_id == task_id)
+        .min_by(|a, b| {
+            a.milestone_sort_order
+                .cmp(&b.milestone_sort_order)
+                .then_with(|| a.milestone_id.cmp(&b.milestone_id))
+        })
+        .map(|link| link.milestone_id.clone())
 }
 
 /// Deterministic AgentKit session id for a migrated Claude/Codex conversation.
@@ -343,6 +460,7 @@ fn empty_report(mode: MigrationMode, legacy_db: &Path, product_db: &Path) -> Mig
         ok: true,
         projects_seen: 0,
         tasks_seen: 0,
+        milestones_seen: 0,
         claude_sessions_seen: 0,
         codex_sessions_seen: 0,
         timeline_events_seen: 0,
@@ -379,6 +497,7 @@ fn build_report(
         });
     }
     for task in &snapshot.tasks {
+        let primary = primary_milestone_for_task(&task.id, &snapshot.task_milestone_links);
         objects.push(MigrationObjectResult {
             kind: ObjectKind::Task,
             id: task.id.clone(),
@@ -389,7 +508,24 @@ fn build_report(
             } else {
                 "upsert".into()
             },
-            detail: Some(task.title.clone()),
+            detail: Some(match primary {
+                Some(mid) => format!("{} (milestone_id={mid})", task.title),
+                None => task.title.clone(),
+            }),
+        });
+    }
+    for milestone in &snapshot.milestones {
+        objects.push(MigrationObjectResult {
+            kind: ObjectKind::Milestone,
+            id: milestone.id.clone(),
+            action: if mode == MigrationMode::DryRun || mode == MigrationMode::Report {
+                "would_upsert".into()
+            } else if mode == MigrationMode::Inspect {
+                "seen".into()
+            } else {
+                "upsert".into()
+            },
+            detail: Some(milestone.title.clone()),
         });
     }
     for dep in &snapshot.dependencies {
@@ -480,6 +616,7 @@ fn build_report(
         ok: true,
         projects_seen: snapshot.projects.len(),
         tasks_seen: snapshot.tasks.len(),
+        milestones_seen: snapshot.milestones.len(),
         claude_sessions_seen: claude,
         codex_sessions_seen: codex,
         timeline_events_seen: snapshot.timeline.len(),
@@ -496,6 +633,7 @@ fn build_report(
                 "Timeline rows projected as readonly legacy imports (pending skipped); migratable≈{timeline_migratable}"
             ),
             "MCP/Skills/Provider/Credential preview never embeds secret values".into(),
+            "Milestones migrate into product_entities; M:N task_milestone_links collapse to a single tasks.milestone_id (lowest sort_order, then id)".into(),
         ],
         errors: Vec::new(),
     }
@@ -516,6 +654,40 @@ fn apply_snapshot(
         store.upsert_project(&mapped)?;
     }
 
+    for milestone in &snapshot.milestones {
+        let mut mapped = ProductMilestone::new(
+            MilestoneId::new(&milestone.id)?,
+            ProjectId::new(&milestone.project_id)?,
+            milestone.title.clone(),
+        )?;
+        mapped.description = milestone.description.clone();
+        mapped.status = map_milestone_status(&milestone.status);
+        mapped.sort_order = milestone.sort_order;
+        mapped.start_date = milestone.start_date.clone();
+        mapped.due_date = milestone.due_date.clone();
+        match store.create_entity(ProductEntity::Milestone(mapped.clone())) {
+            Ok(_) => {}
+            Err(ProductError::Conflict { .. }) => {
+                let current = store.get_entity(
+                    lilia_contracts::ProductEntityKind::Milestone,
+                    mapped.id.as_str(),
+                )?;
+                if let ProductEntity::Milestone(current_milestone) = current {
+                    mapped.revision = current_milestone.revision;
+                    if current_milestone != mapped {
+                        store.update_entity(
+                            ProductEntity::Milestone(mapped),
+                            lilia_contracts::ExpectedRevision::new(
+                                current_milestone.revision.get(),
+                            )?,
+                        )?;
+                    }
+                }
+            }
+            Err(err) => return Err(err),
+        }
+    }
+
     for task in &snapshot.tasks {
         let project_id = task
             .project_id
@@ -533,6 +705,9 @@ fn apply_snapshot(
         mapped.sort_order = task.sort_order;
         mapped.created_at = task.created_at;
         mapped.updated_at = task.created_at;
+        mapped.milestone_id = primary_milestone_for_task(&task.id, &snapshot.task_milestone_links)
+            .map(|id| MilestoneId::new(id))
+            .transpose()?;
         mapped.legacy_source = snapshot
             .sessions
             .iter()
@@ -870,16 +1045,11 @@ impl LegacyMigrationTool {
         if self.product_db.is_file() {
             let store = SqliteProductStore::open(&self.product_db)?;
             if let Some(run) = store.latest_migration_run()? {
-                if run.status == "completed" {
-                    if let Ok(report) = serde_json::from_str::<MigrationReport>(&run.report_json) {
-                        if report
-                            .notes
-                            .iter()
-                            .any(|note| note.contains(DESKTOP_PRODUCT_CORE_CUTOVER))
-                        {
-                            return Ok(None);
-                        }
-                    }
+                // Completed cutover is authoritative even if report JSON drifts.
+                if run.status == "completed"
+                    && run.report_json.contains(DESKTOP_PRODUCT_CORE_CUTOVER)
+                {
+                    return Ok(None);
                 }
             }
         }
@@ -914,6 +1084,9 @@ impl LegacyMigrationTool {
             ok: true,
             projects_seen: projects,
             tasks_seen: tasks,
+            milestones_seen: store
+                .list_entities(lilia_contracts::ProductEntityKind::Milestone)?
+                .len(),
             claude_sessions_seen: claude,
             codex_sessions_seen: codex,
             timeline_events_seen: 0,
@@ -1015,6 +1188,10 @@ impl LegacyMigrationTool {
                 ok: true,
                 projects_seen: store.list_projects().map(|v| v.len()).unwrap_or(0),
                 tasks_seen: store.list_tasks().map(|v| v.len()).unwrap_or(0),
+                milestones_seen: store
+                    .list_entities(lilia_contracts::ProductEntityKind::Milestone)
+                    .map(|v| v.len())
+                    .unwrap_or(0),
                 claude_sessions_seen: 0,
                 codex_sessions_seen: 0,
                 timeline_events_seen: 0,
@@ -1048,6 +1225,7 @@ impl LegacyMigrationTool {
             ok: true,
             projects_seen: 0,
             tasks_seen: 0,
+            milestones_seen: 0,
             claude_sessions_seen: 0,
             codex_sessions_seen: 0,
             timeline_events_seen: 0,
@@ -1136,9 +1314,130 @@ mod tests {
               ('ev-1', 'task-claude', 't1', 'claude', 'message', 'done', 'hi', NULL, '{}', 1, 1, 1, 0),
               ('ev-pending', 'task-claude', 't1', 'claude', 'approval', 'pending', 'allow?', NULL, '{}', 1, 1, 1, 1),
               ('ev-2', 'task-codex', 't2', 'codex', 'message', 'done', 'yo', NULL, '{}', 1, 1, 1, 0);
+            CREATE TABLE milestones (
+              id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              description TEXT,
+              status TEXT NOT NULL DEFAULT 'upcoming',
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              start_date TEXT,
+              due_date TEXT
+            );
+            CREATE TABLE task_milestone_links (
+              task_id TEXT NOT NULL,
+              milestone_id TEXT NOT NULL,
+              PRIMARY KEY (task_id, milestone_id)
+            );
+            INSERT INTO milestones(id, project_id, title, description, status, sort_order, start_date, due_date)
+              VALUES
+                ('ms-b', 'proj-1', 'Beta', NULL, 'upcoming', 2, NULL, NULL),
+                ('ms-a', 'proj-1', 'Alpha', 'first', 'in-progress', 1, NULL, NULL);
+            INSERT INTO task_milestone_links(task_id, milestone_id)
+              VALUES
+                ('task-claude', 'ms-b'),
+                ('task-claude', 'ms-a'),
+                ('task-codex', 'ms-b');
             "#,
         )
         .unwrap();
+    }
+
+    #[test]
+    fn apply_if_needed_respects_completed_cutover_even_with_legacy_report_json() {
+        let root = std::env::temp_dir().join(format!("lilia-mig-cutover-{}", now_stamp()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("db")).unwrap();
+        let legacy = root.join("db").join("lilia.db");
+        let product = root.join("db").join("product.db");
+        write_legacy_fixture(&legacy);
+        let tool = LegacyMigrationTool::with_explicit(legacy, product.clone(), root);
+        assert!(tool.apply().unwrap().ok);
+        // Simulate an older completed cutover report that lacks milestones_seen.
+        let store = SqliteProductStore::open(&product).unwrap();
+        let legacy_report = format!(
+            r#"{{"mode":"apply","legacyDb":"x","productDb":"y","ok":true,"projectsSeen":1,"tasksSeen":2,"claudeSessionsSeen":1,"codexSessionsSeen":1,"timelineEventsSeen":0,"agentkitBindingsPlanned":2,"objects":[],"legacySessions":[],"compatAssets":[],"notes":["cutover marker: {DESKTOP_PRODUCT_CORE_CUTOVER}"],"errors":[]}}"#
+        );
+        store
+            .record_migration_run(
+                "cutover-legacy-shape",
+                "apply",
+                "legacy",
+                product.to_string_lossy().as_ref(),
+                "completed",
+                "1",
+                Some("1"),
+                None,
+                &legacy_report,
+            )
+            .unwrap();
+        // Must not re-apply over product data when cutover already completed.
+        assert!(tool.apply_if_needed().unwrap().is_none());
+        // Deserialize of full report still works when milestones_seen is absent.
+        let parsed: MigrationReport = serde_json::from_str(&legacy_report).unwrap();
+        assert_eq!(parsed.milestones_seen, 0);
+        assert!(parsed
+            .notes
+            .iter()
+            .any(|n| n.contains(DESKTOP_PRODUCT_CORE_CUTOVER)));
+    }
+
+    #[test]
+    fn apply_migrates_milestones_and_primary_task_link() {
+        let root = std::env::temp_dir().join(format!("lilia-mig-ms-{}", now_stamp()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("db")).unwrap();
+        let legacy = root.join("db").join("lilia.db");
+        let product = root.join("db").join("product.db");
+        write_legacy_fixture(&legacy);
+
+        let tool = LegacyMigrationTool::with_explicit(
+            legacy.clone(),
+            product.clone(),
+            root.clone(),
+        );
+        let report = tool.apply().unwrap();
+        assert!(report.ok);
+        assert_eq!(report.milestones_seen, 2);
+        assert!(report.objects.iter().any(|o| {
+            o.kind == ObjectKind::Milestone && o.id == "ms-a" && o.action == "upsert"
+        }));
+
+        let store = SqliteProductStore::open(&product).unwrap();
+        let milestones = store
+            .list_entities(lilia_contracts::ProductEntityKind::Milestone)
+            .unwrap();
+        assert_eq!(milestones.len(), 2);
+        let task = store.get_task(&TaskId::new("task-claude").unwrap()).unwrap();
+        // Lowest sort_order among links: ms-a (1) wins over ms-b (2).
+        assert_eq!(
+            task.milestone_id.as_ref().map(|id| id.as_str()),
+            Some("ms-a")
+        );
+        let task_b = store.get_task(&TaskId::new("task-codex").unwrap()).unwrap();
+        assert_eq!(
+            task_b.milestone_id.as_ref().map(|id| id.as_str()),
+            Some("ms-b")
+        );
+
+        // Idempotent re-apply keeps the same primary link.
+        let again = LegacyMigrationTool::with_explicit(legacy, product.clone(), root)
+            .apply()
+            .unwrap();
+        assert!(again.ok);
+        let store = SqliteProductStore::open(product).unwrap();
+        let task = store.get_task(&TaskId::new("task-claude").unwrap()).unwrap();
+        assert_eq!(
+            task.milestone_id.as_ref().map(|id| id.as_str()),
+            Some("ms-a")
+        );
+        assert_eq!(
+            store
+                .list_entities(lilia_contracts::ProductEntityKind::Milestone)
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[test]

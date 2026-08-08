@@ -50,6 +50,8 @@ pub trait ProductRepository: Send + Sync {
     fn list_tasks(&self) -> ProductResult<Vec<ProductTask>>;
     fn record_binding(&self, binding: AgentSessionBinding) -> ProductResult<AgentSessionBinding>;
     fn list_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<Vec<AgentSessionBinding>>;
+    /// Drop product Agent session bindings for a task (e.g. user session reset).
+    fn clear_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<usize>;
 }
 
 #[derive(Default)]
@@ -377,6 +379,15 @@ impl ProductRepository for Mutex<InMemoryProductStore> {
         bindings.sort_by(|left, right| left.binding_id.cmp(&right.binding_id));
         Ok(bindings)
     }
+
+    fn clear_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<usize> {
+        let mut store = lock_store(self)?;
+        let before = store.bindings.len();
+        store
+            .bindings
+            .retain(|_, binding| binding.task_id != *task_id);
+        Ok(before.saturating_sub(store.bindings.len()))
+    }
 }
 
 pub struct ProductServices {
@@ -438,6 +449,10 @@ impl ProductServices {
         task_id: &TaskId,
     ) -> ProductResult<Vec<AgentSessionBinding>> {
         self.repository.list_bindings_for_task(task_id)
+    }
+
+    pub fn clear_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<usize> {
+        self.repository.clear_bindings_for_task(task_id)
     }
 
     pub fn record_binding(

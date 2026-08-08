@@ -69,15 +69,16 @@ pub(crate) struct WorktreeMergeResult {
     pub(crate) message: String,
 }
 
-#[derive(Debug, Clone)]
-struct GitWorktree {
-    path: String,
-    head: Option<String>,
-    branch: Option<String>,
-    bare: bool,
-    detached: bool,
-    prunable: bool,
-    locked: bool,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GitWorktree {
+    pub(crate) path: String,
+    pub(crate) head: Option<String>,
+    pub(crate) branch: Option<String>,
+    pub(crate) bare: bool,
+    pub(crate) detached: bool,
+    pub(crate) prunable: bool,
+    pub(crate) locked: bool,
 }
 
 fn run_git(args: &[&str], cwd: &Path) -> Result<String, String> {
@@ -182,7 +183,7 @@ fn parse_worktree_porcelain(input: &str) -> Vec<GitWorktree> {
     out
 }
 
-fn list_git_worktrees(base_repo_path: &Path) -> Result<Vec<GitWorktree>, String> {
+pub(crate) fn list_git_worktrees(base_repo_path: &Path) -> Result<Vec<GitWorktree>, String> {
     ensure_git_repo(base_repo_path)?;
     let output = run_git(&["worktree", "list", "--porcelain"], base_repo_path)?;
     Ok(parse_worktree_porcelain(&output))
@@ -482,7 +483,9 @@ pub(crate) fn worktree_list(
     let base_canon = canonical_path_string(&base)?;
     let conn = store.conn()?;
     let bound_paths = active_bound_paths(&conn)?;
-    Ok(list_git_worktrees(&base)?
+    // Production path: workspace RuntimeDomain owns git worktree list authority.
+    let worktrees = crate::production_workspace_domain::list_worktrees_via_domain(&base)?;
+    Ok(worktrees
         .into_iter()
         .map(|item| {
             let item_path =

@@ -140,6 +140,7 @@ export async function respondPermissionApproval(
   if (nativeDecision) {
     await respondNativeApproval(taskId, nativeDecision);
   } else {
+    // Missing providerContext.native: backend refuses Node stdin on Native turns.
     await respondAgentInteraction({
       taskId,
       requestId,

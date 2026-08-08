@@ -99,6 +99,7 @@ lilia-cli timeline --task <id> --home <DIR>
 - `apps/desktop/legacy/**` 仍保留至截止版本 `1.0.0`，**仅** `--features legacy-runner` 后门可链入
 - Jsonl process registry 等通用子进程基建仍在 Desktop 树内（非 Node agent-runner 产品路径）
 - Provider/Credential 完整 CredentialRef 导入仍需 Host Native Credential UI 重绑
-- Milestone/Roadmap/Memory/Product Conversation 全量面继续由 #56/#61 覆盖
+- Milestone 已进入 migration 切片：`milestones` + `task_milestone_links` → `product_entities` Milestone + 单 `tasks.milestone_id`（M:N 取最低 sort_order）
+- Memory / Product Conversation 全量面 / Automation 等继续由 #56/#61 覆盖
 - 不把 Legacy continue 做成新任务默认选项或 Native 失败 fallback
 - 不逆向官方客户端认证

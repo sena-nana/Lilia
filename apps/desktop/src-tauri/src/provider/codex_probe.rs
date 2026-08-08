@@ -322,6 +322,13 @@ pub(crate) fn codex_send_block_reason(status: &CodexAppServerStatus) -> Option<S
 }
 
 pub(crate) fn validate_backend_ready_for_send(active_backend: &str) -> Result<(), String> {
+    // Native AgentKit execution does not depend on official Codex app-server.
+    // Brand labels (claude/codex) remain product provider scope only.
+    if crate::native_agent::resolve_execution_backend()
+        == crate::native_agent::ExecutionBackend::NativeAgentkit
+    {
+        return Ok(());
+    }
     if active_backend != BACKEND_CODEX {
         return Ok(());
     }
@@ -348,6 +355,18 @@ mod tests {
                 Vec::new(),
             ),
             path: Some(path.to_string()),
+        }
+    }
+
+    #[test]
+    fn native_execution_skips_codex_app_server_send_gate() {
+        let previous = std::env::var("LILIA_AGENT_EXECUTION_BACKEND").ok();
+        std::env::remove_var("LILIA_AGENT_EXECUTION_BACKEND");
+        // Brand label is codex; execution is still Native — must not require app-server.
+        assert!(validate_backend_ready_for_send(BACKEND_CODEX).is_ok());
+        match previous {
+            Some(value) => std::env::set_var("LILIA_AGENT_EXECUTION_BACKEND", value),
+            None => std::env::remove_var("LILIA_AGENT_EXECUTION_BACKEND"),
         }
     }
 

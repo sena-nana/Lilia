@@ -1,7 +1,7 @@
 //! Product-core facade status exposed to Desktop.
 //!
 //! Native AgentKit is the default Desktop execution backend after Host pin alignment
-//! (`MutsukiCore@9a081d2`). Legacy Node `agent-runner` is limited-time compatibility
+//! (`Mutsuki@d475f1b`). Legacy Node `agent-runner` is limited-time compatibility
 //! only via `LILIA_AGENT_EXECUTION_BACKEND=node` until
 //! [`crate::native_agent::LEGACY_NODE_RUNNER_COMPAT_UNTIL`] (#47).
 
@@ -45,6 +45,14 @@ impl EmbeddedProductCore {
         task_id: &TaskId,
     ) -> Result<Option<AgentSessionBinding>, ProductError> {
         Ok(self.client.list_bindings(task_id)?.into_iter().next())
+    }
+
+    /// Clear product Agent session bindings so a user reset does not resume the old session.
+    pub(crate) fn clear_bindings_for_task(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<usize, ProductError> {
+        self.client.clear_bindings(task_id)
     }
 
     pub(crate) fn create_task_with_conversation(
@@ -149,6 +157,10 @@ pub struct ProductCoreStatus {
     pub default_bundle_includes_official_agent_server: bool,
     /// #47 — default install resources exclude Node agent-runner.
     pub default_bundle_includes_node_agent_runner: bool,
+    /// #47 honesty: `legacy-runner` Cargo feature compiled into this binary.
+    pub legacy_runner_feature_compiled: bool,
+    /// Raw `LILIA_AGENT_EXECUTION_BACKEND` when set (debug / escape hatch).
+    pub execution_backend_env_override: Option<String>,
     pub agent_capabilities: lilia_core::NativeAgentCapabilitySnapshot,
     pub mutsuki_core_pin: &'static str,
     pub credential_broker_wired: bool,
@@ -176,8 +188,10 @@ pub fn product_core_status() -> ProductCoreStatus {
         default_bundle_includes_official_agent_server: host
             .default_bundle_includes_official_agent_server,
         default_bundle_includes_node_agent_runner: host.default_bundle_includes_node_agent_runner,
+        legacy_runner_feature_compiled: host.legacy_runner_feature_compiled,
+        execution_backend_env_override: host.env_override.clone(),
         agent_capabilities: host.capabilities,
-        mutsuki_core_pin: "9a081d20807c2511b4b6fb051d85afb44bc4643a",
+        mutsuki_core_pin: "d475f1ba24942b50e42ed2588e8fd208f1381a12",
         credential_broker_wired: host
             .diagnostics
             .as_ref()
@@ -281,6 +295,8 @@ mod tests {
         );
         assert!(!status.default_bundle_includes_official_agent_server);
         assert!(!status.default_bundle_includes_node_agent_runner);
+        assert!(!status.legacy_runner_feature_compiled);
+        assert!(status.execution_backend_env_override.is_none());
         assert!(status.timeline_is_agentkit_projection);
         assert!(status.desktop_sqlite_is_ui_cache_only);
         assert_eq!(

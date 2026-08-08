@@ -391,11 +391,30 @@ pub fn chat_respond_agent_interaction(
     _app: AppHandle,
     store: State<'_, ChatStore>,
 ) -> Result<(), String> {
+    if running_turn_is_native(&store, &task_id) {
+        return Err(
+            "当前任务由 AgentKit Native 执行；权限与交互请走 native_respond_approval，禁止写入 Node runner stdin"
+                .into(),
+        );
+    }
     let payload = agent_interaction_response_payload(request_id.clone(), kind.clone(), result);
     let mut attributes = control_event_attributes([("requestId", request_id), ("kind", kind)]);
     let write_result = write_runner_stdin(&store, &task_id, payload);
     attach_stdin_delivery(&mut attributes, &write_result);
     write_result.map(|_| ())
+}
+
+fn running_turn_is_native(store: &ChatStore, task_id: &str) -> bool {
+    if let Some(turn) = store
+        .running_turns
+        .lock()
+        .ok()
+        .and_then(|turns| turns.get(task_id).cloned())
+    {
+        return turn.backend == crate::native_agent::BACKEND_NATIVE_AGENTKIT;
+    }
+    crate::native_agent::resolve_execution_backend()
+        == crate::native_agent::ExecutionBackend::NativeAgentkit
 }
 
 #[tauri::command]
@@ -404,6 +423,11 @@ pub fn chat_send_process_session_command(
     command: ChatRuntimeCommand,
     store: State<'_, ChatStore>,
 ) -> Result<(), String> {
+    if running_turn_is_native(&store, &task_id) {
+        return Err(
+            "当前任务由 AgentKit Native 执行；process_session 控制不走 Node runner stdin".into(),
+        );
+    }
     match command {
         ChatRuntimeCommand::ProcessSession { .. } => {
             let payload = process_session_command_payload(command);
@@ -495,6 +519,10 @@ pub fn chat_set_composer_state(
     let Some(payload) = payload else {
         return;
     };
+    // Native turns do not consume Node runner stdin control messages.
+    if running_turn_is_native(&store, &state.task_id) {
+        return;
+    }
     let mut attributes = composer_runtime_settings_update_attributes(&payload);
     let write_result = write_runner_stdin(&store, &state.task_id, payload);
     attach_stdin_delivery(&mut attributes, &write_result);

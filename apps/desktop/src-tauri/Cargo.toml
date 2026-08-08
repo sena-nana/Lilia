@@ -15,11 +15,8 @@ default = []
 # Default Desktop builds omit this; enable only for explicit legacy compat until 1.0.0.
 legacy-runner = []
 agent-debug-webdriver = ["dep:tauri-plugin-wdio-webdriver"]
-runtime-domain-reference = [
-  "dep:mutsuki-runtime-core",
-  "dep:mutsuki-runtime-host",
-  "dep:mutsuki-runtime-sdk",
-]
+# #43 reference multi-domain assembly + bench; production workspace domain is always on.
+runtime-domain-reference = []
 
 [[bin]]
 name = "lilia-runtime-domain-bench"
@@ -44,9 +41,9 @@ tauri-plugin-updater = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 mutsuki-runtime-contracts = { workspace = true }
-mutsuki-runtime-core = { workspace = true, optional = true }
-mutsuki-runtime-host = { workspace = true, optional = true }
-mutsuki-runtime-sdk = { workspace = true, optional = true }
+mutsuki-runtime-core = { workspace = true }
+mutsuki-runtime-host = { workspace = true }
+mutsuki-runtime-sdk = { workspace = true }
 mutsuki-tauri-host = { workspace = true }
 mutsuki-agent-client = { workspace = true }
 mutsuki-agent-contracts = { workspace = true }

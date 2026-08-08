@@ -18,6 +18,7 @@ pub enum ObjectKind {
     Project,
     Task,
     TaskDependency,
+    Milestone,
     LegacySession,
     AgentKitBinding,
     TimelineEvent,
@@ -68,6 +69,9 @@ pub struct MigrationReport {
     pub ok: bool,
     pub projects_seen: usize,
     pub tasks_seen: usize,
+    /// Optional for forward-compatible cutover report JSON (older runs omit the field).
+    #[serde(default)]
+    pub milestones_seen: usize,
     pub claude_sessions_seen: usize,
     pub codex_sessions_seen: usize,
     pub timeline_events_seen: usize,

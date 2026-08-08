@@ -507,6 +507,18 @@ impl SqliteProductStore {
         })
     }
 
+    pub fn clear_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<usize> {
+        self.with_conn(|conn| {
+            let removed = conn
+                .execute(
+                    "DELETE FROM agent_session_bindings WHERE task_id = ?1",
+                    params![task_id.as_str()],
+                )
+                .map_err(db_err)?;
+            Ok(removed)
+        })
+    }
+
     pub fn list_all_bindings(&self) -> ProductResult<Vec<AgentSessionBinding>> {
         self.with_conn(|conn| {
             let mut stmt = conn
@@ -1002,6 +1014,11 @@ impl ProductRepository for SqliteProductStore {
 
     fn list_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<Vec<AgentSessionBinding>> {
         SqliteProductStore::list_bindings_for_task(self, task_id)
+    }
+
+    fn clear_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<usize> {
+        let _mutation = self.lock_mutation()?;
+        SqliteProductStore::clear_bindings_for_task(self, task_id)
     }
 }
 
@@ -1631,6 +1648,50 @@ mod tests {
         GitWorkspaceRef, IdempotencyKey, ProductConversation, ProductEntity, ProjectAssetId,
         ProjectSettings,
     };
+
+    #[test]
+    fn clear_bindings_for_task_removes_only_that_task() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let project = Project::new(ProjectId::new("p-bind").unwrap(), "Demo").unwrap();
+        store.upsert_project(&project).unwrap();
+        let task_a = ProductTask::new(
+            TaskId::new("task-a").unwrap(),
+            Some(project.id.clone()),
+            "A",
+        )
+        .unwrap();
+        let task_b = ProductTask::new(
+            TaskId::new("task-b").unwrap(),
+            Some(project.id.clone()),
+            "B",
+        )
+        .unwrap();
+        store.upsert_task(&task_a).unwrap();
+        store.upsert_task(&task_b).unwrap();
+        store
+            .upsert_binding(&AgentSessionBinding {
+                binding_id: BindingId::new("binding-a").unwrap(),
+                task_id: task_a.id.clone(),
+                conversation_id: None,
+                agent_session: AgentSessionRef::new("session-a").unwrap(),
+                profile_id: Some("native-coding".into()),
+                revision: ProductRevision::INITIAL,
+            })
+            .unwrap();
+        store
+            .upsert_binding(&AgentSessionBinding {
+                binding_id: BindingId::new("binding-b").unwrap(),
+                task_id: task_b.id.clone(),
+                conversation_id: None,
+                agent_session: AgentSessionRef::new("session-b").unwrap(),
+                profile_id: Some("native-coding".into()),
+                revision: ProductRevision::INITIAL,
+            })
+            .unwrap();
+        assert_eq!(store.clear_bindings_for_task(&task_a.id).unwrap(), 1);
+        assert!(store.list_bindings_for_task(&task_a.id).unwrap().is_empty());
+        assert_eq!(store.list_bindings_for_task(&task_b.id).unwrap().len(), 1);
+    }
 
     #[test]
     fn project_task_roundtrip() {

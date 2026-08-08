@@ -463,7 +463,7 @@ impl NativeAgentKitRuntime {
             ));
         }
         let binding = self.binding(session.as_str())?;
-        self.gate_credentials_for_turn()?;
+        let credential_bound = self.gate_credentials_for_turn()?;
         let (plan, workspace) = self.turn_plan(context.as_ref())?;
         if let Some(workspace) = &workspace {
             self.prepare_native_coding_workspace(&workspace.root)
@@ -493,7 +493,14 @@ impl NativeAgentKitRuntime {
             .expect("Native Coding run context serializes")
         });
         let result = self.run_agent(host, session.as_str(), request)?;
-        self.page_from_result(session.as_str(), turn_id, &binding, &plan, true, result)
+        self.page_from_result(
+            session.as_str(),
+            turn_id,
+            &binding,
+            &plan,
+            credential_bound,
+            result,
+        )
     }
 
     pub fn respond_approval_streaming(
@@ -507,7 +514,7 @@ impl NativeAgentKitRuntime {
             ));
         }
         let binding = self.binding(session.as_str())?;
-        self.gate_credentials_for_turn()?;
+        let credential_bound = self.gate_credentials_for_turn()?;
         let snapshot = self.session_snapshot(session.as_str())?;
         let context = snapshot
             .messages
@@ -547,7 +554,7 @@ impl NativeAgentKitRuntime {
             &decision.turn_id,
             &binding,
             &plan,
-            true,
+            credential_bound,
             result,
         )?;
         self.resolve_product_approval(&binding, decision, page.next_sequence)?;
@@ -1161,7 +1168,8 @@ impl NativeAgentKitRuntime {
             })),
             official_agent_server: false,
             credential_bound,
-            live_model_adapter_drives_turn: true,
+            // Plan only builds when a live adapter CredentialRef is bound.
+            live_model_adapter_drives_turn: credential_bound,
             profile_id: binding.profile_id.clone(),
         })
     }
@@ -1561,6 +1569,47 @@ mod tests {
     }
 
     #[test]
+    fn live_model_diagnostics_flip_true_after_login_and_false_after_revoke() {
+        let runtime = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        let cold = runtime.independent_diagnostics();
+        assert!(!cold.live_model_adapter_drives_turn);
+        assert!(!cold.profile_has_credential_refs);
+
+        let view = runtime
+            .credentials()
+            .login(ProductCredentialLoginInput {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: "sk-test-openai-api-key-0123456789abcdef".into(),
+                account_label: None,
+                source: Some("user_api_key".into()),
+            })
+            .unwrap();
+        runtime.refresh_product_profile(None).unwrap();
+        let live = runtime.independent_diagnostics();
+        assert!(live.profile_has_credential_refs);
+        assert!(live.live_model_adapter_drives_turn);
+        assert!(live.credential.has_usable_model_credential);
+        assert!(live.runtime_ready);
+
+        let credential = runtime
+            .credentials()
+            .primary_usable_credential()
+            .expect("login must expose usable credential ref");
+        assert_eq!(credential.credential_id, view.credential_id);
+        runtime
+            .credentials()
+            .revoke(credential, Some("test-revoke".into()))
+            .unwrap();
+        runtime.refresh_product_profile(None).unwrap();
+        let revoked = runtime.independent_diagnostics();
+        assert!(!revoked.live_model_adapter_drives_turn);
+        assert!(!revoked.profile_has_credential_refs);
+    }
+
+    #[test]
     fn full_permission_runs_model_and_native_tool_only_through_agentkit_host() {
         let workspace = TestWorkspace::new("full");
         let (runtime, server) = configured_runtime(vec![write_call(), final_response()]);
@@ -1585,6 +1634,12 @@ mod tests {
         assert_eq!(
             page.tool_summary.as_ref().unwrap()["waiting_approval"],
             false
+        );
+        assert!(page.credential_bound);
+        assert!(page.live_model_adapter_drives_turn);
+        assert_eq!(
+            page.tool_summary.as_ref().unwrap()["driver"],
+            "openai-compatible"
         );
         assert!(page.events.iter().any(|event| matches!(
             event.event,
