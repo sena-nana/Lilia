@@ -4,6 +4,7 @@ version = "1.0.0-beta.1"
 description = "Lilia · 一个把 Claude Code 会话当作任务管理的桌面客户端"
 authors = ["Sena"]
 edition = "2021"
+default-run = "lilia"
 
 [lib]
 name = "lilia_lib"
