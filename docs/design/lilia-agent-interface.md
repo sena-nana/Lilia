@@ -146,10 +146,12 @@ UI 禁止直接构造 Mutsuki 内部 DTO 或模型厂商私有字段作为 publi
 
 | Adapter id | Protocol family | 用途 |
 | --- | --- | --- |
-| `openai-compatible` | `openai.chat-completions` | OpenAI 兼容 API / 本地代理 |
+| `openai-compatible` | `openai.chat-completions` | OpenAI 兼容 Chat Completions / 本地代理 |
+| `openai-responses` | `openai.responses` | OpenAI Responses API |
 | `anthropic-messages` | `anthropic.messages` | Anthropic Messages API |
 
-二者是 **LLM 协议适配**，不是 Claude Code / Codex 产品后端。  
+三者是 **LLM 协议适配**，不是 Claude Code / Codex 产品后端。  
+基本对话与简单 ReAct 由 Mutsuki AgentKit 提供；产品 Persona / 审批 UI / 工作流不进 Mutsuki。  
 禁止再引入官方 Agent Server、CLI app-server 或 Node legacy runner 作为执行路径。
 
 ### Profile

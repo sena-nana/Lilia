@@ -1,7 +1,7 @@
 //! Product-core facade status exposed to Desktop.
 //!
 //! Native AgentKit is the Desktop execution backend after Host pin alignment
-//! (`Mutsuki@d475f1b`).
+//! (`Mutsuki@873af51`).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -189,7 +189,7 @@ pub fn product_core_status() -> ProductCoreStatus {
         legacy_runner_feature_compiled: host.legacy_runner_feature_compiled,
         execution_backend_env_override: host.env_override.clone(),
         agent_capabilities: host.capabilities,
-        mutsuki_core_pin: "d475f1ba24942b50e42ed2588e8fd208f1381a12",
+        mutsuki_core_pin: "873af51f5391f7bd5f1d3216c2bcfe8680c839f8",
         credential_broker_wired: host
             .diagnostics
             .as_ref()
