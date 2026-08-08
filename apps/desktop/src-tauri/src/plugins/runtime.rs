@@ -2,18 +2,20 @@ use std::collections::BTreeMap;
 
 use tauri::{AppHandle, Runtime};
 
-use super::claude_mcp::{
-    claude_mcp_config_path, list_claude_mcp_servers, runtime_claude_mcp_servers,
-};
+use super::claude_mcp::{claude_mcp_config_path, list_claude_mcp_servers};
+#[cfg(feature = "legacy-runner")]
+use super::claude_mcp::runtime_claude_mcp_servers;
 use super::claude_plugins::list_claude_plugins;
 use super::claude_skills::list_claude_skills;
 use super::codex_mcp::{codex_config_path, list_codex_mcp_servers};
+#[cfg(feature = "legacy-runner")]
 use super::hooks::runtime_claude_hooks;
 use super::paths::{SCOPE_PROJECT, SCOPE_USER};
+#[cfg(feature = "legacy-runner")]
 use super::types::{
     AgentRuntimeExtensions, ClaudeRuntimeExtensions, ClaudeRuntimePlugin, CodexRuntimeExtensions,
-    PluginSkill, PluginsOverview,
 };
+use super::types::{PluginSkill, PluginsOverview};
 
 fn list_scoped_claude_skills<R: Runtime>(
     app: &AppHandle<R>,
@@ -59,6 +61,7 @@ pub fn overview<R: Runtime>(app: &AppHandle<R>, project_cwd: Option<&str>) -> Pl
     }
 }
 
+#[cfg(feature = "legacy-runner")]
 pub fn runtime_extensions<R: Runtime>(
     app: &AppHandle<R>,
     project_cwd: Option<&str>,

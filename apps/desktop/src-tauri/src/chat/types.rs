@@ -559,6 +559,7 @@ pub(crate) struct ChatModelOption {
     pub(crate) label: String,
     pub(crate) backend: String,
 }
+#[cfg(feature = "legacy-runner")]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct TurnStartedEvent {

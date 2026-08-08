@@ -2,7 +2,9 @@ use std::collections::HashSet;
 #[cfg(feature = "legacy-runner")]
 use std::env;
 use std::io::Write;
+#[cfg(feature = "legacy-runner")]
 use std::path::PathBuf;
+#[cfg(feature = "legacy-runner")]
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use std::thread;
@@ -10,52 +12,73 @@ use std::time::Duration;
 
 use rusqlite::{params, OptionalExtension};
 use serde::Serialize;
-use serde_json::{Map as JsonMap, Value as JsonValue};
+#[cfg(any(feature = "legacy-runner", test))]
+use serde_json::Map as JsonMap;
+use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::agent_events::{
     runner_quota_usage_result_control_type, AgentEventHost, AgentRuntimeEvent, AgentTurnContext,
 };
 use crate::agent_extensions::TodoMirrorExtension;
-use crate::chat::auto_turn_decision::{prepare_turn_for_start, resolve_resume_session_id};
+#[cfg(feature = "legacy-runner")]
+use crate::chat::auto_turn_decision::prepare_turn_for_start;
+use crate::chat::auto_turn_decision::resolve_resume_session_id;
 use crate::chat::contract;
-use crate::chat::process_registry::{
-    JsonlProcessPoll, JsonlProcessRegistry, JsonlProcessStdinStatus,
-};
+use crate::chat::process_registry::{JsonlProcessPoll, JsonlProcessRegistry};
+#[cfg(feature = "legacy-runner")]
+use crate::chat::process_registry::JsonlProcessStdinStatus;
 #[cfg(test)]
 use crate::chat::state::take_next_pending_turn;
 use crate::chat::state::{
     clear_runtime_state_for_app, clear_task_runtime_state_for_reset, finish_running_turn_handles,
     is_turn_marked_reset, persist_agent_session_id, persist_and_emit_interrupted_timeline_event,
-    persist_runtime_state_for_app, session_key, set_context_usage, set_guide_status_for_app,
-    should_emit_runner_exit_error, should_persist_user_message, take_next_pending_turn_for_app,
+    session_key, set_context_usage, set_guide_status_for_app, should_emit_runner_exit_error,
+    should_persist_user_message, take_next_pending_turn_for_app,
     take_next_recoverable_pending_turn, take_pending_finalization_for_app, ChatStore,
-    PersistedRuntimeState, RunningTurn,
+    PersistedRuntimeState,
 };
+#[cfg(feature = "legacy-runner")]
+use crate::chat::state::{persist_runtime_state_for_app, RunningTurn};
 use crate::chat::timeline_sink::{
     assistant_error_text, log_agent_event_effect, normalize_timeline_text,
     persist_and_emit_error_timeline_event, persist_and_emit_message_timeline_event,
-    persist_and_emit_model_selection_timeline_event, timeline_input_from_runtime_event,
-    TimelineThrottle,
+    timeline_input_from_runtime_event, TimelineThrottle,
 };
+#[cfg(feature = "legacy-runner")]
+use crate::chat::timeline_sink::persist_and_emit_model_selection_timeline_event;
 use crate::chat::title_update::spawn_title_update;
 use crate::chat::types::{
-    conversation_references_payload, AgentInteractionRequestEvent, ChatAttachment,
-    ChatComposerState, ChatContextUsage, ChatConversationReference, ChatRollbackResult,
-    ChatRuntimeCommand, ChatWorkflow, CodexComposerSettings, DoneEvent, ProviderRuntimeOptions,
-    TurnStartedEvent,
+    AgentInteractionRequestEvent, ChatAttachment, ChatComposerState, ChatContextUsage,
+    ChatConversationReference, ChatRollbackResult, ChatRuntimeCommand, ChatWorkflow, DoneEvent,
+    ProviderRuntimeOptions,
 };
-use crate::chat::workflow::{automation_run_id, runtime_command_kind, workflow_kind};
+#[cfg(any(feature = "legacy-runner", test))]
+use crate::chat::types::conversation_references_payload;
+#[cfg(feature = "legacy-runner")]
+use crate::chat::types::{CodexComposerSettings, TurnStartedEvent};
+use crate::chat::workflow::automation_run_id;
+#[cfg(any(feature = "legacy-runner", test))]
+use crate::chat::workflow::workflow_kind;
+#[cfg(feature = "legacy-runner")]
+use crate::chat::workflow::runtime_command_kind;
+#[cfg(feature = "legacy-runner")]
 use crate::process_command::hide_console_window;
+#[cfg(feature = "legacy-runner")]
 use crate::provider::{
     build_effective_claude_settings, build_effective_codex_subagent_settings,
     load_agent_interaction_settings, normalize_codex_settings_profile, normalize_json_object,
     normalize_optional_string, normalize_reasoning_effort, normalize_runtime_workspace_roots,
     normalize_string_list, resolve_connection_for, CodexProfileSettings, ConnectionMode,
 };
+#[cfg(any(feature = "legacy-runner", test))]
 use crate::runner_protocol_contract;
 use crate::store::LiliaStore;
-use crate::{plugins, BACKEND_CLAUDE, BACKEND_CODEX};
+#[cfg(feature = "legacy-runner")]
+use crate::plugins;
+use crate::BACKEND_CLAUDE;
+#[cfg(any(feature = "legacy-runner", test))]
+use crate::BACKEND_CODEX;
 
 pub(crate) struct RunnerInvocation {
     pub(crate) task_id: String,
@@ -70,6 +93,7 @@ pub(crate) struct RunnerInvocation {
     pub(crate) turn_id: String,
     pub(crate) resume_session_id: Option<String>,
     pub(crate) queued_count: usize,
+    #[cfg(feature = "legacy-runner")]
     pub(crate) script_path: PathBuf,
 }
 
@@ -303,6 +327,7 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
         turn_id,
         resume_session_id,
         queued_count: 0,
+        #[cfg(feature = "legacy-runner")]
         script_path: PathBuf::new(),
     };
 
@@ -509,6 +534,7 @@ pub(crate) fn run_node_agent_runner<R: Runtime>(
     run_node_agent_runner_with_observer(app_handle, invocation, &mut observer)
 }
 
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn start_runner_session<R: Runtime>(
     app_handle: &AppHandle<R>,
     invocation: RunnerInvocation,
@@ -1231,6 +1257,7 @@ fn runner_event_kind(event: &AgentRuntimeEvent) -> &'static str {
     event.event_type()
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 pub(crate) fn build_runner_stdin_payload<T: Serialize>(
     backend: &str,
     project_cwd: &str,
@@ -1355,6 +1382,7 @@ pub(crate) fn runtime_reference_agent_payload(payload: &JsonValue) -> Result<Jso
     Ok(output)
 }
 
+#[cfg(feature = "legacy-runner")]
 fn runtime_state_context_json(
     project_cwd: &str,
     prompt: &str,
@@ -1384,6 +1412,7 @@ fn runtime_state_context_json(
     .to_string()
 }
 
+#[cfg(feature = "legacy-runner")]
 fn build_provider_runtime_options<R: Runtime>(
     app: &AppHandle<R>,
     backend: &str,
@@ -1435,6 +1464,7 @@ fn build_provider_runtime_options<R: Runtime>(
     }
 }
 
+#[cfg(feature = "legacy-runner")]
 fn merge_runtime_provider_defaults(
     mut value: JsonValue,
     defaults: serde_json::Map<String, JsonValue>,
@@ -1471,6 +1501,7 @@ fn merge_runtime_provider_defaults(
     value
 }
 
+#[cfg(feature = "legacy-runner")]
 fn build_effective_codex_settings<R: Runtime>(
     app: &AppHandle<R>,
     composer: &ChatComposerState,
@@ -1535,6 +1566,7 @@ fn build_effective_codex_settings<R: Runtime>(
     })
 }
 
+#[cfg(feature = "legacy-runner")]
 fn effective_runtime_workspace_roots(
     local: &CodexComposerSettings,
     project: &CodexProfileSettings,
@@ -1549,6 +1581,7 @@ fn effective_runtime_workspace_roots(
     }
 }
 
+#[cfg(feature = "legacy-runner")]
 fn effective_string_list(
     local: Option<Vec<String>>,
     project: &[String],
@@ -1683,6 +1716,7 @@ fn plan_next_turn_dispatch<R: Runtime>(
 const CONVERSATION_CONTEXT_TASK_LIMIT: i64 = 24;
 const CONVERSATION_CONTEXT_MESSAGE_LIMIT: i64 = 24;
 const CONVERSATION_CONTEXT_TEXT_LIMIT: usize = 2_000;
+#[cfg(any(feature = "legacy-runner", test))]
 const DEPENDENCY_CONTEXT_MESSAGE_SCAN_LIMIT: i64 = 64;
 
 struct DependencyTaskRow {
@@ -1691,6 +1725,7 @@ struct DependencyTaskRow {
     status: String,
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 struct DependencyContextItem {
     task_id: String,
     title: String,
@@ -1779,6 +1814,7 @@ fn ensure_dependency_chain_done(
     Ok(())
 }
 
+#[cfg(feature = "legacy-runner")]
 fn apply_main_agent_prompt_to_runtime_options<R: Runtime>(
     app: &AppHandle<R>,
     backend: &str,
@@ -1793,6 +1829,7 @@ fn apply_main_agent_prompt_to_runtime_options<R: Runtime>(
     )
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn append_main_agent_prompt_to_runtime_options(
     backend: &str,
     runtime_options: Option<JsonValue>,
@@ -1806,6 +1843,7 @@ fn append_main_agent_prompt_to_runtime_options(
     )
 }
 
+#[cfg(feature = "legacy-runner")]
 fn apply_dependency_context_to_runtime_options<R: Runtime>(
     app: &AppHandle<R>,
     task_id: &str,
@@ -1834,6 +1872,7 @@ fn apply_dependency_context_to_runtime_options<R: Runtime>(
     }
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn build_dependency_context_core(
     conn: &rusqlite::Connection,
     task_id: &str,
@@ -1969,6 +2008,7 @@ fn load_dependency_tasks(
     Ok(out)
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn load_dependency_final_summary(
     conn: &rusqlite::Connection,
     task_id: &str,
@@ -2018,6 +2058,7 @@ fn load_dependency_final_summary(
     Ok(None)
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn format_dependency_context(items: &[DependencyContextItem]) -> Option<String> {
     if items.is_empty() {
         return None;
@@ -2039,6 +2080,7 @@ fn format_dependency_context(items: &[DependencyContextItem]) -> Option<String> 
     Some(lines.join("\n"))
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn compact_context_line(text: &str) -> String {
     text.lines()
         .map(str::trim)

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "legacy-runner")]
 use serde_json::Value as JsonValue;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +170,7 @@ pub struct HookDocumentUpdateInput {
     pub handlers: Vec<HookHandlerUpdateInput>,
 }
 
+#[cfg(feature = "legacy-runner")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeRuntimePlugin {
@@ -176,6 +178,7 @@ pub struct ClaudeRuntimePlugin {
     pub path: String,
 }
 
+#[cfg(feature = "legacy-runner")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeRuntimeExtensions {
@@ -187,6 +190,7 @@ pub struct ClaudeRuntimeExtensions {
     pub warnings: Vec<String>,
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClaudeRuntimeMcpServer {
@@ -198,6 +202,7 @@ pub struct ClaudeRuntimeMcpServer {
     pub env: BTreeMap<String, String>,
 }
 
+#[cfg(feature = "legacy-runner")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexRuntimeExtensions {
@@ -206,6 +211,7 @@ pub struct CodexRuntimeExtensions {
     pub warnings: Vec<String>,
 }
 
+#[cfg(feature = "legacy-runner")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRuntimeExtensions {

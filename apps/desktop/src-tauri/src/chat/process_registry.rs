@@ -1,9 +1,15 @@
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader, Read, Write};
-use std::process::{Child, ChildStdin, ChildStdout};
+#[cfg(any(feature = "legacy-runner", test))]
+use std::io::{BufRead, BufReader, Write};
+use std::io::Read;
+use std::process::{Child, ChildStdin};
+#[cfg(any(feature = "legacy-runner", test))]
+use std::process::ChildStdout;
 use std::sync::{mpsc, Arc, Mutex};
+#[cfg(any(feature = "legacy-runner", test))]
 use std::thread;
 
+#[cfg(any(feature = "legacy-runner", test))]
 use serde_json::Value as JsonValue;
 
 #[derive(Debug)]
@@ -19,6 +25,7 @@ pub(crate) struct JsonlProcessExit {
     pub(crate) stderr_text: String,
 }
 
+#[cfg(feature = "legacy-runner")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum JsonlProcessStdinStatus {
     Ready { bytes: usize },
@@ -38,6 +45,7 @@ struct JsonlProcessSession {
 
 pub(crate) struct JsonlProcessRegistry {
     sessions: Mutex<HashMap<String, JsonlProcessSession>>,
+    #[cfg(any(feature = "legacy-runner", test))]
     next_id: Mutex<u64>,
 }
 
@@ -45,10 +53,12 @@ impl JsonlProcessRegistry {
     pub(crate) fn new() -> Self {
         Self {
             sessions: Mutex::new(HashMap::new()),
+            #[cfg(any(feature = "legacy-runner", test))]
             next_id: Mutex::new(0),
         }
     }
 
+    #[cfg(any(feature = "legacy-runner", test))]
     pub(crate) fn start(
         &self,
         mut child: Child,
@@ -116,6 +126,7 @@ impl JsonlProcessRegistry {
         session.finished = true;
     }
 
+    #[cfg(feature = "legacy-runner")]
     pub(crate) fn stdin_status(&self, session_id: &str) -> Option<JsonlProcessStdinStatus> {
         let handle = self.stdin_handle(session_id)?;
         let status = match handle.lock() {
@@ -222,6 +233,7 @@ fn read_stderr(stderr: Option<std::process::ChildStderr>) -> String {
     text
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn spawn_stdout_reader(stdout: ChildStdout) -> mpsc::Receiver<String> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {

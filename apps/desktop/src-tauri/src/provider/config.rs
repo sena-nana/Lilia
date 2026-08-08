@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use serde::Serialize;
-use serde_json::{Map as JsonMap, Value as JsonValue};
+#[cfg(feature = "legacy-runner")]
+use serde_json::Map as JsonMap;
+use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Runtime};
 
 use crate::chat::state::{default_backend, normalize_backend, try_normalize_backend};
@@ -13,6 +15,7 @@ use super::config_contract;
 use super::credentials::{
     assistant_ai_account, has_secret, normalize_secret, provider_account, read_secret, write_secret,
 };
+#[cfg(feature = "legacy-runner")]
 use super::subagents::{claude_managed_subagents, codex_subagent_instructions};
 use super::types::{
     AgentInteractionSettings, AssistantAIConfig, AssistantAIModelPoolItem, CodexProfileSettings,
@@ -464,6 +467,7 @@ pub(crate) fn normalize_reasoning_effort(value: Option<String>) -> Option<String
     }
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 pub(crate) fn normalize_codex_settings_profile(value: Option<String>) -> Option<String> {
     let value = normalize_optional_string(value)?;
     manifest_contains(config_contract::codex_settings_profiles(), &value).then_some(value)
@@ -485,6 +489,7 @@ pub(crate) fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     normalized
 }
 
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn build_effective_claude_settings<R: Runtime>(app: &AppHandle<R>) -> Option<JsonValue> {
     let settings = load_agent_interaction_settings(app).subagent_mode;
     if !settings.enabled || !settings.claude.enabled {
@@ -511,6 +516,7 @@ pub(crate) fn build_effective_claude_settings<R: Runtime>(app: &AppHandle<R>) ->
     Some(JsonValue::Object(claude))
 }
 
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn build_effective_codex_subagent_settings<R: Runtime>(
     app: &AppHandle<R>,
 ) -> Option<JsonValue> {

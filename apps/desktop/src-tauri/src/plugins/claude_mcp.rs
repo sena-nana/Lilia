@@ -8,7 +8,9 @@ use super::paths::{
     ensure_dir, lilia_config_dir, sanitize_extension_name, BUILTIN_CLAUDE_MCP_SERVER,
     CLAUDE_MCP_CONFIG_FILE,
 };
-use super::types::{ClaudeRuntimeMcpServer, PluginMcpServer, PluginMcpServerInput};
+#[cfg(any(feature = "legacy-runner", test))]
+use super::types::ClaudeRuntimeMcpServer;
+use super::types::{PluginMcpServer, PluginMcpServerInput};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -272,6 +274,7 @@ pub fn set_claude_mcp_server_enabled(name: &str, enabled: bool) -> Result<(), St
     write_claude_mcp_config(&config)
 }
 
+#[cfg(feature = "legacy-runner")]
 pub fn runtime_claude_mcp_servers() -> (BTreeMap<String, ClaudeRuntimeMcpServer>, Vec<String>) {
     let config = match read_claude_mcp_config() {
         Ok(config) => config,
@@ -280,6 +283,7 @@ pub fn runtime_claude_mcp_servers() -> (BTreeMap<String, ClaudeRuntimeMcpServer>
     runtime_claude_mcp_servers_from_config(config)
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn runtime_claude_mcp_servers_from_config(
     config: ClaudeMcpConfigFile,
 ) -> (BTreeMap<String, ClaudeRuntimeMcpServer>, Vec<String>) {

@@ -176,6 +176,7 @@ pub fn set_hook_source_enabled<R: Runtime>(
     }
 }
 
+#[cfg(feature = "legacy-runner")]
 pub fn runtime_claude_hooks<R: Runtime>(
     app: &AppHandle<R>,
     project_cwd: Option<&str>,
@@ -1314,6 +1315,7 @@ fn toml_item_to_json(item: &Item) -> Option<JsonValue> {
     None
 }
 
+#[cfg(feature = "legacy-runner")]
 fn merge_hook_documents(docs: Vec<Vec<HookHandlerView>>) -> Option<JsonValue> {
     let mut handlers = Vec::new();
     for doc in docs {

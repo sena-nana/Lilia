@@ -2,14 +2,18 @@ use std::collections::HashSet;
 
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+#[cfg(any(feature = "legacy-runner", test))]
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use tauri::{AppHandle, Manager, Runtime, State};
+use tauri::{AppHandle, Runtime, State};
+#[cfg(feature = "legacy-runner")]
+use tauri::Manager;
 use uuid::Uuid;
 
 use crate::settings_store::{load_store_value, save_store_value};
 use crate::store::LiliaStore;
 use crate::task_contract::{self, MemorySettingsDefaults};
 use crate::util::now_millis;
+#[cfg(any(feature = "legacy-runner", test))]
 use crate::{BACKEND_CLAUDE, BACKEND_CODEX};
 
 const MEMORY_SETTINGS_KEY: &str = "memory.settings";
@@ -389,6 +393,7 @@ pub(crate) fn reset_task_memory_cooldown_core(
     get_injection_state_core(conn, task_id)
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn current_turn_seq(conn: &Connection, task_id: &str) -> Result<i64, String> {
     conn.query_row(
         "SELECT MAX(turn_seq) FROM agent_timeline_events WHERE task_id = ?1",
@@ -399,6 +404,7 @@ fn current_turn_seq(conn: &Connection, task_id: &str) -> Result<i64, String> {
     .map_err(|e| format!("memory_baseline: 查询当前 turn 失败：{e}"))
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn resolve_project_id(
     conn: &Connection,
     task_id: &str,
@@ -430,6 +436,7 @@ fn resolve_project_id(
     .map_err(|e| format!("memory_baseline: 按 cwd 查询项目失败：{e}"))
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn enabled_memories_for_baseline(
     conn: &Connection,
     project_id: Option<&str>,
@@ -443,6 +450,7 @@ fn enabled_memories_for_baseline(
     Ok((user, project))
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn list_enabled_memories(
     conn: &Connection,
     scope: &str,
@@ -485,6 +493,7 @@ fn list_enabled_memories(
     Ok(out)
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn compact_body(body: &str) -> String {
     body.lines()
         .map(str::trim)
@@ -493,6 +502,7 @@ fn compact_body(body: &str) -> String {
         .join(" ")
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 pub(crate) fn format_memory_baseline(
     user: &[MemoryRecord],
     project: &[MemoryRecord],
@@ -526,6 +536,7 @@ pub(crate) fn format_memory_baseline(
     Some(lines.join("\n"))
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 pub(crate) fn build_memory_baseline_core(
     conn: &Connection,
     task_id: &str,
@@ -555,6 +566,7 @@ pub(crate) fn build_memory_baseline_core(
     Ok(baseline)
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn record_memory_injection_core(
     conn: &Connection,
     task_id: &str,
@@ -574,6 +586,7 @@ fn record_memory_injection_core(
     .map_err(|e| format!("memory_baseline: 记录注入状态失败：{e}"))
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn ensure_runtime_options_object(runtime_options: Option<JsonValue>) -> JsonValue {
     match runtime_options {
         Some(value @ JsonValue::Object(_)) => value,
@@ -581,6 +594,7 @@ fn ensure_runtime_options_object(runtime_options: Option<JsonValue>) -> JsonValu
     }
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn append_context(existing: Option<&JsonValue>, baseline: &str) -> String {
     let existing = existing
         .and_then(JsonValue::as_str)
@@ -592,6 +606,7 @@ fn append_context(existing: Option<&JsonValue>, baseline: &str) -> String {
     }
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 pub(crate) fn append_context_to_runtime_options(
     backend: &str,
     runtime_options: Option<JsonValue>,
@@ -626,6 +641,7 @@ pub(crate) fn append_context_to_runtime_options(
     Some(value)
 }
 
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn apply_memory_baseline_to_runtime_options<R: Runtime>(
     app: &AppHandle<R>,
     task_id: &str,

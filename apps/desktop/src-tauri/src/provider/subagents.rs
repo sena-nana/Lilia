@@ -3,9 +3,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+#[cfg(any(feature = "legacy-runner", test))]
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use uuid::Uuid;
 
+#[cfg(any(feature = "legacy-runner", test))]
 use crate::prompt_contract::codex_subagent_prompts;
 use crate::store::resolve_lilia_home;
 
@@ -99,6 +101,7 @@ fn ensure_unique_subagent_names(subagents: &[CustomSubagentDefinition]) -> Resul
     Ok(())
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn slugify_agent_name(raw: &str) -> String {
     let mut slug = String::new();
     let mut last_dash = false;
@@ -124,6 +127,7 @@ fn slugify_agent_name(raw: &str) -> String {
     slug.trim_matches('-').to_string()
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn compose_lilia_subagent_prompt(instruction: &str) -> String {
     let prompts = codex_subagent_prompts();
     format!(
@@ -132,6 +136,7 @@ fn compose_lilia_subagent_prompt(instruction: &str) -> String {
     )
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn compile_codex_subagent_instructions(subagents: &[CustomSubagentDefinition]) -> Option<String> {
     if subagents.is_empty() {
         return None;
@@ -167,6 +172,7 @@ fn compile_codex_subagent_instructions(subagents: &[CustomSubagentDefinition]) -
     Some(lines.join("\n"))
 }
 
+#[cfg(any(feature = "legacy-runner", test))]
 fn compile_claude_managed_subagents(subagents: &[CustomSubagentDefinition]) -> Option<JsonValue> {
     if subagents.is_empty() {
         return None;
@@ -204,6 +210,7 @@ pub(crate) fn load_custom_subagents() -> Result<Vec<CustomSubagentDefinition>, S
     Ok(subagents)
 }
 
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn enabled_custom_subagents() -> Result<Vec<CustomSubagentDefinition>, String> {
     Ok(load_custom_subagents()?
         .into_iter()
@@ -246,12 +253,14 @@ pub(crate) fn delete_custom_subagent(id: &str) -> Result<(), String> {
     save_custom_subagents_to_path(&path, &subagents)
 }
 
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn codex_subagent_instructions() -> Result<Option<String>, String> {
     Ok(compile_codex_subagent_instructions(
         &enabled_custom_subagents()?,
     ))
 }
 
+#[cfg(feature = "legacy-runner")]
 pub(crate) fn claude_managed_subagents() -> Result<Option<JsonValue>, String> {
     Ok(compile_claude_managed_subagents(
         &enabled_custom_subagents()?

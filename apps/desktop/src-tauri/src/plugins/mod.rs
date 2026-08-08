@@ -25,4 +25,5 @@ mod runtime;
 mod types;
 
 pub use commands::*;
+#[cfg(feature = "legacy-runner")]
 pub(crate) use runtime::runtime_extensions;
