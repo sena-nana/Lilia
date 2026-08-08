@@ -21,15 +21,15 @@
     "tauri:install": "yarn --cwd ../.. tauri:install"
   },
   "devDependencies": {
-    "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=304f54706cf0a48469531e534efe7d775aaaacf4",
-    "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=304f54706cf0a48469531e534efe7d775aaaacf4",
-    "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=304f54706cf0a48469531e534efe7d775aaaacf4"
+    "@lilia/build": "github:sena-nana/LiliaUI#workspace=@lilia/build&commit=30a8ffebf9024c126011c8963b75881b165f1e53",
+    "@lilia/config": "github:sena-nana/LiliaUI#workspace=@lilia/config&commit=30a8ffebf9024c126011c8963b75881b165f1e53",
+    "@lilia/tools": "github:sena-nana/LiliaUI#workspace=@lilia/tools&commit=30a8ffebf9024c126011c8963b75881b165f1e53"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.195",
     "@anthropic-ai/sdk": "^0.106.0",
     "@lilia/contracts": "workspace:*",
-    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=304f54706cf0a48469531e534efe7d775aaaacf4",
+    "@lilia/ui": "github:sena-nana/LiliaUI#workspace=@lilia/ui&commit=30a8ffebf9024c126011c8963b75881b165f1e53",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@tauri-apps/plugin-updater": "2.10.1",
     "@vue-flow/core": "^1.48.2",
