@@ -265,23 +265,55 @@ fn query_milestones(conn: &Connection) -> ProductResult<Vec<LegacyMilestoneRow>>
     if !table_exists(conn, "milestones")? {
         return Ok(Vec::new());
     }
-    let mut stmt = conn
-        .prepare(
-            "SELECT id, project_id, title, description, status, sort_order, start_date, due_date \
-             FROM milestones ORDER BY project_id, sort_order, id",
-        )
-        .map_err(map_sql)?;
+    // Desktop legacy `lilia.db` milestones evolved over time:
+    // - no `start_date` (product has it)
+    // - `due_date` may be INTEGER millis or TEXT
+    // - `description` may be NOT NULL TEXT
+    let cols = table_columns(conn, "milestones")?;
+    let description_expr = if cols.iter().any(|c| c == "description") {
+        "description"
+    } else {
+        "NULL"
+    };
+    let status_expr = if cols.iter().any(|c| c == "status") {
+        "status"
+    } else {
+        "'upcoming'"
+    };
+    let sort_order_expr = if cols.iter().any(|c| c == "sort_order") {
+        "sort_order"
+    } else {
+        "0"
+    };
+    let start_date_expr = if cols.iter().any(|c| c == "start_date") {
+        "start_date"
+    } else {
+        "NULL"
+    };
+    let due_date_expr = if cols.iter().any(|c| c == "due_date") {
+        "due_date"
+    } else {
+        "NULL"
+    };
+    let sql = format!(
+        "SELECT id, project_id, title, {description_expr}, {status_expr}, {sort_order_expr}, \
+         {start_date_expr}, {due_date_expr} \
+         FROM milestones ORDER BY project_id, {sort_order_expr}, id"
+    );
+    let mut stmt = conn.prepare(&sql).map_err(map_sql)?;
     let rows = stmt
         .query_map([], |row| {
             Ok(LegacyMilestoneRow {
                 id: row.get(0)?,
                 project_id: row.get(1)?,
                 title: row.get(2)?,
-                description: row.get(3)?,
-                status: row.get(4)?,
-                sort_order: row.get(5)?,
-                start_date: row.get(6)?,
-                due_date: row.get(7)?,
+                description: optional_cell_as_text(row, 3)?,
+                status: row
+                    .get::<_, Option<String>>(4)?
+                    .unwrap_or_else(|| "upcoming".to_string()),
+                sort_order: row.get::<_, Option<i64>>(5)?.unwrap_or(0),
+                start_date: optional_cell_as_text(row, 6)?,
+                due_date: optional_cell_as_text(row, 7)?,
             })
         })
         .map_err(map_sql)?;
@@ -337,6 +369,48 @@ fn table_exists(conn: &Connection, name: &str) -> ProductResult<bool> {
         )
         .map_err(map_sql)?;
     Ok(count > 0)
+}
+
+fn table_columns(conn: &Connection, table: &str) -> ProductResult<Vec<String>> {
+    let mut stmt = conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .map_err(map_sql)?;
+    let rows = stmt
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(map_sql)?;
+    let mut cols = Vec::new();
+    for row in rows {
+        cols.push(row.map_err(map_sql)?);
+    }
+    Ok(cols)
+}
+
+/// Read a legacy cell as optional text. Accepts TEXT / INTEGER / REAL so older
+/// Desktop `due_date INTEGER` (epoch millis) still migrates without failing.
+fn optional_cell_as_text(
+    row: &rusqlite::Row<'_>,
+    idx: usize,
+) -> Result<Option<String>, rusqlite::Error> {
+    match row.get_ref(idx)? {
+        rusqlite::types::ValueRef::Null => Ok(None),
+        rusqlite::types::ValueRef::Text(bytes) => {
+            let text = std::str::from_utf8(bytes)
+                .map_err(|err| rusqlite::Error::FromSqlConversionFailure(
+                    idx,
+                    rusqlite::types::Type::Text,
+                    Box::new(err),
+                ))?
+                .trim();
+            if text.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(text.to_string()))
+            }
+        }
+        rusqlite::types::ValueRef::Integer(value) => Ok(Some(value.to_string())),
+        rusqlite::types::ValueRef::Real(value) => Ok(Some(value.to_string())),
+        rusqlite::types::ValueRef::Blob(_) => Ok(None),
+    }
 }
 
 fn collect_rows<T>(
@@ -1380,6 +1454,45 @@ mod tests {
             .notes
             .iter()
             .any(|n| n.contains(DESKTOP_PRODUCT_CORE_CUTOVER)));
+    }
+
+    #[test]
+    fn query_milestones_accepts_desktop_schema_without_start_date() {
+        let path = std::env::temp_dir().join(format!(
+            "lilia-mig-ms-desktop-schema-{}.db",
+            now_stamp()
+        ));
+        let _ = fs::remove_file(&path);
+        let conn = Connection::open(&path).unwrap();
+        // Mirrors apps/desktop/src-tauri/src/store/schema.rs milestones.
+        conn.execute_batch(
+            r#"
+            CREATE TABLE milestones (
+              id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              description TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'upcoming',
+              due_date INTEGER,
+              sort_order INTEGER NOT NULL DEFAULT 0,
+              created_at INTEGER NOT NULL
+            );
+            INSERT INTO milestones(id, project_id, title, description, status, due_date, sort_order, created_at)
+              VALUES
+                ('m1', 'p1', 'Ship', 'desc', 'in-progress', 1710000000000, 1, 1),
+                ('m2', 'p1', 'Polish', '', 'upcoming', NULL, 2, 2);
+            "#,
+        )
+        .unwrap();
+        let rows = query_milestones(&conn).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, "m1");
+        assert_eq!(rows[0].start_date, None);
+        assert_eq!(rows[0].due_date.as_deref(), Some("1710000000000"));
+        assert_eq!(rows[0].description.as_deref(), Some("desc"));
+        assert_eq!(rows[1].due_date, None);
+        assert_eq!(rows[1].description, None);
+        let _ = fs::remove_file(&path);
     }
 
     #[test]
