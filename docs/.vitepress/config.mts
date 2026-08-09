@@ -1,6 +1,6 @@
 import { defineConfig } from "vitepress";
 
-const githubUrl = "https://github.com/sena-nana/Lilia";
+const githubUrl = "https://github.com/sena-nana/LiliaCode";
 
 export default defineConfig({
   base: "/LiliaCode/",
