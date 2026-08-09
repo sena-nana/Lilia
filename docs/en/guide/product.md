@@ -20,7 +20,7 @@ LiliaCode focuses on software engineering. Other applications in the same family
 | LiliaCore / anticorruption | Task↔session binding, profile assembly, Agent Wire, event projection |
 | Mutsuki AgentKit | Sole implementation of session / turn / approval / plugins / model gateway |
 
-See [Provider · Model · Lilia Protocol](../../design/lilia-agent-interface.md) and [Mutsuki dependency pin](../../design/mutsuki-dependency-pin.md).
+See [Provider · Model · Lilia Protocol](https://github.com/sena-nana/LiliaCode/blob/main/docs/design/lilia-agent-interface.md) and [Mutsuki dependency pin](https://github.com/sena-nana/LiliaCode/blob/main/docs/design/mutsuki-dependency-pin.md).
 
 ## What Makes It Different
 
