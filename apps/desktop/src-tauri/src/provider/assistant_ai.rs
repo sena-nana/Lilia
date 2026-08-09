@@ -226,7 +226,6 @@ pub(crate) fn optimize_prompt<R: Runtime>(
         &route_request,
         prompt_contract::prompt_router_system_instruction(),
         700,
-        "Prompt Router",
         model_features.prompt_router.clone(),
     )?;
     let route = normalize_prompt_route(&route_text)?;
@@ -237,7 +236,6 @@ pub(crate) fn optimize_prompt<R: Runtime>(
         &optimize_request,
         prompt_contract::prompt_optimize_system_instruction(),
         900,
-        "提示词优化",
         model_features.prompt_optimize,
     )?;
     Ok(PromptOptimizeResult {
@@ -272,7 +270,6 @@ fn request_assistant_text<R: Runtime>(
     prompt: &str,
     system_instruction: &str,
     max_tokens: u32,
-    label: &str,
     override_model: Option<String>,
 ) -> Result<String, String> {
     let model = assistant_ai_model_request(app, override_model)?;

@@ -43,14 +43,6 @@ pub struct QuotaUsageStatsInput {
     pub backend: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QuotaUsageQueryInput {
-    pub days: Option<i64>,
-    pub backend: Option<String>,
-    pub scope: Option<String>,
-}
-
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageTokenTotals {
@@ -487,16 +479,6 @@ fn normalize_backend_filter(value: Option<String>) -> String {
             .first()
             .cloned()
             .unwrap_or_else(|| "all".to_string())
-    }
-}
-
-fn normalize_scope(value: Option<String>) -> String {
-    match value.as_deref() {
-        Some("summary") => "summary".to_string(),
-        Some("projects") => "projects".to_string(),
-        Some("conversations") => "conversations".to_string(),
-        Some("tools") => "tools".to_string(),
-        _ => "all".to_string(),
     }
 }
 
@@ -986,56 +968,6 @@ pub(crate) fn stats(
     })
 }
 
-pub(crate) fn query_usage(
-    conn: &Connection,
-    input: QuotaUsageQueryInput,
-    now: i64,
-) -> Result<JsonValue, String> {
-    let scope = normalize_scope(input.scope);
-    let result = stats(
-        conn,
-        QuotaUsageStatsInput {
-            days: input.days,
-            backend: input.backend,
-        },
-        now,
-    )?;
-    let value = serde_json::to_value(&result)
-        .map_err(|e| format!("quota_usage_query: 序列化查询结果失败：{e}"))?;
-    if scope == "all" {
-        return Ok(value);
-    }
-    let mut obj = serde_json::Map::new();
-    for key in [
-        "days",
-        "backend",
-        "rangeStart",
-        "rangeEnd",
-        "totals",
-        "cost",
-    ] {
-        if let Some(field) = value.get(key) {
-            obj.insert(key.to_string(), field.clone());
-        }
-    }
-    match scope.as_str() {
-        "summary" => {
-            for key in ["daily", "backends", "recent"] {
-                if let Some(field) = value.get(key) {
-                    obj.insert(key.to_string(), field.clone());
-                }
-            }
-        }
-        "projects" | "conversations" | "tools" => {
-            if let Some(field) = value.get(scope.as_str()) {
-                obj.insert(scope.clone(), field.clone());
-            }
-        }
-        _ => {}
-    }
-    Ok(JsonValue::Object(obj))
-}
-
 #[tauri::command]
 pub fn quota_usage_get_stats(
     input: Option<QuotaUsageStatsInput>,
@@ -1379,37 +1311,6 @@ mod tests {
             .iter()
             .any(|tool| tool.label == "内容搜索" && tool.call_count == 1));
         assert!(all.tools.iter().all(|tool| tool.share_percent == 50.0));
-    }
-
-    #[test]
-    fn query_usage_scope_returns_requested_slice() {
-        let conn = usage_conn();
-        let day = DAY_MS;
-        record_from_timeline_event(
-            &conn,
-            &timeline_event(
-                "native-1",
-                BACKEND_NATIVE_AGENTKIT,
-                json!({ "totalCostUsd": 0.1, "usage": { "input_tokens": 100, "output_tokens": 10 } }),
-                day * 10 + 1,
-            ),
-        )
-        .unwrap();
-
-        let value = query_usage(
-            &conn,
-            QuotaUsageQueryInput {
-                days: Some(7),
-                backend: Some(BACKEND_NATIVE_AGENTKIT.to_string()),
-                scope: Some("projects".to_string()),
-            },
-            day * 12 + 5,
-        )
-        .unwrap();
-
-        assert!(value.get("projects").is_some());
-        assert!(value.get("conversations").is_none());
-        assert_eq!(value["backend"], json!(BACKEND_NATIVE_AGENTKIT));
     }
 
     #[test]

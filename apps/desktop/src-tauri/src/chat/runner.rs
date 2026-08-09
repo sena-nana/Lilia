@@ -19,20 +19,20 @@ use crate::chat::process_registry::JsonlProcessRegistry;
 #[cfg(test)]
 use crate::chat::state::take_next_pending_turn;
 use crate::chat::state::{
-    clear_runtime_state_for_app, clear_task_runtime_state_for_reset, finish_running_turn_handles,
-    persist_agent_session_id, session_key, set_guide_status_for_app,
-    should_persist_user_message, take_next_pending_turn_for_app,
-    take_next_recoverable_pending_turn, take_pending_finalization_for_app, ChatStore,
+    clear_task_runtime_state_for_reset, finish_running_turn_handles, persist_agent_session_id,
+    session_key, set_guide_status_for_app, should_persist_user_message,
+    take_next_pending_turn_for_app, take_next_recoverable_pending_turn,
+    take_pending_finalization_for_app, ChatStore,
 };
 use crate::chat::timeline_sink::{
     persist_and_emit_error_timeline_event, persist_and_emit_message_timeline_event,
 };
+#[cfg(test)]
+use crate::chat::types::conversation_references_payload;
 use crate::chat::types::{
     ChatAttachment, ChatComposerState, ChatConversationReference, ChatRollbackResult,
     ChatRuntimeCommand, ChatWorkflow, DoneEvent, ProviderRuntimeOptions,
 };
-#[cfg(test)]
-use crate::chat::types::conversation_references_payload;
 use crate::chat::workflow::automation_run_id;
 #[cfg(test)]
 use crate::chat::workflow::workflow_kind;
@@ -66,7 +66,6 @@ pub(crate) struct RunnerOutput {
     pub(crate) terminal_failed: bool,
 }
 
-
 #[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,7 +87,6 @@ fn record_runner_lifecycle(
 ) {
     observer.record(RunnerLifecycleEvent { stage, detail });
 }
-
 
 fn process_registry() -> &'static JsonlProcessRegistry {
     static REGISTRY: OnceLock<JsonlProcessRegistry> = OnceLock::new();
@@ -470,12 +468,6 @@ pub(crate) fn runtime_reference_agent_payload(payload: &JsonValue) -> Result<Jso
     Ok(output)
 }
 
-
-
-
-
-
-
 pub(crate) fn finish_agent_turn<R: Runtime>(
     app_handle: AppHandle<R>,
     task_id: String,
@@ -696,7 +688,6 @@ fn ensure_dependency_chain_done(
     Ok(())
 }
 
-
 #[cfg(test)]
 fn append_main_agent_prompt_to_runtime_options(
     backend: &str,
@@ -710,7 +701,6 @@ fn append_main_agent_prompt_to_runtime_options(
         &crate::prompt_contract::build_main_agent_prompt(mode, Some(custom_prompt)),
     )
 }
-
 
 #[cfg(test)]
 fn build_dependency_context_core(

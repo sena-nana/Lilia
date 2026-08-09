@@ -22,7 +22,6 @@ mod agent_event_sink_tests {
     use crate::chat::state::*;
     use crate::chat::timeline_sink::*;
     use crate::chat::types::*;
-    use crate::provider::*;
     use crate::native_agent::BACKEND_NATIVE_AGENTKIT;
     use crate::{BACKEND_CLAUDE, BACKEND_CODEX};
 
@@ -1433,12 +1432,6 @@ mod agent_event_sink_tests {
             },
         );
 
-        assert!(is_turn_marked_reset(
-            &store,
-            "task-1",
-            "turn-reset",
-            BACKEND_CLAUDE
-        ));
         assert!(store.reset_turns.lock().unwrap().get("task-1").is_some());
 
         let (interrupted, reset) =
@@ -2489,21 +2482,6 @@ mod agent_event_sink_tests {
             .get("task-1")
             .is_none());
         assert!(store.reset_turns.lock().unwrap().get("task-1").is_none());
-    }
-
-    #[test]
-    fn interrupted_exit_does_not_emit_runner_error() {
-        assert!(!should_emit_runner_exit_error(
-            true,
-            true,
-            "agent 进程被终止",
-        ));
-        assert!(should_emit_runner_exit_error(
-            false,
-            true,
-            "agent 进程异常退出",
-        ));
-        assert!(!should_emit_runner_exit_error(false, true, "   "));
     }
 
     fn create_resume_schema(conn: &Connection) {

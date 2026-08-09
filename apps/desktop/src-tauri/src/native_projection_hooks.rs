@@ -1,7 +1,9 @@
 //! Desktop product side effects on the Mutsuki projection stream
-//! (todo checklist + context-usage ring).
+//! (todo checklist, context-usage ring, and automation signals).
 
-use mutsuki_agent_contracts::{AgentEvent, AgentEventEnvelope, TodoItem, TodoItemStatus};
+use mutsuki_agent_contracts::{
+    AgentEvent, AgentEventEnvelope, InteractionKind, TodoItem, TodoItemStatus,
+};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
@@ -63,6 +65,53 @@ pub(crate) fn apply_projection_side_effects<R: Runtime>(
                     unavailable_reason: None,
                 });
             }
+            AgentEvent::ApprovalRequest { request } => {
+                emit_interaction_signal(
+                    app,
+                    task_id,
+                    &request.turn_id,
+                    &request.action_id,
+                    crate::agent_interaction_contract::permission_approval_interaction_kind(),
+                    json!({
+                        "reason": request.summary,
+                        "requestedAccess": {
+                            "tool": request.tool,
+                            "sideEffect": request.side_effect,
+                        },
+                        "scopeSuggestion": "turn",
+                        "providerContext": {
+                            "native": {
+                                "sessionId": request.session_id,
+                                "turnId": request.turn_id,
+                                "actionId": request.action_id,
+                                "version": request.version,
+                                "tool": request.tool,
+                            }
+                        },
+                        "source": "native-agentkit",
+                        "sequence": envelope.sequence,
+                    }),
+                );
+            }
+            AgentEvent::InteractionRequested {
+                turn_id,
+                interaction,
+            } => {
+                emit_interaction_signal(
+                    app,
+                    task_id,
+                    turn_id,
+                    &interaction.interaction_id,
+                    interaction_kind_name(&interaction.kind),
+                    json!({
+                        "prompt": interaction.prompt,
+                        "options": interaction.options,
+                        "detailsRef": interaction.details,
+                        "source": "native-agentkit",
+                        "sequence": envelope.sequence,
+                    }),
+                );
+            }
             _ => {}
         }
     }
@@ -79,6 +128,43 @@ pub(crate) fn apply_projection_side_effects<R: Runtime>(
         }
         let _ = app.emit(context_usage_event_name(), usage);
     }
+}
+
+fn interaction_kind_name(kind: &InteractionKind) -> &'static str {
+    match kind {
+        InteractionKind::Approval => "approval",
+        InteractionKind::Clarification => "clarification",
+        InteractionKind::PlanConfirm => "plan_confirm",
+        InteractionKind::Custom => "custom",
+    }
+}
+
+fn emit_interaction_signal<R: Runtime>(
+    app: &AppHandle<R>,
+    task_id: &str,
+    turn_id: &str,
+    request_id: &str,
+    interaction_kind: &str,
+    payload: serde_json::Value,
+) {
+    let automation_run_id =
+        match crate::automation::automation_run_id_for_waiting_turn(app, turn_id) {
+            Ok(run_id) => run_id,
+            Err(err) => {
+                eprintln!("[native-projection] resolve automation run failed for {turn_id}: {err}");
+                return;
+            }
+        };
+    crate::automation::emit_interaction_signal(
+        app,
+        task_id.to_string(),
+        turn_id.to_string(),
+        BACKEND_NATIVE_AGENTKIT.to_string(),
+        request_id.to_string(),
+        interaction_kind.to_string(),
+        payload,
+        automation_run_id,
+    );
 }
 
 /// Rebuild path: sync latest product todo projection into `task_todos`.

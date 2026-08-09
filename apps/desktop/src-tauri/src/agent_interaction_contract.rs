@@ -18,7 +18,6 @@ struct AgentInteractionContract {
     architecture_interaction_kind: String,
     #[cfg(test)]
     mcp_elicitation_interaction_kind: String,
-    #[cfg(test)]
     permission_approval_interaction_kind: String,
     #[cfg(test)]
     commands: AgentInteractionCommandsContract,
@@ -67,7 +66,6 @@ pub(crate) fn mcp_elicitation_interaction_kind() -> &'static str {
     &agent_interaction_contract().mcp_elicitation_interaction_kind
 }
 
-#[cfg(test)]
 pub(crate) fn permission_approval_interaction_kind() -> &'static str {
     &agent_interaction_contract().permission_approval_interaction_kind
 }

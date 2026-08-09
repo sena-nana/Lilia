@@ -569,14 +569,3 @@ pub(crate) struct DoneEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) rollback: Option<ChatRollbackResult>,
 }
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct AgentInteractionRequestEvent {
-    pub(crate) task_id: String,
-    pub(crate) turn_id: String,
-    pub(crate) backend: String,
-    pub(crate) request_id: String,
-    pub(crate) kind: String,
-    pub(crate) payload: JsonValue,
-}

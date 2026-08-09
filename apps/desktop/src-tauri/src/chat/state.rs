@@ -6,8 +6,6 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tauri::{AppHandle, Manager, Runtime};
 use uuid::Uuid;
 
-use crate::agent_timeline::AgentTimelineEventInput;
-use crate::chat::timeline_sink::persist_and_emit_input;
 use crate::chat::types::{
     ChatAttachment, ChatComposerState, ChatContextUsage, ChatConversationReference, ChatMessage,
     ChatModelOption, ChatRollbackResult, ChatRuntimeCommand, ChatRuntimeSnapshot, ChatWorkflow,
@@ -1382,20 +1380,6 @@ pub(crate) fn prepare_running_turn_stop(
     })
 }
 
-pub(crate) fn is_turn_marked_reset(
-    store: &ChatStore,
-    task_id: &str,
-    turn_id: &str,
-    backend: &str,
-) -> bool {
-    store
-        .reset_turns
-        .lock()
-        .unwrap()
-        .get(task_id)
-        .is_some_and(|turn| turn.turn_id == turn_id && turn.backend == backend)
-}
-
 pub(crate) fn take_turn_stop_marks(
     store: &ChatStore,
     task_id: &str,
@@ -1522,44 +1506,6 @@ pub(crate) fn take_next_pending_turn_for_app<R: Runtime>(
     take_next_pending_turn(store, task_id, true)
 }
 
-pub(crate) fn should_emit_runner_exit_error(
-    interrupted: bool,
-    nonzero: bool,
-    stderr_text: &str,
-) -> bool {
-    !interrupted && nonzero && !stderr_text.trim().is_empty()
-}
-
-pub(crate) fn persist_and_emit_interrupted_timeline_event<R: Runtime>(
-    app_handle: &AppHandle<R>,
-    task_id: &str,
-    backend: &str,
-    turn_id: &str,
-) {
-    let now = now_millis() as i64;
-    let message = "用户打断了当前 Agent 运行";
-    persist_and_emit_input(
-        app_handle,
-        AgentTimelineEventInput {
-            id: Some(format!("{turn_id}:interrupted")),
-            task_id: task_id.to_string(),
-            turn_id: Some(turn_id.to_string()),
-            backend: backend.to_string(),
-            kind: "error".to_string(),
-            status: "error".to_string(),
-            title: "Agent 已打断".to_string(),
-            summary: Some(message.to_string()),
-            payload: serde_json::json!({
-                "backend": backend,
-                "interrupted": true,
-                "message": message,
-            }),
-            created_at: Some(now),
-            updated_at: Some(now),
-        },
-    );
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1599,8 +1545,11 @@ mod tests {
             Some("xhigh")
         );
         assert_eq!(
-            normalize_reasoning_effort_for_backend(Some("max".to_string()), BACKEND_NATIVE_AGENTKIT)
-                .as_deref(),
+            normalize_reasoning_effort_for_backend(
+                Some("max".to_string()),
+                BACKEND_NATIVE_AGENTKIT
+            )
+            .as_deref(),
             Some("max")
         );
     }

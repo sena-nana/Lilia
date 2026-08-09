@@ -14,8 +14,10 @@ struct ChatEventsContract {
     chat_turn_started_event_name: String,
     chat_done_event_name: String,
     chat_context_usage_event_name: String,
+    #[cfg(test)]
     chat_agent_interaction_request_event_name: String,
     agent_timeline_event_name: String,
+    #[cfg(test)]
     agent_timeline_batch_event_name: String,
 }
 
@@ -41,6 +43,7 @@ pub(crate) fn context_usage_event_name() -> &'static str {
     &chat_events_contract().chat_context_usage_event_name
 }
 
+#[cfg(test)]
 pub(crate) fn agent_interaction_request_event_name() -> &'static str {
     &chat_events_contract().chat_agent_interaction_request_event_name
 }
@@ -49,6 +52,7 @@ pub(crate) fn agent_timeline_event_name() -> &'static str {
     &chat_events_contract().agent_timeline_event_name
 }
 
+#[cfg(test)]
 pub(crate) fn agent_timeline_batch_event_name() -> &'static str {
     &chat_events_contract().agent_timeline_batch_event_name
 }

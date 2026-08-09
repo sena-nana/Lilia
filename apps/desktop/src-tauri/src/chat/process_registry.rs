@@ -6,13 +6,9 @@
 
 use std::collections::HashMap;
 #[cfg(test)]
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::process::{Child, ChildStdin};
-#[cfg(test)]
-use std::process::ChildStdout;
-use std::sync::{mpsc, Arc, Mutex};
-#[cfg(test)]
-use std::thread;
+use std::sync::{Arc, Mutex};
 
 #[cfg(test)]
 use serde_json::Value as JsonValue;
@@ -21,26 +17,12 @@ use serde_json::Value as JsonValue;
 #[derive(Debug)]
 pub(crate) enum JsonlProcessPoll {
     Pending,
-    StdoutLine(String),
-    Exited(JsonlProcessExit),
-}
-
-#[cfg(test)]
-#[derive(Debug)]
-pub(crate) struct JsonlProcessExit {
-    pub(crate) success: bool,
-    pub(crate) stderr_text: String,
+    Exited,
 }
 
 struct JsonlProcessSession {
     child: Child,
-    #[cfg(test)]
-    stdout_lines: Option<mpsc::Receiver<String>>,
-    #[cfg(test)]
-    stdout_available: bool,
     stdin: Option<Arc<Mutex<ChildStdin>>>,
-    #[cfg(test)]
-    stderr: Option<std::process::ChildStderr>,
     termination_requested: bool,
     finished: bool,
 }
@@ -70,16 +52,9 @@ impl JsonlProcessRegistry {
         *next_id += 1;
         let session_id = format!("jsonl-process-{}", *next_id);
         let stdin = child.stdin.take().map(|stdin| Arc::new(Mutex::new(stdin)));
-        let stdout = child.stdout.take();
-        let stdout_available = stdout.is_some();
-        let stdout_lines = stdout.map(spawn_stdout_reader);
-        let stderr = child.stderr.take();
         let session = JsonlProcessSession {
             child,
-            stdout_lines,
-            stdout_available,
             stdin: stdin.clone(),
-            stderr,
             termination_requested: false,
             finished: false,
         };
@@ -137,6 +112,7 @@ impl JsonlProcessRegistry {
             .is_some_and(|session| !session.finished && !session.termination_requested)
     }
 
+    #[cfg(test)]
     pub(crate) fn remove(&self, session_id: &str) -> Option<()> {
         self.sessions.lock().unwrap().remove(session_id).map(|_| ())
     }
@@ -148,30 +124,15 @@ impl JsonlProcessRegistry {
         if session.finished {
             return Some(JsonlProcessPoll::Pending);
         }
-        if let Some(stdout_lines) = session.stdout_lines.as_ref() {
-            match stdout_lines.try_recv() {
-                Ok(line) => return Some(JsonlProcessPoll::StdoutLine(line)),
-                Err(mpsc::TryRecvError::Empty) => {}
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    session.stdout_lines = None;
-                }
-            }
-        }
         match session.child.try_wait() {
-            Ok(Some(status)) => {
+            Ok(Some(_)) => {
                 session.finished = true;
-                Some(JsonlProcessPoll::Exited(JsonlProcessExit {
-                    success: status.success(),
-                    stderr_text: read_stderr(session.stderr.take()),
-                }))
+                Some(JsonlProcessPoll::Exited)
             }
             Ok(None) => Some(JsonlProcessPoll::Pending),
             Err(_) => {
                 session.finished = true;
-                Some(JsonlProcessPoll::Exited(JsonlProcessExit {
-                    success: false,
-                    stderr_text: "failed to poll child process".to_string(),
-                }))
+                Some(JsonlProcessPoll::Exited)
             }
         }
     }
@@ -181,35 +142,6 @@ impl Default for JsonlProcessRegistry {
     fn default() -> Self {
         Self::new()
     }
-}
-
-#[cfg(test)]
-fn read_stderr(stderr: Option<std::process::ChildStderr>) -> String {
-    use std::io::Read;
-    let Some(mut stderr) = stderr else {
-        return String::new();
-    };
-    let mut text = String::new();
-    let _ = stderr.read_to_string(&mut text);
-    text
-}
-
-#[cfg(test)]
-fn spawn_stdout_reader(stdout: ChildStdout) -> mpsc::Receiver<String> {
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let mut stdout = BufReader::new(stdout);
-        loop {
-            let mut line = String::new();
-            if !matches!(stdout.read_line(&mut line), Ok(n) if n > 0) {
-                break;
-            }
-            if tx.send(line).is_err() {
-                break;
-            }
-        }
-    });
-    rx
 }
 
 #[cfg(test)]
@@ -236,7 +168,7 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
             match registry.poll(session_id) {
-                Some(JsonlProcessPoll::Exited(_)) => break,
+                Some(JsonlProcessPoll::Exited) => break,
                 Some(JsonlProcessPoll::Pending) if Instant::now() < deadline => {
                     thread::sleep(Duration::from_millis(10));
                 }

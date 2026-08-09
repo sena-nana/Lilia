@@ -3,8 +3,6 @@ use tauri_plugin_global_shortcut::ShortcutState;
 
 mod agent_debug;
 pub mod agent_events;
-#[cfg(test)]
-mod agent_extensions;
 mod agent_interaction_contract;
 pub mod agent_timeline;
 mod agent_timeline_contract;

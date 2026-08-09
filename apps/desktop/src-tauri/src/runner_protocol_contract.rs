@@ -38,6 +38,7 @@ pub(crate) struct RunnerControlMessageTypes {
     pub(crate) interaction_response: String,
     pub(crate) settings_update: String,
     pub(crate) interrupt_turn: String,
+    #[cfg(test)]
     pub(crate) quota_usage_result: String,
     pub(crate) lilia_iab_result: String,
 }

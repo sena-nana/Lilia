@@ -7,6 +7,7 @@ use tauri::{AppHandle, Runtime};
 use crate::chat::state::{default_backend, normalize_backend, try_normalize_backend};
 use crate::chat_backends_contract::chat_backends_contract;
 use crate::settings_store::{load_store_value, save_store_value};
+#[cfg(test)]
 use crate::BACKEND_CODEX;
 
 use super::config_contract;
@@ -617,8 +618,6 @@ pub(crate) fn normalize_string_list(values: Vec<String>) -> Vec<String> {
     }
     normalized
 }
-
-
 
 pub(crate) fn load_router_mode<R: Runtime>(app: &AppHandle<R>, backend: &str) -> String {
     let backend = normalize_backend(backend);

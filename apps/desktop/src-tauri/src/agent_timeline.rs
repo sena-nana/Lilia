@@ -30,6 +30,7 @@ use crate::agent_timeline_contract;
 use crate::store::LiliaStore;
 use crate::util::now_millis;
 
+#[cfg(test)]
 pub(crate) const AGENT_TIMELINE_SCHEMA_SQL: &str = r#"
 CREATE TABLE agent_timeline_events (
   id                TEXT PRIMARY KEY,
@@ -50,6 +51,7 @@ CREATE INDEX idx_agent_timeline_events_task_id_turn
   ON agent_timeline_events(task_id, turn_seq, intra_turn_order);
 "#;
 
+#[cfg(test)]
 pub(crate) fn create_timeline_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(AGENT_TIMELINE_SCHEMA_SQL)
 }

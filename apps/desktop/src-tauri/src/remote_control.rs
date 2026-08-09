@@ -30,8 +30,6 @@ const DEFAULT_HTTP_BRIDGE_PORT: u16 = 41478;
 const REMOTE_WAKE_MONITOR_IDLE_MS: u64 = 30_000;
 
 static HTTP_BRIDGE: OnceLock<Mutex<Option<RemoteHttpBridge>>> = OnceLock::new();
-static PENDING_INTERACTIONS: OnceLock<Mutex<HashMap<String, RemotePendingInteraction>>> =
-    OnceLock::new();
 static REMOTE_WAKE: OnceLock<Arc<RemoteWakeController>> = OnceLock::new();
 
 #[derive(Debug, Clone)]
@@ -88,17 +86,6 @@ impl RemoteWakeRuntime {
             .map(|active_until| Duration::from_millis((active_until - now) as u64))
             .unwrap_or_else(|| Duration::from_millis(REMOTE_WAKE_MONITOR_IDLE_MS))
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct RemotePendingInteraction {
-    pub task_id: String,
-    pub turn_id: String,
-    pub backend: String,
-    pub request_id: String,
-    pub kind: String,
-    pub payload: JsonValue,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1105,11 +1092,6 @@ fn dispatch_request(
                     }))
                 }));
             }
-            interactions.extend(
-                pending_interactions_for_task(task_id)
-                    .into_iter()
-                    .map(|pending| serde_json::to_value(pending).unwrap_or(JsonValue::Null)),
-            );
             Ok(json!({
                 "type": "interaction.pending",
                 "interactions": interactions,
@@ -1174,7 +1156,6 @@ fn dispatch_request(
                 chat_store,
             )
             .map_err(RemoteDispatchError::unavailable)?;
-            clear_pending_interaction(&request_id);
             Ok(json!({ "type": "interaction.respond", "accepted": true }))
         }
         "provider.status.read" => {
@@ -1196,53 +1177,6 @@ fn is_process_session_control_command(command: &chat::types::ChatRuntimeCommand)
         command,
         chat::types::ChatRuntimeCommand::ProcessSession { action, .. } if action != "spawn"
     )
-}
-
-pub(crate) fn record_pending_interaction(
-    task_id: String,
-    turn_id: String,
-    backend: String,
-    request_id: String,
-    kind: String,
-    payload: JsonValue,
-) {
-    let lock = PENDING_INTERACTIONS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut pending) = lock.lock() {
-        pending.insert(
-            request_id.clone(),
-            RemotePendingInteraction {
-                task_id,
-                turn_id,
-                backend,
-                request_id,
-                kind,
-                payload,
-            },
-        );
-    }
-}
-
-pub(crate) fn clear_pending_interaction(request_id: &str) {
-    let Some(lock) = PENDING_INTERACTIONS.get() else {
-        return;
-    };
-    if let Ok(mut pending) = lock.lock() {
-        pending.remove(request_id);
-    }
-}
-
-fn pending_interactions_for_task(task_id: Option<&str>) -> Vec<RemotePendingInteraction> {
-    let Some(lock) = PENDING_INTERACTIONS.get() else {
-        return Vec::new();
-    };
-    let Ok(pending) = lock.lock() else {
-        return Vec::new();
-    };
-    pending
-        .values()
-        .filter(|interaction| task_id.is_none_or(|task_id| interaction.task_id == task_id))
-        .cloned()
-        .collect()
 }
 
 fn authorize_envelope(
