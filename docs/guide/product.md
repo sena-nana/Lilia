@@ -20,7 +20,7 @@ LiliaCode 聚焦代码工程场景。同系列应用可以继续围绕其他高�
 | LiliaCore / 防腐层 | Task↔Session 绑定、profile 装配、Agent Wire、事件投影 |
 | Mutsuki AgentKit | session / turn / approval / plugin / model gateway 的唯一实现 |
 
-详细边界见 [Provider · Model · Lilia Protocol 架构](../design/lilia-agent-interface.md) 与 [Mutsuki 依赖 pin](../design/mutsuki-dependency-pin.md)。
+详细边界见 [Provider · Model · Lilia Protocol 架构](https://github.com/sena-nana/LiliaCode/blob/main/docs/design/lilia-agent-interface.md) 与 [Mutsuki 依赖 pin](https://github.com/sena-nana/LiliaCode/blob/main/docs/design/mutsuki-dependency-pin.md)。
 
 ## 核心差异
 
