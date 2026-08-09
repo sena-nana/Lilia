@@ -10,6 +10,7 @@ use crate::task_handoff;
 
 const LILIA_CODE_APP_ID: &str = "lilia.code";
 const LILIA_CODE_CAPABILITY: &str = "lilia.code.task.accept";
+const MAX_HANDOFF_ID_BYTES: usize = 128;
 
 pub fn start_app_delivery_endpoint<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
     let lease_dir = std::env::temp_dir()
@@ -53,9 +54,7 @@ fn accept_handoff_payload<R: Runtime>(
         .get("id")
         .and_then(Value::as_str)
         .ok_or_else(|| "交接 payload 缺少 id".to_string())?;
-    let path = std::env::temp_dir()
-        .join("lilia-code-task-handoffs")
-        .join(format!("{handoff_id}.direct.json"));
+    let path = handoff_temp_path(handoff_id)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("创建临时交接目录失败：{error}"))?;
@@ -65,4 +64,62 @@ fn accept_handoff_payload<R: Runtime>(
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let open = task_handoff::resolve_task_handoff(app, &path, &cwd)?;
     Ok(open.task_id)
+}
+
+fn handoff_temp_path(handoff_id: &str) -> Result<PathBuf, String> {
+    validate_handoff_id(handoff_id)?;
+    Ok(std::env::temp_dir()
+        .join("lilia-code-task-handoffs")
+        .join(format!("{handoff_id}.direct.json")))
+}
+
+fn validate_handoff_id(handoff_id: &str) -> Result<(), String> {
+    if handoff_id.is_empty()
+        || handoff_id.len() > MAX_HANDOFF_ID_BYTES
+        || !handoff_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err(
+            "交接 payload 的 id 必须是 1 到 128 字节的 ASCII 字母、数字、连字符或下划线"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{handoff_temp_path, validate_handoff_id};
+
+    #[test]
+    fn handoff_id_allows_stable_uuid_style_identifiers() {
+        assert!(validate_handoff_id("handoff_019b7a5f-53c2-7000-a812-123456789abc").is_ok());
+    }
+
+    #[test]
+    fn handoff_id_rejects_path_separators_and_traversal() {
+        for value in ["../escape", "..\\escape", "nested/file", "nested\\file"] {
+            assert!(validate_handoff_id(value).is_err(), "accepted unsafe id: {value}");
+        }
+    }
+
+    #[test]
+    fn handoff_temp_path_remains_inside_the_handoff_directory() {
+        let path = handoff_temp_path("handoff-123").expect("valid handoff id");
+        assert_eq!(
+            path.parent().and_then(|parent| parent.file_name()),
+            Some(std::ffi::OsStr::new("lilia-code-task-handoffs"))
+        );
+        assert_eq!(
+            path.file_name(),
+            Some(std::ffi::OsStr::new("handoff-123.direct.json"))
+        );
+    }
+
+    #[test]
+    fn handoff_id_rejects_empty_and_oversized_values() {
+        assert!(validate_handoff_id("").is_err());
+        assert!(validate_handoff_id(&"a".repeat(129)).is_err());
+    }
 }
