@@ -207,6 +207,7 @@ pub fn run() {
                 .build(),
         )
         .manage(chat::state::ChatStore::default())
+        .manage(chat::title_update::TitleUpdateCoordinator::default())
         .manage(cli_project::CliProjectOpenState::default())
         .setup(|app| {
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
@@ -447,6 +448,15 @@ pub fn run() {
             native_shared_services::native_shared_memory_query,
             native_shared_services::native_shared_memory_write,
         ])
-        .run(context)
-        .expect("error while running tauri application");
+        .build(context)
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Some(coordinator) =
+                    app.try_state::<chat::title_update::TitleUpdateCoordinator>()
+                {
+                    coordinator.shutdown();
+                }
+            }
+        });
 }
