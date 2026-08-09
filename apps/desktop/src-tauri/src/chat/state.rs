@@ -1563,7 +1563,7 @@ pub(crate) fn persist_and_emit_interrupted_timeline_event<R: Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BACKEND_CLAUDE, BACKEND_CODEX};
+    use crate::native_agent::BACKEND_NATIVE_AGENTKIT;
 
     #[test]
     fn reasoning_effort_normalization_uses_contract_manifest() {
@@ -1579,26 +1579,27 @@ mod tests {
             ]
         );
         assert_eq!(
-            manifest.backend_reasoning_efforts.get(BACKEND_CODEX),
+            manifest
+                .backend_reasoning_efforts
+                .get(BACKEND_NATIVE_AGENTKIT),
             Some(&vec![
                 "low".to_string(),
                 "medium".to_string(),
                 "high".to_string(),
-                "xhigh".to_string()
+                "xhigh".to_string(),
+                "max".to_string()
             ])
         );
         assert_eq!(
-            normalize_reasoning_effort_for_backend(Some(" xhigh ".to_string()), BACKEND_CODEX)
-                .as_deref(),
+            normalize_reasoning_effort_for_backend(
+                Some(" xhigh ".to_string()),
+                BACKEND_NATIVE_AGENTKIT
+            )
+            .as_deref(),
             Some("xhigh")
         );
         assert_eq!(
-            normalize_reasoning_effort_for_backend(Some("max".to_string()), BACKEND_CODEX)
-                .as_deref(),
-            Some("xhigh")
-        );
-        assert_eq!(
-            normalize_reasoning_effort_for_backend(Some("max".to_string()), BACKEND_CLAUDE)
+            normalize_reasoning_effort_for_backend(Some("max".to_string()), BACKEND_NATIVE_AGENTKIT)
                 .as_deref(),
             Some("max")
         );
@@ -1606,46 +1607,40 @@ mod tests {
 
     #[test]
     fn model_options_are_loaded_from_contract_manifest() {
-        assert_eq!(
-            chat_backends(),
-            &[BACKEND_CLAUDE.to_string(), BACKEND_CODEX.to_string()]
-        );
-        assert!(chat_backend_supported(BACKEND_CLAUDE));
+        assert_eq!(chat_backends(), &[BACKEND_NATIVE_AGENTKIT.to_string()]);
+        assert!(chat_backend_supported(BACKEND_NATIVE_AGENTKIT));
         assert!(!chat_backend_supported("unknown"));
         assert_eq!(
-            try_normalize_backend(&format!(" {BACKEND_CODEX} ")),
-            Some(BACKEND_CODEX)
+            try_normalize_backend(&format!(" {BACKEND_NATIVE_AGENTKIT} ")),
+            Some(BACKEND_NATIVE_AGENTKIT)
         );
         assert_eq!(try_normalize_backend("unknown"), None);
-        assert_eq!(default_backend(), BACKEND_CLAUDE);
+        assert_eq!(default_backend(), BACKEND_NATIVE_AGENTKIT);
         assert_eq!(normalize_backend("unknown"), default_backend());
         assert_eq!(
-            default_model_for_backend(BACKEND_CLAUDE),
-            "claude-sonnet-4-6"
+            default_model_for_backend(BACKEND_NATIVE_AGENTKIT),
+            "gpt-5.4"
         );
-        assert_eq!(default_model_for_backend(BACKEND_CODEX), "gpt-5.5");
 
-        let claude_models = model_options_for_backend(BACKEND_CLAUDE);
-        assert_eq!(claude_models.len(), 3);
-        assert_eq!(claude_models[0].id, "claude-opus-4-7");
-        assert_eq!(claude_models[1].label, "Sonnet 4.6");
-        assert!(claude_models
+        let native_models = model_options_for_backend(BACKEND_NATIVE_AGENTKIT);
+        assert!(native_models.len() >= 3);
+        assert_eq!(native_models[0].id, "gpt-5.5");
+        assert!(native_models
             .iter()
-            .all(|option| option.backend == BACKEND_CLAUDE));
+            .all(|option| option.backend == BACKEND_NATIVE_AGENTKIT));
 
-        let codex_models = model_options_for_backend(BACKEND_CODEX);
-        assert_eq!(codex_models[0].id, "gpt-5.5");
         assert_eq!(
-            normalize_model_for_backend(" gpt-6-preview ", BACKEND_CODEX),
+            normalize_model_for_backend(" gpt-6-preview ", BACKEND_NATIVE_AGENTKIT),
             "gpt-6-preview"
         );
+        // Unknown model ids that fail allowed-prefix checks fall back to default.
         assert_eq!(
-            normalize_model_for_backend("claude-sonnet-4-6", BACKEND_CODEX),
-            "gpt-5.5"
+            normalize_model_for_backend("not-a-real-model", BACKEND_NATIVE_AGENTKIT),
+            "gpt-5.4"
         );
         assert_eq!(
-            normalize_model_for_backend("unknown", BACKEND_CODEX),
-            "gpt-5.5"
+            normalize_model_for_backend("unknown", BACKEND_NATIVE_AGENTKIT),
+            "gpt-5.4"
         );
         assert_eq!(
             default_composer("task-1").permission,
@@ -1654,7 +1649,7 @@ mod tests {
         let mut composer = default_composer("task-1");
         composer.permission = "danger".to_string();
         assert_eq!(
-            normalize_composer_for_backend(composer, "task-1", BACKEND_CODEX).permission,
+            normalize_composer_for_backend(composer, "task-1", BACKEND_NATIVE_AGENTKIT).permission,
             normalize_permission_mode("")
         );
     }
@@ -1666,7 +1661,7 @@ mod tests {
             &store,
             ChatContextUsage {
                 task_id: "task-1".to_string(),
-                backend: BACKEND_CODEX.to_string(),
+                backend: BACKEND_NATIVE_AGENTKIT.to_string(),
                 used_tokens: 4096,
                 limit_tokens: Some(8192),
                 used_percent: Some(50.0),
@@ -1680,7 +1675,7 @@ mod tests {
 
         let usage = snapshot.context_usage.expect("context usage");
         assert_eq!(usage.task_id, "task-1");
-        assert_eq!(usage.backend, BACKEND_CODEX);
+        assert_eq!(usage.backend, BACKEND_NATIVE_AGENTKIT);
         assert_eq!(usage.used_tokens, 4096);
         assert_eq!(usage.limit_tokens, Some(8192));
         assert_eq!(usage.used_percent, Some(50.0));

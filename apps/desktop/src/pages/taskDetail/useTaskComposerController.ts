@@ -61,6 +61,7 @@ import {
 import { useConnectionStatus } from "../../composables/useConnectionStatus";
 import {
   getComposerState,
+  getModelFeatureSettings,
   listModels,
   getRuntimeSnapshot,
   ackRestoredRollback,
@@ -72,6 +73,7 @@ import {
   sendMessage,
   setComposerState,
 } from "../../services/chat";
+import { selectModelForTurn } from "../../services/modelSelection";
 import { getProjectSettings } from "../../services/projects";
 import { getTask, listTasks } from "../../services/tasksStore";
 import {
@@ -670,6 +672,34 @@ export function useTaskComposerController(options: {
       runtimeOptions = await runtimeOptionsWithWorktreeContext(currentComposer, runtimeOptions);
       assertCurrentTaskSnapshot(snapshot);
 
+      // Model layer: apply role-preset router on the product path so runtimeOptions
+      // always carries modelSelection (unless already provided). Rust mirrors this
+      // when LLM auto-turn decision is disabled.
+      let sendComposer = currentComposer;
+      const hasModelSelection = Boolean(runtimeOptions?.common?.modelSelection);
+      if (!hasModelSelection) {
+        try {
+          const modelFeatureSettings = await getModelFeatureSettings();
+          const selection = selectModelForTurn({
+            backend: currentComposer.backend,
+            modelOptions: modelOptionsForView.value,
+            composer: currentComposer,
+            prompt: content,
+            attachments: outgoingAttachments,
+            conversationReferences: outgoingConversationReferences,
+            workflow,
+            runtimeCommand,
+            runtimeOptions,
+            modelFeatureSettings,
+          });
+          sendComposer = selection.composer;
+          runtimeOptions = selection.runtimeOptions;
+        } catch (err) {
+          console.error("[model-selection] selectModelForTurn failed; sending with composer state", err);
+        }
+      }
+      assertCurrentTaskSnapshot(snapshot);
+
       const optimistic = timeline.createOptimisticMessageEvent({
         content,
         attachments: outgoingAttachments,
@@ -682,7 +712,7 @@ export function useTaskComposerController(options: {
         taskId: snapshot.taskId,
         turn: {
           content,
-          composer: currentComposer,
+          composer: sendComposer,
           projectCwd: cwd,
           attachments: outgoingAttachments,
           conversationReferences: outgoingConversationReferences,

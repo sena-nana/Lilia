@@ -545,7 +545,7 @@ mod tests {
               project_id        TEXT NOT NULL,
               task_id           TEXT NOT NULL,
               turn_id           TEXT,
-              backend           TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+              backend           TEXT NOT NULL,
               status            TEXT NOT NULL CHECK (status IN
                                 ('proposed','pending','applied','rejected','rolled_back')),
               permission_mode   TEXT NOT NULL CHECK (permission_mode IN ('ask','full','readonly')),
@@ -564,7 +564,7 @@ mod tests {
 
             CREATE TABLE task_agent_sessions (
               task_id         TEXT NOT NULL,
-              backend         TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+              backend         TEXT NOT NULL,
               session_id      TEXT NOT NULL,
               updated_at      INTEGER NOT NULL,
               PRIMARY KEY (task_id, backend)
@@ -573,7 +573,7 @@ mod tests {
             CREATE TABLE task_runtime_states (
               task_id         TEXT PRIMARY KEY,
               turn_id         TEXT NOT NULL,
-              backend         TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+              backend         TEXT NOT NULL,
               phase           TEXT NOT NULL CHECK (phase IN
                                 ('running','interrupted_pending_finish','reset_pending_finish')),
               process_session_id TEXT,
@@ -588,7 +588,7 @@ mod tests {
               id                TEXT PRIMARY KEY,
               task_id           TEXT NOT NULL,
               turn_id           TEXT,
-              backend           TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+              backend           TEXT NOT NULL,
               kind              TEXT NOT NULL,
               status            TEXT NOT NULL,
               title             TEXT NOT NULL,
@@ -606,7 +606,7 @@ mod tests {
               event_id              TEXT PRIMARY KEY,
               task_id               TEXT NOT NULL,
               turn_id               TEXT,
-              backend               TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+              backend               TEXT NOT NULL,
               session_id            TEXT,
               input_tokens          INTEGER NOT NULL DEFAULT 0,
               output_tokens         INTEGER NOT NULL DEFAULT 0,

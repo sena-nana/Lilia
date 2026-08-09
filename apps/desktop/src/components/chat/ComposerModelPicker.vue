@@ -36,10 +36,15 @@ const effectiveEffort = computed<ReasoningEffort | null>(() =>
     : props.autoModelPreview.reasoningEffort ?? null,
 );
 const effortLabel = computed(() => effectiveEffort.value ?? "auto");
+const autoPresetLabel = computed(
+  () => props.autoModelPreview.presetLabel || props.autoModelPreview.presetId || null,
+);
 const triggerLabel = computed(() =>
   manualMode.value
     ? `手动 · ${modelLabel.value} · ${effortLabel.value}`
-    : `自动 · ${autoModelLabel.value} · ${effortLabel.value}`,
+    : autoPresetLabel.value
+      ? `自动 · ${autoPresetLabel.value} · ${autoModelLabel.value} · ${effortLabel.value}`
+      : `自动 · ${autoModelLabel.value} · ${effortLabel.value}`,
 );
 const effortOptions = computed(() =>
   reasoningEffortsForBackend(props.state.backend),
@@ -139,7 +144,10 @@ onBeforeUnmount(() => {
       >
         <Sparkles :size="14" aria-hidden="true" />
         <span class="composer-model-picker__main">自动</span>
-        <span class="composer-model-picker__meta">{{ autoModelLabel }} · {{ autoModelPreview.reasoningEffort ?? "auto" }}</span>
+        <span class="composer-model-picker__meta">
+          <template v-if="autoPresetLabel">{{ autoPresetLabel }} · </template>
+          {{ autoModelLabel }} · {{ autoModelPreview.reasoningEffort ?? "auto" }}
+        </span>
         <Check v-if="!manualMode" :size="14" aria-hidden="true" />
       </button>
       <div class="composer-model-picker__section" role="none">模型</div>

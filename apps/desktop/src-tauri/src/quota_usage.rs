@@ -1056,6 +1056,7 @@ pub fn quota_usage_get_stats(
 mod tests {
     use super::*;
     use crate::agent_timeline;
+    use crate::native_agent::BACKEND_NATIVE_AGENTKIT;
     use crate::BACKEND_CLAUDE;
     use serde_json::json;
 
@@ -1087,7 +1088,9 @@ mod tests {
               event_id              TEXT PRIMARY KEY,
               task_id               TEXT NOT NULL,
               turn_id               TEXT,
-              backend               TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+              backend               TEXT NOT NULL CHECK (
+                backend IN ('native-agentkit','claude','codex')
+              ),
               session_id            TEXT,
               input_tokens          INTEGER NOT NULL DEFAULT 0,
               output_tokens         INTEGER NOT NULL DEFAULT 0,
@@ -1142,28 +1145,6 @@ mod tests {
         }
     }
 
-    fn codex_quota_status_json() -> JsonValue {
-        json!({
-            "available": true,
-            "connectionMode": "codex-account",
-            "limitId": null,
-            "limitName": null,
-            "planType": null,
-            "rateLimitReachedType": null,
-            "fiveHour": null,
-            "weekly": null,
-            "sparkFiveHour": null,
-            "sparkWeekly": null,
-            "credits": null,
-            "sparkCredits": null,
-            "rateLimitResetCredits": null,
-            "accountUsage": null,
-            "usageError": null,
-            "fetchedAt": 1,
-            "error": null,
-        })
-    }
-
     fn insert_tool_event(
         conn: &Connection,
         id: &str,
@@ -1176,7 +1157,7 @@ mod tests {
         conn.execute(
             r#"INSERT INTO agent_timeline_events
                (id, task_id, turn_id, backend, kind, status, title, payload, created_at, updated_at, turn_seq, intra_turn_order)
-               VALUES (?1, 'task-1', 'turn-1', 'claude', ?2, 'success', ?3, ?4, ?5, ?5, 0, ?6)"#,
+               VALUES (?1, 'task-1', 'turn-1', 'native-agentkit', ?2, 'success', ?3, ?4, ?5, ?5, 0, ?6)"#,
             params![id, kind, title, payload.to_string(), created_at, order],
         )
         .unwrap();
@@ -1212,10 +1193,10 @@ mod tests {
     }
 
     #[test]
-    fn extracts_codex_camel_case_usage_without_cost() {
+    fn extracts_native_camel_case_usage_without_cost() {
         let event = timeline_event(
             "event-2",
-            BACKEND_CODEX,
+            BACKEND_NATIVE_AGENTKIT,
             json!({
                 "sessionId": "thread-1",
                 "usage": {
@@ -1240,45 +1221,25 @@ mod tests {
     #[test]
     fn backend_normalization_uses_chat_backend_contract() {
         assert_eq!(usage_stats_days(), &[7, 30]);
-        assert!(is_rate_limit_reset_credit_consume_outcome("reset"));
-        assert!(!is_rate_limit_reset_credit_consume_outcome("unknown"));
         assert_eq!(normalize_days(None), default_usage_stats_days());
         assert_eq!(normalize_days(Some(30)), 30);
         assert_eq!(normalize_days(Some(90)), default_usage_stats_days());
         assert_eq!(
-            normalize_backend(&format!(" {BACKEND_CODEX} ")).as_deref(),
-            Some(BACKEND_CODEX)
+            normalize_backend(&format!(" {BACKEND_NATIVE_AGENTKIT} ")).as_deref(),
+            Some(BACKEND_NATIVE_AGENTKIT)
         );
         assert_eq!(normalize_backend("unknown"), None);
+        // Removed brand backends are not product filters; fall back to "all".
         assert_eq!(
             normalize_backend_filter(Some(format!(" {BACKEND_CLAUDE} "))),
-            BACKEND_CLAUDE
+            "all"
+        );
+        assert_eq!(
+            normalize_backend_filter(Some(format!(" {BACKEND_NATIVE_AGENTKIT} "))),
+            BACKEND_NATIVE_AGENTKIT
         );
         assert_eq!(normalize_backend_filter(Some(" all ".to_string())), "all");
         assert_eq!(normalize_backend_filter(Some("unknown".to_string())), "all");
-    }
-
-    #[test]
-    fn reset_credit_consume_result_rejects_unknown_contract_outcome() {
-        let ok = parse_codex_rate_limit_reset_credit_consume_result(
-            &json!({
-                "outcome": "reset",
-                "status": codex_quota_status_json()
-            })
-            .to_string(),
-        )
-        .unwrap();
-        assert_eq!(ok.outcome, "reset");
-
-        let err = parse_codex_rate_limit_reset_credit_consume_result(
-            &json!({
-                "outcome": "unknown",
-                "status": codex_quota_status_json()
-            })
-            .to_string(),
-        )
-        .unwrap_err();
-        assert!(err.contains("未知 outcome"));
     }
 
     #[test]
@@ -1287,14 +1248,14 @@ mod tests {
 
         let first = timeline_event(
             "event-1",
-            BACKEND_CODEX,
+            BACKEND_NATIVE_AGENTKIT,
             json!({ "usage": { "inputTokens": 10, "outputTokens": 5 } }),
             1_000,
         );
         record_from_timeline_event(&conn, &first).unwrap();
         let updated = timeline_event(
             "event-1",
-            BACKEND_CODEX,
+            BACKEND_NATIVE_AGENTKIT,
             json!({ "usage": { "inputTokens": 20, "outputTokens": 7, "costUsd": 0.03 } }),
             2_000,
         );
@@ -1316,19 +1277,19 @@ mod tests {
         let day = DAY_MS;
         for event in [
             timeline_event(
-                "claude-1",
-                BACKEND_CLAUDE,
+                "native-cost",
+                BACKEND_NATIVE_AGENTKIT,
                 json!({ "totalCostUsd": 0.1, "usage": { "input_tokens": 100, "output_tokens": 10 } }),
                 day * 10 + 1,
             ),
             timeline_event(
-                "codex-1",
-                BACKEND_CODEX,
+                "native-1",
+                BACKEND_NATIVE_AGENTKIT,
                 json!({ "usage": { "inputTokens": 50, "outputTokens": 20 } }),
                 day * 11 + 1,
             ),
             timeline_event(
-                "old",
+                "legacy-brand",
                 BACKEND_CLAUDE,
                 json!({ "totalCostUsd": 0.2, "usage": { "input_tokens": 999 } }),
                 day,
@@ -1347,27 +1308,28 @@ mod tests {
         )
         .unwrap();
 
+        // Recent 7-day window: native-cost (110) + native-1 (70) = 180; legacy-brand is outside window.
         assert_eq!(all.totals.total_tokens, 180);
         assert_eq!(all.cost.known_cost_usd, Some(0.1));
         assert_eq!(all.cost.cost_record_count, 1);
         assert_eq!(all.cost.total_record_count, 2);
         assert_eq!(all.daily.len(), 7);
-        assert_eq!(all.backends.len(), 2);
+        assert_eq!(all.backends.len(), 1);
         assert_eq!(all.recent.len(), 2);
 
-        let codex = stats(
+        let native = stats(
             &conn,
             QuotaUsageStatsInput {
                 days: Some(7),
-                backend: Some(BACKEND_CODEX.to_string()),
+                backend: Some(BACKEND_NATIVE_AGENTKIT.to_string()),
             },
             day * 12 + 5,
         )
         .unwrap();
-        assert_eq!(codex.totals.total_tokens, 70);
-        assert_eq!(codex.cost.known_cost_usd, None);
-        assert_eq!(codex.backends.len(), 1);
-        assert_eq!(codex.backends[0].backend, BACKEND_CODEX);
+        assert_eq!(native.totals.total_tokens, 180);
+        assert_eq!(native.cost.known_cost_usd, Some(0.1));
+        assert_eq!(native.backends.len(), 1);
+        assert_eq!(native.backends[0].backend, BACKEND_NATIVE_AGENTKIT);
         assert_eq!(all.projects.len(), 1);
         assert_eq!(all.projects[0].project_name, "Lilia");
         assert_eq!(all.conversations.len(), 1);
@@ -1401,7 +1363,7 @@ mod tests {
             &conn,
             QuotaUsageStatsInput {
                 days: Some(7),
-                backend: Some(BACKEND_CLAUDE.to_string()),
+                backend: Some(BACKEND_NATIVE_AGENTKIT.to_string()),
             },
             day * 12 + 5,
         )
@@ -1426,8 +1388,8 @@ mod tests {
         record_from_timeline_event(
             &conn,
             &timeline_event(
-                "claude-1",
-                BACKEND_CLAUDE,
+                "native-1",
+                BACKEND_NATIVE_AGENTKIT,
                 json!({ "totalCostUsd": 0.1, "usage": { "input_tokens": 100, "output_tokens": 10 } }),
                 day * 10 + 1,
             ),
@@ -1438,7 +1400,7 @@ mod tests {
             &conn,
             QuotaUsageQueryInput {
                 days: Some(7),
-                backend: Some(BACKEND_CLAUDE.to_string()),
+                backend: Some(BACKEND_NATIVE_AGENTKIT.to_string()),
                 scope: Some("projects".to_string()),
             },
             day * 12 + 5,
@@ -1447,7 +1409,7 @@ mod tests {
 
         assert!(value.get("projects").is_some());
         assert!(value.get("conversations").is_none());
-        assert_eq!(value["backend"], json!(BACKEND_CLAUDE));
+        assert_eq!(value["backend"], json!(BACKEND_NATIVE_AGENTKIT));
     }
 
     #[test]

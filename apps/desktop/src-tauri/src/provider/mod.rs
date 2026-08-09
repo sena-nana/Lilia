@@ -12,16 +12,17 @@ mod types;
 
 pub use commands::*;
 
-/// Native-only readiness check (official Claude/Codex servers removed).
+/// Product send path only accepts native-agentkit (legacy brand labels still normalize elsewhere).
 pub(crate) fn validate_backend_ready_for_send(backend: &str) -> Result<(), String> {
-    if backend == "native-agentkit" || backend == "claude" || backend == "codex" {
-        // Brand backends are no longer execution paths; turns use native-agentkit.
-        return Ok(());
-    }
-    if backend.trim().is_empty() {
+    let backend = backend.trim();
+    if backend.is_empty() {
         return Err("未选择 Agent 后端".to_string());
     }
-    Ok(())
+    // Historical brand strings are accepted as aliases; execution still uses native-agentkit.
+    if matches!(backend, "native-agentkit" | "claude" | "codex" | "native" | "agentkit") {
+        return Ok(());
+    }
+    Err(format!("不支持的 Agent 后端：{backend}"))
 }
 
 pub(crate) use config::{
@@ -32,7 +33,7 @@ pub(crate) use config::{
 pub(crate) use connection::resolve_connection_for;
 pub(crate) use types::{
     AssistantAIConfig, AutoTurnDecisionSettings, BackendConnectionPlan, CodexProfileSettings,
-    ConnectionMode, ModelFeatureSettings,
+    ConnectionMode, ModelFeatureChatSettings, ModelFeatureSettings, ModelPresetGroup,
 };
 
 #[cfg(test)]

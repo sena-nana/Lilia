@@ -15,7 +15,6 @@ struct QuotaContract {
     usage_stats_days: Vec<i64>,
     default_usage_stats_days: i64,
     usage_stats_backend_filters: Vec<String>,
-    rate_limit_reset_credit_consume_outcomes: Vec<String>,
 }
 
 #[cfg(test)]
@@ -23,8 +22,6 @@ struct QuotaContract {
 #[serde(rename_all = "camelCase")]
 struct QuotaCommandsContract {
     get_stats: String,
-    get_codex_account_status: String,
-    consume_codex_rate_limit_reset_credit: String,
 }
 
 fn quota_contract() -> &'static QuotaContract {
@@ -45,36 +42,15 @@ pub(crate) fn usage_stats_backend_filters() -> &'static [String] {
     &quota_contract().usage_stats_backend_filters
 }
 
-pub(crate) fn is_rate_limit_reset_credit_consume_outcome(value: &str) -> bool {
-    quota_contract()
-        .rate_limit_reset_credit_consume_outcomes
-        .iter()
-        .any(|outcome| outcome == value)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::quota_usage::{
-        quota_usage_consume_codex_rate_limit_reset_credit, quota_usage_get_codex_account_status,
-        quota_usage_get_stats,
-    };
+    use crate::quota_usage::quota_usage_get_stats;
 
     #[test]
     fn quota_command_names_load_from_contract_manifest() {
         let commands = &quota_contract().commands;
         let _ = quota_usage_get_stats;
-        let _ = quota_usage_get_codex_account_status;
-        let _ = quota_usage_consume_codex_rate_limit_reset_credit;
-
         assert_eq!(commands.get_stats, stringify!(quota_usage_get_stats));
-        assert_eq!(
-            commands.get_codex_account_status,
-            stringify!(quota_usage_get_codex_account_status)
-        );
-        assert_eq!(
-            commands.consume_codex_rate_limit_reset_credit,
-            stringify!(quota_usage_consume_codex_rate_limit_reset_credit)
-        );
     }
 }

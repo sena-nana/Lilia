@@ -23,6 +23,7 @@ mod agent_event_sink_tests {
     use crate::chat::timeline_sink::*;
     use crate::chat::types::*;
     use crate::provider::*;
+    use crate::native_agent::BACKEND_NATIVE_AGENTKIT;
     use crate::{BACKEND_CLAUDE, BACKEND_CODEX};
 
     fn test_python_executable() -> String {
@@ -1209,116 +1210,16 @@ mod agent_event_sink_tests {
     }
 
     #[test]
-    fn active_backend_normalizes_unknown_values_to_claude() {
-        assert_eq!(normalize_backend(BACKEND_CLAUDE), BACKEND_CLAUDE);
-        assert_eq!(normalize_backend(BACKEND_CODEX), BACKEND_CODEX);
-        assert_eq!(normalize_backend(""), BACKEND_CLAUDE);
-        assert_eq!(normalize_backend("unknown"), BACKEND_CLAUDE);
-    }
-
-    #[test]
-    fn codex_cli_version_parser_reads_codex_cli_output() {
+    fn active_backend_normalizes_unknown_values_to_native_agentkit() {
         assert_eq!(
-            parse_codex_cli_version("codex-cli 0.128.0"),
-            Some((0, 128, 0))
+            normalize_backend(BACKEND_NATIVE_AGENTKIT),
+            BACKEND_NATIVE_AGENTKIT
         );
-        assert_eq!(
-            parse_codex_cli_version("codex-cli 0.130.0-alpha.5"),
-            Some((0, 130, 0))
-        );
-        assert_eq!(
-            parse_codex_cli_version("codex-cli 0.136.0-alpha.2"),
-            Some((0, 136, 0))
-        );
-    }
-
-    #[test]
-    fn codex_cli_probe_skips_failed_managed_candidate() {
-        let candidates = vec![
-            "C:\\Users\\me\\.lilia\\runtime\\codex\\bin\\codex.cmd".to_string(),
-            "C:\\Users\\me\\.lilia\\runtime\\codex\\bin\\codex.exe".to_string(),
-        ];
-        let status = build_codex_app_server_probe_status_with(&candidates, |program, args| {
-            if program.ends_with("codex.cmd") {
-                return Err("command not found".to_string());
-            }
-            match args {
-                ["--version"] => Ok("codex-cli 0.136.0".to_string()),
-                ["app-server", "--help"] => {
-                    Ok("Usage: codex app-server [OPTIONS] [COMMAND]".to_string())
-                }
-                _ => Err("unexpected args".to_string()),
-            }
-        });
-
-        assert_eq!(
-            status.path.as_deref(),
-            Some("C:\\Users\\me\\.lilia\\runtime\\codex\\bin\\codex.exe")
-        );
-        assert!(status.public.supports_required_protocol);
-        assert_eq!(status.public.version.as_deref(), Some("codex-cli 0.136.0"));
-    }
-
-    #[test]
-    fn codex_send_block_reason_mentions_cli_and_responses_support() {
-        let reason = codex_send_block_reason(&CodexAppServerStatus {
-            version: Some("codex-cli 0.125.0".to_string()),
-            install_path: None,
-            managed: false,
-            available: true,
-            supports_required_protocol: false,
-            failure_kind: Some("experimentalApiUnsupported".to_string()),
-            issues: vec!["当前 codex CLI 版本过低，需要 0.136.0 或更新版本。".to_string()],
-            latest_version: None,
-            update_available: false,
-            release_notes: Vec::new(),
-            update_error: None,
-            update_state: "idle".to_string(),
-            prepared_version: None,
-            update_progress_percent: None,
-        })
-        .unwrap();
-
-        assert!(reason.contains("当前 codex CLI 版本过低"));
-        assert!(reason.contains("0.136.0"));
-        assert!(!reason.contains("OpenAI Responses API"));
-
-        let reason = codex_send_block_reason(&CodexAppServerStatus {
-            version: Some("codex-cli 0.136.0".to_string()),
-            install_path: None,
-            managed: false,
-            available: true,
-            supports_required_protocol: false,
-            failure_kind: Some("providerIncompatible".to_string()),
-            issues: vec!["当前上游 provider 不兼容 Codex。".to_string()],
-            latest_version: None,
-            update_available: false,
-            release_notes: Vec::new(),
-            update_error: None,
-            update_state: "idle".to_string(),
-            prepared_version: None,
-            update_progress_percent: None,
-        })
-        .unwrap();
-        assert!(reason.contains("OpenAI Responses API"));
-
-        assert!(codex_send_block_reason(&CodexAppServerStatus {
-            version: Some("codex-cli 0.136.0".to_string()),
-            install_path: None,
-            managed: false,
-            available: true,
-            supports_required_protocol: true,
-            failure_kind: None,
-            issues: Vec::new(),
-            latest_version: None,
-            update_available: false,
-            release_notes: Vec::new(),
-            update_error: None,
-            update_state: "idle".to_string(),
-            prepared_version: None,
-            update_progress_percent: None,
-        })
-        .is_none());
+        // Legacy brand labels fall back to the sole product backend.
+        assert_eq!(normalize_backend(BACKEND_CLAUDE), BACKEND_NATIVE_AGENTKIT);
+        assert_eq!(normalize_backend(BACKEND_CODEX), BACKEND_NATIVE_AGENTKIT);
+        assert_eq!(normalize_backend(""), BACKEND_NATIVE_AGENTKIT);
+        assert_eq!(normalize_backend("unknown"), BACKEND_NATIVE_AGENTKIT);
     }
 
     #[test]
@@ -1326,7 +1227,7 @@ mod agent_event_sink_tests {
         let composer = ChatComposerState {
             task_id: "stale-task".to_string(),
             backend: BACKEND_CLAUDE.to_string(),
-            model: "claude-sonnet-4-6".to_string(),
+            model: "not-a-real-model".to_string(),
             model_selection_mode: "auto".to_string(),
             reasoning_effort: None,
             plan_mode: true,
@@ -1335,11 +1236,12 @@ mod agent_event_sink_tests {
             codex_settings: Default::default(),
         };
 
-        let normalized = normalize_composer_for_backend(composer, "task-1", BACKEND_CODEX);
+        let normalized =
+            normalize_composer_for_backend(composer, "task-1", BACKEND_NATIVE_AGENTKIT);
 
         assert_eq!(normalized.task_id, "task-1");
-        assert_eq!(normalized.backend, BACKEND_CODEX);
-        assert_eq!(normalized.model, "gpt-5.5");
+        assert_eq!(normalized.backend, BACKEND_NATIVE_AGENTKIT);
+        assert_eq!(normalized.model, "gpt-5.4");
         assert!(normalized.plan_mode);
         assert_eq!(normalized.permission, "readonly");
     }
@@ -1358,18 +1260,19 @@ mod agent_event_sink_tests {
             codex_settings: Default::default(),
         };
 
-        let normalized = normalize_composer_for_backend(composer, "task-1", BACKEND_CODEX);
+        let normalized =
+            normalize_composer_for_backend(composer, "task-1", BACKEND_NATIVE_AGENTKIT);
 
-        assert_eq!(normalized.backend, BACKEND_CODEX);
+        assert_eq!(normalized.backend, BACKEND_NATIVE_AGENTKIT);
         assert_eq!(normalized.model, "gpt-5.4-mini");
     }
 
     #[test]
     fn composer_normalizes_model_selection_and_reasoning_effort_for_backend() {
-        let codex = normalize_composer_for_backend(
+        let native = normalize_composer_for_backend(
             ChatComposerState {
                 task_id: "task-1".to_string(),
-                backend: BACKEND_CODEX.to_string(),
+                backend: BACKEND_NATIVE_AGENTKIT.to_string(),
                 model: "gpt-5.4-mini".to_string(),
                 model_selection_mode: "manual".to_string(),
                 reasoning_effort: Some("max".to_string()),
@@ -1379,28 +1282,28 @@ mod agent_event_sink_tests {
                 codex_settings: Default::default(),
             },
             "task-1",
-            BACKEND_CODEX,
+            BACKEND_NATIVE_AGENTKIT,
         );
-        assert_eq!(codex.model_selection_mode, "manual");
-        assert_eq!(codex.reasoning_effort.as_deref(), Some("xhigh"));
+        assert_eq!(native.model_selection_mode, "manual");
+        assert_eq!(native.reasoning_effort.as_deref(), Some("max"));
 
-        let claude = normalize_composer_for_backend(
+        let auto_mode = normalize_composer_for_backend(
             ChatComposerState {
                 task_id: "task-1".to_string(),
-                backend: BACKEND_CLAUDE.to_string(),
+                backend: BACKEND_NATIVE_AGENTKIT.to_string(),
                 model: "claude-opus-4-7".to_string(),
                 model_selection_mode: "unexpected".to_string(),
-                reasoning_effort: Some("max".to_string()),
+                reasoning_effort: Some("high".to_string()),
                 plan_mode: false,
                 goal_mode: false,
                 permission: "ask".to_string(),
                 codex_settings: Default::default(),
             },
             "task-1",
-            BACKEND_CLAUDE,
+            BACKEND_NATIVE_AGENTKIT,
         );
-        assert_eq!(claude.model_selection_mode, "auto");
-        assert_eq!(claude.reasoning_effort.as_deref(), Some("max"));
+        assert_eq!(auto_mode.model_selection_mode, "auto");
+        assert_eq!(auto_mode.reasoning_effort.as_deref(), Some("high"));
     }
 
     fn pending_turn(id: &str) -> PendingChatTurn {
@@ -2062,7 +1965,7 @@ mod agent_event_sink_tests {
         let conn = resume_conn_with_task();
         let running_turn = RunningTurn {
             turn_id: "turn-persisted".to_string(),
-            backend: BACKEND_CODEX.to_string(),
+            backend: BACKEND_NATIVE_AGENTKIT.to_string(),
             native_approval_pause: None,
         };
 
@@ -2086,7 +1989,7 @@ mod agent_event_sink_tests {
         let snapshot = chat_runtime_snapshot_with_persisted(Some(&conn), &store, "task-1");
 
         assert_eq!(snapshot.phase, "running_and_queued");
-        assert_eq!(snapshot.backend.as_deref(), Some(BACKEND_CODEX));
+        assert_eq!(snapshot.backend.as_deref(), Some(BACKEND_NATIVE_AGENTKIT));
         assert_eq!(snapshot.turn_id.as_deref(), Some("turn-persisted"));
     }
 
@@ -2612,7 +2515,7 @@ mod agent_event_sink_tests {
             );
             CREATE TABLE task_agent_sessions (
               task_id         TEXT NOT NULL,
-              backend         TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+              backend         TEXT NOT NULL,
               session_id      TEXT NOT NULL,
               updated_at      INTEGER NOT NULL,
               PRIMARY KEY (task_id, backend)
@@ -2620,7 +2523,7 @@ mod agent_event_sink_tests {
             CREATE TABLE task_runtime_states (
               task_id         TEXT PRIMARY KEY,
               turn_id         TEXT NOT NULL,
-              backend         TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+              backend         TEXT NOT NULL,
               phase           TEXT NOT NULL CHECK (phase IN
                                 ('running','interrupted_pending_finish','reset_pending_finish')),
               process_session_id TEXT,

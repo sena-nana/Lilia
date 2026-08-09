@@ -43,7 +43,8 @@ pub(crate) struct SubagentBackendSettings {
 
 impl Default for SubagentBackendSettings {
     fn default() -> Self {
-        agent_interaction_defaults_contract::subagent_backend_settings()
+        // Literals only — must not re-enter agent_interaction_defaults OnceLock during serde.
+        Self { enabled: true }
     }
 }
 
@@ -60,7 +61,11 @@ pub(crate) struct ClaudeSubagentModeSettings {
 
 impl Default for ClaudeSubagentModeSettings {
     fn default() -> Self {
-        agent_interaction_defaults_contract::claude_subagent_mode_settings()
+        Self {
+            enabled: true,
+            forward_subagent_text: true,
+            agent_progress_summaries: true,
+        }
     }
 }
 
@@ -77,24 +82,28 @@ pub(crate) struct SubagentModeSettings {
 
 impl Default for SubagentModeSettings {
     fn default() -> Self {
-        agent_interaction_defaults_contract::subagent_mode_settings()
+        Self {
+            enabled: false,
+            codex: SubagentBackendSettings::default(),
+            claude: ClaudeSubagentModeSettings::default(),
+        }
     }
 }
 
 fn default_codex_subagent_enabled() -> bool {
-    agent_interaction_defaults_contract::codex_subagent_enabled()
+    true
 }
 
 fn default_claude_subagent_enabled() -> bool {
-    agent_interaction_defaults_contract::claude_subagent_enabled()
+    true
 }
 
 fn default_claude_forward_subagent_text() -> bool {
-    agent_interaction_defaults_contract::claude_forward_subagent_text()
+    true
 }
 
 fn default_claude_agent_progress_summaries() -> bool {
-    agent_interaction_defaults_contract::claude_agent_progress_summaries()
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -128,44 +137,56 @@ pub(crate) struct AutoTurnDecisionSettings {
 
 impl Default for AutoTurnDecisionSettings {
     fn default() -> Self {
-        agent_interaction_defaults_contract::auto_turn_decision_settings()
+        Self {
+            enabled: true,
+            allow_model_tier: true,
+            allow_reasoning_effort: true,
+            allow_plan_mode: true,
+            allow_goal_mode: true,
+            allow_session_fork: true,
+        }
     }
 }
 
 fn default_auto_turn_decision_enabled() -> bool {
-    agent_interaction_defaults_contract::auto_turn_decision_enabled()
+    true
 }
 
 fn default_auto_turn_decision_allow_model_tier() -> bool {
-    agent_interaction_defaults_contract::auto_turn_decision_allow_model_tier()
+    true
 }
 
 fn default_auto_turn_decision_allow_reasoning_effort() -> bool {
-    agent_interaction_defaults_contract::auto_turn_decision_allow_reasoning_effort()
+    true
 }
 
 fn default_auto_turn_decision_allow_plan_mode() -> bool {
-    agent_interaction_defaults_contract::auto_turn_decision_allow_plan_mode()
+    true
 }
 
 fn default_auto_turn_decision_allow_goal_mode() -> bool {
-    agent_interaction_defaults_contract::auto_turn_decision_allow_goal_mode()
+    true
 }
 
 fn default_auto_turn_decision_allow_session_fork() -> bool {
-    agent_interaction_defaults_contract::auto_turn_decision_allow_session_fork()
+    true
 }
 
 fn default_permission_mode() -> String {
-    agent_interaction_defaults_contract::permission_mode()
+    "ask".to_string()
 }
 
 fn default_permission_mode_availability() -> HashMap<String, bool> {
-    agent_interaction_defaults_contract::permission_mode_availability()
+    HashMap::from([
+        ("full".to_string(), true),
+        ("ask".to_string(), true),
+        ("readonly".to_string(), true),
+        ("free".to_string(), true),
+    ])
 }
 
 fn default_main_agent_prompt_mode() -> String {
-    agent_interaction_defaults_contract::main_agent_prompt_mode()
+    "conservative".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -191,14 +212,31 @@ pub(crate) struct CodexProfileSettings {
     pub(crate) exclude_turns: Vec<String>,
 }
 
+impl CodexProfileSettings {
+    /// Non-reentrant empty defaults for bootstrap / manifest parse paths.
+    pub(crate) fn default_non_reentrant() -> Self {
+        Self {
+            profile: "default".to_string(),
+            model: None,
+            reasoning_effort: None,
+            runtime_workspace_roots: Vec::new(),
+            responses_api_client_metadata: None,
+            additional_context: None,
+            persist_extended_history: None,
+            initial_turns_page: None,
+            exclude_turns: Vec::new(),
+        }
+    }
+}
+
 impl Default for CodexProfileSettings {
     fn default() -> Self {
-        agent_interaction_defaults_contract::codex_profile_settings()
+        Self::default_non_reentrant()
     }
 }
 
 fn default_codex_profile_name() -> String {
-    agent_interaction_defaults_contract::codex_profile_name()
+    "default".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -286,11 +324,34 @@ impl Default for ModelFeatureChatSettings {
     }
 }
 
+/// Role / use-case model preset (builtin default|plan|fast|review or user custom).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ModelPresetGroup {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    /// "builtin" | "custom"
+    pub(crate) kind: String,
+    #[serde(default)]
+    pub(crate) model: Option<String>,
+    #[serde(default)]
+    pub(crate) reasoning_effort: Option<String>,
+    #[serde(default = "default_true")]
+    pub(crate) enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ModelFeatureSettings {
     #[serde(default)]
     pub(crate) chat: ModelFeatureChatSettings,
+    /// Role preset groups; empty triggers migration from `chat` tiers on normalize.
+    #[serde(default)]
+    pub(crate) presets: Vec<ModelPresetGroup>,
     #[serde(default)]
     pub(crate) title: Option<String>,
     #[serde(default)]
@@ -307,6 +368,7 @@ impl Default for ModelFeatureSettings {
     fn default() -> Self {
         Self {
             chat: ModelFeatureChatSettings::default(),
+            presets: Vec::new(),
             title: None,
             suggestion: None,
             prompt_router: None,

@@ -17,10 +17,10 @@ hero:
       link: https://github.com/sena-nana/Lilia
 
 features:
-  - title: 任务化会话
-    details: 将对话作为可管理的工程任务，而不是只保存聊天记录。
+  - title: 任务为主对象
+    details: 将对话作为可管理的工程任务；底层 session 对用户隐形，不只保存聊天记录。
   - title: 本地工程状态
-    details: 记录项目、会话、待办、过程和关键交互，方便恢复和继续推进。
+    details: 记录项目、任务、待办、过程和关键交互，方便恢复和继续推进。
   - title: 过程可观察
     details: 用时间线呈现 Agent 的思考、工具调用、命令执行、文件变更和最终回复。
   - title: 非打断交互

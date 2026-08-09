@@ -299,8 +299,8 @@ mod tests {
         let built_main_agent_prompt = build_main_agent_prompt("aggressive", None);
         assert!(built_main_agent_prompt.len() > main_agent.base_prompt.len());
         assert!(
-            built_main_agent_prompt.contains("不替代当前 provider 的原生系统提示"),
-            "mainAgent prompt must preserve provider-native prompt precedence"
+            built_main_agent_prompt.contains("不替代 Mutsuki AgentKit / 模型协议 adapter 的系统提示"),
+            "mainAgent prompt must preserve AgentKit / adapter system prompt precedence"
         );
         for key in main_agent.workflow_types.keys() {
             assert!(main_agent.workflow_order.contains(key));

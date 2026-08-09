@@ -1416,6 +1416,12 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
     case MODEL_FEATURE_GET_SETTINGS_COMMAND:
       return {
         chat: { light: null, normal: null, deep: null },
+        presets: [
+          { id: "fast", label: "Fast", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+          { id: "default", label: "Default", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+          { id: "plan", label: "Plan", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+          { id: "review", label: "Review", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+        ],
         title: null,
         suggestion: null,
         promptRouter: null,

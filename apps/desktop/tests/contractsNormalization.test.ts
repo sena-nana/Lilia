@@ -434,10 +434,15 @@ import {
   automationToolActionUsesField,
   automationTriggerKindLabel,
   autoModelForBackendTier,
+  autoModelForBackendPreset,
+  autoPresetForWorkflowType,
+  autoReasoningEffortForPreset,
   autoReasoningEffortForTier,
   autoRuntimeCommandSignalLabel,
   autoTierForRuntimeCommandType,
   autoTierForWorkflowType,
+  normalizeModelFeatureSettings,
+  PLAN_MODE_PRESET,
   chatAttachmentReferenceLabel,
   chatAttachmentReferencePattern,
   chatAttachmentDirectorySummaryLabel,
@@ -1985,19 +1990,17 @@ describe("contracts normalization helpers", () => {
     expect(normalizeSessionForkCommand({ type: "other" })).toBeNull();
   });
 
-  it.skip("normalizes runtime options for model selection", () => {
-    expect(AUTO_MODEL_BY_BACKEND_AND_TIER.codex).toEqual({
+  it("normalizes model selection defaults and preset feature settings", () => {
+    expect(AUTO_MODEL_BY_BACKEND_AND_TIER["native-agentkit"]).toEqual({
       light: "gpt-5.4-mini",
       normal: "gpt-5.4",
       deep: "gpt-5.5",
     });
-    expect(AUTO_MODEL_BY_BACKEND_AND_TIER.claude).toEqual({
-      light: "claude-haiku-4-5",
-      normal: "claude-sonnet-4-6",
-      deep: "claude-opus-4-7",
-    });
-    expect(autoModelForBackendTier("codex", "deep")).toBe("gpt-5.5");
-    expect(autoModelForBackendTier("claude", "light")).toBe("claude-haiku-4-5");
+    expect(autoModelForBackendTier("native-agentkit", "deep")).toBe("gpt-5.5");
+    expect(autoModelForBackendPreset("native-agentkit", "fast")).toBe("gpt-5.4-mini");
+    expect(autoModelForBackendPreset("native-agentkit", "plan")).toBe("gpt-5.5");
+    expect(PLAN_MODE_PRESET).toBe("plan");
+    expect(autoReasoningEffortForPreset("review")).toBe("high");
     expect(AUTO_REASONING_EFFORT_BY_TIER).toEqual({
       light: "low",
       normal: "medium",
@@ -2007,6 +2010,8 @@ describe("contracts normalization helpers", () => {
     expect(AUTO_WORKFLOW_TYPES_BY_TIER.light).toContain("lilia_compact");
     expect(AUTO_WORKFLOW_TYPES_BY_TIER.deep).toContain("lilia_batch_apply");
     expect(autoTierForWorkflowType("lilia_review")).toBe("deep");
+    expect(autoPresetForWorkflowType("lilia_review")).toBe("review");
+    expect(autoPresetForWorkflowType("lilia_compact")).toBe("fast");
     expect(autoTierForWorkflowType("unknown")).toBeNull();
     expect(AUTO_RUNTIME_COMMAND_TYPES_BY_TIER.light).toEqual([
       "runtime_settings",
@@ -2028,62 +2033,57 @@ describe("contracts normalization helpers", () => {
       directoryFileCount: 200,
       directoryTotalSize: 20971520,
     });
-    expect(runtimeOptionsModelForBackend("codex", {
+    expect(runtimeOptionsModelForBackend("native-agentkit", {
       common: { model: " gpt-5.4 " },
-      provider: { codex: { model: "gpt-5.5" } },
+      provider: { "native-agentkit": { model: "gpt-5.5" } },
     })).toBe("gpt-5.4");
-    expect(runtimeOptionsModelForBackend("codex", {
-      provider: { codex: { model: " gpt-5.5 " } },
+    expect(runtimeOptionsModelForBackend("native-agentkit", {
+      provider: { "native-agentkit": { model: " gpt-5.5 " } },
     })).toBe("gpt-5.5");
-    expect(runtimeOptionsReasoningEffortForBackend("claude", {
+    expect(runtimeOptionsReasoningEffortForBackend("native-agentkit", {
       common: { reasoningEffort: "low" },
-      provider: { claude: { reasoningEffort: "max" } },
+      provider: { "native-agentkit": { reasoningEffort: "max" } },
     })).toBe("max");
+
+    const migrated = normalizeModelFeatureSettings({
+      chat: { light: "gpt-5.4-mini", normal: null, deep: "gpt-5.5" },
+    });
+    expect(migrated.presets.map((preset) => preset.id)).toEqual([
+      "fast",
+      "default",
+      "plan",
+      "review",
+    ]);
+    expect(migrated.presets.find((preset) => preset.id === "fast")?.model).toBe("gpt-5.4-mini");
 
     const explanation = {
       mode: "auto" as const,
       model: "gpt-5.5",
-      reasoningEffort: "max" as const,
+      reasoningEffort: "high" as const,
+      presetId: "plan",
+      presetLabel: "Plan",
       source: "auto" as const,
-      summary: "自动选择 gpt-5.5",
+      summary: "自动选择 [Plan] gpt-5.5",
       signals: ["计划模式"],
     };
-    const codexRuntimeOptions = mergeModelSelectionRuntimeOptions(
-      "codex",
-      { provider: { codex: { profile: "deep" } } },
+    const nativeRuntimeOptions = mergeModelSelectionRuntimeOptions(
+      "native-agentkit",
+      { provider: { "native-agentkit": { maxTurns: 12 } } },
       "gpt-5.5",
-      "max",
+      "high",
       explanation,
     );
-    expect(codexRuntimeOptions.common).toMatchObject({
+    expect(nativeRuntimeOptions.common).toMatchObject({
       model: "gpt-5.5",
-      reasoningEffort: "max",
+      reasoningEffort: "high",
       modelSelection: explanation,
     });
-    expect(codexRuntimeOptions.provider?.codex).toMatchObject({
-      profile: "deep",
+    expect(nativeRuntimeOptions.provider?.["native-agentkit"]).toMatchObject({
+      maxTurns: 12,
       model: "gpt-5.5",
-      reasoningEffort: "xhigh",
-    });
-
-    const claudeRuntimeOptions = mergeModelSelectionRuntimeOptions(
-      "claude",
-      { provider: { claude: { thinking: { type: "enabled", budgetTokens: 12000 } } } },
-      "claude-opus-4-7",
-      "high",
-      { ...explanation, model: "claude-opus-4-7", reasoningEffort: "high" },
-    );
-    expect(claudeRuntimeOptions.provider?.claude).toMatchObject({
       reasoningEffort: "high",
-      thinking: { type: "enabled", budgetTokens: 12000 },
+      thinking: { type: "adaptive" },
     });
-    expect(mergeModelSelectionRuntimeOptions(
-      "claude",
-      {},
-      "claude-sonnet-4-6",
-      "medium",
-      { ...explanation, model: "claude-sonnet-4-6", reasoningEffort: "medium" },
-    ).provider?.claude?.thinking).toEqual({ type: "adaptive" });
   });
 
   it("normalizes chat attachment payloads", () => {

@@ -11,6 +11,81 @@
     "normal": "medium",
     "deep": "high"
   },
+  "autoPresetReasoningEfforts": {
+    "fast": "low",
+    "default": "medium",
+    "plan": "high",
+    "review": "high"
+  },
+  "presetTierMap": {
+    "fast": "light",
+    "default": "normal",
+    "plan": "deep",
+    "review": "deep"
+  },
+  "builtinPresetLabels": {
+    "fast": "Fast",
+    "default": "Default",
+    "plan": "Plan",
+    "review": "Review"
+  },
+  "autoPresetRules": {
+    "planModePreset": "plan",
+    "workflowPresets": {
+      "fast": [
+        "lilia_compact",
+        "lilia_background_terminals_clean",
+        "lilia_config_diagnostics",
+        "lilia_memory_mode",
+        "lilia_memory_reset"
+      ],
+      "default": [
+        "lilia_task_workflow"
+      ],
+      "review": [
+        "lilia_review",
+        "lilia_fix_suggestion",
+        "lilia_batch_apply"
+      ],
+      "plan": []
+    },
+    "runtimeCommandPresets": {
+      "fast": [
+        "runtime_settings",
+        "remote_environment",
+        "session_management"
+      ],
+      "default": [],
+      "review": [],
+      "plan": []
+    },
+    "runtimeCommandSignals": {
+      "runtime_settings": "运行时诊断/设置",
+      "remote_environment": "远程环境管理",
+      "session_management": "会话管理"
+    },
+    "contextScalePresets": {
+      "small": "fast",
+      "medium": "default",
+      "large": "plan"
+    },
+    "contextThresholds": {
+      "medium": {
+        "contextUsagePercent": 35,
+        "promptLength": 2000,
+        "attachmentCount": 2,
+        "conversationReferenceCount": 1
+      },
+      "large": {
+        "contextUsagePercent": 70,
+        "promptLength": 8000,
+        "attachmentCount": 6,
+        "conversationReferenceCount": 3,
+        "directoryFileCount": 200,
+        "directoryTotalSize": 20971520
+      }
+    }
+  },
   "autoTierRules": {
     "workflowTiers": {
       "light": [

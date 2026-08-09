@@ -498,7 +498,7 @@ mod tests {
             );
             CREATE TABLE task_agent_sessions (
               task_id         TEXT NOT NULL,
-              backend         TEXT NOT NULL CHECK (backend IN ('claude','codex')),
+              backend         TEXT NOT NULL,
               session_id      TEXT NOT NULL,
               updated_at      INTEGER NOT NULL,
               PRIMARY KEY (task_id, backend)
@@ -549,60 +549,61 @@ mod tests {
     }
 
     #[test]
-    fn archive_task_skips_non_codex_archived_and_missing_sessions() {
+    fn archive_task_skips_already_archived_rows() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         create_archive_schema(&conn);
-        insert_task(&conn, "claude-task", "project-1", false);
+        insert_task(&conn, "active-task", "project-1", false);
         insert_task(&conn, "archived-task", "project-1", true);
-        insert_task(&conn, "missing-session", "project-1", false);
         insert_session(
             &conn,
-            "claude-task",
-            crate::BACKEND_CLAUDE,
-            "claude-session",
+            "active-task",
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+            "native-session",
         );
-        insert_session(&conn, "archived-task", BACKEND_CODEX, "thread-archived");
+        insert_session(
+            &conn,
+            "archived-task",
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+            "thread-archived",
+        );
 
-        assert!(codex_thread_ids_for_task_archive(&conn, "claude-task")
-            .unwrap()
-            .is_empty());
-        assert!(codex_thread_ids_for_task_archive(&conn, "archived-task")
-            .unwrap()
-            .is_empty());
-        assert!(codex_thread_ids_for_task_archive(&conn, "missing-session")
-            .unwrap()
-            .is_empty());
-
-        let changed = conn
+        let unchanged = conn
             .execute(
                 "UPDATE tasks SET archived = 1 WHERE id = ?1 AND archived = 0",
                 params!["archived-task"],
             )
             .unwrap();
+        assert_eq!(unchanged, 0);
 
-        assert_eq!(changed, 0);
+        let changed = conn
+            .execute(
+                "UPDATE tasks SET archived = 1 WHERE id = ?1 AND archived = 0",
+                params!["active-task"],
+            )
+            .unwrap();
+        assert_eq!(changed, 1);
+        assert!(task_archived(&conn, "active-task"));
     }
 
     #[test]
-    fn archive_queries_collect_builtin_codex_threads_before_local_update() {
+    fn archive_project_marks_unarchived_tasks_only() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         create_archive_schema(&conn);
         insert_task(&conn, "task-1", "project-1", false);
         insert_task(&conn, "task-2", "project-1", false);
         insert_task(&conn, "task-3", "project-2", false);
         insert_task(&conn, "task-4", "project-1", true);
-        insert_session(&conn, "task-1", BACKEND_CODEX, "thread-1");
-        insert_session(&conn, "task-2", BACKEND_CODEX, "thread-2");
-        insert_session(&conn, "task-3", BACKEND_CODEX, "thread-other-project");
-        insert_session(&conn, "task-4", BACKEND_CODEX, "thread-already-archived");
-
-        assert_eq!(
-            codex_thread_ids_for_task_archive(&conn, "task-1").unwrap(),
-            vec!["thread-1"]
+        insert_session(
+            &conn,
+            "task-1",
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+            "thread-1",
         );
-        assert_eq!(
-            codex_thread_ids_for_project_archive(&conn, "project-1").unwrap(),
-            vec!["thread-1", "thread-2"]
+        insert_session(
+            &conn,
+            "task-2",
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+            "thread-2",
         );
 
         let count = conn
@@ -616,5 +617,6 @@ mod tests {
         assert!(task_archived(&conn, "task-1"));
         assert!(task_archived(&conn, "task-2"));
         assert!(!task_archived(&conn, "task-3"));
+        assert!(task_archived(&conn, "task-4"));
     }
 }

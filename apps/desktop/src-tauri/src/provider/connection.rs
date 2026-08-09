@@ -3,7 +3,6 @@ use std::env;
 use tauri::{AppHandle, Runtime};
 
 use crate::chat::state::normalize_backend;
-use crate::BACKEND_CODEX;
 
 use super::config::{
     backend_api_key_env, backend_direct_url, connection_mode_uses_api_key,
@@ -57,12 +56,8 @@ pub(crate) fn resolve_connection_for<R: Runtime>(
     let backend = normalize_backend(backend_str);
     let mode = load_router_mode(app, backend);
     match mode.as_str() {
-        ROUTER_CODEX_ACCOUNT if backend == BACKEND_CODEX => BackendConnectionPlan {
-            mode: ConnectionMode::CodexAccount,
-            base_url: None,
-            api_key: None,
-        },
-        ROUTER_API => try_api_for_backend(app, backend),
+        // Legacy router value: treat as API rather than official Codex account.
+        ROUTER_API | ROUTER_CODEX_ACCOUNT => try_api_for_backend(app, backend),
         _ => BackendConnectionPlan {
             mode: ConnectionMode::Unconfigured,
             base_url: None,

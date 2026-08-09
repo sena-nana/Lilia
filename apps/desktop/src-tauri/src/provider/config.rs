@@ -15,8 +15,8 @@ use super::credentials::{
 };
 use super::types::{
     AgentInteractionSettings, AssistantAIConfig, AssistantAIModelPoolItem, CodexProfileSettings,
-    ConnectionMode, ModelFeatureChatSettings, ModelFeatureSettings, ProviderConfig,
-    SubagentModeSettings,
+    ConnectionMode, ModelFeatureChatSettings, ModelFeatureSettings, ModelPresetGroup,
+    ProviderConfig, SubagentModeSettings,
 };
 
 fn manifest_contains(values: &[String], value: &str) -> bool {
@@ -269,21 +269,149 @@ pub(crate) fn normalize_model_pool(
     out
 }
 
+const BUILTIN_PRESET_SPECS: &[(&str, &str, &str)] = &[
+    ("fast", "Fast", "light"),
+    ("default", "Default", "normal"),
+    ("plan", "Plan", "deep"),
+    ("review", "Review", "deep"),
+];
+
 pub(crate) fn normalize_model_feature_settings(
     settings: Option<ModelFeatureSettings>,
 ) -> ModelFeatureSettings {
     let settings = settings.unwrap_or_default();
+    let chat = ModelFeatureChatSettings {
+        light: normalize_optional_string(settings.chat.light),
+        normal: normalize_optional_string(settings.chat.normal),
+        deep: normalize_optional_string(settings.chat.deep),
+    };
+    let presets = normalize_model_presets(settings.presets, &chat);
+    let chat = mirror_presets_into_chat_tiers(&presets, &chat);
     ModelFeatureSettings {
-        chat: ModelFeatureChatSettings {
-            light: normalize_optional_string(settings.chat.light),
-            normal: normalize_optional_string(settings.chat.normal),
-            deep: normalize_optional_string(settings.chat.deep),
-        },
+        chat,
+        presets,
         title: normalize_optional_string(settings.title),
         suggestion: normalize_optional_string(settings.suggestion),
         prompt_router: normalize_optional_string(settings.prompt_router),
         prompt_optimize: normalize_optional_string(settings.prompt_optimize),
         auto_turn_decision: normalize_optional_string(settings.auto_turn_decision),
+    }
+}
+
+fn normalize_model_presets(
+    raw: Vec<ModelPresetGroup>,
+    chat: &ModelFeatureChatSettings,
+) -> Vec<ModelPresetGroup> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut builtin_overrides: BTreeMap<String, ModelPresetGroup> = BTreeMap::new();
+    let mut customs: Vec<ModelPresetGroup> = Vec::new();
+    let mut seen_custom: BTreeSet<String> = BTreeSet::new();
+
+    for item in raw {
+        let id = item.id.trim().to_string();
+        if id.is_empty() {
+            continue;
+        }
+        if is_builtin_preset_id(&id) {
+            let label = builtin_preset_label(&id);
+            builtin_overrides.insert(
+                id.clone(),
+                ModelPresetGroup {
+                    id,
+                    label,
+                    kind: "builtin".to_string(),
+                    model: normalize_optional_string(item.model),
+                    reasoning_effort: normalize_optional_string(item.reasoning_effort),
+                    enabled: item.enabled,
+                },
+            );
+            continue;
+        }
+        if !seen_custom.insert(id.clone()) {
+            continue;
+        }
+        let label = {
+            let trimmed = item.label.trim();
+            if trimmed.is_empty() {
+                id.clone()
+            } else {
+                trimmed.to_string()
+            }
+        };
+        customs.push(ModelPresetGroup {
+            id,
+            label,
+            kind: "custom".to_string(),
+            model: normalize_optional_string(item.model),
+            reasoning_effort: normalize_optional_string(item.reasoning_effort),
+            enabled: item.enabled,
+        });
+    }
+
+    let mut builtins = Vec::with_capacity(BUILTIN_PRESET_SPECS.len());
+    for (id, label, tier) in BUILTIN_PRESET_SPECS {
+        let from_chat = match *tier {
+            "light" => chat.light.clone(),
+            "normal" => chat.normal.clone(),
+            "deep" => chat.deep.clone(),
+            _ => None,
+        };
+        if let Some(mut override_preset) = builtin_overrides.remove(*id) {
+            if override_preset.model.is_none() {
+                override_preset.model = from_chat;
+            }
+            builtins.push(override_preset);
+            continue;
+        }
+        builtins.push(ModelPresetGroup {
+            id: (*id).to_string(),
+            label: (*label).to_string(),
+            kind: "builtin".to_string(),
+            model: from_chat,
+            reasoning_effort: None,
+            enabled: true,
+        });
+    }
+
+    builtins.extend(customs);
+    builtins
+}
+
+fn mirror_presets_into_chat_tiers(
+    presets: &[ModelPresetGroup],
+    chat: &ModelFeatureChatSettings,
+) -> ModelFeatureChatSettings {
+    let mut light = chat.light.clone();
+    let mut normal = chat.normal.clone();
+    let mut deep = chat.deep.clone();
+    for preset in presets {
+        match preset.id.as_str() {
+            "fast" if preset.model.is_some() => light = preset.model.clone(),
+            "default" if preset.model.is_some() => normal = preset.model.clone(),
+            "plan" if preset.model.is_some() => deep = preset.model.clone(),
+            "review" if preset.model.is_some() && deep.is_none() => deep = preset.model.clone(),
+            _ => {}
+        }
+    }
+    ModelFeatureChatSettings {
+        light,
+        normal,
+        deep,
+    }
+}
+
+fn is_builtin_preset_id(id: &str) -> bool {
+    matches!(id, "fast" | "default" | "plan" | "review")
+}
+
+fn builtin_preset_label(id: &str) -> String {
+    match id {
+        "fast" => "Fast".to_string(),
+        "default" => "Default".to_string(),
+        "plan" => "Plan".to_string(),
+        "review" => "Review".to_string(),
+        other => other.to_string(),
     }
 }
 
@@ -452,10 +580,15 @@ pub(crate) fn normalize_optional_string(value: Option<String>) -> Option<String>
 
 pub(crate) fn normalize_reasoning_effort(value: Option<String>) -> Option<String> {
     let value = normalize_optional_string(value)?;
+    let backend = crate::chat::state::default_backend();
     if chat_backends_contract()
         .backend_reasoning_efforts
-        .get(BACKEND_CODEX)
+        .get(backend)
         .is_some_and(|efforts| manifest_contains(efforts, &value))
+        || chat_backends_contract()
+            .reasoning_efforts
+            .iter()
+            .any(|effort| effort == &value)
     {
         Some(value)
     } else {
@@ -522,11 +655,9 @@ pub(crate) fn connection_mode_uses_custom_url(mode: ConnectionMode) -> bool {
     )
 }
 
+/// Official Codex account connection was removed; keep the helper for legacy mode values.
 pub(crate) fn connection_mode_uses_codex_account(mode: ConnectionMode) -> bool {
-    manifest_contains(
-        &chat_backends_contract().connection_modes_using_codex_account,
-        mode.as_contract_value(),
-    )
+    mode == ConnectionMode::CodexAccount
 }
 
 fn normalize_router_mode_value(backend: &str, value: Option<&str>) -> String {
@@ -555,10 +686,11 @@ fn normalize_router_mode_value(backend: &str, value: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BACKEND_CLAUDE;
 
     #[test]
     fn codex_profile_settings_are_normalized_to_controlled_values() {
+        use crate::native_agent::BACKEND_NATIVE_AGENTKIT;
+
         assert_eq!(
             config_contract::permission_modes(),
             ["full", "ask", "readonly", "free"]
@@ -569,19 +701,17 @@ mod tests {
         assert_eq!(
             chat_backends_contract()
                 .backend_reasoning_efforts
-                .get(BACKEND_CODEX),
+                .get(BACKEND_NATIVE_AGENTKIT),
             Some(&vec![
                 "low".to_string(),
                 "medium".to_string(),
                 "high".to_string(),
-                "xhigh".to_string()
+                "xhigh".to_string(),
+                "max".to_string()
             ])
         );
-        assert_eq!(
-            config_contract::codex_settings_profiles(),
-            ["default", "fast", "balanced", "deep"]
-        );
-        assert_eq!(config_contract::default_codex_settings_profile(), "default");
+        // Official Codex profile catalog remains empty after product-path removal.
+        assert!(config_contract::codex_settings_profiles().is_empty());
         assert_eq!(
             normalize_reasoning_effort(Some(" xhigh ".to_string())).as_deref(),
             Some("xhigh")
@@ -621,9 +751,10 @@ mod tests {
         assert_eq!(normalized.persist_extended_history, Some(true));
         assert_eq!(normalized.initial_turns_page, None);
         assert_eq!(normalized.exclude_turns, vec!["turn-1"]);
+        // Codex profile catalog is empty; any named profile normalizes to none.
         assert_eq!(
-            normalize_codex_settings_profile(Some(" balanced ".to_string())).as_deref(),
-            Some("balanced")
+            normalize_codex_settings_profile(Some(" balanced ".to_string())),
+            None
         );
         assert_eq!(
             normalize_codex_settings_profile(Some("bad".to_string())),
@@ -724,12 +855,15 @@ mod tests {
 
     #[test]
     fn router_mode_defaults_and_legacy_values_normalize_to_current_modes() {
+        use crate::native_agent::BACKEND_NATIVE_AGENTKIT;
+
         assert_eq!(
             crate::chat::state::chat_backends(),
-            &[BACKEND_CLAUDE.to_string(), BACKEND_CODEX.to_string()]
+            &[BACKEND_NATIVE_AGENTKIT.to_string()]
         );
-        assert!(crate::chat::state::chat_backend_supported(BACKEND_CLAUDE));
-        assert!(crate::chat::state::chat_backend_supported(BACKEND_CODEX));
+        assert!(crate::chat::state::chat_backend_supported(
+            BACKEND_NATIVE_AGENTKIT
+        ));
         assert!(!crate::chat::state::chat_backend_supported("unknown"));
         assert_eq!(
             provider_key_for_backend("unknown"),
@@ -740,59 +874,42 @@ mod tests {
             normalize_router_mode_value(default_backend(), None)
         );
         assert_eq!(
-            backend_direct_url(BACKEND_CLAUDE),
-            "https://api.anthropic.com"
-        );
-        assert_eq!(
-            backend_direct_url(BACKEND_CODEX),
+            backend_direct_url(BACKEND_NATIVE_AGENTKIT),
             "https://api.openai.com/v1"
         );
-        assert_eq!(backend_api_key_env(BACKEND_CLAUDE), "ANTHROPIC_API_KEY");
-        assert_eq!(backend_api_key_env(BACKEND_CODEX), "OPENAI_API_KEY");
-        assert_eq!(provider_key_for_backend(BACKEND_CLAUDE), "provider.claude");
-        assert_eq!(provider_key_for_backend(BACKEND_CODEX), "provider.codex");
         assert_eq!(
-            known_provider_key_for_backend(&format!(" {BACKEND_CODEX} ")).unwrap(),
-            "provider.codex"
+            backend_api_key_env(BACKEND_NATIVE_AGENTKIT),
+            "OPENAI_API_KEY"
+        );
+        assert_eq!(
+            provider_key_for_backend(BACKEND_NATIVE_AGENTKIT),
+            "provider.native-agentkit"
+        );
+        assert_eq!(
+            known_provider_key_for_backend(&format!(" {BACKEND_NATIVE_AGENTKIT} ")).unwrap(),
+            "provider.native-agentkit"
         );
         assert!(known_provider_key_for_backend("unknown").is_err());
         assert_eq!(
-            router_key_for_backend(BACKEND_CLAUDE).unwrap(),
-            "router.claude"
-        );
-        assert_eq!(
-            router_key_for_backend(BACKEND_CODEX).unwrap(),
-            "router.codex"
+            router_key_for_backend(BACKEND_NATIVE_AGENTKIT).unwrap(),
+            "router.native-agentkit"
         );
         assert!(router_key_for_backend("unknown").is_err());
         assert_eq!(
-            backend_for_provider_key("provider.claude"),
-            Some(BACKEND_CLAUDE)
-        );
-        assert_eq!(
-            backend_for_provider_key("provider.codex"),
-            Some(BACKEND_CODEX)
+            backend_for_provider_key("provider.native-agentkit"),
+            Some(BACKEND_NATIVE_AGENTKIT)
         );
         assert_eq!(
             chat_backends_contract()
                 .backend_router_modes
-                .get(BACKEND_CLAUDE),
+                .get(BACKEND_NATIVE_AGENTKIT),
             Some(&vec![ROUTER_API.to_string()])
         );
         assert_eq!(
             chat_backends_contract()
-                .backend_router_modes
-                .get(BACKEND_CODEX),
-            Some(&vec![
-                ROUTER_API.to_string(),
-                ROUTER_CODEX_ACCOUNT.to_string()
-            ])
-        );
-        assert_eq!(
-            chat_backends_contract()
                 .default_router_modes
-                .get(BACKEND_CODEX),
-            Some(&ROUTER_CODEX_ACCOUNT.to_string())
+                .get(BACKEND_NATIVE_AGENTKIT),
+            Some(&ROUTER_API.to_string())
         );
         assert!(connection_mode_uses_api_key(ConnectionMode::Api));
         assert!(connection_mode_uses_api_key(ConnectionMode::CustomBaseUrl));
@@ -801,6 +918,7 @@ mod tests {
         assert!(connection_mode_uses_custom_url(
             ConnectionMode::CustomBaseUrl
         ));
+        // Codex account mode is legacy-only and never selected by current contracts.
         assert!(connection_mode_uses_codex_account(
             ConnectionMode::CodexAccount
         ));
@@ -808,37 +926,33 @@ mod tests {
             ConnectionMode::Unconfigured
         ));
         assert_eq!(
-            normalize_router_mode_value(BACKEND_CLAUDE, None),
+            normalize_router_mode_value(BACKEND_NATIVE_AGENTKIT, None),
             ROUTER_API
         );
         assert_eq!(
-            normalize_router_mode_value(BACKEND_CODEX, None),
-            ROUTER_CODEX_ACCOUNT
-        );
-        assert_eq!(
-            normalize_router_mode_value(BACKEND_CLAUDE, Some(ROUTER_DIRECT_LEGACY)),
+            normalize_router_mode_value(BACKEND_NATIVE_AGENTKIT, Some(ROUTER_DIRECT_LEGACY)),
             ROUTER_API
         );
         assert_eq!(
-            normalize_router_mode_value(BACKEND_CODEX, Some(ROUTER_CC_SWITCH_LEGACY)),
+            normalize_router_mode_value(BACKEND_NATIVE_AGENTKIT, Some(ROUTER_CC_SWITCH_LEGACY)),
             ROUTER_API
         );
+        // Unknown / removed router modes fall back to API.
         assert_eq!(
-            normalize_router_mode_value(BACKEND_CLAUDE, Some(ROUTER_CODEX_ACCOUNT)),
+            normalize_router_mode_value(BACKEND_NATIVE_AGENTKIT, Some(ROUTER_CODEX_ACCOUNT)),
             ROUTER_API
-        );
-        assert_eq!(
-            normalize_router_mode_value(BACKEND_CODEX, Some(ROUTER_CODEX_ACCOUNT)),
-            ROUTER_CODEX_ACCOUNT
         );
         assert!(router_mode_supported_for_backend(
-            BACKEND_CODEX,
+            BACKEND_NATIVE_AGENTKIT,
+            ROUTER_API
+        ));
+        assert!(!router_mode_supported_for_backend(
+            BACKEND_NATIVE_AGENTKIT,
             ROUTER_CODEX_ACCOUNT
         ));
         assert!(!router_mode_supported_for_backend(
-            BACKEND_CLAUDE,
-            ROUTER_CODEX_ACCOUNT
+            BACKEND_NATIVE_AGENTKIT,
+            "unknown"
         ));
-        assert!(!router_mode_supported_for_backend(BACKEND_CODEX, "unknown"));
     }
 }

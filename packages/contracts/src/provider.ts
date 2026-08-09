@@ -1,4 +1,4 @@
-import type { ChatBackendKind, ModelTier } from "./chat";
+import type { ChatBackendKind, ModelTier, ReasoningEffort } from "./chat";
 import {
   API_DESCRIPTION_BY_BACKEND,
   API_KEY_ENV_BY_BACKEND,
@@ -289,8 +289,28 @@ export interface AssistantAIModelsResult {
   models: AssistantAIModelPoolItem[];
 }
 
+/** Role / use-case model preset group (builtin or user-defined). */
+export type ModelPresetKind = "builtin" | "custom";
+
+export interface ModelPresetGroup {
+  id: string;
+  label: string;
+  kind: ModelPresetKind;
+  /** Bound model id; null uses catalog default for the preset's tier. */
+  model: string | null;
+  reasoningEffort?: ReasoningEffort | null;
+  enabled: boolean;
+}
+
+/**
+ * Model manager settings.
+ * - `presets`: role groups (default/plan/fast/review + custom CRUD)
+ * - `chat`: legacy tier slots kept for migration / feature helpers (mirrored from builtins)
+ * - remaining keys: auxiliary feature models (title, suggestion, …)
+ */
 export interface ModelFeatureSettings {
   chat: Record<ModelTier, string | null>;
+  presets: ModelPresetGroup[];
   title: string | null;
   suggestion: string | null;
   promptRouter: string | null;

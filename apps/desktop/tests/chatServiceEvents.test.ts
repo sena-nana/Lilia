@@ -58,6 +58,12 @@ describe("chat service timeline events", () => {
 
     await setModelFeatureSettings({
       chat: { light: "gpt-5.4-mini", normal: null, deep: null },
+      presets: [
+        { id: "fast", label: "Fast", kind: "builtin", model: "gpt-5.4-mini", reasoningEffort: null, enabled: true },
+        { id: "default", label: "Default", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+        { id: "plan", label: "Plan", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+        { id: "review", label: "Review", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+      ],
       title: null,
       suggestion: null,
       promptRouter: null,
@@ -70,6 +76,12 @@ describe("chat service timeline events", () => {
     unlisten();
     await setModelFeatureSettings({
       chat: { light: "gpt-5.4", normal: null, deep: null },
+      presets: [
+        { id: "fast", label: "Fast", kind: "builtin", model: "gpt-5.4", reasoningEffort: null, enabled: true },
+        { id: "default", label: "Default", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+        { id: "plan", label: "Plan", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+        { id: "review", label: "Review", kind: "builtin", model: null, reasoningEffort: null, enabled: true },
+      ],
       title: null,
       suggestion: null,
       promptRouter: null,

@@ -161,10 +161,19 @@ pub(crate) fn prepare_turn_for_start<R: Runtime>(
 
     let settings = load_agent_interaction_settings(app).auto_turn_decision;
     if !settings.enabled {
-        return Ok(PreparedTurn {
+        // Deterministic Model-layer router (role presets / tier mirror). Always runs when
+        // the optional LLM auto-turn decision helper is off.
+        return Ok(apply_local_preset_selection(
+            app,
+            &backend,
             composer,
             runtime_options,
-        });
+            content,
+            attachments,
+            conversation_references,
+            workflow,
+            runtime_command,
+        ));
     }
 
     let raw = request_auto_turn_decision(
@@ -321,12 +330,13 @@ fn merge_runtime_selection(
     common.model_selection = Some(explanation);
     next.common = Some(common);
     let mut provider = next.provider.unwrap_or_default();
+    // Brand provider bags are legacy mirrors only. Native AgentKit reads common.*.
     if backend == BACKEND_CODEX {
         let mut codex: RuntimeSettingsCodex = provider.codex.unwrap_or_default();
         codex.model = Some(model.to_string());
         codex.reasoning_effort = effort.clone();
         provider.codex = Some(codex);
-    } else {
+    } else if backend == crate::BACKEND_CLAUDE {
         let mut claude: RuntimeSettingsClaude = provider.claude.unwrap_or_default();
         claude.reasoning_effort = effort.clone();
         if effort.is_some() && claude.thinking.is_none() {
@@ -336,6 +346,231 @@ fn merge_runtime_selection(
     }
     next.provider = Some(provider);
     next
+}
+
+/// Deterministic role-preset router aligned with packages/contracts model-selection-defaults.
+fn apply_local_preset_selection<R: Runtime>(
+    app: &AppHandle<R>,
+    backend: &str,
+    composer: ChatComposerState,
+    runtime_options: Option<ProviderRuntimeOptions>,
+    content: &str,
+    attachments: &[ChatAttachment],
+    conversation_references: &[ChatConversationReference],
+    workflow: Option<&ChatWorkflow>,
+    runtime_command: Option<&ChatRuntimeCommand>,
+) -> PreparedTurn {
+    let features = load_model_feature_settings(app);
+    apply_local_preset_selection_with_features(
+        &features,
+        backend,
+        composer,
+        runtime_options,
+        content,
+        attachments,
+        conversation_references,
+        workflow,
+        runtime_command,
+    )
+}
+
+fn apply_local_preset_selection_with_features(
+    features: &crate::provider::ModelFeatureSettings,
+    backend: &str,
+    composer: ChatComposerState,
+    runtime_options: Option<ProviderRuntimeOptions>,
+    content: &str,
+    attachments: &[ChatAttachment],
+    conversation_references: &[ChatConversationReference],
+    workflow: Option<&ChatWorkflow>,
+    runtime_command: Option<&ChatRuntimeCommand>,
+) -> PreparedTurn {
+    let mut signals = Vec::new();
+    let preset_id = select_local_preset_id(
+        &composer,
+        content,
+        attachments,
+        conversation_references,
+        workflow,
+        runtime_command,
+        &mut signals,
+    );
+    let tier = tier_for_preset_id(preset_id);
+    let selected_model = model_for_preset_from_features(features, backend, preset_id, tier);
+    let mut selected_effort = effort_for_preset_from_features(features, preset_id, tier);
+    selected_effort = normalize_reasoning_effort_for_backend(selected_effort, backend);
+    let preset_label = preset_label_for_id(preset_id);
+    let explanation = json!({
+        "mode": "auto",
+        "model": selected_model,
+        "reasoningEffort": selected_effort,
+        "tier": tier.as_str(),
+        "presetId": preset_id,
+        "presetLabel": preset_label,
+        "planMode": composer.plan_mode,
+        "source": "auto",
+        "signals": signals,
+        "summary": format!(
+            "自动选择 [{preset_label}] {selected_model}{}",
+            selected_effort
+                .as_deref()
+                .map(|effort| format!("，thinking {effort}"))
+                .unwrap_or_default()
+        ),
+    });
+    let mut next_composer = composer;
+    next_composer.model = selected_model.clone();
+    next_composer.reasoning_effort = None;
+    let runtime_options = merge_runtime_selection(
+        backend,
+        runtime_options,
+        &selected_model,
+        selected_effort,
+        explanation,
+    );
+    PreparedTurn {
+        composer: next_composer,
+        runtime_options: Some(runtime_options),
+    }
+}
+
+fn select_local_preset_id(
+    composer: &ChatComposerState,
+    content: &str,
+    attachments: &[ChatAttachment],
+    conversation_references: &[ChatConversationReference],
+    workflow: Option<&ChatWorkflow>,
+    runtime_command: Option<&ChatRuntimeCommand>,
+    signals: &mut Vec<String>,
+) -> &'static str {
+    if composer.plan_mode {
+        signals.push("计划模式".to_string());
+        return "plan";
+    }
+    if let Some(kind) = workflow_kind(workflow) {
+        match kind.as_str() {
+            "lilia_compact"
+            | "lilia_background_terminals_clean"
+            | "lilia_config_diagnostics"
+            | "lilia_memory_mode"
+            | "lilia_memory_reset" => {
+                signals.push(format!("轻量工作流 {kind}"));
+                return "fast";
+            }
+            "lilia_review" | "lilia_fix_suggestion" | "lilia_batch_apply" => {
+                signals.push(format!("工作流 {kind}"));
+                return "review";
+            }
+            "lilia_task_workflow" => {
+                signals.push(format!("工作流 {kind}"));
+                return "default";
+            }
+            _ => {}
+        }
+    }
+    if let Some(kind) = runtime_command_kind(runtime_command) {
+        match kind.as_str() {
+            "runtime_settings" | "remote_environment" | "session_management" => {
+                signals.push(match kind.as_str() {
+                    "runtime_settings" => "运行时诊断/设置".to_string(),
+                    "remote_environment" => "远程环境管理".to_string(),
+                    "session_management" => "会话管理".to_string(),
+                    other => other.to_string(),
+                });
+                return "fast";
+            }
+            _ => {}
+        }
+    }
+    match context_scale_for_turn(content, attachments, conversation_references, signals) {
+        "large" => "plan",
+        "medium" => "default",
+        _ => "fast",
+    }
+}
+
+fn context_scale_for_turn(
+    content: &str,
+    attachments: &[ChatAttachment],
+    conversation_references: &[ChatConversationReference],
+    signals: &mut Vec<String>,
+) -> &'static str {
+    let prompt_len = content.trim().chars().count();
+    let attachment_count = attachments.len();
+    let reference_count = conversation_references.len();
+    let has_large_directory = attachments.iter().any(|attachment| {
+        attachment
+            .directory
+            .as_ref()
+            .is_some_and(|directory| directory.truncated || directory.file_count >= 200 || directory.total_size >= 20_971_520)
+    });
+    if prompt_len >= 8000
+        || attachment_count >= 6
+        || reference_count >= 3
+        || has_large_directory
+    {
+        signals.push("上下文规模 large".to_string());
+        return "large";
+    }
+    if prompt_len >= 2000 || attachment_count >= 2 || reference_count >= 1 {
+        signals.push("上下文规模 medium".to_string());
+        return "medium";
+    }
+    signals.push("上下文规模 small".to_string());
+    "small"
+}
+
+fn tier_for_preset_id(preset_id: &str) -> ModelTier {
+    match preset_id {
+        "fast" => ModelTier::Light,
+        "plan" | "review" => ModelTier::Deep,
+        _ => ModelTier::Normal,
+    }
+}
+
+fn preset_label_for_id(preset_id: &str) -> &'static str {
+    match preset_id {
+        "fast" => "Fast",
+        "plan" => "Plan",
+        "review" => "Review",
+        _ => "Default",
+    }
+}
+
+fn model_for_preset_from_features(
+    features: &crate::provider::ModelFeatureSettings,
+    backend: &str,
+    preset_id: &str,
+    tier: ModelTier,
+) -> String {
+    let configured = features
+        .presets
+        .iter()
+        .find(|preset| preset.id == preset_id && preset.enabled)
+        .and_then(|preset| preset.model.as_deref())
+        .or_else(|| match tier {
+            ModelTier::Light => features.chat.light.as_deref(),
+            ModelTier::Normal => features.chat.normal.as_deref(),
+            ModelTier::Deep => features.chat.deep.as_deref(),
+        });
+    model_for_tier_with_override(backend, tier, configured)
+}
+
+fn effort_for_preset_from_features(
+    features: &crate::provider::ModelFeatureSettings,
+    preset_id: &str,
+    tier: ModelTier,
+) -> Option<String> {
+    if let Some(effort) = features
+        .presets
+        .iter()
+        .find(|preset| preset.id == preset_id && preset.enabled)
+        .and_then(|preset| preset.reasoning_effort.clone())
+        .filter(|effort| !effort.trim().is_empty())
+    {
+        return Some(effort);
+    }
+    Some(default_effort_for_tier(tier))
 }
 
 fn apply_auto_turn_decision_for_app<R: Runtime>(
@@ -681,12 +916,12 @@ fn model_for_tier_from_features(
     backend: &str,
     tier: ModelTier,
 ) -> String {
-    let configured = match tier {
-        ModelTier::Light => feature_settings.chat.light.as_deref(),
-        ModelTier::Normal => feature_settings.chat.normal.as_deref(),
-        ModelTier::Deep => feature_settings.chat.deep.as_deref(),
+    let preset_id = match tier {
+        ModelTier::Light => "fast",
+        ModelTier::Normal => "default",
+        ModelTier::Deep => "plan",
     };
-    model_for_tier_with_override(backend, tier, configured)
+    model_for_preset_from_features(feature_settings, backend, preset_id, tier)
 }
 
 #[cfg(test)]
@@ -779,8 +1014,8 @@ mod tests {
     #[test]
     fn applies_auto_decision_fields() {
         let prepared = apply_auto_turn_decision(
-            BACKEND_CODEX,
-            composer(BACKEND_CODEX),
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+            composer(crate::native_agent::BACKEND_NATIVE_AGENTKIT),
             None,
             &AutoTurnDecisionSettings::default(),
             raw_decision(),
@@ -795,9 +1030,10 @@ mod tests {
         assert_eq!(prepared.composer.plan_mode, true);
         assert_eq!(prepared.composer.goal_mode, true);
         assert_eq!(common.model.as_deref(), Some("gpt-5.5"));
-        assert_eq!(common.reasoning_effort.as_deref(), Some("xhigh"));
+        // native-agentkit supports max; no codex-style xhigh downgrade.
+        assert_eq!(common.reasoning_effort.as_deref(), Some("max"));
         assert_eq!(explanation["tier"], "deep");
-        assert_eq!(explanation["reasoningEffort"], "xhigh");
+        assert_eq!(explanation["reasoningEffort"], "max");
         assert_eq!(explanation["planMode"], true);
         assert_eq!(explanation["goalMode"], true);
         assert_eq!(explanation["sessionFork"], true);
@@ -993,19 +1229,110 @@ mod tests {
     }
 
     #[test]
+    fn local_preset_selection_uses_plan_for_plan_mode_and_review_workflow() {
+        let features = crate::provider::ModelFeatureSettings {
+            chat: crate::provider::ModelFeatureChatSettings {
+                light: Some("gpt-5.4-mini".to_string()),
+                normal: Some("gpt-5.4".to_string()),
+                deep: Some("gpt-5.5".to_string()),
+            },
+            presets: vec![
+                crate::provider::ModelPresetGroup {
+                    id: "fast".to_string(),
+                    label: "Fast".to_string(),
+                    kind: "builtin".to_string(),
+                    model: Some("gpt-5.4-mini".to_string()),
+                    reasoning_effort: None,
+                    enabled: true,
+                },
+                crate::provider::ModelPresetGroup {
+                    id: "default".to_string(),
+                    label: "Default".to_string(),
+                    kind: "builtin".to_string(),
+                    model: Some("gpt-5.4".to_string()),
+                    reasoning_effort: None,
+                    enabled: true,
+                },
+                crate::provider::ModelPresetGroup {
+                    id: "plan".to_string(),
+                    label: "Plan".to_string(),
+                    kind: "builtin".to_string(),
+                    model: Some("gpt-5.5".to_string()),
+                    reasoning_effort: Some("high".to_string()),
+                    enabled: true,
+                },
+                crate::provider::ModelPresetGroup {
+                    id: "review".to_string(),
+                    label: "Review".to_string(),
+                    kind: "builtin".to_string(),
+                    model: Some("gpt-5.5".to_string()),
+                    reasoning_effort: None,
+                    enabled: true,
+                },
+            ],
+            ..crate::provider::ModelFeatureSettings::default()
+        };
+        let mut plan_composer = composer(crate::native_agent::BACKEND_NATIVE_AGENTKIT);
+        plan_composer.plan_mode = true;
+        let planned = apply_local_preset_selection_with_features(
+            &features,
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+            plan_composer,
+            None,
+            "plan this",
+            &[],
+            &[],
+            None,
+            None,
+        );
+        let planned_selection = planned
+            .runtime_options
+            .as_ref()
+            .and_then(|options| options.common.as_ref())
+            .and_then(|common| common.model_selection.as_ref())
+            .cloned()
+            .expect("model selection");
+        assert_eq!(planned_selection["presetId"], "plan");
+        assert_eq!(planned.composer.model, "gpt-5.5");
+
+        let reviewed = apply_local_preset_selection_with_features(
+            &features,
+            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
+            composer(crate::native_agent::BACKEND_NATIVE_AGENTKIT),
+            None,
+            "",
+            &[],
+            &[],
+            Some(&ChatWorkflow::LiliaReview {
+                target: crate::chat::types::LiliaReviewTarget::UncommittedChanges,
+                instructions: None,
+                delivery: None,
+            }),
+            None,
+        );
+        let reviewed_selection = reviewed
+            .runtime_options
+            .as_ref()
+            .and_then(|options| options.common.as_ref())
+            .and_then(|common| common.model_selection.as_ref())
+            .cloned()
+            .expect("model selection");
+        assert_eq!(reviewed_selection["presetId"], "review");
+    }
+
+    #[test]
     fn model_selection_defaults_are_loaded_from_contracts_manifest() {
+        let backend = crate::native_agent::BACKEND_NATIVE_AGENTKIT;
+        assert_eq!(model_for_tier(backend, ModelTier::Light), "gpt-5.4-mini");
+        assert_eq!(model_for_tier(backend, ModelTier::Normal), "gpt-5.4");
+        assert_eq!(model_for_tier(backend, ModelTier::Deep), "gpt-5.5");
         assert_eq!(
-            model_for_tier(BACKEND_CODEX, ModelTier::Light),
-            "gpt-5.4-mini"
-        );
-        assert_eq!(model_for_tier(BACKEND_CODEX, ModelTier::Deep), "gpt-5.5");
-        assert_eq!(
-            model_for_tier(BACKEND_CLAUDE, ModelTier::Normal),
-            "claude-sonnet-4-6",
-        );
-        assert_eq!(
-            tier_for_model(BACKEND_CLAUDE, "claude-opus-4-7"),
+            tier_for_model(backend, "gpt-5.5"),
             ModelTier::Deep
+        );
+        assert_eq!(
+            tier_for_model(backend, "claude-opus-4-7"),
+            ModelTier::Normal
         );
         assert_eq!(default_effort_for_tier(ModelTier::Normal), "medium");
     }

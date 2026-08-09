@@ -21,7 +21,7 @@ Lilia/
 │   └── contracts/              # 跨端 TS 契约（Lilia 协议 + timeline display）
 └── docs/
     └── design/
-        ├── lilia-agent-interface.md   # 产品协议 ↔ Mutsuki 边界
+        ├── lilia-agent-interface.md   # Provider · Model · Lilia Protocol 与 Mutsuki 边界
         └── mutsuki-dependency-pin.md  # mutsuki-* 依赖 pin
 ```
 

@@ -263,8 +263,9 @@ onBeforeUnmount(() => {
     <div class="settings-row settings-row--stacked">
       <div class="settings-row__label">接入说明</div>
       <div class="settings-row__status muted">
-        LiliaCore / native-agentkit 使用 OpenAI 兼容 API 或凭据代理。
-        OpenAI / Anthropic 官方凭据请到
+        此处配置 <strong>LLM Provider 连接</strong>（端点 / API Key），与执行后端
+        <code>native-agentkit</code>（Mutsuki）正交。模型目录与角色预设在「模型」设置中管理。
+        OpenAI / Anthropic 等凭据也可到
         <RouterLink
           class="inline-link"
           to="/settings?tab=credentials"
@@ -272,7 +273,7 @@ onBeforeUnmount(() => {
         >
           凭据
         </RouterLink>
-        配置；Claude Code / Codex 官方产品已移除，不再提供品牌后端选择。
+        配置；官方 Claude Code / Codex 产品路径已移除。
       </div>
     </div>
 

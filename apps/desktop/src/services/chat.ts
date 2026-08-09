@@ -84,65 +84,66 @@ import {
 } from "@lilia/contracts/remoteControlCommandsContract.mjs";
 import { TAURI_PLUGIN_DIALOG_OPEN_COMMAND } from "../tauri/pluginCommands";
 import { installCombinedUnlisten } from "@lilia/ui/utils/eventListeners";
-import type {
-  AgentInteractionSettings,
-  AgentInteractionKind,
-  AgentInteractionRequest,
-  AgentInteractionResponse,
-  AgentTimelineBatchEvent,
-  AssistantAIConfig,
-  AssistantAIModelsResult,
-  AssistantAITestResult,
-  BackendEnvStatus,
-  ChatBackendKind,
-  ChatAttachment,
-  ChatContextSearchResult,
-  ChatConversationReference,
-  ChatSlashCommandSearchResult,
-  ChatComposerState,
-  ChatContextUsage,
-  ChatModelOption,
-  ChatRuntimeCommand,
-  ChatRuntimeSnapshot,
-  ChatWorkflow,
-  ProviderRuntimeOptions,
-  ChatInterruptResult,
-  AgentTimelineEvent,
-  AssistantAIModelPoolItem,
-  ChatSendResult,
-  ConnectionMode,
-  EnvStatusReport,
-  ModelFeatureSettings,
-  ProviderConfig,
-  RouterMode,
-  SuggestionItem,
-  SuggestionSettings,
-  ToolConsentDecision,
-  ToolConsentRequest,
-  ToolConsentUpdatedInput,
-  McpElicitationPayload,
-  McpElicitationResult,
-  PermissionApprovalPayload,
-  PermissionApprovalResult,
-  LiliaIabSnapshot,
-  ChatRollbackResult,
-  ChatDoneEvent,
-  ChatTurnStartedEvent,
-  ConversationSuggestionSources,
-  ConversationSuggestionSourceKind,
-  ProjectArchitectureApplyInput,
-  ProjectArchitectureApplyResult,
-  ProjectArchitectureChangeEvent,
-  ProjectArchitectureChangeRecord,
-  ProjectArchitectureGraph,
-  ProjectArchitectureRejectInput,
-  ProjectArchitectureRollbackResult,
-  CustomSubagentDefinition,
-  CustomSubagentUpsertInput,
-  QuotaUsageStats,
-  QuotaUsageStatsInput,
-  RemoteControlStatus,
-  RemotePairingTicket,
+import {
+  normalizeModelFeatureSettings,
+  type AgentInteractionSettings,
+  type AgentInteractionKind,
+  type AgentInteractionRequest,
+  type AgentInteractionResponse,
+  type AgentTimelineBatchEvent,
+  type AssistantAIConfig,
+  type AssistantAIModelsResult,
+  type AssistantAITestResult,
+  type BackendEnvStatus,
+  type ChatBackendKind,
+  type ChatAttachment,
+  type ChatContextSearchResult,
+  type ChatConversationReference,
+  type ChatSlashCommandSearchResult,
+  type ChatComposerState,
+  type ChatContextUsage,
+  type ChatModelOption,
+  type ChatRuntimeCommand,
+  type ChatRuntimeSnapshot,
+  type ChatWorkflow,
+  type ProviderRuntimeOptions,
+  type ChatInterruptResult,
+  type AgentTimelineEvent,
+  type AssistantAIModelPoolItem,
+  type ChatSendResult,
+  type ConnectionMode,
+  type EnvStatusReport,
+  type ModelFeatureSettings,
+  type ProviderConfig,
+  type RouterMode,
+  type SuggestionItem,
+  type SuggestionSettings,
+  type ToolConsentDecision,
+  type ToolConsentRequest,
+  type ToolConsentUpdatedInput,
+  type McpElicitationPayload,
+  type McpElicitationResult,
+  type PermissionApprovalPayload,
+  type PermissionApprovalResult,
+  type LiliaIabSnapshot,
+  type ChatRollbackResult,
+  type ChatDoneEvent,
+  type ChatTurnStartedEvent,
+  type ConversationSuggestionSources,
+  type ConversationSuggestionSourceKind,
+  type ProjectArchitectureApplyInput,
+  type ProjectArchitectureApplyResult,
+  type ProjectArchitectureChangeEvent,
+  type ProjectArchitectureChangeRecord,
+  type ProjectArchitectureGraph,
+  type ProjectArchitectureRejectInput,
+  type ProjectArchitectureRollbackResult,
+  type CustomSubagentDefinition,
+  type CustomSubagentUpsertInput,
+  type QuotaUsageStats,
+  type QuotaUsageStatsInput,
+  type RemoteControlStatus,
+  type RemotePairingTicket,
 } from "@lilia/contracts";
 
 export type {
@@ -395,8 +396,9 @@ export function listModelFeatureOptions(): Promise<AssistantAIModelPoolItem[]> {
   return invoke<AssistantAIModelPoolItem[]>(MODEL_FEATURE_LIST_MODEL_OPTIONS_COMMAND);
 }
 
-export function getModelFeatureSettings(): Promise<ModelFeatureSettings> {
-  return invoke<ModelFeatureSettings>(MODEL_FEATURE_GET_SETTINGS_COMMAND);
+export async function getModelFeatureSettings(): Promise<ModelFeatureSettings> {
+  const settings = await invoke<ModelFeatureSettings>(MODEL_FEATURE_GET_SETTINGS_COMMAND);
+  return normalizeModelFeatureSettings(settings);
 }
 
 type ModelFeatureSettingsListener = (settings: ModelFeatureSettings) => void;
@@ -409,9 +411,10 @@ export function onModelFeatureSettingsChanged(listener: ModelFeatureSettingsList
 }
 
 export async function setModelFeatureSettings(settings: ModelFeatureSettings): Promise<void> {
-  await invoke<void>(MODEL_FEATURE_SET_SETTINGS_COMMAND, { settings });
+  const normalized = normalizeModelFeatureSettings(settings);
+  await invoke<void>(MODEL_FEATURE_SET_SETTINGS_COMMAND, { settings: normalized });
   for (const listener of modelFeatureSettingsListeners) {
-    listener(settings);
+    listener(normalized);
   }
 }
 

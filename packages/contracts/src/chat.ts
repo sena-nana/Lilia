@@ -127,19 +127,38 @@ import {
   type NormalizedLiliaTaskWorkflow as ContractNormalizedLiliaTaskWorkflow,
 } from "./liliaWorkflowContract.mjs";
 import {
+  AUTO_CONTEXT_SCALE_PRESETS,
   AUTO_CONTEXT_THRESHOLDS,
   AUTO_MODEL_BY_BACKEND_AND_TIER,
+  AUTO_PRESET_REASONING_EFFORT,
   AUTO_REASONING_EFFORT_BY_TIER,
   AUTO_RUNTIME_COMMAND_SIGNAL_LABELS,
+  AUTO_RUNTIME_COMMAND_TYPES_BY_PRESET,
   AUTO_RUNTIME_COMMAND_TYPES_BY_TIER,
+  AUTO_WORKFLOW_TYPES_BY_PRESET,
   AUTO_WORKFLOW_TYPES_BY_TIER,
+  BUILTIN_MODEL_PRESET_IDS,
+  BUILTIN_PRESET_LABELS,
+  PLAN_MODE_PRESET,
+  PRESET_TIER_MAP,
   autoContextThresholdsForScale as autoContextThresholdsForScaleImpl,
+  autoModelForBackendPreset as autoModelForBackendPresetImpl,
   autoModelForBackendTier as autoModelForBackendTierImpl,
+  autoPresetForContextScale as autoPresetForContextScaleImpl,
+  autoPresetForRuntimeCommandType as autoPresetForRuntimeCommandTypeImpl,
+  autoPresetForWorkflowType as autoPresetForWorkflowTypeImpl,
+  autoReasoningEffortForPreset as autoReasoningEffortForPresetImpl,
   autoReasoningEffortForTier as autoReasoningEffortForTierImpl,
   autoRuntimeCommandSignalLabel as autoRuntimeCommandSignalLabelImpl,
   autoTierForRuntimeCommandType as autoTierForRuntimeCommandTypeImpl,
   autoTierForWorkflowType as autoTierForWorkflowTypeImpl,
+  builtinPresetLabel as builtinPresetLabelImpl,
+  createDefaultBuiltinPresets as createDefaultBuiltinPresetsImpl,
+  isBuiltinModelPresetId as isBuiltinModelPresetIdImpl,
   MODEL_SELECTION_TIERS,
+  normalizeModelFeatureSettings as normalizeModelFeatureSettingsImpl,
+  tierForPreset as tierForPresetImpl,
+  type BuiltinModelPresetId as ContractBuiltinModelPresetId,
   type ModelSelectionContextScale as ContractModelSelectionContextScale,
   type ModelSelectionContextThresholds as ContractModelSelectionContextThresholds,
   type ModelTier as ContractModelTier,
@@ -1266,16 +1285,25 @@ export function normalizeReasoningEffortForBackend(
 export type ModelSelectionMode = "auto" | "manual";
 
 export {
+  AUTO_CONTEXT_SCALE_PRESETS,
   AUTO_CONTEXT_THRESHOLDS,
   AUTO_MODEL_BY_BACKEND_AND_TIER,
+  AUTO_PRESET_REASONING_EFFORT,
   AUTO_REASONING_EFFORT_BY_TIER,
   AUTO_RUNTIME_COMMAND_SIGNAL_LABELS,
+  AUTO_RUNTIME_COMMAND_TYPES_BY_PRESET,
   AUTO_RUNTIME_COMMAND_TYPES_BY_TIER,
+  AUTO_WORKFLOW_TYPES_BY_PRESET,
   AUTO_WORKFLOW_TYPES_BY_TIER,
+  BUILTIN_MODEL_PRESET_IDS,
+  BUILTIN_PRESET_LABELS,
   MODEL_SELECTION_TIERS,
+  PLAN_MODE_PRESET,
+  PRESET_TIER_MAP,
 };
 
 export type ModelTier = ContractModelTier;
+export type BuiltinModelPresetId = ContractBuiltinModelPresetId;
 export type ModelSelectionContextScale = ContractModelSelectionContextScale;
 
 export type ModelSelectionContextThresholds =
@@ -1285,7 +1313,11 @@ export interface ModelSelectionExplanation {
   mode: ModelSelectionMode;
   model: string;
   reasoningEffort?: ReasoningEffort | null;
+  /** @deprecated Prefer presetId; retained for older diagnostics. */
   tier?: ModelTier;
+  /** Role preset used for auto selection (default/plan/fast/review or custom id). */
+  presetId?: string;
+  presetLabel?: string;
   planMode?: boolean;
   goalMode?: boolean;
   sessionFork?: boolean;
@@ -1295,11 +1327,21 @@ export interface ModelSelectionExplanation {
 }
 
 export const autoModelForBackendTier = autoModelForBackendTierImpl;
+export const autoModelForBackendPreset = autoModelForBackendPresetImpl;
 export const autoReasoningEffortForTier = autoReasoningEffortForTierImpl;
+export const autoReasoningEffortForPreset = autoReasoningEffortForPresetImpl;
 export const autoTierForWorkflowType = autoTierForWorkflowTypeImpl;
 export const autoTierForRuntimeCommandType = autoTierForRuntimeCommandTypeImpl;
+export const autoPresetForWorkflowType = autoPresetForWorkflowTypeImpl;
+export const autoPresetForRuntimeCommandType = autoPresetForRuntimeCommandTypeImpl;
+export const autoPresetForContextScale = autoPresetForContextScaleImpl;
 export const autoRuntimeCommandSignalLabel = autoRuntimeCommandSignalLabelImpl;
 export const autoContextThresholdsForScale = autoContextThresholdsForScaleImpl;
+export const tierForPreset = tierForPresetImpl;
+export const isBuiltinModelPresetId = isBuiltinModelPresetIdImpl;
+export const builtinPresetLabel = builtinPresetLabelImpl;
+export const createDefaultBuiltinPresets = createDefaultBuiltinPresetsImpl;
+export const normalizeModelFeatureSettings = normalizeModelFeatureSettingsImpl;
 
 /** Anthropic-compatible thinking config (LLM provider concept, not a chat backend). */
 export type ClaudeThinkingConfig =

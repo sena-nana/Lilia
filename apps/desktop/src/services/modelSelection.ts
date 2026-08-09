@@ -1,17 +1,23 @@
 import {
-  autoModelForBackendTier,
-  autoRuntimeCommandSignalLabel,
-  autoReasoningEffortForTier,
-  autoTierForRuntimeCommandType,
-  autoTierForWorkflowType,
   autoContextThresholdsForScale,
+  autoModelForBackendPreset,
+  autoPresetForContextScale,
+  autoPresetForRuntimeCommandType,
+  autoPresetForWorkflowType,
+  autoReasoningEffortForPreset,
+  autoRuntimeCommandSignalLabel,
+  builtinPresetLabel,
   chatBackendLabel,
+  isBuiltinModelPresetId,
   mergeModelSelectionRuntimeOptions,
   modelBelongsToBackend,
-  normalizeReasoningEffortForBackend,
+  normalizeModelFeatureSettings,
   normalizeReasoningEffort,
+  normalizeReasoningEffortForBackend,
+  PLAN_MODE_PRESET,
   runtimeOptionsModelForBackend,
   runtimeOptionsReasoningEffortForBackend,
+  tierForPreset,
   type ChatAttachment,
   type ChatBackendKind,
   type ChatComposerState,
@@ -21,6 +27,7 @@ import {
   type ChatRuntimeCommand,
   type ChatWorkflow,
   type ModelFeatureSettings,
+  type ModelPresetGroup,
   type ModelSelectionContextScale,
   type ModelSelectionExplanation,
   type ModelTier,
@@ -111,64 +118,84 @@ function contextScale(input: ModelSelectionInput, signals: string[]): ModelSelec
   return "small";
 }
 
-function selectAutoTier(input: ModelSelectionInput, signals: string[]): ModelTier {
-  const type = workflowType(input.workflow);
+function selectAutoPreset(input: ModelSelectionInput, signals: string[]): string {
   if (input.composer.planMode) {
     signals.push("计划模式");
-    return "deep";
+    return PLAN_MODE_PRESET;
   }
-  const workflowTier = autoTierForWorkflowType(type);
-  if (workflowTier) {
+  const type = workflowType(input.workflow);
+  const workflowPreset = autoPresetForWorkflowType(type);
+  if (workflowPreset) {
     signals.push(
-      workflowTier === "light" ? `轻量工作流 ${type}` : `工作流 ${type}`,
+      workflowPreset === "fast" ? `轻量工作流 ${type}` : `工作流 ${type}`,
     );
-    return workflowTier;
+    return workflowPreset;
   }
-  const runtimeCommandTier = autoTierForRuntimeCommandType(input.runtimeCommand?.type);
-  if (runtimeCommandTier) {
+  const runtimeCommandPreset = autoPresetForRuntimeCommandType(input.runtimeCommand?.type);
+  if (runtimeCommandPreset) {
     signals.push(autoRuntimeCommandSignalLabel(input.runtimeCommand?.type) ?? "运行时命令");
-    return runtimeCommandTier;
+    return runtimeCommandPreset;
   }
   const scale = contextScale(input, signals);
-  if (scale === "large") return "deep";
-  if (scale === "medium") return "normal";
-  return "light";
+  return autoPresetForContextScale(scale);
 }
 
-function modelExists(modelOptions: ChatModelOption[], model: string): boolean {
-  return modelOptions.some((option) => option.id === model);
+function findPreset(
+  settings: ModelFeatureSettings,
+  presetId: string,
+): ModelPresetGroup | undefined {
+  return settings.presets.find((preset) => preset.id === presetId && preset.enabled !== false);
 }
 
 function pickAvailableModel(
   backend: ChatBackendKind,
-  tier: ModelTier,
+  presetId: string,
   modelOptions: ChatModelOption[],
   signals: string[],
-  modelFeatureSettings?: ModelFeatureSettings | null,
+  settings: ModelFeatureSettings,
 ): string {
-  const desired = modelFeatureSettings?.chat?.[tier]?.trim() || autoModelForBackendTier(backend, tier);
-  if (modelExists(modelOptions, desired)) return desired;
+  const preset = findPreset(settings, presetId);
+  const desired =
+    preset?.model?.trim() ||
+    autoModelForBackendPreset(backend, isBuiltinModelPresetId(presetId) ? presetId : "default");
+  if (modelOptions.some((option) => option.id === desired)) return desired;
   const fallback = modelOptions.find((option) => option.backend === backend)?.id ?? desired;
   if (fallback !== desired) signals.push(`模型 ${desired} 不可用，已使用 ${fallback}`);
   return fallback;
+}
+
+function pickEffortForPreset(
+  backend: ChatBackendKind,
+  presetId: string,
+  settings: ModelFeatureSettings,
+  signals: string[],
+): ReasoningEffort | null {
+  const preset = findPreset(settings, presetId);
+  const configured = normalizeReasoningEffort(preset?.reasoningEffort);
+  const raw =
+    configured ??
+    autoReasoningEffortForPreset(isBuiltinModelPresetId(presetId) ? presetId : "default");
+  return normalizeEffortForBackend(backend, raw, signals);
 }
 
 function validateModel(
   backend: ChatBackendKind,
   model: string,
   modelOptions: ChatModelOption[],
-  fallbackTier: ModelTier,
+  fallbackPresetId: string,
+  settings: ModelFeatureSettings,
   signals: string[],
 ): string {
   if (modelBelongsToBackend(backend, model)) return model;
-  signals.push(`模型 ${model} 不属于当前后端，已回退自动档位`);
-  return pickAvailableModel(backend, fallbackTier, modelOptions, signals);
+  signals.push(`模型 ${model} 不属于当前后端，已回退自动预设`);
+  return pickAvailableModel(backend, fallbackPresetId, modelOptions, signals, settings);
 }
 
 function selectionSummary(
   source: SelectionSource,
   model: string,
   effort: ReasoningEffort | null,
+  presetId: string | undefined,
   signals: string[],
 ): string {
   const prefix = source === "auto"
@@ -176,23 +203,26 @@ function selectionSummary(
     : source === "manual"
       ? "手动覆盖"
       : "runtimeOptions 覆盖";
+  const presetText = presetId ? ` [${builtinPresetLabel(presetId) || presetId}]` : "";
   const effortText = effort ? `，thinking ${effort}` : "";
   const signalText = signals.length ? `；${signals.join("；")}` : "";
-  return `${prefix} ${model}${effortText}${signalText}`;
+  return `${prefix}${presetText} ${model}${effortText}${signalText}`;
 }
 
 export function selectModelForTurn(input: ModelSelectionInput): ModelSelectionResult {
   const signals: string[] = [];
   const backend = input.backend;
-  const tier = selectAutoTier(input, signals);
+  const settings = normalizeModelFeatureSettings(input.modelFeatureSettings ?? null, backend);
+  const presetId = selectAutoPreset(input, signals);
+  const tier: ModelTier = tierForPreset(presetId);
   const autoModel = pickAvailableModel(
     backend,
-    tier,
+    presetId,
     input.modelOptions,
     signals,
-    input.modelFeatureSettings,
+    settings,
   );
-  const autoEffort = autoReasoningEffortForTier(tier);
+  const autoEffort = pickEffortForPreset(backend, presetId, settings, signals);
   const runtimeModel = runtimeOptionsModelForBackend(backend, input.runtimeOptions);
   const runtimeEffort = runtimeOptionsReasoningEffortForBackend(backend, input.runtimeOptions);
   const manualMode = input.composer.modelSelectionMode === "manual";
@@ -204,7 +234,8 @@ export function selectModelForTurn(input: ModelSelectionInput): ModelSelectionRe
     backend,
     runtimeModel ?? manualModel ?? autoModel,
     input.modelOptions,
-    tier,
+    presetId,
+    settings,
     signals,
   );
   const selectedEffort = normalizeEffortForBackend(
@@ -214,13 +245,18 @@ export function selectModelForTurn(input: ModelSelectionInput): ModelSelectionRe
   );
   if (source === "manual") signals.push("用户手动覆盖");
   if (source === "runtimeOptions") signals.push("runtimeOptions 显式覆盖");
+  const presetLabel = builtinPresetLabel(presetId) || presetId;
   const explanation: ModelSelectionExplanation = {
     mode: manualMode ? "manual" : "auto",
     model: selectedModel,
     reasoningEffort: selectedEffort,
+    tier,
+    presetId,
+    presetLabel,
+    planMode: input.composer.planMode || undefined,
     source,
     signals,
-    summary: selectionSummary(source, selectedModel, selectedEffort, signals),
+    summary: selectionSummary(source, selectedModel, selectedEffort, presetId, signals),
   };
   const composer: ChatComposerState = {
     ...input.composer,
@@ -253,4 +289,3 @@ export function previewAutoModelSelection(input: Omit<ModelSelectionInput, "runt
     runtimeOptions: null,
   }).explanation;
 }
-

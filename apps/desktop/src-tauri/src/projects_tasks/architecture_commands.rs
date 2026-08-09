@@ -781,7 +781,7 @@ mod tests {
             project_id: "p1".to_string(),
             task_id: "t1".to_string(),
             turn_id: Some("turn-1".to_string()),
-            backend: "claude".to_string(),
+            backend: "native-agentkit".to_string(),
             permission: "ask".to_string(),
             reason: "测试".to_string(),
             changes,
@@ -792,7 +792,10 @@ mod tests {
     #[test]
     fn validators_accept_contract_values() {
         let backend_contract = chat_backends_contract();
-        assert_eq!(backend_contract.chat_backends, vec!["claude", "codex"]);
+        assert_eq!(
+            backend_contract.chat_backends,
+            vec!["native-agentkit".to_string()]
+        );
         assert_eq!(
             project_architecture_permissions(),
             &["ask", "full", "readonly"]
@@ -933,35 +936,34 @@ mod tests {
     }
 
     #[test]
-    fn rollback_history_uses_requested_backend_for_claude_and_codex() {
-        for backend in ["claude", "codex"] {
-            let mut conn = Connection::open_in_memory().unwrap();
-            create_schema(&conn);
-            apply_project_architecture_changes_core(
-                &mut conn,
-                input(vec![ProjectArchitectureChange::UpsertNode {
-                    node: node("api"),
-                }]),
+    fn rollback_history_uses_requested_backend_for_native_agentkit() {
+        let backend = "native-agentkit";
+        let mut conn = Connection::open_in_memory().unwrap();
+        create_schema(&conn);
+        apply_project_architecture_changes_core(
+            &mut conn,
+            input(vec![ProjectArchitectureChange::UpsertNode {
+                node: node("api"),
+            }]),
+        )
+        .unwrap();
+
+        let result = rollback_project_architecture_core(
+            &mut conn,
+            "p1".to_string(),
+            "t1".to_string(),
+            backend.to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(result.event.as_ref().unwrap().backend, backend);
+        let history_backend: String = conn
+            .query_row(
+                "SELECT backend FROM project_architecture_changes WHERE status = ?1",
+                params![rolled_back_change_status()],
+                |row| row.get(0),
             )
             .unwrap();
-
-            let result = rollback_project_architecture_core(
-                &mut conn,
-                "p1".to_string(),
-                "t1".to_string(),
-                backend.to_string(),
-            )
-            .unwrap();
-
-            assert_eq!(result.event.as_ref().unwrap().backend, backend);
-            let history_backend: String = conn
-                .query_row(
-                    "SELECT backend FROM project_architecture_changes WHERE status = ?1",
-                    params![rolled_back_change_status()],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            assert_eq!(history_backend, backend);
-        }
+        assert_eq!(history_backend, backend);
     }
 }

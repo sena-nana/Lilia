@@ -1754,7 +1754,7 @@ mod tests {
 
         assert_eq!(event.id.as_deref(), Some("automation:run-1:tool-1"));
         assert_eq!(event.task_id, "task-1");
-        assert_eq!(event.backend, "codex");
+        assert_eq!(event.backend, "native-agentkit");
         assert_eq!(event.kind, "automation");
         assert_eq!(event.status, "success");
         assert_eq!(event.title, "记录 manual");

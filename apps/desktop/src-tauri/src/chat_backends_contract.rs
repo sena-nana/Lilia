@@ -27,7 +27,6 @@ pub(crate) struct ChatBackendsContract {
     pub(crate) connection_modes_using_api_key: Vec<String>,
     pub(crate) connection_modes_using_default_api: Vec<String>,
     pub(crate) connection_modes_using_custom_url: Vec<String>,
-    pub(crate) connection_modes_using_codex_account: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -738,8 +738,13 @@ mod tests {
             default_backend()
         );
         assert_eq!(
+            normalize_optional_backend(Some("native-agentkit".to_string())),
+            "native-agentkit"
+        );
+        // Brand backends are not product chat backends; fall back to default.
+        assert_eq!(
             normalize_optional_backend(Some("codex".to_string())),
-            "codex"
+            default_backend()
         );
     }
 
