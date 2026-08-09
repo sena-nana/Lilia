@@ -168,6 +168,10 @@ export default defineConfig(async ({ command, mode }) => ({
     dedupe: ["vue", "vue-router", "@vue/runtime-core", "@vue/runtime-dom", "@lucide/vue"],
   },
 
+  optimizeDeps: {
+    exclude: ["@lilia/ui/settings"],
+  },
+
   // 这些 Vite 选项面向 Tauri 开发，只在 `tauri dev` 或 `tauri build` 中生效
   clearScreen: false,
   server: {
