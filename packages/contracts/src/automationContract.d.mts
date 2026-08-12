@@ -8,7 +8,7 @@ type AutomationScopeEventKind =
   | "interaction_request";
 type AutomationScopeTaskStatus = "waiting" | "running" | "blocked" | "done";
 type AutomationLogicKind = "condition" | "switch" | "stop";
-type AutomationRunStatus = "pending" | "running" | "succeeded" | "failed" | "skipped" | "waiting_user";
+type AutomationRunStatus = "pending" | "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "waiting_user";
 type AutomationStatusTone = "muted" | "accent" | "ok" | "err";
 type AutomationToolAction =
   | "record_timeline"

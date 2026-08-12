@@ -20,10 +20,12 @@ export const CHAT_SAVE_CLIPBOARD_IMAGE_COMMAND =
   manifest.chatSaveClipboardImageCommand;
 export const CHAT_SAVE_CLIPBOARD_TEXT_COMMAND = manifest.chatSaveClipboardTextCommand;
 export const CHAT_GET_COMPOSER_STATE_COMMAND = manifest.chatGetComposerStateCommand;
+export const CHAT_GET_COMPOSER_DRAFT_COMMAND = manifest.chatGetComposerDraftCommand;
 export const CHAT_LIST_MODELS_COMMAND = manifest.chatListModelsCommand;
 export const CHAT_GET_RUNTIME_SNAPSHOT_COMMAND =
   manifest.chatGetRuntimeSnapshotCommand;
 export const CHAT_SET_COMPOSER_STATE_COMMAND = manifest.chatSetComposerStateCommand;
+export const CHAT_SET_COMPOSER_DRAFT_COMMAND = manifest.chatSetComposerDraftCommand;
 export const CHAT_ACK_RESTORED_ROLLBACK_COMMAND =
   manifest.chatAckRestoredRollbackCommand;
 export const CHAT_SEND_PROCESS_SESSION_COMMAND =

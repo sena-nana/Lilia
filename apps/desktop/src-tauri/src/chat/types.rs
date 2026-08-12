@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+pub(crate) use lilia_contracts::{
+    ChatAttachment, ChatContextSearchResult, ChatContextUsage, ChatConversationReference,
+};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatMessage {
@@ -14,61 +18,15 @@ pub(crate) struct ChatMessage {
     pub(crate) created_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatAttachment {
-    pub(crate) id: String,
-    pub(crate) name: String,
-    pub(crate) path: String,
-    pub(crate) kind: String,
-    pub(crate) size: Option<u64>,
-    #[serde(default = "default_attachment_exists")]
-    pub(crate) exists: bool,
-    #[serde(default)]
-    pub(crate) mime: Option<String>,
-    #[serde(default)]
-    pub(crate) directory: Option<ChatAttachmentDirectoryMeta>,
-}
-
-fn default_attachment_exists() -> bool {
-    true
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatAttachmentDirectoryMeta {
-    pub(crate) file_count: u64,
-    pub(crate) directory_count: u64,
-    pub(crate) total_size: u64,
-    pub(crate) truncated: bool,
-    pub(crate) unreadable_count: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatConversationReference {
-    pub(crate) task_id: String,
-    pub(crate) title: String,
-    pub(crate) route: String,
-    #[serde(default)]
-    pub(crate) project_id: Option<String>,
-    #[serde(default)]
-    pub(crate) project_name: Option<String>,
-}
-
-impl ChatConversationReference {
-    pub(crate) fn timeline_payload(&self) -> JsonValue {
-        serde_json::to_value(self).expect("ChatConversationReference must serialize")
-    }
-}
-
 pub(crate) fn conversation_references_payload(
     conversation_references: &[ChatConversationReference],
 ) -> JsonValue {
     JsonValue::Array(
         conversation_references
             .iter()
-            .map(ChatConversationReference::timeline_payload)
+            .map(|reference| {
+                serde_json::to_value(reference).expect("ChatConversationReference must serialize")
+            })
             .collect(),
     )
 }
@@ -89,7 +47,7 @@ mod tests {
         };
 
         assert_eq!(
-            reference.timeline_payload(),
+            serde_json::to_value(reference).unwrap(),
             json!({
                 "taskId": "task-1",
                 "title": "Title",
@@ -99,14 +57,6 @@ mod tests {
             })
         );
     }
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatContextSearchResult {
-    pub(crate) attachment: ChatAttachment,
-    pub(crate) relative_path: String,
-    pub(crate) matched_by: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -471,20 +421,6 @@ pub(crate) struct ChatRollbackResult {
     #[serde(default)]
     pub(crate) restored_conversation_references: Vec<ChatConversationReference>,
     pub(crate) removed_event_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatContextUsage {
-    pub(crate) task_id: String,
-    pub(crate) backend: String,
-    pub(crate) used_tokens: u64,
-    pub(crate) limit_tokens: Option<u64>,
-    pub(crate) used_percent: Option<f64>,
-    pub(crate) source: String,
-    pub(crate) updated_at: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) unavailable_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

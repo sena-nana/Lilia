@@ -9,7 +9,7 @@ use mutsuki_agent_client::{
 };
 use mutsuki_agent_contracts::{
     AgentEventEnvelope, AgentMessage, AgentSession, AgentSessionCreateRequest, AgentWireError,
-    AgentWireRequestEnvelope, AgentWireResponseEnvelope, PermissionDecision,
+    AgentWireRequestEnvelope, AgentWireResponseEnvelope, InteractionResolution, PermissionDecision,
     PermissionDecisionKind, ResourceRef,
 };
 use serde_json::Value;
@@ -110,6 +110,25 @@ impl AgentWireRuntime for NativeWireRuntime {
                     approved: decision.decision == PermissionDecisionKind::Approved,
                 },
             )
+            .map_err(port_error)?;
+        page_output(page)
+    }
+
+    fn apply_interactions(
+        &self,
+        resolutions: &[InteractionResolution],
+    ) -> Result<AgentWireTurnOutput, AgentWireError> {
+        let first = resolutions.first().ok_or_else(|| {
+            wire_error(
+                "agent.interaction.resolution_required",
+                "at least one interaction resolution is required",
+                false,
+            )
+        })?;
+        let session = self.ensure_binding(&first.session_id)?;
+        let page = self
+            .runtime
+            .respond_interactions_streaming(&session, resolutions.to_vec())
             .map_err(port_error)?;
         page_output(page)
     }
@@ -271,6 +290,36 @@ impl NativeAgentWireService {
         })
     }
 
+    pub fn fork_task_session(
+        &mut self,
+        source_session_id: &str,
+        target_session_id: &str,
+    ) -> Result<AgentSession, AgentWireError> {
+        self.fork_task_session_from(source_session_id, target_session_id, None)
+    }
+
+    pub fn fork_task_session_through_turn(
+        &mut self,
+        source_session_id: &str,
+        target_session_id: &str,
+        through_turn_id: &str,
+    ) -> Result<AgentSession, AgentWireError> {
+        self.fork_task_session_from(source_session_id, target_session_id, Some(through_turn_id))
+    }
+
+    fn fork_task_session_from(
+        &mut self,
+        source_session_id: &str,
+        target_session_id: &str,
+        through_turn_id: Option<&str>,
+    ) -> Result<AgentSession, AgentWireError> {
+        let session = self
+            .runtime
+            .fork_session_state_through_turn(source_session_id, target_session_id, through_turn_id)
+            .map_err(port_error)?;
+        self.authority.attach_session(session)
+    }
+
     pub fn submit_task_turn_observed<O>(
         &mut self,
         session_id: &str,
@@ -328,6 +377,28 @@ impl NativeAgentWireService {
             })
             .map_err(port_error)?
     }
+
+    pub fn respond_task_interaction_observed<O>(
+        &mut self,
+        resolution: InteractionResolution,
+        observer: O,
+    ) -> Result<NativeWireTurnResult, AgentWireError>
+    where
+        O: Fn(&[AgentEventEnvelope]) + Send + Sync + 'static,
+    {
+        let runtime = self.runtime.clone();
+        let session_id = resolution.session_id.clone();
+        let turn_id = resolution.turn_id.clone();
+        runtime
+            .with_turn_event_observer(&session_id, &turn_id, observer, || {
+                let (version, output) = self.authority.apply_interaction(resolution)?;
+                Ok(NativeWireTurnResult {
+                    version,
+                    page: output_page(output)?,
+                })
+            })
+            .map_err(port_error)?
+    }
 }
 
 impl InProcessAgentService for NativeAgentWireService {
@@ -379,7 +450,9 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    fn runtime_with_final_model() -> (SharedNativeAgentKitRuntime, std::thread::JoinHandle<()>) {
+    fn runtime_with_final_models(
+        response_count: usize,
+    ) -> (SharedNativeAgentKitRuntime, std::thread::JoinHandle<()>) {
         let runtime = SharedNativeAgentKitRuntime::new(
             NativeRuntimeBootstrap::embedded_reference()
                 .unwrap()
@@ -400,28 +473,34 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 16_384];
-            let _ = stream.read(&mut request).unwrap();
-            let body = json!({
-                "choices": [{
-                    "finish_reason": "stop",
-                    "message": {"role": "assistant", "content": "done"}
-                }],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
-            })
-            .to_string();
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .unwrap();
+            for index in 0..response_count {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 16_384];
+                let _ = stream.read(&mut request).unwrap();
+                let body = json!({
+                    "choices": [{
+                        "finish_reason": "stop",
+                        "message": {"role": "assistant", "content": format!("done-{index}")}
+                    }],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+                })
+                .to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
         });
         runtime
             .inner()
             .set_model_endpoint_override(Some(format!("http://{address}/v1/chat/completions")));
         (runtime, server)
+    }
+
+    fn runtime_with_final_model() -> (SharedNativeAgentKitRuntime, std::thread::JoinHandle<()>) {
+        runtime_with_final_models(1)
     }
 
     #[test]
@@ -465,6 +544,61 @@ mod tests {
             .unwrap()
             .events
             .is_empty());
+    }
+
+    #[test]
+    fn task_session_fork_stops_at_the_selected_durable_turn() {
+        let (runtime, server) = runtime_with_final_models(2);
+        let mut service = NativeAgentWireService::new(runtime);
+        let source = service
+            .open_task_session(
+                &TaskId::new("task-fork-cut").unwrap(),
+                Some("session-fork-source"),
+                "mutsuki.reference.coding-agent",
+                Some("Fork source".into()),
+            )
+            .unwrap();
+        service
+            .submit_task_turn(
+                &source.session_id,
+                "turn-1",
+                vec![AgentMessage::user("first")],
+                "turn-1-key",
+            )
+            .unwrap();
+        service
+            .submit_task_turn(
+                &source.session_id,
+                "turn-2",
+                vec![AgentMessage::user("second")],
+                "turn-2-key",
+            )
+            .unwrap();
+        server.join().unwrap();
+
+        let fork = service
+            .fork_task_session_through_turn(&source.session_id, "session-fork-target", "turn-1")
+            .unwrap();
+        assert_eq!(fork.turn_count, 1);
+        assert!(fork
+            .messages
+            .iter()
+            .any(|message| message.content == "first"));
+        assert!(!fork
+            .messages
+            .iter()
+            .any(|message| message.content == "second"));
+        assert!(fork
+            .events
+            .iter()
+            .all(|event| event.meta.turn_id.as_deref() != Some("turn-2")));
+        assert!(service
+            .runtime()
+            .session_snapshot(&source.session_id)
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| event.meta.turn_id.as_deref() == Some("turn-2")));
     }
 
     #[test]

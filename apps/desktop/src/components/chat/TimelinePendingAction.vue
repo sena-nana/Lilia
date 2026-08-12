@@ -182,9 +182,12 @@ const canSubmitMcp = computed(() => {
 const permissionJson = computed(() =>
   JSON.stringify(permissionAction.value?.payload.requestedAccess ?? {}, null, 2),
 );
-const permissionCwd = computed(() =>
-  permissionAction.value?.payload.providerContext?.codex?.cwd ?? "",
-);
+const permissionCwd = computed(() => {
+  const codex = permissionAction.value?.payload.providerContext?.codex;
+  if (!codex || typeof codex !== "object" || Array.isArray(codex)) return "";
+  const cwd = (codex as Record<string, unknown>).cwd;
+  return typeof cwd === "string" ? cwd : "";
+});
 
 function mcpFieldInputType(type: string): string {
   return timelineMcpFieldInputType(type);
@@ -219,7 +222,7 @@ function applySubmittingStateForResolution(resolution: PendingAgentActionResolut
   const target = pendingAgentActionResolutionSubmittingTarget(resolution);
   if (target === "tool" && resolution.kind === TOOL_CONSENT_INTERACTION_KIND) {
     toolSubmitting.value = resolution.decision;
-  } else if (target === "native" || target === "codex") {
+  } else if (target === "native") {
     codexSubmitting.value = true;
   }
 }

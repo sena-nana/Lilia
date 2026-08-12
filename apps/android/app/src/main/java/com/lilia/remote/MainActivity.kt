@@ -979,6 +979,11 @@ private fun TaskDetailScreen(
     var selectedInteractionOptions by remember(pendingInteraction?.requestId) { mutableStateOf<Set<String>>(emptySet()) }
     val timelineListState = rememberLazyListState()
     var didScrollInitialTimeline by remember(detail.task.taskId) { mutableStateOf(false) }
+    LaunchedEffect(capabilities.supportsSessionFork) {
+        if (!capabilities.supportsSessionFork && pendingBranchAnchor != null) {
+            onClearBranchAnchor()
+        }
+    }
     LaunchedEffect(
         detail.task.taskId,
         detail.timelinePage.hasMoreBefore,
@@ -1056,31 +1061,33 @@ private fun TaskDetailScreen(
         if (taskRunBlockInfo != null) {
             BlockedTaskPanel(taskRunBlockInfo)
         }
-        ProcessSessionPanel(
-            running = processRunning,
-            processSessionId = detail.processSessionId,
-            command = processCommand,
-            stdin = processStdin,
-            loading = loading,
-            startBlockReason = taskRunBlockInfo?.reason,
-            onCommandChange = { processCommand = it },
-            onStdinChange = { processStdin = it },
-            onStart = {
-                val command = processCommand.trim()
-                if (command.isNotEmpty()) {
-                    processCommand = ""
-                    onStartProcess(command)
-                }
-            },
-            onSendStdin = {
-                if (processStdin.isNotEmpty()) {
-                    val value = processStdin
-                    processStdin = ""
-                    onSendProcessStdin(value)
-                }
-            },
-            onStop = onStopProcess,
-        )
+        if (capabilities.supportsProcessSession) {
+            ProcessSessionPanel(
+                running = processRunning,
+                processSessionId = detail.processSessionId,
+                command = processCommand,
+                stdin = processStdin,
+                loading = loading,
+                startBlockReason = taskRunBlockInfo?.reason,
+                onCommandChange = { processCommand = it },
+                onStdinChange = { processStdin = it },
+                onStart = {
+                    val command = processCommand.trim()
+                    if (command.isNotEmpty()) {
+                        processCommand = ""
+                        onStartProcess(command)
+                    }
+                },
+                onSendStdin = {
+                    if (processStdin.isNotEmpty()) {
+                        val value = processStdin
+                        processStdin = ""
+                        onSendProcessStdin(value)
+                    }
+                },
+                onStop = onStopProcess,
+            )
+        }
         pendingInteraction?.let { interaction ->
             val optionQuestion = interactionOptionQuestion(interaction)
             val canResolveInteraction = interactionCanSubmit(
@@ -1192,6 +1199,7 @@ private fun TaskDetailScreen(
                     item = item,
                     loading = loading,
                     retryEnabled = retryEnabled,
+                    branchEnabled = capabilities.supportsSessionFork,
                     onRetry = { onRetry(item.id) },
                     onStartBranch = { mode ->
                         item.branchSourceTurnId?.let { turnId ->
@@ -1202,7 +1210,7 @@ private fun TaskDetailScreen(
                 )
             }
         }
-        pendingBranchAnchor?.let { anchor ->
+        pendingBranchAnchor?.takeIf { capabilities.supportsSessionFork }?.let { anchor ->
             Panel {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1525,6 +1533,7 @@ private fun TimelineRow(
     item: RemoteTimelineItem,
     loading: Boolean,
     retryEnabled: Boolean,
+    branchEnabled: Boolean,
     onRetry: () -> Unit,
     onStartBranch: (RemoteSessionForkMode) -> Unit,
     blockReason: String?,
@@ -1579,7 +1588,7 @@ private fun TimelineRow(
                 Text("重试")
             }
         }
-        if (item.branchSourceTurnId != null) {
+        if (branchEnabled && item.branchSourceTurnId != null) {
             if (blockReason != null) {
                 Text(blockReason, color = Danger, style = MaterialTheme.typography.bodySmall)
             }

@@ -4,14 +4,16 @@
 //! the same `NativeCodingAgentBundle` Arc handles that Agent tools use — never a
 //! second session or private product service.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_agent_contracts::{
     AgentMemoryQueryRequest, AgentMemoryWriteRequest, AgentWorkspaceRef, CodeFileChange,
     CodeIndexBatch, CodeSearchMode, CodeSearchQuery, CodeWorkspaceRef, ComputerUseServiceRequest,
-    GitServiceRequest, GitServiceResponse, LspServerDescriptor, LspWorkspaceId, MemoryScopeRef,
-    WorkspacePathRequest,
+    GitServiceRequest, GitServiceResponse, LspServerDescriptor, LspWorkspaceId, McpPromptGetResult,
+    McpResourceReadResult, McpServerManifest, McpServerState, McpTransportKind, MemoryScopeRef,
+    SkillLoadRequest, SkillSourceKind, WorkspacePathRequest,
 };
 use mutsuki_agent_plugin_code_index::SERVICE_ID as CODE_INDEX_SERVICE_ID;
 use mutsuki_agent_plugin_computer_use::SERVICE_ID as COMPUTER_USE_SERVICE_ID;
@@ -23,6 +25,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::native_runtime::{NativeAgentKitRuntime, NativeRuntimeError};
+use lilia_storage::AgentkitMcpRegistryEntry;
 
 /// Inventory of shared coding service ids + identity proof for UI diagnostics.
 #[derive(Clone, Debug, Serialize)]
@@ -50,6 +53,24 @@ pub struct SharedCodingServicesStatus {
     /// Product pages should bind to AgentKit shared Services (not Claude/Codex files).
     pub data_source: &'static str,
     pub official_agent_server: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegisteredMcpActivation {
+    pub server_id: String,
+    pub state: Option<McpServerState>,
+    pub tool_count: usize,
+    pub resource_count: usize,
+    pub prompt_count: usize,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedMcpResourceRead {
+    pub result: McpResourceReadResult,
+    pub content: Value,
 }
 
 impl NativeAgentKitRuntime {
@@ -169,6 +190,141 @@ impl NativeAgentKitRuntime {
         Ok(serde_json::to_value(servers)?)
     }
 
+    /// Read the live catalog from the same SharedMcpService instance used by
+    /// Agent tools. This never starts a transport or pins a turn generation.
+    pub fn shared_mcp_catalog(&self, server_id: Option<&str>) -> Result<Value, NativeRuntimeError> {
+        let catalog = self.bootstrap().bundle().mcp.catalog(server_id, None)?;
+        Ok(serde_json::to_value(catalog)?)
+    }
+
+    /// Read a declared resource through the same MCP session used by Agent tools,
+    /// then resolve the immutable AgentResourceStore payload for product display.
+    pub fn shared_mcp_read_resource(
+        &self,
+        server_id: &str,
+        uri: &str,
+    ) -> Result<SharedMcpResourceRead, NativeRuntimeError> {
+        let bundle = self.bootstrap().bundle();
+        let result = bundle.mcp.read_resource(server_id, uri)?;
+        let details = result.details.as_ref().ok_or_else(|| {
+            NativeRuntimeError::Agent("MCP resource did not return readable content".to_owned())
+        })?;
+        let content = bundle.resources.read_json(details)?;
+        Ok(SharedMcpResourceRead { result, content })
+    }
+
+    /// Materialize a declared prompt through the shared live MCP session.
+    pub fn shared_mcp_get_prompt(
+        &self,
+        namespaced_name: &str,
+        arguments: Value,
+    ) -> Result<McpPromptGetResult, NativeRuntimeError> {
+        Ok(self
+            .bootstrap()
+            .bundle()
+            .mcp
+            .get_prompt(namespaced_name, arguments)?)
+    }
+
+    /// Connect every secret-free MCP registry entry through the shared service
+    /// instance used by Agent tools. One broken server does not hide the status
+    /// of other configured servers.
+    pub fn activate_registered_mcp_servers(
+        &self,
+        paths: &lilia_storage::LiliaDataPaths,
+    ) -> Result<Vec<RegisteredMcpActivation>, NativeRuntimeError> {
+        let Some(registry) = lilia_storage::load_mcp_registry(paths)
+            .map_err(|error| NativeRuntimeError::Agent(error.to_string()))?
+        else {
+            return Ok(Vec::new());
+        };
+        Ok(registry
+            .servers
+            .into_iter()
+            .filter(|entry| entry.enabled)
+            .map(|entry| self.activate_mcp_registry_entry(entry, Vec::new(), Vec::new()))
+            .collect())
+    }
+
+    pub fn activate_registered_mcp_server(
+        &self,
+        paths: &lilia_storage::LiliaDataPaths,
+        server_id: &str,
+    ) -> Result<RegisteredMcpActivation, NativeRuntimeError> {
+        let registry = lilia_storage::load_mcp_registry(paths)
+            .map_err(|error| NativeRuntimeError::Agent(error.to_string()))?
+            .ok_or_else(|| NativeRuntimeError::Agent("MCP registry is unavailable".to_owned()))?;
+        let entry = registry
+            .servers
+            .into_iter()
+            .find(|entry| entry.server_id == server_id)
+            .ok_or_else(|| {
+                NativeRuntimeError::Agent(format!("MCP server `{server_id}` is not registered"))
+            })?;
+        if !entry.enabled {
+            return Err(NativeRuntimeError::Agent(format!(
+                "MCP server `{server_id}` is disabled"
+            )));
+        }
+        Ok(self.activate_mcp_registry_entry(entry, Vec::new(), Vec::new()))
+    }
+
+    pub fn disconnect_shared_mcp_server(&self, server_id: &str) -> Result<(), NativeRuntimeError> {
+        let service = &self.bootstrap().bundle().mcp;
+        if service
+            .list_servers()
+            .iter()
+            .any(|status| status.server_id == server_id)
+        {
+            service.disconnect(server_id)?;
+        }
+        Ok(())
+    }
+
+    pub fn activate_mcp_registry_entry(
+        &self,
+        entry: AgentkitMcpRegistryEntry,
+        secret_env: Vec<(String, String)>,
+        secret_headers: Vec<(String, String)>,
+    ) -> RegisteredMcpActivation {
+        let server_id = entry.server_id.clone();
+        let transport = registered_mcp_transport(&entry.transport);
+        let result = transport.and_then(|transport| {
+            let mut env_allowlist = entry.env_allowlist;
+            env_allowlist.extend(secret_env);
+            self.bootstrap().bundle().mcp.connect(McpServerManifest {
+                server_id: entry.server_id,
+                source: entry.source,
+                transport,
+                command: entry.command,
+                args: entry.args,
+                env_allowlist,
+                url: entry.url,
+                headers: secret_headers,
+                permissions: Vec::new(),
+                request_timeout_ms: None,
+            })
+        });
+        match result {
+            Ok(status) => RegisteredMcpActivation {
+                server_id,
+                state: Some(status.state),
+                tool_count: status.tool_count,
+                resource_count: status.resource_count,
+                prompt_count: status.prompt_count,
+                error: status.last_error,
+            },
+            Err(error) => RegisteredMcpActivation {
+                server_id,
+                state: None,
+                tool_count: 0,
+                resource_count: 0,
+                prompt_count: 0,
+                error: Some(error.to_string()),
+            },
+        }
+    }
+
     /// Durable AgentKit MCP/Skills registry under `$LILIA_HOME/config/` (#47).
     /// Does not spawn MCP transports; reports configured (secret-free) entries only.
     pub fn shared_agentkit_registry_status(
@@ -178,35 +334,70 @@ impl NativeAgentKitRuntime {
         Ok(lilia_storage::registry_status_json(paths))
     }
 
-    /// Apply SkillRoots.user from durable skills registry (discoverable by Host).
-    pub fn apply_migrated_skill_roots(
+    /// Apply the durable Skills registry to the shared AgentKit runtime.
+    pub fn apply_registered_skill_packages(
         &self,
         paths: &lilia_storage::LiliaDataPaths,
+    ) -> Result<usize, NativeRuntimeError> {
+        self.apply_registered_skill_packages_with_extra_roots(paths, Vec::new())
+    }
+
+    pub fn apply_registered_skill_packages_with_extra_roots(
+        &self,
+        paths: &lilia_storage::LiliaDataPaths,
+        extra_roots: Vec<PathBuf>,
     ) -> Result<usize, NativeRuntimeError> {
         let Some(registry) = lilia_storage::load_skills_registry(paths)
             .map_err(|err| NativeRuntimeError::Agent(err.to_string()))?
         else {
-            return Ok(0);
+            return self.reload_skill_roots(None, Vec::new(), extra_roots);
         };
-        let user = registry
-            .user_skill_roots
-            .iter()
-            .map(PathBuf::from)
-            .find(|path| path.is_dir())
-            .or_else(|| {
+        let uses_exact_packages = registry.revision > 0 || !registry.packages.is_empty();
+        let user = (!uses_exact_packages)
+            .then(|| {
                 registry
-                    .packages
+                    .user_skill_roots
                     .iter()
-                    .map(|package| PathBuf::from(&package.path))
-                    .filter_map(|path| path.parent().map(Path::to_path_buf))
+                    .map(PathBuf::from)
                     .find(|path| path.is_dir())
-            });
+            })
+            .flatten();
+        let user_packages = registry
+            .packages
+            .iter()
+            .filter(|package| package.enabled && package.scope == "user")
+            .map(|package| PathBuf::from(&package.path))
+            .collect();
+        self.reload_skill_roots(user, user_packages, extra_roots)
+    }
+
+    fn reload_skill_roots(
+        &self,
+        user: Option<PathBuf>,
+        user_packages: Vec<PathBuf>,
+        plugin_packages: Vec<PathBuf>,
+    ) -> Result<usize, NativeRuntimeError> {
+        let registered_packages = user_packages
+            .into_iter()
+            .map(|path| (SkillSourceKind::User, path))
+            .chain(
+                plugin_packages
+                    .into_iter()
+                    .map(|path| (SkillSourceKind::Plugin, path)),
+            )
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .map(
+                |(source_kind, path)| mutsuki_agent_runtime::SkillPackageRoot { source_kind, path },
+            )
+            .collect();
         self.bootstrap()
             .bundle()
             .core
             .skills
             .set_roots(mutsuki_agent_runtime::SkillRoots {
                 user,
+                registered_packages,
                 ..Default::default()
             });
         let reloaded = self
@@ -216,6 +407,36 @@ impl NativeAgentKitRuntime {
             .skills
             .reload(mutsuki_agent_contracts::SkillReloadRequest {})?;
         Ok(reloaded.discovered)
+    }
+
+    /// Backward-compatible bootstrap entry used by existing hosts.
+    pub fn apply_migrated_skill_roots(
+        &self,
+        paths: &lilia_storage::LiliaDataPaths,
+    ) -> Result<usize, NativeRuntimeError> {
+        self.apply_registered_skill_packages(paths)
+    }
+
+    pub fn shared_skill_catalog(&self) -> Result<Value, NativeRuntimeError> {
+        let catalog = self.bootstrap().bundle().core.skills.discover(
+            mutsuki_agent_contracts::SkillDiscoverRequest {
+                include_unavailable: true,
+            },
+        )?;
+        serde_json::to_value(catalog).map_err(|error| NativeRuntimeError::Agent(error.to_string()))
+    }
+
+    pub fn shared_skill_load(&self, skill_id: &str) -> Result<Value, NativeRuntimeError> {
+        let loaded = self
+            .bootstrap()
+            .bundle()
+            .core
+            .skills
+            .load(SkillLoadRequest {
+                skill_id: skill_id.to_owned(),
+                generation: None,
+            })?;
+        serde_json::to_value(loaded).map_err(|error| NativeRuntimeError::Agent(error.to_string()))
     }
 
     /// Start the appropriate language server for a real workspace.
@@ -380,6 +601,19 @@ impl NativeAgentKitRuntime {
                 details_ref: None,
             })?;
         Ok(serde_json::to_value(record)?)
+    }
+}
+
+fn registered_mcp_transport(
+    value: &str,
+) -> Result<McpTransportKind, mutsuki_agent_contracts::AgentError> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "stdio" => Ok(McpTransportKind::Stdio),
+        "http" | "streamable_http" | "streamable-http" => Ok(McpTransportKind::StreamableHttp),
+        "sse" => Ok(McpTransportKind::Sse),
+        _ => Err(mutsuki_agent_contracts::AgentError::invalid_input(format!(
+            "unsupported MCP transport `{value}`"
+        ))),
     }
 }
 
@@ -697,6 +931,23 @@ mod tests {
         let product = Arc::clone(&bundle.mcp);
         assert!(Arc::ptr_eq(&bundle.mcp, &product));
         assert_eq!(bundle.mcp.active_server_count(), 0);
+    }
+
+    #[test]
+    fn registered_mcp_transport_accepts_supported_registry_spellings() {
+        assert_eq!(
+            registered_mcp_transport("stdio").unwrap(),
+            McpTransportKind::Stdio
+        );
+        assert_eq!(
+            registered_mcp_transport("streamable-http").unwrap(),
+            McpTransportKind::StreamableHttp
+        );
+        assert_eq!(
+            registered_mcp_transport("http").unwrap(),
+            McpTransportKind::StreamableHttp
+        );
+        assert!(registered_mcp_transport("oauth").is_err());
     }
 
     #[test]

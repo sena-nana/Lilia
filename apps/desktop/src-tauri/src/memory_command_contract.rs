@@ -51,8 +51,8 @@ mod tests {
         let _ = memory_upsert;
         let _ = memory_set_enabled;
         let _ = memory_delete;
-        let _ = memory_get_settings::<tauri::Wry>;
-        let _ = memory_set_settings::<tauri::Wry>;
+        let _ = memory_get_settings;
+        let _ = memory_set_settings;
         let _ = memory_get_injection_state;
         let _ = memory_set_task_enabled;
         let _ = memory_reset_task_cooldown;

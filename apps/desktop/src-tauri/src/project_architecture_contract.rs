@@ -1,5 +1,10 @@
+#![cfg(test)]
+
 use std::sync::OnceLock;
 
+use lilia_desktop_application::{
+    ArchitectureBackend, ArchitectureChangeStatus, ArchitecturePermission,
+};
 use serde::Deserialize;
 
 const ARCHITECTURE_CONTRACT_JSON: &str =
@@ -10,14 +15,12 @@ static ARCHITECTURE_CONTRACT: OnceLock<ProjectArchitectureContract> = OnceLock::
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectArchitectureContract {
-    #[cfg(test)]
     commands: ProjectArchitectureCommandsContract,
     project_architecture_permissions: Vec<String>,
     project_architecture_rollback_permission: String,
     project_architecture_change_statuses: Vec<String>,
 }
 
-#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ProjectArchitectureCommandsContract {
@@ -37,19 +40,6 @@ fn architecture_contract() -> &'static ProjectArchitectureContract {
     })
 }
 
-pub(crate) fn project_architecture_permissions() -> &'static [String] {
-    &architecture_contract().project_architecture_permissions
-}
-
-pub(crate) fn project_architecture_rollback_permission() -> &'static str {
-    &architecture_contract().project_architecture_rollback_permission
-}
-
-pub(crate) fn project_architecture_change_statuses() -> &'static [String] {
-    &architecture_contract().project_architecture_change_statuses
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::projects_tasks::{
@@ -74,5 +64,29 @@ mod tests {
         assert_eq!(commands.apply, stringify!(project_architecture_apply));
         assert_eq!(commands.reject, stringify!(project_architecture_reject));
         assert_eq!(commands.rollback, stringify!(project_architecture_rollback));
+        assert_eq!(
+            architecture_contract().project_architecture_permissions,
+            ["ask", "full", "readonly"]
+        );
+        assert_eq!(
+            architecture_contract().project_architecture_rollback_permission,
+            "full"
+        );
+        assert_eq!(
+            architecture_contract().project_architecture_change_statuses,
+            ["proposed", "pending", "applied", "rejected", "rolled_back"]
+        );
+        assert_eq!(
+            serde_json::to_value(ArchitectureBackend::NativeAgentkit).unwrap(),
+            "native-agentkit"
+        );
+        assert_eq!(
+            serde_json::to_value(ArchitecturePermission::Readonly).unwrap(),
+            "readonly"
+        );
+        assert_eq!(
+            serde_json::to_value(ArchitectureChangeStatus::RolledBack).unwrap(),
+            "rolled_back"
+        );
     }
 }

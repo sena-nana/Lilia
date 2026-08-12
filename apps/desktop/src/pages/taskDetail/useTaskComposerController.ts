@@ -31,6 +31,7 @@ import type {
   TaskWorktree,
   WorktreeListItem,
 } from "@lilia/contracts";
+import { clearTaskGoal, refreshTaskGoal, setTaskGoal } from "../../services/taskGoal";
 import {
   findPlanApprovalAsk,
   isPlanApprovalAsk,
@@ -61,7 +62,7 @@ import {
 import { useConnectionStatus } from "../../composables/useConnectionStatus";
 import {
   getComposerState,
-  getModelFeatureSettings,
+  getComposerDraft,
   listModels,
   getRuntimeSnapshot,
   ackRestoredRollback,
@@ -72,8 +73,8 @@ import {
   onTurnStarted,
   sendMessage,
   setComposerState,
+  setComposerDraft,
 } from "../../services/chat";
-import { selectModelForTurn } from "../../services/modelSelection";
 import { getProjectSettings } from "../../services/projects";
 import { getTask, listTasks } from "../../services/tasksStore";
 import {
@@ -284,6 +285,7 @@ export function useTaskComposerController(options: {
   let loadSeq = 0;
   let runtimeEventSeq = 0;
   let composerStateWriteSeq = 0;
+  let composerDraftWriteSeq = 0;
   let activeLoadCycle: TaskLoadCycle | null = null;
   let composerLoad: Promise<ChatComposerState | null> | null = null;
   let composerBackendLoaded = false;
@@ -298,8 +300,19 @@ export function useTaskComposerController(options: {
         return useGuideDispatch({
           taskId: () => props.taskId,
           ensureReady: context.ensureTaskReadyForMessage,
-          sendAgentMessage: (content, outgoingAttachments, guideId) =>
-            sendAgentMessage({ turn: { content, outgoingAttachments, guideId } }),
+          sendAgentMessage: (
+            content,
+            outgoingAttachments,
+            outgoingConversationReferences,
+            guideId,
+          ) => sendAgentMessage({
+            turn: {
+              content,
+              outgoingAttachments,
+              outgoingConversationReferences,
+              guideId,
+            },
+          }),
           ensureDispatchReady: async () => {
             await ensureComposerLoaded();
           },
@@ -605,9 +618,14 @@ export function useTaskComposerController(options: {
   async function createGuideFromComposer(
     content: string,
     outgoingAttachments: ChatAttachment[] = [],
+    outgoingConversationReferences: ChatConversationReference[] = [],
   ) {
     const guideDispatch = await getGuideDispatch();
-    await guideDispatch.createGuideFromComposer(content, outgoingAttachments);
+    await guideDispatch.createGuideFromComposer(
+      content,
+      outgoingAttachments,
+      outgoingConversationReferences,
+    );
   }
 
   function reportTaskRunBlock(): string | null {
@@ -653,11 +671,24 @@ export function useTaskComposerController(options: {
     let optimisticId: string | null = null;
     try {
       assertCurrentTaskSnapshot(snapshot);
+      const wasLiveDraft = context.conversationRouteState.value.isLiveDraft;
+      const stagedDraftComposer = wasLiveDraft ? composer.value : null;
+      await context.ensureTaskReadyForMessage(titleContent ?? content, outgoingAttachments);
+      assertCurrentTaskSnapshot(snapshot);
+      if (wasLiveDraft) {
+        await setComposerDraft(snapshot.taskId, content);
+        assertCurrentTaskSnapshot(snapshot);
+      }
+      if (stagedDraftComposer) {
+        const normalized = withActiveBackend(stagedDraftComposer);
+        await setComposerState(normalized);
+        assertCurrentTaskSnapshot(snapshot);
+        composer.value = normalized;
+        composerBackendLoaded = true;
+      }
       await ensureComposerLoaded();
       assertCurrentTaskSnapshot(snapshot);
       const currentComposer = composerForView.value;
-      await context.ensureTaskReadyForMessage(titleContent ?? content, outgoingAttachments);
-      assertCurrentTaskSnapshot(snapshot);
       const cwd = taskWorktree.value?.worktreePath ??
         context.project.value?.cwd ??
         (await context.ensureOrphanCwd());
@@ -672,34 +703,6 @@ export function useTaskComposerController(options: {
       runtimeOptions = await runtimeOptionsWithWorktreeContext(currentComposer, runtimeOptions);
       assertCurrentTaskSnapshot(snapshot);
 
-      // Model layer: apply role-preset router on the product path so runtimeOptions
-      // always carries modelSelection (unless already provided). Rust mirrors this
-      // when LLM auto-turn decision is disabled.
-      let sendComposer = currentComposer;
-      const hasModelSelection = Boolean(runtimeOptions?.common?.modelSelection);
-      if (!hasModelSelection) {
-        try {
-          const modelFeatureSettings = await getModelFeatureSettings();
-          const selection = selectModelForTurn({
-            backend: currentComposer.backend,
-            modelOptions: modelOptionsForView.value,
-            composer: currentComposer,
-            prompt: content,
-            attachments: outgoingAttachments,
-            conversationReferences: outgoingConversationReferences,
-            workflow,
-            runtimeCommand,
-            runtimeOptions,
-            modelFeatureSettings,
-          });
-          sendComposer = selection.composer;
-          runtimeOptions = selection.runtimeOptions;
-        } catch (err) {
-          console.error("[model-selection] selectModelForTurn failed; sending with composer state", err);
-        }
-      }
-      assertCurrentTaskSnapshot(snapshot);
-
       const optimistic = timeline.createOptimisticMessageEvent({
         content,
         attachments: outgoingAttachments,
@@ -712,7 +715,7 @@ export function useTaskComposerController(options: {
         taskId: snapshot.taskId,
         turn: {
           content,
-          composer: sendComposer,
+          composer: currentComposer,
           projectCwd: cwd,
           attachments: outgoingAttachments,
           conversationReferences: outgoingConversationReferences,
@@ -766,7 +769,11 @@ export function useTaskComposerController(options: {
     if (!context.hasContext.value) return;
     if (reportTaskRunBlock()) return;
     if (isTurnRunning.value || blockingPendingAgentActions.value.length > 0) {
-      await createGuideFromComposer(content, outgoingAttachments);
+      await createGuideFromComposer(
+        content,
+        outgoingAttachments,
+        outgoingConversationReferences,
+      );
       return;
     }
 
@@ -876,18 +883,39 @@ export function useTaskComposerController(options: {
   }
 
   async function onSetLiliaGoal(objective: string) {
-    const actions = await getLiliaWorkflowActions();
-    await actions.onSetLiliaGoal(objective);
+    if (!context.hasContext.value || isTurnRunning.value || blockingPendingAgentActions.value.length > 0) return;
+    try {
+      await setTaskGoal(props.taskId, objective);
+      timeline.applyLoadedTimelineEvents(await timeline.loadTimelineEvents(props.taskId));
+    } catch (err) {
+      timeline.upsertTimelineEvent(
+        timeline.createLocalErrorTimelineEvent(`设置 Goal 失败：${String(err)}`),
+      );
+    }
   }
 
   async function onRefreshLiliaGoal() {
-    const actions = await getLiliaWorkflowActions();
-    await actions.onRefreshLiliaGoal();
+    if (!context.hasContext.value || isTurnRunning.value || blockingPendingAgentActions.value.length > 0) return;
+    try {
+      await refreshTaskGoal(props.taskId);
+      timeline.applyLoadedTimelineEvents(await timeline.loadTimelineEvents(props.taskId));
+    } catch (err) {
+      timeline.upsertTimelineEvent(
+        timeline.createLocalErrorTimelineEvent(`刷新 Goal 失败：${String(err)}`),
+      );
+    }
   }
 
   async function onClearLiliaGoal() {
-    const actions = await getLiliaWorkflowActions();
-    await actions.onClearLiliaGoal();
+    if (!context.hasContext.value || isTurnRunning.value || blockingPendingAgentActions.value.length > 0) return;
+    try {
+      await clearTaskGoal(props.taskId);
+      timeline.applyLoadedTimelineEvents(await timeline.loadTimelineEvents(props.taskId));
+    } catch (err) {
+      timeline.upsertTimelineEvent(
+        timeline.createLocalErrorTimelineEvent(`清除 Goal 失败：${String(err)}`),
+      );
+    }
   }
 
   function onInsertGuide(todo: TaskTodo) {
@@ -960,10 +988,24 @@ export function useTaskComposerController(options: {
     if (requestedPermission !== permissionMode.value) {
       void agentInteractionSettings.update({ permissionMode: requestedPermission });
     }
+    if (context.conversationRouteState.value.isLiveDraft) return;
     try {
       await persistComposerState(normalized, snapshot);
     } catch (err) {
       console.error("[chat] setComposerState failed", err);
+    }
+  }
+
+  async function onComposerDraftChange(content: string) {
+    const snapshot = captureTaskSnapshot();
+    const writeSeq = ++composerDraftWriteSeq;
+    await Promise.resolve();
+    if (writeSeq !== composerDraftWriteSeq || !isCurrentTaskSnapshot(snapshot)) return;
+    if (context.conversationRouteState.value.isLiveDraft) return;
+    try {
+      await setComposerDraft(snapshot.taskId, content);
+    } catch (err) {
+      console.error("[chat] setComposerDraft failed", err);
     }
   }
 
@@ -986,11 +1028,17 @@ export function useTaskComposerController(options: {
   async function loadComposerForCurrentTask(
     cycle: TaskLoadCycle,
   ): Promise<ChatComposerState | null> {
-    const comp = await loadComposerState(cycle.taskId);
+    const [comp, draft] = await Promise.all([
+      loadComposerState(cycle.taskId),
+      getComposerDraft(cycle.taskId),
+    ]);
     if (!isCurrentLoadCycle(cycle)) return null;
     await refreshTaskWorktree(cycle);
     if (!isCurrentLoadCycle(cycle)) return null;
     composer.value = withActiveBackend(comp);
+    restoreDraftContent.value = draft;
+    restoreDraftConversationReferences.value = [];
+    restoreDraftKey.value += 1;
     composerBackendLoaded = true;
     return composer.value;
   }
@@ -1282,6 +1330,7 @@ export function useTaskComposerController(options: {
     cancelScheduledHydration();
     loadSeq += 1;
     composerStateWriteSeq += 1;
+    composerDraftWriteSeq += 1;
     activeLoadCycle = null;
     composerLoad = null;
     isTurnRunning.value = false;
@@ -1353,6 +1402,7 @@ export function useTaskComposerController(options: {
     onResolveToolConsent,
     onResolvePendingAgentAction,
     onComposerUpdate,
+    onComposerDraftChange,
     onSelectWorktree,
     onRetryTimelineEvent,
     loadAll,

@@ -10,6 +10,7 @@ import {
   CHAT_SEND_MESSAGE_COMMAND,
   LILIA_IAB_OPEN_COMMAND,
   TODO_CREATE_COMMAND,
+  TODO_SUBMIT_GUIDE_COMMAND,
   WORKTREE_GET_FOR_TASK_COMMAND,
 } from "@lilia/contracts";
 import TaskDetail from "../src/pages/TaskDetail.vue";
@@ -677,6 +678,44 @@ describe("chat scheduler", () => {
       const guideRows = Array.from(view.container.querySelectorAll(".todo-float__row--guide"));
       expect(guideRows.some((row) => row.textContent?.includes("补充：优先看调度器")))
         .toBe(false);
+    });
+  });
+
+  it("Agent 运行中的引导会持久化并恢复对话引用", async () => {
+    const view = await renderTaskDetail();
+
+    await sendText(view, "先检查当前实现");
+    await waitFor(() => {
+      expect(view.getByRole("button", { name: "打断 Agent" })).toBeInTheDocument();
+    });
+
+    await setComposerText(view, "#Claude");
+    await flushAfterPaint();
+    await fireEvent.click(
+      await view.findByRole("option", { name: /接入 Claude Code 会话发现/ }),
+    );
+    const sendButton = view.container.querySelector(".chat-composer .chat-composer__send");
+    expect(sendButton).toBeInstanceOf(HTMLButtonElement);
+    await fireEvent.click(sendButton as HTMLButtonElement);
+
+    const create = await waitFor(() => {
+      const call = mockInvoke.mock.calls.find(([cmd]) => cmd === TODO_SUBMIT_GUIDE_COMMAND);
+      expect(call).toBeDefined();
+      return call!;
+    });
+    expect(create[1].conversationReferences).toEqual([
+      expect.objectContaining({
+        taskId: expect.any(String),
+        title: "接入 Claude Code 会话发现",
+        route: expect.any(String),
+      }),
+    ]);
+
+    completeMockAgentTurn("t-002");
+    await waitFor(() => {
+      const sends = mockInvoke.mock.calls.filter(([cmd]) => cmd === CHAT_SEND_MESSAGE_COMMAND);
+      expect(sends).toHaveLength(2);
+      expect(sends[1][1].conversationReferences).toEqual(create[1].conversationReferences);
     });
   });
 

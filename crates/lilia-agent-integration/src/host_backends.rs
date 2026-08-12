@@ -15,9 +15,8 @@ use mutsuki_agent_plugin_computer_use::{
 };
 use mutsuki_agent_plugin_git::CliGitBackend;
 use mutsuki_agent_plugin_lsp::StdioLspProcessFactory;
-use mutsuki_agent_plugin_mcp::{CompositeMcpTransportFactory, McpHttpClient};
+use mutsuki_agent_plugin_mcp::{CompositeMcpTransportFactory, ReqwestMcpHttpClient};
 use reqwest::blocking::Client;
-use serde_json::Value;
 
 struct ActiveProcess {
     child: Mutex<Child>,
@@ -217,33 +216,6 @@ fn html_title(body: &[u8]) -> Option<String> {
     (!title.is_empty()).then(|| title.to_string())
 }
 
-#[derive(Default)]
-struct ReqwestMcpHttpClient;
-
-impl McpHttpClient for ReqwestMcpHttpClient {
-    fn post_json(
-        &self,
-        url: &str,
-        headers: &[(String, String)],
-        body: &Value,
-        timeout: Duration,
-    ) -> Result<Value, AgentError> {
-        let client = Client::builder()
-            .timeout(timeout)
-            .build()
-            .map_err(|error| AgentError::new("lilia.host.mcp.client", error.to_string()))?;
-        let mut request = client.post(url).json(body);
-        for (name, value) in headers {
-            request = request.header(name, value);
-        }
-        request
-            .send()
-            .and_then(reqwest::blocking::Response::error_for_status)
-            .and_then(reqwest::blocking::Response::json)
-            .map_err(|error| AgentError::new("lilia.host.mcp.http", error.to_string()))
-    }
-}
-
 pub(crate) fn native_coding_backends() -> NativeCodingBackends {
     NativeCodingBackends {
         git: Arc::new(CliGitBackend::default()),
@@ -270,10 +242,7 @@ mod tests {
         std::fs::create_dir_all(&root).unwrap();
         let backend = HostProcessBackend::default();
         #[cfg(windows)]
-        let (command, args) = (
-            "cmd".to_string(),
-            vec!["/C".into(), "echo 123456".into()],
-        );
+        let (command, args) = ("cmd".to_string(), vec!["/C".into(), "echo 123456".into()]);
         #[cfg(not(windows))]
         let (command, args) = ("sh".to_string(), vec!["-c".into(), "printf 123456".into()]);
         let result = backend

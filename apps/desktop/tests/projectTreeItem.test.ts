@@ -6,6 +6,7 @@ import {
   POPUP_OPEN_CHILD_QUESTION_COMMAND,
   POPUP_OPEN_NEW_CHAT_COMMAND,
   POPUP_OPEN_TASK_COMMAND,
+  PROJECT_REMOVE_COMMAND,
   type Task,
 } from "@lilia/contracts";
 import ProjectTreeItem from "../src/components/sidebar/ProjectTreeItem.vue";
@@ -71,6 +72,7 @@ async function renderProjectTreeItem(initialRoute = "/projects/lilia") {
         @toggle="$emit('toggle', $event)"
         @error="emitError"
         @archived="emitArchived"
+        @deleted="$emit('deleted')"
       />
       <ContextMenuHost />
     `,
@@ -195,6 +197,34 @@ describe("ProjectTreeItem", () => {
     await waitFor(() => {
       expect(getProject("lilia")?.name).toBe("Lilia Next");
       expect(view.queryByRole("textbox")).toBeNull();
+    });
+  });
+
+  it("移除项目需要二次确认且只调用一次共享命令", async () => {
+    const view = await renderProjectTreeItem("/projects/lilia");
+
+    await fireEvent.click(view.getByLabelText("更多"));
+    const remove = await view.findByRole("menuitem", { name: "移除项目" });
+    await fireEvent.click(remove);
+    expect(mockInvoke).not.toHaveBeenCalledWith(
+      PROJECT_REMOVE_COMMAND,
+      { id: "lilia" },
+      undefined,
+    );
+    await fireEvent.click(await view.findByRole("menuitem", {
+      name: "确认移除？再点一次",
+    }));
+
+    await waitFor(() => {
+      expect(mockInvoke.mock.calls.filter(([command]) =>
+        command === PROJECT_REMOVE_COMMAND
+      )).toHaveLength(1);
+      expect(mockInvoke).toHaveBeenCalledWith(
+        PROJECT_REMOVE_COMMAND,
+        { id: "lilia" },
+        undefined,
+      );
+      expect(view.emitted("deleted")).toEqual([[]]);
     });
   });
 

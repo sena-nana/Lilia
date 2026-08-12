@@ -1,5 +1,6 @@
 import type { Router } from "vue-router";
 import {
+  AGENT_DEBUG_EQUIVALENCE_SNAPSHOT_COMMAND,
   AGENT_DEBUG_RECORD_ACTION_COMMAND,
   type AgentDebugAction,
   type AgentDebugElement,
@@ -18,6 +19,7 @@ type AgentDebugWindow = Window & {
     act: (action: AgentDebugAction) => Promise<AgentDebugSnapshot>;
     mark: (label: string, data?: unknown) => Promise<AgentDebugSnapshot>;
     getRecentErrors: () => AgentDebugErrorEntry[];
+    equivalenceSnapshot: (fixtureId: string) => Promise<unknown>;
   };
 };
 
@@ -419,6 +421,8 @@ export function installAgentDebugHarness(router: Router): void {
     act,
     mark: markAgentDebug,
     getRecentErrors: () => [...errors],
+    equivalenceSnapshot: (fixtureId: string) =>
+      rawInvoke(AGENT_DEBUG_EQUIVALENCE_SNAPSHOT_COMMAND, { fixtureId }),
   };
   void markAgentDebug("agent-debug-installed", { route: currentRoute() });
 }

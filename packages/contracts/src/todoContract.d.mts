@@ -13,6 +13,7 @@ export const QUEUED_TASK_TODO_GUIDE_STATUS: TaskTodoGuideStatus;
 export const SENT_TASK_TODO_GUIDE_STATUS: TaskTodoGuideStatus;
 export const TODO_LIST_COMMAND: "todo_list";
 export const TODO_CREATE_COMMAND: "todo_create";
+export const TODO_SUBMIT_GUIDE_COMMAND: "todo_submit_guide";
 export const TODO_UPDATE_COMMAND: "todo_update";
 export const TODO_DELETE_COMMAND: "todo_delete";
 export const TODO_APPLY_AGENT_EVENT_COMMAND: "todo_apply_agent_event";

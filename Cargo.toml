@@ -8,8 +8,10 @@ members = [
     "crates/lilia-agent-integration",
     "crates/lilia-service",
     "crates/lilia-editor-compat",
+    "crates/lilia-desktop-application",
     "apps/service",
     "apps/cli",
+    "apps/native-desktop",
     "apps/desktop/src-tauri",
 ]
 default-members = [
@@ -20,8 +22,10 @@ default-members = [
     "crates/lilia-agent-integration",
     "crates/lilia-service",
     "crates/lilia-editor-compat",
+    "crates/lilia-desktop-application",
     "apps/service",
     "apps/cli",
+    "apps/native-desktop",
 ]
 
 [workspace.package]
@@ -32,38 +36,41 @@ version = "0.1.0"
 [workspace.dependencies]
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
+sha2 = "0.10.9"
 thiserror = "2.0"
+uuid = { version = "1.23.4", features = ["v4"] }
 lilia-contracts = { path = "crates/lilia-contracts" }
 lilia-core = { path = "crates/lilia-core" }
 lilia-client = { path = "crates/lilia-client" }
 lilia-storage = { path = "crates/lilia-storage" }
 lilia-agent-integration = { path = "crates/lilia-agent-integration" }
 lilia-service = { path = "crates/lilia-service" }
+lilia-desktop-application = { path = "crates/lilia-desktop-application" }
 # Mutsuki pin mode: PATH (sibling checkout) vs GIT (release rev).
 # See docs/design/mutsuki-dependency-pin.md — switch all entries together.
-# GIT mode (default): pin https://github.com/sena-nana/Mutsuki.git @ 873af51f5391f7bd5f1d3216c2bcfe8680c839f8
-mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-runtime-contracts" }
-mutsuki-runtime-core = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-runtime-core" }
-mutsuki-runtime-host = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-runtime-host" }
-mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-runtime-sdk" }
-mutsuki-tauri-host = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-tauri-host" }
-mutsuki-agent-adapter-api = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-adapter-api" }
-mutsuki-agent-adapter-anthropic = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-adapter-anthropic" }
-mutsuki-agent-adapter-openai = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-adapter-openai" }
-mutsuki-agent-bundle = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-bundle" }
-mutsuki-agent-client = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-client" }
-mutsuki-agent-contracts = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-contracts" }
-mutsuki-agent-plugin-code-index = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-plugin-code-index" }
-mutsuki-agent-plugin-code-completion = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-plugin-code-completion" }
-mutsuki-agent-plugin-computer-use = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-plugin-computer-use" }
-mutsuki-agent-plugin-git = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-plugin-git" }
-mutsuki-agent-plugin-lsp = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-plugin-lsp" }
-mutsuki-agent-plugin-mcp = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-plugin-mcp" }
-mutsuki-agent-plugin-next-edit = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-plugin-next-edit" }
-mutsuki-agent-runtime = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-runtime" }
-mutsuki-agent-sdk = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-sdk" }
-mutsuki-agent-testkit = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-agent-testkit" }
-mutsuki-plugin-agent-memory-router = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "873af51f5391f7bd5f1d3216c2bcfe8680c839f8", package = "mutsuki-plugin-agent-memory-router" }
+# GIT mode (default): pin https://github.com/sena-nana/Mutsuki.git @ fea58012240dac944c688f5e164ccf454614db7b
+mutsuki-runtime-contracts = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-runtime-contracts" }
+mutsuki-runtime-core = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-runtime-core" }
+mutsuki-runtime-host = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-runtime-host" }
+mutsuki-runtime-sdk = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-runtime-sdk" }
+mutsuki-tauri-host = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-tauri-host" }
+mutsuki-agent-adapter-api = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-adapter-api" }
+mutsuki-agent-adapter-anthropic = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-adapter-anthropic" }
+mutsuki-agent-adapter-openai = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-adapter-openai" }
+mutsuki-agent-bundle = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-bundle" }
+mutsuki-agent-client = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-client" }
+mutsuki-agent-contracts = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-contracts" }
+mutsuki-agent-plugin-code-index = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-plugin-code-index" }
+mutsuki-agent-plugin-code-completion = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-plugin-code-completion" }
+mutsuki-agent-plugin-computer-use = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-plugin-computer-use" }
+mutsuki-agent-plugin-git = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-plugin-git" }
+mutsuki-agent-plugin-lsp = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-plugin-lsp" }
+mutsuki-agent-plugin-mcp = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-plugin-mcp" }
+mutsuki-agent-plugin-next-edit = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-plugin-next-edit" }
+mutsuki-agent-runtime = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-runtime" }
+mutsuki-agent-sdk = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-sdk" }
+mutsuki-agent-testkit = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-agent-testkit" }
+mutsuki-plugin-agent-memory-router = { git = "https://github.com/sena-nana/Mutsuki.git", rev = "fea58012240dac944c688f5e164ccf454614db7b", package = "mutsuki-plugin-agent-memory-router" }
 # PATH mode (local sibling; comment GIT block above, uncomment all together):
 # mutsuki-runtime-contracts = { path = "../MutsukiCore/crates/mutsuki-runtime-contracts" }
 # mutsuki-agent-adapter-anthropic = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-adapter-anthropic" }

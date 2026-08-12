@@ -259,6 +259,9 @@ function processAnchorIdsForEntry(entry: TimelineEntry): string[] {
     ref="timelineRef"
     class="agent-timeline"
     aria-label="Agent 工作过程"
+    data-agent-id="timeline.surface"
+    :data-agent-total-count="props.events.length"
+    :data-agent-rendered-count="renderedEntries.length"
   >
     <div class="agent-timeline__rail-layer" aria-hidden="true">
       <span class="agent-timeline__rail-line" :style="railLineStyle" />

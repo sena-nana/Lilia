@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AssignmentId, ConflictKind, MilestoneId, ProductError, ProductResult, ProductRevision,
-    ProjectId, TaskId, WorkflowId,
+    AssignmentId, ConflictKind, ConversationId, MilestoneId, ProductError, ProductResult,
+    ProductRevision, ProjectId, TaskId, WorkflowId,
 };
 
 /// Product Task is not an Agent Todo. Agent todos must be explicitly promoted.
@@ -60,6 +60,37 @@ pub struct ProductTask {
     pub revision: ProductRevision,
     /// Provenance only — never a Claude/Codex brand field on the core model.
     pub legacy_source: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductTaskReorderEntry {
+    pub task_id: TaskId,
+    pub expected_revision: crate::ExpectedRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductTaskReorderOutcome {
+    pub tasks: Vec<ProductTask>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductTaskMoveInput {
+    pub task_id: TaskId,
+    pub target_project_id: Option<ProjectId>,
+    pub target_parent_id: Option<TaskId>,
+    pub expected_revision: crate::ExpectedRevision,
+    pub moved_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductTaskMoveOutcome {
+    pub task: ProductTask,
+    pub moved_task_ids: Vec<TaskId>,
+    pub moved_conversation_ids: Vec<ConversationId>,
 }
 
 impl ProductTask {

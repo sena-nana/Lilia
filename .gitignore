@@ -73,6 +73,7 @@ coverage/
 *.lcov
 .vitest-cache/
 agent-debug-runs/
+artifacts/native-preview-smoke/
 
 # ---------- Rust / Cargo / Tauri ----------
 target/

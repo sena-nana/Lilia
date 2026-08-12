@@ -6,7 +6,7 @@
 //! `lilia-storage`. Desktop SQLite is a rebuildable UI cache, not an execution
 //! fact source.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use lilia_agent_integration::{
@@ -15,13 +15,14 @@ use lilia_agent_integration::{
     TurnCancellationDisposition, PRODUCT_NATIVE_CODING_PROFILE_HINT,
 };
 use lilia_contracts::{
-    AgentSessionRef, ProductApprovalDecision, TaskId, TimelineProjectionEvent,
-    PRODUCT_TIMELINE_STORE_ID, TIMELINE_UI_CACHE_KIND,
+    AgentSessionRef, PendingProjectionStatus, ProductApprovalDecision, TaskId,
+    TimelineProjectionEvent, PRODUCT_TIMELINE_STORE_ID, TIMELINE_UI_CACHE_KIND,
 };
 use lilia_core::{AgentKitClientPort, NativeAgentCapabilitySnapshot};
 use mutsuki_agent_contracts::{
-    AgentEventEnvelope, AgentMessage, AgentSession, AgentWireError, AgentWireRequestEnvelope,
-    AgentWireResponseEnvelope, CredentialRef, EditorContextSnapshot, EditorWorkspaceRef,
+    AgentEvent, AgentEventEnvelope, AgentMessage, AgentSession, AgentWireError,
+    AgentWireRequestEnvelope, AgentWireResponseEnvelope, CredentialRef, EditorContextSnapshot,
+    EditorWorkspaceRef, InteractionResolution,
 };
 use serde::Serialize;
 use serde_json::json;
@@ -30,8 +31,8 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 use crate::agent_timeline::AgentTimelineEventInput;
 use crate::chat::runner::{finish_agent_turn, RunnerInvocation, RunnerOutput};
 use crate::chat::state::{
-    finish_running_turn_handles, pause_native_running_turn, register_running_turn,
-    remember_agent_session, session_key, ChatStore, NativeApprovalPause,
+    finish_running_turn_handles, pause_native_action_turn, register_running_turn,
+    remember_agent_session, session_key, ChatStore, NativeActionPause,
 };
 use crate::chat::timeline_sink::persist_and_emit_input;
 use crate::chat::workflow::automation_run_id;
@@ -96,9 +97,27 @@ pub fn require_native_for_automation_or_multi_agent(context: &str) -> Result<(),
 /// Honesty field: Node legacy-runner feature is permanently removed (always false).
 pub const LEGACY_RUNNER_FEATURE_COMPILED: bool = false;
 
+static SHARED_RUNTIME: OnceLock<Result<SharedNativeAgentKitRuntime, String>> = OnceLock::new();
+
+pub fn install_shared_runtime(runtime: SharedNativeAgentKitRuntime) -> Result<(), String> {
+    if let Some(existing) = SHARED_RUNTIME.get() {
+        return match existing {
+            Ok(existing) if Arc::ptr_eq(&existing.0, &runtime.0) => Ok(()),
+            Ok(_) => {
+                Err("Native AgentKit runtime was already initialized by another authority".into())
+            }
+            Err(error) => Err(format!(
+                "Native AgentKit runtime initialization already failed: {error}"
+            )),
+        };
+    }
+    SHARED_RUNTIME
+        .set(Ok(runtime))
+        .map_err(|_| "Native AgentKit runtime was initialized concurrently".to_string())
+}
+
 fn shared_runtime() -> Result<&'static SharedNativeAgentKitRuntime, String> {
-    static RUNTIME: OnceLock<Result<SharedNativeAgentKitRuntime, String>> = OnceLock::new();
-    match RUNTIME.get_or_init(|| {
+    match SHARED_RUNTIME.get_or_init(|| {
         NativeRuntimeBootstrap::embedded_reference()
             .map_err(|err| err.to_string())
             .and_then(|bootstrap| {
@@ -186,12 +205,12 @@ pub fn cancel_product_agent_turn<R: Runtime>(
     Ok(disposition)
 }
 
-pub(crate) fn finish_cancelled_native_approval_turn<R: Runtime>(
+pub(crate) fn finish_cancelled_native_paused_turn<R: Runtime>(
     app_handle: &AppHandle<R>,
     task_id: &str,
     turn: crate::chat::state::RunningTurn,
 ) {
-    let Some(pause) = turn.native_approval_pause else {
+    let Some(pause) = turn.native_action_pause else {
         return;
     };
     let store = app_handle.state::<ChatStore>();
@@ -473,31 +492,244 @@ pub fn native_respond_approval<R: Runtime>(
         );
     })?;
     mirror_stream_page_to_ui_cache(&app_handle, &task_id, &page, streamed_sequences.as_ref())?;
+    let waiting_for_action = page_waiting_for_action(&page);
+    if waiting_for_action {
+        ensure_native_paused_turn(&app_handle, &task_id, &page.turn_id, &page.session_id)?;
+    }
     emit_native_stream_event(
         &app_handle,
         &task_id,
         &page.turn_id,
         Some(page.next_sequence),
         page.events.len(),
-        !page.waiting_approval,
+        !waiting_for_action,
         Some(&page),
     );
-    if !page.waiting_approval {
-        finish_native_approval_turn(&app_handle, &task_id, &page)?;
+    if !waiting_for_action {
+        finish_native_paused_turn(&app_handle, &task_id, &page)?;
     }
     serde_json::to_value(page).map_err(|e| e.to_string())
 }
 
-pub fn respond_product_agent_approval(
-    decision: ProductApprovalDecision,
-) -> Result<NativeTurnStreamPage, String> {
-    Ok(agent_wire_service()
-        .map_err(|error| format!("{}: {}", error.code, error.message))?
+pub fn respond_native_agent_interaction<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    task_id: &str,
+    request_id: &str,
+    kind: &str,
+    result: serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let task = TaskId::new(task_id.to_owned()).map_err(|error| error.to_string())?;
+    let pending = native_runtime()?
+        .product_pending_for_task(&task)
+        .into_iter()
+        .find(|pending| {
+            pending.request_id == request_id && pending.status == PendingProjectionStatus::Open
+        })
+        .ok_or_else(|| format!("Native interaction `{request_id}` is not pending"))?;
+    if pending.kind != kind {
+        return Err(format!(
+            "Native interaction `{request_id}` has kind `{}`, not `{kind}`",
+            pending.kind
+        ));
+    }
+    let turn_id = pending
+        .turn_id
+        .clone()
+        .ok_or_else(|| format!("Native interaction `{request_id}` is missing its turn id"))?;
+    let version = pending.action_revision.ok_or_else(|| {
+        format!("Native interaction `{request_id}` is missing its action revision")
+    })?;
+    let running_turn = app_handle
+        .state::<ChatStore>()
+        .running_turns
         .lock()
-        .map_err(|_| "Desktop Agent Wire service lock is poisoned".to_string())?
-        .respond_task_approval(decision)
-        .map_err(|error| format!("{}: {}", error.code, error.message))?
-        .page)
+        .map_err(|_| "Desktop running turn lock is poisoned".to_owned())?
+        .get(task_id)
+        .cloned();
+    if running_turn.as_ref().is_some_and(|running_turn| {
+        running_turn.backend != BACKEND_NATIVE_AGENTKIT
+            || running_turn.turn_id != turn_id
+            || running_turn.native_action_pause.is_none()
+    }) {
+        return Err(format!(
+            "Native interaction `{request_id}` does not belong to the paused active turn"
+        ));
+    }
+
+    let resolution = InteractionResolution {
+        session_id: pending.agent_session.as_str().to_owned(),
+        turn_id: turn_id.clone(),
+        version,
+        interaction_id: request_id.to_owned(),
+        accepted: interaction_result_accepted(kind, &result),
+        response: result,
+    };
+    let streamed_sequences = Arc::new(Mutex::new(HashSet::new()));
+    let observed_sequences = streamed_sequences.clone();
+    let stream_app = app_handle.clone();
+    let stream_task_id = task_id.to_owned();
+    let stream_turn_id = turn_id.clone();
+    let page = respond_product_agent_interaction_observed(resolution, move |events| {
+        if mirror_agent_events_to_ui_cache(&stream_app, &stream_task_id, events).is_ok() {
+            if let Ok(mut sequences) = observed_sequences.lock() {
+                sequences.extend(events.iter().map(|event| event.sequence));
+            }
+        }
+        emit_native_stream_event(
+            &stream_app,
+            &stream_task_id,
+            &stream_turn_id,
+            events.last().map(|event| event.sequence),
+            events.len(),
+            false,
+            None,
+        );
+    })?;
+    mirror_stream_page_to_ui_cache(app_handle, task_id, &page, streamed_sequences.as_ref())?;
+    let waiting_for_action = page_waiting_for_action(&page);
+    if waiting_for_action {
+        ensure_native_paused_turn(app_handle, task_id, &page.turn_id, &page.session_id)?;
+    }
+    emit_native_stream_event(
+        app_handle,
+        task_id,
+        &page.turn_id,
+        Some(page.next_sequence),
+        page.events.len(),
+        !waiting_for_action,
+        Some(&page),
+    );
+    if !waiting_for_action {
+        finish_native_paused_turn(app_handle, task_id, &page)?;
+    }
+    serde_json::to_value(page).map_err(|error| error.to_string())
+}
+
+pub fn restore_paused_native_turns<R: Runtime>(app_handle: &AppHandle<R>) -> Result<usize, String> {
+    let runtime = native_runtime()?;
+    let mut latest_by_task = BTreeMap::new();
+    for pending in runtime.product_open_pending() {
+        let Some(turn_id) = pending.turn_id.as_deref() else {
+            continue;
+        };
+        let session = match runtime.session_snapshot(pending.agent_session.as_str()) {
+            Ok(session) => session,
+            Err(error) => {
+                eprintln!(
+                    "[native-agent] skip pending `{}` with unavailable session: {error}",
+                    pending.request_id
+                );
+                continue;
+            }
+        };
+        if !turn_events_waiting_for_action(&session.events, turn_id) {
+            continue;
+        }
+        latest_by_task
+            .entry(pending.task_id.as_str().to_owned())
+            .and_modify(|current: &mut lilia_contracts::PendingProjection| {
+                if pending.sequence > current.sequence {
+                    *current = pending.clone();
+                }
+            })
+            .or_insert(pending);
+    }
+
+    for (task_id, pending) in &latest_by_task {
+        let turn_id = pending
+            .turn_id
+            .as_deref()
+            .expect("restored Native pending has a turn id");
+        ensure_native_paused_turn(app_handle, task_id, turn_id, pending.agent_session.as_str())?;
+    }
+    Ok(latest_by_task.len())
+}
+
+fn turn_events_waiting_for_action(events: &[AgentEventEnvelope], turn_id: &str) -> bool {
+    events
+        .iter()
+        .rev()
+        .find_map(|event| match &event.event {
+            AgentEvent::TurnState {
+                turn_id: event_turn_id,
+                status,
+            } if event_turn_id == turn_id => Some(status.as_str()),
+            _ => None,
+        })
+        .is_some_and(|status| matches!(status, "waiting_approval" | "waiting_interaction"))
+}
+
+fn ensure_native_paused_turn<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    task_id: &str,
+    turn_id: &str,
+    session_id: &str,
+) -> Result<(), String> {
+    let store = app_handle.state::<ChatStore>();
+    let already_paused = store
+        .running_turns
+        .lock()
+        .map_err(|_| "Desktop running turn lock is poisoned".to_owned())?
+        .get(task_id)
+        .is_some_and(|turn| {
+            turn.backend == BACKEND_NATIVE_AGENTKIT
+                && turn.turn_id == turn_id
+                && turn.native_action_pause.is_some()
+        });
+    if !already_paused {
+        register_running_turn(
+            &store,
+            task_id.to_owned(),
+            turn_id.to_owned(),
+            BACKEND_NATIVE_AGENTKIT,
+        );
+        let automation_run_id =
+            crate::automation::automation_run_id_for_waiting_turn(app_handle, turn_id)?;
+        if !pause_native_action_turn(
+            &store,
+            task_id,
+            turn_id,
+            automation_run_id,
+            Some(session_id.to_owned()),
+        ) {
+            return Err(format!("failed to restore paused Native turn `{turn_id}`"));
+        }
+    }
+    store
+        .running_tasks
+        .lock()
+        .map_err(|_| "Desktop running task lock is poisoned".to_owned())?
+        .insert(task_id.to_owned(), true);
+    store
+        .sdk_sessions
+        .lock()
+        .map_err(|_| "Desktop session lock is poisoned".to_owned())?
+        .insert(
+            session_key(BACKEND_NATIVE_AGENTKIT, task_id),
+            session_id.to_owned(),
+        );
+    Ok(())
+}
+
+fn interaction_result_accepted(kind: &str, result: &serde_json::Value) -> bool {
+    if result.get("cancelled").and_then(serde_json::Value::as_bool) == Some(true) {
+        return false;
+    }
+    if matches!(
+        result.get("action").and_then(serde_json::Value::as_str),
+        Some("cancel" | "decline" | "deny" | "reject")
+    ) {
+        return false;
+    }
+    if kind == "plan_approval" {
+        return result
+            .get("answers")
+            .and_then(|answers| answers.get("approve-plan"))
+            .and_then(|answer| answer.get("value"))
+            .and_then(serde_json::Value::as_str)
+            != Some("no");
+    }
+    true
 }
 
 fn respond_product_agent_approval_observed<O>(
@@ -512,6 +744,22 @@ where
         .lock()
         .map_err(|_| "Desktop Agent Wire service lock is poisoned".to_string())?
         .respond_task_approval_observed(decision, observer)
+        .map_err(|error| format!("{}: {}", error.code, error.message))?
+        .page)
+}
+
+fn respond_product_agent_interaction_observed<O>(
+    resolution: InteractionResolution,
+    observer: O,
+) -> Result<NativeTurnStreamPage, String>
+where
+    O: Fn(&[AgentEventEnvelope]) + Send + Sync + 'static,
+{
+    Ok(agent_wire_service()
+        .map_err(|error| format!("{}: {}", error.code, error.message))?
+        .lock()
+        .map_err(|_| "Desktop Agent Wire service lock is poisoned".to_string())?
+        .respond_task_interaction_observed(resolution, observer)
         .map_err(|error| format!("{}: {}", error.code, error.message))?
         .page)
 }
@@ -807,8 +1055,9 @@ pub fn run_native_agent_turn<R: Runtime>(
         .map_err(|error| format!("{}: {}", error.code, error.message))?
         .page;
 
-    let waiting_approval = page.waiting_approval
-        && pause_native_running_turn(
+    let waiting_for_action = page_waiting_for_action(&page);
+    let paused = waiting_for_action
+        && pause_native_action_turn(
             &app_handle.state::<ChatStore>(),
             &invocation.task_id,
             &invocation.turn_id,
@@ -832,11 +1081,11 @@ pub fn run_native_agent_turn<R: Runtime>(
         &invocation.turn_id,
         Some(page.next_sequence),
         page.events.len(),
-        !waiting_approval,
+        !paused,
         Some(&page),
     );
 
-    if !waiting_approval {
+    if !paused {
         crate::chat::title_update::spawn_title_update(
             app_handle.clone(),
             invocation.task_id.clone(),
@@ -848,9 +1097,14 @@ pub fn run_native_agent_turn<R: Runtime>(
         last_session_id: Some(page.session_id.clone()),
         interrupted: false,
         reset: false,
-        waiting_approval,
-        terminal_failed: !waiting_approval && !page.completed,
+        waiting_approval: paused && page.waiting_approval,
+        waiting_interaction: paused && page.waiting_interaction,
+        terminal_failed: !paused && !page.completed && !page.cancelled,
     })
+}
+
+fn page_waiting_for_action(page: &NativeTurnStreamPage) -> bool {
+    page.waiting_approval || page.waiting_interaction
 }
 
 fn emit_native_stream_event<R: Runtime>(
@@ -876,7 +1130,9 @@ fn emit_native_stream_event<R: Runtime>(
             "profileId": page.map(|page| page.profile_id.as_str()),
             "toolSummary": page.and_then(|page| page.tool_summary.as_ref()),
             "waitingApproval": page.map(|page| page.waiting_approval),
+            "waitingInteraction": page.map(|page| page.waiting_interaction),
             "completed": page.map(|page| page.completed),
+            "cancelled": page.map(|page| page.cancelled),
             "timelineIsProjection": true,
             "productTimelineStore": PRODUCT_TIMELINE_STORE_ID,
             "desktopSqliteIsUiCacheOnly": true,
@@ -885,7 +1141,7 @@ fn emit_native_stream_event<R: Runtime>(
     );
 }
 
-fn finish_native_approval_turn<R: Runtime>(
+fn finish_native_paused_turn<R: Runtime>(
     app_handle: &AppHandle<R>,
     task_id: &str,
     page: &NativeTurnStreamPage,
@@ -900,16 +1156,16 @@ fn finish_native_approval_turn<R: Runtime>(
         .cloned();
     if running_turn
         .as_ref()
-        .is_some_and(|turn| turn.native_approval_pause.is_none())
+        .is_some_and(|turn| turn.native_action_pause.is_none())
     {
         return Err(format!(
-            "Native turn `{}` is still running and is not paused for approval",
+            "Native turn `{}` is still running and is not paused for an action",
             page.turn_id
         ));
     }
-    let pause = running_turn.and_then(|turn| turn.native_approval_pause);
+    let pause = running_turn.and_then(|turn| turn.native_action_pause);
     let (automation_run_id, last_session_id, interrupted, reset) = match pause {
-        Some(NativeApprovalPause {
+        Some(NativeActionPause {
             automation_run_id,
             last_session_id,
         }) => {
@@ -1046,7 +1302,7 @@ fn mirror_agent_events_to_ui_cache<R: Runtime>(
     Ok(())
 }
 
-fn mirror_product_timeline_to_ui_cache<R: Runtime>(
+pub(crate) fn mirror_product_timeline_to_ui_cache<R: Runtime>(
     app_handle: &AppHandle<R>,
     events: &[TimelineProjectionEvent],
 ) -> Result<usize, String> {
@@ -1110,6 +1366,7 @@ fn annotate_projection_payload(
 mod tests {
     use super::*;
     use lilia_contracts::{AgentSessionRef, ProjectionEventId};
+    use mutsuki_agent_contracts::AgentEventMeta;
 
     #[test]
     fn product_timeline_ui_events_are_not_desktop_sqlite_fact_source() {
@@ -1199,5 +1456,52 @@ mod tests {
             Some(value) => std::env::set_var(ENV_EXECUTION_BACKEND, value),
             None => std::env::remove_var(ENV_EXECUTION_BACKEND),
         }
+    }
+
+    #[test]
+    fn interaction_acceptance_preserves_answers_and_rejects_plan_no() {
+        assert!(interaction_result_accepted(
+            "ask_user",
+            &json!({ "answers": { "question": { "value": "no" } } })
+        ));
+        assert!(!interaction_result_accepted(
+            "plan_approval",
+            &json!({ "answers": { "approve-plan": { "value": "no" } } })
+        ));
+        assert!(interaction_result_accepted(
+            "plan_approval",
+            &json!({ "answers": { "approve-plan": { "value": "yes" } } })
+        ));
+        assert!(interaction_result_accepted(
+            "plan_approval",
+            &json!({ "action": "revision_request", "feedback": "simplify" })
+        ));
+        assert!(!interaction_result_accepted(
+            "ask_user",
+            &json!({ "cancelled": true })
+        ));
+    }
+
+    #[test]
+    fn paused_turn_restore_uses_latest_state_for_the_same_turn() {
+        let event = |sequence, turn_id: &str, status: &str| AgentEventEnvelope {
+            session_id: "session-restore".into(),
+            sequence,
+            meta: AgentEventMeta::new(format!("event-{sequence}"), "turn state"),
+            event: AgentEvent::TurnState {
+                turn_id: turn_id.into(),
+                status: status.into(),
+            },
+        };
+        let mut events = vec![
+            event(1, "turn-1", "running"),
+            event(2, "turn-1", "waiting_interaction"),
+            event(3, "turn-other", "completed"),
+        ];
+        assert!(turn_events_waiting_for_action(&events, "turn-1"));
+
+        events.push(event(4, "turn-1", "completed"));
+        assert!(!turn_events_waiting_for_action(&events, "turn-1"));
+        assert!(!turn_events_waiting_for_action(&events, "missing"));
     }
 }

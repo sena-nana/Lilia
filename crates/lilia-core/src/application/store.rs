@@ -4,8 +4,11 @@ use std::sync::{Arc, Mutex};
 use lilia_contracts::{
     AgentSessionBinding, ConflictKind, ExpectedRevision, Page, PageRequest, ProductCommandMeta,
     ProductCommandResult, ProductEntity, ProductEntityKind, ProductError, ProductEvent,
-    ProductEventSequence, ProductResult, ProductTask, Project, ProjectId, TaskDependencyGraph,
-    TaskId,
+    ProductEventSequence, ProductProjectRemovalOutcome, ProductProjectReorderEntry,
+    ProductProjectReorderOutcome, ProductResult, ProductTask, ProductTaskHandoffImport,
+    ProductTaskHandoffRecord, ProductTaskMoveInput, ProductTaskMoveOutcome,
+    ProductTaskReorderEntry, ProductTaskReorderOutcome, Project, ProjectArchiveState, ProjectId,
+    TaskDependencyGraph, TaskId,
 };
 
 use crate::domain::ensure_expected_revision;
@@ -35,6 +38,27 @@ pub trait ProductRepository: Send + Sync {
         entity: ProductEntity,
         action: &str,
     ) -> ProductResult<ProductCommandResult<ProductEntity>>;
+    fn remove_project_command(
+        &self,
+        meta: &ProductCommandMeta,
+        project_id: &ProjectId,
+        removed_at: i64,
+    ) -> ProductResult<ProductCommandResult<ProductProjectRemovalOutcome>>;
+    fn reorder_projects_command(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductProjectReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductProjectReorderOutcome>>;
+    fn reorder_tasks_command(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductTaskReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductTaskReorderOutcome>>;
+    fn move_task_command(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskMoveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskMoveOutcome>>;
     fn product_events(&self, request: &PageRequest) -> ProductResult<Page<ProductEvent>>;
     fn create_project(&self, project: Project) -> ProductResult<Project>;
     fn create_task(&self, task: ProductTask) -> ProductResult<ProductTask>;
@@ -48,8 +72,20 @@ pub trait ProductRepository: Send + Sync {
     fn list_projects(&self) -> ProductResult<Vec<Project>>;
     fn get_task(&self, task_id: &TaskId) -> ProductResult<ProductTask>;
     fn list_tasks(&self) -> ProductResult<Vec<ProductTask>>;
+    fn accept_task_handoff(
+        &self,
+        import: ProductTaskHandoffImport,
+    ) -> ProductResult<ProductTaskHandoffRecord>;
+    fn task_handoff_for_task(
+        &self,
+        task_id: &TaskId,
+    ) -> ProductResult<Option<ProductTaskHandoffRecord>>;
     fn record_binding(&self, binding: AgentSessionBinding) -> ProductResult<AgentSessionBinding>;
     fn list_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<Vec<AgentSessionBinding>>;
+    fn replace_binding_for_task(
+        &self,
+        binding: AgentSessionBinding,
+    ) -> ProductResult<AgentSessionBinding>;
     /// Drop product Agent session bindings for a task (e.g. user session reset).
     fn clear_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<usize>;
 }
@@ -59,8 +95,13 @@ pub struct InMemoryProductStore {
     pub projects: HashMap<String, Project>,
     pub tasks: HashMap<String, ProductTask>,
     pub bindings: HashMap<String, AgentSessionBinding>,
+    pub task_handoffs: HashMap<String, ProductTaskHandoffRecord>,
     entities: HashMap<String, ProductEntity>,
     command_results: HashMap<String, ProductCommandResult<ProductEntity>>,
+    project_removal_results: HashMap<String, ProductCommandResult<ProductProjectRemovalOutcome>>,
+    project_reorder_results: HashMap<String, ProductCommandResult<ProductProjectReorderOutcome>>,
+    task_reorder_results: HashMap<String, ProductCommandResult<ProductTaskReorderOutcome>>,
+    task_move_results: HashMap<String, ProductCommandResult<ProductTaskMoveOutcome>>,
     product_events: Vec<ProductEvent>,
     dependency_graph: TaskDependencyGraph,
 }
@@ -80,8 +121,13 @@ impl InMemoryProductStore {
         self.projects.clear();
         self.tasks.clear();
         self.bindings.clear();
+        self.task_handoffs.clear();
         self.entities.clear();
         self.command_results.clear();
+        self.project_removal_results.clear();
+        self.project_reorder_results.clear();
+        self.task_reorder_results.clear();
+        self.task_move_results.clear();
         self.product_events.clear();
         for project in projects {
             self.projects
@@ -231,6 +277,400 @@ impl ProductRepository for Mutex<InMemoryProductStore> {
         append_command_result(&mut store, meta, entity, action)
     }
 
+    fn remove_project_command(
+        &self,
+        meta: &ProductCommandMeta,
+        project_id: &ProjectId,
+        removed_at: i64,
+    ) -> ProductResult<ProductCommandResult<ProductProjectRemovalOutcome>> {
+        let mut store = lock_store(self)?;
+        if let Some(result) = store
+            .project_removal_results
+            .get(meta.idempotency_key.as_str())
+            .cloned()
+        {
+            return duplicate_command_result(meta, result);
+        }
+        let expected = meta
+            .expected_revision
+            .ok_or_else(|| ProductError::InvalidInput {
+                field: "expected_revision".into(),
+                message: "remove project command requires expected_revision".into(),
+            })?;
+        let mut project = store
+            .projects
+            .get(project_id.as_str())
+            .cloned()
+            .ok_or_else(|| ProductError::NotFound {
+                entity: "project".into(),
+                id: project_id.as_str().into(),
+            })?;
+        ensure_expected_revision(expected, project.revision)?;
+        if project.archive == ProjectArchiveState::Archived {
+            return Err(ProductError::InvalidState {
+                message: format!("project `{project_id}` is already archived"),
+            });
+        }
+
+        let mut conversation_keys = store
+            .entities
+            .iter()
+            .filter_map(|(key, entity)| match entity {
+                ProductEntity::Conversation(conversation)
+                    if conversation.project_id.as_ref() == Some(project_id)
+                        && !conversation.archived =>
+                {
+                    Some(key.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        conversation_keys.sort();
+        let mut moved_conversation_ids = Vec::with_capacity(conversation_keys.len());
+        let mut detached = Vec::with_capacity(conversation_keys.len());
+        for key in conversation_keys {
+            let Some(ProductEntity::Conversation(conversation)) = store.entities.get_mut(&key)
+            else {
+                continue;
+            };
+            conversation.project_id = None;
+            conversation.updated_at = conversation.updated_at.max(removed_at);
+            conversation.revision = conversation.revision.next();
+            moved_conversation_ids.push(conversation.id.clone());
+            detached.push(ProductEntity::Conversation(conversation.clone()));
+        }
+
+        let mut task_ids = store
+            .tasks
+            .values()
+            .filter(|task| task.project_id.as_ref() == Some(project_id) && !task.archived)
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        task_ids.sort();
+        let mut moved_task_ids = Vec::with_capacity(task_ids.len());
+        for task_id in task_ids {
+            let Some(task) = store.tasks.get_mut(task_id.as_str()) else {
+                continue;
+            };
+            task.project_id = None;
+            task.updated_at = task.updated_at.max(removed_at);
+            task.revision = task.revision.next();
+            moved_task_ids.push(task.id.clone());
+            detached.push(ProductEntity::Task(task.clone()));
+        }
+        for entity in &detached {
+            append_product_event(&mut store, meta, entity, "detached_from_project");
+        }
+
+        project.archive = ProjectArchiveState::Archived;
+        project.revision = project.revision.next();
+        store
+            .projects
+            .insert(project.id.as_str().to_owned(), project.clone());
+        store.rebuild_graph();
+        let outcome = ProductProjectRemovalOutcome {
+            project: project.clone(),
+            moved_task_ids,
+            moved_conversation_ids,
+            already_removed: false,
+        };
+        append_project_removal_result(&mut store, meta, outcome, "project_removed")
+    }
+
+    fn reorder_projects_command(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductProjectReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductProjectReorderOutcome>> {
+        let mut store = lock_store(self)?;
+        if let Some(result) = store
+            .project_reorder_results
+            .get(meta.idempotency_key.as_str())
+            .cloned()
+        {
+            return duplicate_command_result(meta, result);
+        }
+        validate_project_reorder_entries(entries)?;
+        let mut projects = entries
+            .iter()
+            .map(|entry| {
+                store
+                    .projects
+                    .get(entry.project_id.as_str())
+                    .cloned()
+                    .ok_or_else(|| ProductError::NotFound {
+                        entity: "project".into(),
+                        id: entry.project_id.as_str().into(),
+                    })
+            })
+            .collect::<ProductResult<Vec<_>>>()?;
+        let pinned = projects[0].pinned;
+        if projects.iter().any(|project| {
+            project.archive == ProjectArchiveState::Archived || project.pinned != pinned
+        }) {
+            return Err(ProductError::InvalidInput {
+                field: "ordered_project_ids".into(),
+                message: "project order must contain active projects from one pinned group".into(),
+            });
+        }
+        let complete_group = store
+            .projects
+            .values()
+            .filter(|project| {
+                project.archive == ProjectArchiveState::Active && project.pinned == pinned
+            })
+            .collect::<Vec<_>>();
+        if complete_group.len() != entries.len()
+            || complete_group
+                .iter()
+                .any(|project| !entries.iter().any(|entry| entry.project_id == project.id))
+        {
+            return Err(ProductError::InvalidInput {
+                field: "ordered_project_ids".into(),
+                message: "project order must contain one complete pinned group".into(),
+            });
+        }
+        for (project, entry) in projects.iter().zip(entries) {
+            ensure_expected_revision(entry.expected_revision, project.revision)?;
+        }
+        for (sort_order, project) in projects.iter_mut().enumerate() {
+            project.sort_order = sort_order as i64;
+            project.revision = project.revision.next();
+            store
+                .projects
+                .insert(project.id.as_str().to_owned(), project.clone());
+            append_product_event(
+                &mut store,
+                meta,
+                &ProductEntity::Project(project.clone()),
+                "projects_reordered",
+            );
+        }
+        append_project_reorder_result(&mut store, meta, ProductProjectReorderOutcome { projects })
+    }
+
+    fn reorder_tasks_command(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductTaskReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductTaskReorderOutcome>> {
+        let mut store = lock_store(self)?;
+        if let Some(result) = store
+            .task_reorder_results
+            .get(meta.idempotency_key.as_str())
+            .cloned()
+        {
+            return duplicate_command_result(meta, result);
+        }
+        validate_task_reorder_entries(entries)?;
+        let mut tasks = entries
+            .iter()
+            .map(|entry| {
+                store
+                    .tasks
+                    .get(entry.task_id.as_str())
+                    .cloned()
+                    .ok_or_else(|| ProductError::NotFound {
+                        entity: "task".into(),
+                        id: entry.task_id.as_str().into(),
+                    })
+            })
+            .collect::<ProductResult<Vec<_>>>()?;
+        let project_id = tasks[0].project_id.clone();
+        let pinned = tasks[0].pinned;
+        if tasks
+            .iter()
+            .any(|task| task.archived || task.project_id != project_id || task.pinned != pinned)
+        {
+            return Err(ProductError::InvalidInput {
+                field: "ordered_task_ids".into(),
+                message: "task order must contain active tasks from one pinned group".into(),
+            });
+        }
+        let complete_group = store
+            .tasks
+            .values()
+            .filter(|task| !task.archived && task.project_id == project_id && task.pinned == pinned)
+            .collect::<Vec<_>>();
+        if complete_group.len() != entries.len()
+            || complete_group
+                .iter()
+                .any(|task| !entries.iter().any(|entry| entry.task_id == task.id))
+        {
+            return Err(ProductError::InvalidInput {
+                field: "ordered_task_ids".into(),
+                message: "task order must contain one complete pinned group".into(),
+            });
+        }
+        for (task, entry) in tasks.iter().zip(entries) {
+            ensure_expected_revision(entry.expected_revision, task.revision)?;
+        }
+        for (sort_order, task) in tasks.iter_mut().enumerate() {
+            task.sort_order = sort_order as i64;
+            task.revision = task.revision.next();
+            store
+                .tasks
+                .insert(task.id.as_str().to_owned(), task.clone());
+            append_product_event(
+                &mut store,
+                meta,
+                &ProductEntity::Task(task.clone()),
+                "tasks_reordered",
+            );
+        }
+        append_task_reorder_result(&mut store, meta, ProductTaskReorderOutcome { tasks })
+    }
+
+    fn move_task_command(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskMoveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskMoveOutcome>> {
+        let mut store = lock_store(self)?;
+        if let Some(result) = store
+            .task_move_results
+            .get(meta.idempotency_key.as_str())
+            .cloned()
+        {
+            return duplicate_command_result(meta, result);
+        }
+        let mut task = store
+            .tasks
+            .get(input.task_id.as_str())
+            .cloned()
+            .ok_or_else(|| ProductError::NotFound {
+                entity: "task".into(),
+                id: input.task_id.as_str().into(),
+            })?;
+        ensure_expected_revision(input.expected_revision, task.revision)?;
+        if task.archived {
+            return Err(ProductError::InvalidInput {
+                field: "task_id".into(),
+                message: "archived tasks cannot be moved".into(),
+            });
+        }
+        if let Some(project_id) = &input.target_project_id {
+            let project =
+                store
+                    .projects
+                    .get(project_id.as_str())
+                    .ok_or_else(|| ProductError::NotFound {
+                        entity: "project".into(),
+                        id: project_id.as_str().into(),
+                    })?;
+            if project.archive == ProjectArchiveState::Archived {
+                return Err(ProductError::InvalidInput {
+                    field: "target_project_id".into(),
+                    message: "target project must be active".into(),
+                });
+            }
+        }
+        let tasks = store.tasks.values().cloned().collect::<Vec<_>>();
+        validate_task_move_parent(
+            &tasks,
+            &input.task_id,
+            input.target_project_id.as_ref(),
+            input.target_parent_id.as_ref(),
+        )?;
+        if task.project_id == input.target_project_id && task.parent_id == input.target_parent_id {
+            return Err(ProductError::InvalidInput {
+                field: "target_parent_id".into(),
+                message: "task is already at the target location".into(),
+            });
+        }
+        let subtree_ids = task_subtree_ids(&tasks, &input.task_id);
+        let location_changed = task.project_id != input.target_project_id;
+        let moved_task_ids = if location_changed {
+            subtree_ids.clone()
+        } else {
+            vec![input.task_id.clone()]
+        };
+
+        let mut moved_conversation_ids = Vec::new();
+        let mut conversations = store
+            .entities
+            .values()
+            .filter_map(|entity| match entity {
+                ProductEntity::Conversation(conversation)
+                    if conversation
+                        .task_id
+                        .as_ref()
+                        .is_some_and(|task_id| moved_task_ids.contains(task_id))
+                        && conversation.project_id != input.target_project_id =>
+                {
+                    Some(conversation.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        conversations.sort_by(|left, right| left.id.as_str().cmp(right.id.as_str()));
+        for mut conversation in conversations {
+            conversation.project_id = input.target_project_id.clone();
+            conversation.updated_at = conversation.updated_at.max(input.moved_at);
+            conversation.revision = conversation.revision.next();
+            moved_conversation_ids.push(conversation.id.clone());
+            let entity = ProductEntity::Conversation(conversation);
+            store_entity(&mut store, entity.clone());
+            append_product_event(&mut store, meta, &entity, "conversation_moved_with_task");
+        }
+
+        if location_changed {
+            task.sort_order = tasks
+                .iter()
+                .filter(|candidate| {
+                    !candidate.archived
+                        && !subtree_ids.contains(&candidate.id)
+                        && candidate.project_id == input.target_project_id
+                })
+                .map(|candidate| candidate.sort_order)
+                .max()
+                .unwrap_or(-1)
+                .saturating_add(1);
+            for descendant_id in subtree_ids.iter().skip(1) {
+                let mut descendant = tasks
+                    .iter()
+                    .find(|candidate| &candidate.id == descendant_id)
+                    .cloned()
+                    .expect("task subtree ids come from the task snapshot");
+                descendant.project_id = input.target_project_id.clone();
+                descendant.updated_at = descendant.updated_at.max(input.moved_at);
+                descendant.revision = descendant.revision.next();
+                store
+                    .tasks
+                    .insert(descendant.id.as_str().to_owned(), descendant.clone());
+                append_product_event(
+                    &mut store,
+                    meta,
+                    &ProductEntity::Task(descendant),
+                    "task_moved_with_parent",
+                );
+            }
+        }
+        task.project_id = input.target_project_id.clone();
+        task.parent_id = input.target_parent_id.clone();
+        task.updated_at = task.updated_at.max(input.moved_at);
+        task.revision = task.revision.next();
+        store
+            .tasks
+            .insert(task.id.as_str().to_owned(), task.clone());
+        store.rebuild_graph();
+        append_product_event(
+            &mut store,
+            meta,
+            &ProductEntity::Task(task.clone()),
+            "task_moved",
+        );
+        append_task_move_result(
+            &mut store,
+            meta,
+            ProductTaskMoveOutcome {
+                task,
+                moved_task_ids,
+                moved_conversation_ids,
+            },
+        )
+    }
+
     fn product_events(&self, request: &PageRequest) -> ProductResult<Page<ProductEvent>> {
         let store = lock_store(self)?;
         Ok(page_events(&store.product_events, request))
@@ -263,6 +703,63 @@ impl ProductRepository for Mutex<InMemoryProductStore> {
             .insert(task.id.as_str().to_string(), task.clone());
         store.rebuild_graph();
         Ok(task)
+    }
+
+    fn accept_task_handoff(
+        &self,
+        import: ProductTaskHandoffImport,
+    ) -> ProductResult<ProductTaskHandoffRecord> {
+        let mut store = lock_store(self)?;
+        if let Some(existing) = store.task_handoffs.get(&import.handoff.id) {
+            let mut existing = existing.clone();
+            existing.duplicate = true;
+            return Ok(existing);
+        }
+        if import.task.project_id.as_ref() != Some(&import.project.id) {
+            return Err(ProductError::InvalidInput {
+                field: "task.project_id".into(),
+                message: "handoff task must belong to the imported project".into(),
+            });
+        }
+        if store.tasks.contains_key(import.task.id.as_str()) {
+            return Err(ProductError::Conflict {
+                conflict: ConflictKind::DuplicateIdempotency,
+                message: format!("task `{}` already exists", import.task.id),
+            });
+        }
+        let project = store
+            .projects
+            .entry(import.project.id.as_str().to_owned())
+            .or_insert_with(|| import.project.clone())
+            .clone();
+        store
+            .tasks
+            .insert(import.task.id.as_str().to_owned(), import.task.clone());
+        let record = ProductTaskHandoffRecord {
+            handoff: import.handoff,
+            payload_json: import.payload_json,
+            project,
+            task: import.task,
+            accepted_at: import.accepted_at,
+            duplicate: false,
+        };
+        store
+            .task_handoffs
+            .insert(record.handoff.id.clone(), record.clone());
+        store.rebuild_graph();
+        Ok(record)
+    }
+
+    fn task_handoff_for_task(
+        &self,
+        task_id: &TaskId,
+    ) -> ProductResult<Option<ProductTaskHandoffRecord>> {
+        let store = lock_store(self)?;
+        Ok(store
+            .task_handoffs
+            .values()
+            .find(|record| &record.task.id == task_id)
+            .cloned())
     }
 
     fn update_task_dependencies(
@@ -380,6 +877,26 @@ impl ProductRepository for Mutex<InMemoryProductStore> {
         Ok(bindings)
     }
 
+    fn replace_binding_for_task(
+        &self,
+        binding: AgentSessionBinding,
+    ) -> ProductResult<AgentSessionBinding> {
+        let mut store = lock_store(self)?;
+        if !store.tasks.contains_key(binding.task_id.as_str()) {
+            return Err(ProductError::NotFound {
+                entity: "task".into(),
+                id: binding.task_id.as_str().to_string(),
+            });
+        }
+        store
+            .bindings
+            .retain(|_, existing| existing.task_id != binding.task_id);
+        store
+            .bindings
+            .insert(binding.binding_id.as_str().to_owned(), binding.clone());
+        Ok(binding)
+    }
+
     fn clear_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<usize> {
         let mut store = lock_store(self)?;
         let before = store.bindings.len();
@@ -444,6 +961,20 @@ impl ProductServices {
         self.repository.list_tasks()
     }
 
+    pub fn accept_task_handoff(
+        &self,
+        import: ProductTaskHandoffImport,
+    ) -> ProductResult<ProductTaskHandoffRecord> {
+        self.repository.accept_task_handoff(import)
+    }
+
+    pub fn task_handoff_for_task(
+        &self,
+        task_id: &TaskId,
+    ) -> ProductResult<Option<ProductTaskHandoffRecord>> {
+        self.repository.task_handoff_for_task(task_id)
+    }
+
     pub fn list_bindings_for_task(
         &self,
         task_id: &TaskId,
@@ -453,6 +984,13 @@ impl ProductServices {
 
     pub fn clear_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<usize> {
         self.repository.clear_bindings_for_task(task_id)
+    }
+
+    pub fn replace_binding_for_task(
+        &self,
+        binding: AgentSessionBinding,
+    ) -> ProductResult<AgentSessionBinding> {
+        self.repository.replace_binding_for_task(binding)
     }
 
     pub fn record_binding(
@@ -498,6 +1036,40 @@ impl ProductServices {
         action: &str,
     ) -> ProductResult<ProductCommandResult<ProductEntity>> {
         self.repository.update_entity_command(meta, entity, action)
+    }
+
+    pub fn remove_project_command(
+        &self,
+        meta: &ProductCommandMeta,
+        project_id: &ProjectId,
+        removed_at: i64,
+    ) -> ProductResult<ProductCommandResult<ProductProjectRemovalOutcome>> {
+        self.repository
+            .remove_project_command(meta, project_id, removed_at)
+    }
+
+    pub fn reorder_projects_command(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductProjectReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductProjectReorderOutcome>> {
+        self.repository.reorder_projects_command(meta, entries)
+    }
+
+    pub fn reorder_tasks_command(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductTaskReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductTaskReorderOutcome>> {
+        self.repository.reorder_tasks_command(meta, entries)
+    }
+
+    pub fn move_task_command(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskMoveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskMoveOutcome>> {
+        self.repository.move_task_command(meta, input)
     }
 
     pub fn product_events(&self, request: &PageRequest) -> ProductResult<Page<ProductEvent>> {
@@ -566,10 +1138,10 @@ fn duplicate_entity_error(entity: &ProductEntity) -> ProductError {
     }
 }
 
-fn duplicate_command_result(
+fn duplicate_command_result<T>(
     meta: &ProductCommandMeta,
-    mut result: ProductCommandResult<ProductEntity>,
-) -> ProductResult<ProductCommandResult<ProductEntity>> {
+    mut result: ProductCommandResult<T>,
+) -> ProductResult<ProductCommandResult<T>> {
     if result.command_id != meta.command_id {
         return Err(ProductError::Conflict {
             conflict: ConflictKind::DuplicateIdempotency,
@@ -606,6 +1178,218 @@ fn append_command_result(
         .command_results
         .insert(meta.idempotency_key.as_str().into(), result.clone());
     Ok(result)
+}
+
+fn append_product_event(
+    store: &mut InMemoryProductStore,
+    meta: &ProductCommandMeta,
+    entity: &ProductEntity,
+    action: &str,
+) {
+    store.product_events.push(ProductEvent {
+        sequence: ProductEventSequence::new(store.product_events.len() as u64 + 1),
+        command_id: meta.command_id.clone(),
+        entity: entity.kind().as_str().into(),
+        entity_id: entity.id().into(),
+        action: action.into(),
+        revision: Some(entity.revision().get()),
+    });
+}
+
+fn append_project_removal_result(
+    store: &mut InMemoryProductStore,
+    meta: &ProductCommandMeta,
+    outcome: ProductProjectRemovalOutcome,
+    action: &str,
+) -> ProductResult<ProductCommandResult<ProductProjectRemovalOutcome>> {
+    let sequence = ProductEventSequence::new(store.product_events.len() as u64 + 1);
+    store.product_events.push(ProductEvent {
+        sequence,
+        command_id: meta.command_id.clone(),
+        entity: ProductEntityKind::Project.as_str().into(),
+        entity_id: outcome.project.id.as_str().into(),
+        action: action.into(),
+        revision: Some(outcome.project.revision.get()),
+    });
+    let result = ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value: outcome,
+        duplicate: false,
+    };
+    store
+        .project_removal_results
+        .insert(meta.idempotency_key.as_str().into(), result.clone());
+    Ok(result)
+}
+
+fn append_project_reorder_result(
+    store: &mut InMemoryProductStore,
+    meta: &ProductCommandMeta,
+    outcome: ProductProjectReorderOutcome,
+) -> ProductResult<ProductCommandResult<ProductProjectReorderOutcome>> {
+    let sequence = store
+        .product_events
+        .last()
+        .map(|event| event.sequence)
+        .ok_or_else(|| ProductError::InvalidState {
+            message: "project reorder command did not publish an event".into(),
+        })?;
+    let result = ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value: outcome,
+        duplicate: false,
+    };
+    store
+        .project_reorder_results
+        .insert(meta.idempotency_key.as_str().into(), result.clone());
+    Ok(result)
+}
+
+fn validate_project_reorder_entries(entries: &[ProductProjectReorderEntry]) -> ProductResult<()> {
+    if entries.is_empty() {
+        return Err(ProductError::InvalidInput {
+            field: "ordered_project_ids".into(),
+            message: "project order must not be empty".into(),
+        });
+    }
+    if entries.iter().enumerate().any(|(index, entry)| {
+        entries[..index]
+            .iter()
+            .any(|candidate| candidate.project_id == entry.project_id)
+    }) {
+        return Err(ProductError::InvalidInput {
+            field: "ordered_project_ids".into(),
+            message: "project order must not contain duplicate ids".into(),
+        });
+    }
+    Ok(())
+}
+
+fn append_task_reorder_result(
+    store: &mut InMemoryProductStore,
+    meta: &ProductCommandMeta,
+    outcome: ProductTaskReorderOutcome,
+) -> ProductResult<ProductCommandResult<ProductTaskReorderOutcome>> {
+    let sequence = store
+        .product_events
+        .last()
+        .map(|event| event.sequence)
+        .ok_or_else(|| ProductError::InvalidState {
+            message: "task reorder command did not publish an event".into(),
+        })?;
+    let result = ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value: outcome,
+        duplicate: false,
+    };
+    store
+        .task_reorder_results
+        .insert(meta.idempotency_key.as_str().into(), result.clone());
+    Ok(result)
+}
+
+fn validate_task_reorder_entries(entries: &[ProductTaskReorderEntry]) -> ProductResult<()> {
+    if entries.is_empty() {
+        return Err(ProductError::InvalidInput {
+            field: "ordered_task_ids".into(),
+            message: "task order must not be empty".into(),
+        });
+    }
+    if entries.iter().enumerate().any(|(index, entry)| {
+        entries[..index]
+            .iter()
+            .any(|candidate| candidate.task_id == entry.task_id)
+    }) {
+        return Err(ProductError::InvalidInput {
+            field: "ordered_task_ids".into(),
+            message: "task order must not contain duplicate ids".into(),
+        });
+    }
+    Ok(())
+}
+
+fn append_task_move_result(
+    store: &mut InMemoryProductStore,
+    meta: &ProductCommandMeta,
+    outcome: ProductTaskMoveOutcome,
+) -> ProductResult<ProductCommandResult<ProductTaskMoveOutcome>> {
+    let sequence = store
+        .product_events
+        .last()
+        .map(|event| event.sequence)
+        .ok_or_else(|| ProductError::InvalidState {
+            message: "task move command did not publish an event".into(),
+        })?;
+    let result = ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value: outcome,
+        duplicate: false,
+    };
+    store
+        .task_move_results
+        .insert(meta.idempotency_key.as_str().into(), result.clone());
+    Ok(result)
+}
+
+fn validate_task_move_parent(
+    tasks: &[ProductTask],
+    task_id: &TaskId,
+    target_project_id: Option<&ProjectId>,
+    target_parent_id: Option<&TaskId>,
+) -> ProductResult<()> {
+    let mut cursor = target_parent_id.cloned();
+    let mut visited = Vec::new();
+    while let Some(parent_id) = cursor {
+        if &parent_id == task_id || visited.contains(&parent_id) {
+            return Err(ProductError::InvalidInput {
+                field: "target_parent_id".into(),
+                message: "task parent would create a cycle".into(),
+            });
+        }
+        let parent = tasks
+            .iter()
+            .find(|task| task.id == parent_id)
+            .ok_or_else(|| ProductError::NotFound {
+                entity: "task".into(),
+                id: parent_id.as_str().into(),
+            })?;
+        if parent.archived || parent.project_id.as_ref() != target_project_id {
+            return Err(ProductError::InvalidInput {
+                field: "target_parent_id".into(),
+                message: "task parent must be active in the target project".into(),
+            });
+        }
+        visited.push(parent_id);
+        cursor = parent.parent_id.clone();
+    }
+    Ok(())
+}
+
+fn task_subtree_ids(tasks: &[ProductTask], root_id: &TaskId) -> Vec<TaskId> {
+    let mut ids = vec![root_id.clone()];
+    loop {
+        let mut added = tasks
+            .iter()
+            .filter(|task| {
+                !ids.contains(&task.id)
+                    && task
+                        .parent_id
+                        .as_ref()
+                        .is_some_and(|parent_id| ids.contains(parent_id))
+            })
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        if added.is_empty() {
+            break;
+        }
+        added.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        ids.extend(added);
+    }
+    ids
 }
 
 fn page_events(events: &[ProductEvent], request: &PageRequest) -> Page<ProductEvent> {

@@ -16,6 +16,7 @@ mod profile;
 mod projection;
 mod quota;
 mod shared_services;
+mod subagent;
 mod wire_service;
 
 pub use anthropic_adapter::{
@@ -23,15 +24,20 @@ pub use anthropic_adapter::{
     DEFAULT_ANTHROPIC_ENDPOINT, DEFAULT_ANTHROPIC_MODEL, ENV_ANTHROPIC_ENDPOINT,
 };
 pub use credential::{
-    CredentialDescriptorView, CredentialHealthSnapshot, IndependentDiagnostics,
-    ProductCredentialBridge, ProductCredentialImportInput, ProductCredentialLoginInput,
+    CredentialDescriptorView, CredentialHealthSnapshot, InMemoryProductCredentialRegistry,
+    IndependentDiagnostics, ProductCredentialBridge, ProductCredentialImportInput,
+    ProductCredentialLoginInput, ProductCredentialRecord, ProductCredentialRecoveryIssue,
+    ProductCredentialRegistry, ProductCredentialRegistryLoad, ProductCredentialRevocationIntent,
+    SqliteProductCredentialRegistry,
 };
 pub use model_turn::{
     live_model_adapter_eligible, resolve_model_endpoint, LiveModelDriver,
     DEFAULT_OPENAI_COMPATIBLE_ENDPOINT, ENV_MODEL_ENDPOINT,
 };
+pub use mutsuki_agent_runtime::SecretStore;
 pub use native_runtime::{
-    NativeAgentKitRuntime, NativeRuntimeBootstrap, NativeRuntimeError, NativeRuntimeMode,
+    NativeAgentKitRuntime, NativeControlModelRequest, NativeControlModelResult,
+    NativeModelRuntimeConfiguration, NativeRuntimeBootstrap, NativeRuntimeError, NativeRuntimeMode,
     NativeTurnStreamPage, SharedNativeAgentKitRuntime, TurnCancellationDisposition,
 };
 pub use profile::{
@@ -42,5 +48,8 @@ pub use projection::{project_agent_event, project_agent_events};
 pub use quota::{
     KnownCapabilityLimit, NativeProviderQuotaRow, NativeQuotaSurface, QuotaApiAvailability,
 };
-pub use shared_services::SharedCodingServicesStatus;
+pub use shared_services::{
+    RegisteredMcpActivation, SharedCodingServicesStatus, SharedMcpResourceRead,
+};
+pub use subagent::NativeSubagentDefinition;
 pub use wire_service::{NativeAgentWireService, NativeWireTurnResult};

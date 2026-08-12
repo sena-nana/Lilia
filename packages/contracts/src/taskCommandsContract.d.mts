@@ -13,3 +13,7 @@ export const TASK_TOGGLE_PIN_COMMAND: "task_toggle_pin";
 export const TASK_REORDER_COMMAND: "task_reorder";
 export const TASK_REPARENT_COMMAND: "task_reparent";
 export const TASK_UPDATE_DEPENDENCIES_COMMAND: "task_update_dependencies";
+export const TASK_GOAL_GET_COMMAND: "task_goal_get";
+export const TASK_GOAL_SET_COMMAND: "task_goal_set";
+export const TASK_GOAL_REFRESH_COMMAND: "task_goal_refresh";
+export const TASK_GOAL_CLEAR_COMMAND: "task_goal_clear";

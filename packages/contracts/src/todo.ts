@@ -1,4 +1,4 @@
-import type { ChatAttachment } from "./chat";
+import type { ChatAttachment, ChatConversationReference } from "./chat";
 import {
   DEFAULT_TASK_TODO_PRIORITY,
   PENDING_TASK_TODO_GUIDE_STATUS,
@@ -13,6 +13,7 @@ import {
   TODO_CREATE_COMMAND,
   TODO_DELETE_COMMAND,
   TODO_LIST_COMMAND,
+  TODO_SUBMIT_GUIDE_COMMAND,
   TODO_UPDATE_COMMAND,
 } from "./todoContract.mjs";
 
@@ -34,6 +35,7 @@ export {
   TODO_CREATE_COMMAND,
   TODO_DELETE_COMMAND,
   TODO_LIST_COMMAND,
+  TODO_SUBMIT_GUIDE_COMMAND,
   TODO_UPDATE_COMMAND,
 };
 
@@ -78,6 +80,7 @@ export interface TaskTodo {
   priority: TaskTodoPriority;
   guideStatus: TaskTodoGuideStatus | null;
   attachments?: ChatAttachment[];
+  conversationReferences?: ChatConversationReference[];
   createdAt: number;
   updatedAt: number;
 }

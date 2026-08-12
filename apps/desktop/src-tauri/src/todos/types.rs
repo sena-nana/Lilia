@@ -1,3 +1,4 @@
+use lilia_contracts::ChatConversationReference;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -15,6 +16,7 @@ pub struct TaskTodo {
     pub priority: String,
     pub guide_status: Option<String>,
     pub attachments: Vec<JsonValue>,
+    pub conversation_references: Vec<ChatConversationReference>,
     pub created_at: i64,
     pub updated_at: i64,
 }

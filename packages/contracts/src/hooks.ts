@@ -81,10 +81,12 @@ export interface HookSourceSummary {
   format: HookSourceFormat;
   name: string;
   path: string;
+  projectCwd?: string | null;
   exists: boolean;
   editable: boolean;
   managed: boolean;
   enabled: boolean;
+  revision: number;
   handlerCount: number;
   warnings: string[];
   limitations: string[];
@@ -136,5 +138,6 @@ export interface HookHandlerUpdateInput {
 }
 
 export interface HookDocumentUpdateInput {
+  expectedRevision: number;
   handlers: HookHandlerUpdateInput[];
 }

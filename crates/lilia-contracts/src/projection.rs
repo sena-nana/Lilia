@@ -64,6 +64,23 @@ pub struct TimelineProjectionEvent {
     pub projected: bool,
 }
 
+/// Stable keyset cursor for task timeline pagination.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineProjectionCursor {
+    pub sequence: u64,
+    pub event_id: String,
+}
+
+/// One chronological task timeline page read from the product projection store.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TimelineProjectionPage {
+    pub events: Vec<TimelineProjectionEvent>,
+    pub before_cursor: Option<TimelineProjectionCursor>,
+    pub has_more_before: bool,
+}
+
 /// Artifact product projection (refs + metadata only; no unbounded blobs).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

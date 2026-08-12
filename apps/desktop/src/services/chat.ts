@@ -25,6 +25,7 @@ import {
 import {
   CHAT_ACK_RESTORED_ROLLBACK_COMMAND,
   CHAT_DESCRIBE_ATTACHMENTS_COMMAND,
+  CHAT_GET_COMPOSER_DRAFT_COMMAND,
   CHAT_GET_COMPOSER_STATE_COMMAND,
   CHAT_GET_RUNTIME_SNAPSHOT_COMMAND,
   CHAT_INTERRUPT_TURN_COMMAND,
@@ -38,6 +39,7 @@ import {
   CHAT_SEARCH_SLASH_COMMANDS_COMMAND,
   CHAT_SEND_MESSAGE_COMMAND,
   CHAT_SET_COMPOSER_STATE_COMMAND,
+  CHAT_SET_COMPOSER_DRAFT_COMMAND,
   AGENT_TIMELINE_LIST_COMMAND,
 } from "@lilia/contracts/chatCommandsContract.mjs";
 import {
@@ -304,6 +306,10 @@ export function getComposerState(taskId: string): Promise<ChatComposerState> {
   return invoke<ChatComposerState>(CHAT_GET_COMPOSER_STATE_COMMAND, { taskId });
 }
 
+export function getComposerDraft(taskId: string): Promise<string> {
+  return invoke<string>(CHAT_GET_COMPOSER_DRAFT_COMMAND, { taskId });
+}
+
 export function listModels(backend: ChatBackendKind): Promise<ChatModelOption[]> {
   return invoke<ChatModelOption[]>(CHAT_LIST_MODELS_COMMAND, { backend });
 }
@@ -314,6 +320,10 @@ export function getRuntimeSnapshot(taskId: string): Promise<ChatRuntimeSnapshot>
 
 export function setComposerState(state: ChatComposerState): Promise<void> {
   return invoke<void>(CHAT_SET_COMPOSER_STATE_COMMAND, { state });
+}
+
+export function setComposerDraft(taskId: string, content: string): Promise<number> {
+  return invoke<number>(CHAT_SET_COMPOSER_DRAFT_COMMAND, { taskId, content });
 }
 
 export function getAgentInteractionSettings(): Promise<AgentInteractionSettings> {

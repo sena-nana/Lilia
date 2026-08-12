@@ -20,6 +20,8 @@ struct PluginsCommandsContract {
     create_skill: String,
     delete_skill: String,
     set_skill_enabled: String,
+    install_package: String,
+    delete_package: String,
     set_package_enabled: String,
     create_mcp_server: String,
     update_mcp_server: String,
@@ -48,11 +50,12 @@ mod tests {
     use super::*;
     use crate::plugins::{
         plugins_create_hook_source, plugins_create_mcp_server, plugins_create_skill,
-        plugins_delete_hook_source, plugins_delete_mcp_server, plugins_delete_skill,
-        plugins_hooks_overview, plugins_open_hook_config, plugins_open_mcp_config,
-        plugins_overview, plugins_read_hook_source, plugins_set_hook_source_enabled,
-        plugins_set_mcp_server_enabled, plugins_set_package_enabled, plugins_set_skill_enabled,
-        plugins_update_hook_source, plugins_update_mcp_server,
+        plugins_delete_hook_source, plugins_delete_mcp_server, plugins_delete_package,
+        plugins_delete_skill, plugins_hooks_overview, plugins_install_package,
+        plugins_open_hook_config, plugins_open_mcp_config, plugins_overview,
+        plugins_read_hook_source, plugins_set_hook_source_enabled, plugins_set_mcp_server_enabled,
+        plugins_set_package_enabled, plugins_set_skill_enabled, plugins_update_hook_source,
+        plugins_update_mcp_server,
     };
 
     #[test]
@@ -63,6 +66,8 @@ mod tests {
         let _ = plugins_create_skill;
         let _ = plugins_delete_skill;
         let _ = plugins_set_skill_enabled;
+        let _ = plugins_install_package;
+        let _ = plugins_delete_package;
         let _ = plugins_set_package_enabled;
         let _ = plugins_create_mcp_server;
         let _ = plugins_update_mcp_server;
@@ -84,6 +89,11 @@ mod tests {
             commands.set_skill_enabled,
             stringify!(plugins_set_skill_enabled)
         );
+        assert_eq!(
+            commands.install_package,
+            stringify!(plugins_install_package)
+        );
+        assert_eq!(commands.delete_package, stringify!(plugins_delete_package));
         assert_eq!(
             commands.set_package_enabled,
             stringify!(plugins_set_package_enabled)

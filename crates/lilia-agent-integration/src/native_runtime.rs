@@ -2,26 +2,33 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use lilia_contracts::{
-    AgentSessionRef, PendingProjectionStatus, ProductApprovalDecision, TaskId,
-    TimelineProjectionCommand, TimelineProjectionEvent,
+    AgentSessionRef, PendingProjectionStatus, ProductApprovalDecision, ProductResult, TaskId,
+    TimelineProjectionCommand, TimelineProjectionCursor, TimelineProjectionEvent,
+    TimelineProjectionPage,
 };
 use lilia_core::{AgentKitClientPort, AgentKitPortError, NativeAgentCapabilitySnapshot};
 use lilia_storage::{
     SqliteAgentRuntimeStateStore, SqliteTimelineProjectionStore, TimelineProjectionRepository,
 };
+use mutsuki_agent_adapter_anthropic::AnthropicMessagesAdapter as MutsukiAnthropicMessagesAdapter;
+use mutsuki_agent_adapter_api::ModelProtocolAdapter;
+use mutsuki_agent_adapter_openai::OpenAiCompatibleAdapter;
 use mutsuki_agent_bundle::{
     run_fix_golden_path, NativeCodingAgentBundle, NativeCodingBackends, NativeCodingRunContext,
     SessionStore, NATIVE_CODING_BUNDLE_ID,
 };
 use mutsuki_agent_contracts::{
-    AgentError, AgentEvent, AgentEventEnvelope, AgentEventMeta, AgentMessage, AgentPermissionMode,
-    AgentRole, AgentRunRequest, AgentRunResult, AgentRunStatus, AgentRuntimeProfile, AgentSession,
-    AgentSessionAppendRequest, AgentSessionCreateRequest, AgentSessionForkRequest,
-    AgentSessionGetRequest, AgentWorkspaceRef, PermissionDecision, PermissionDecisionKind,
-    AGENT_RUN_PROTOCOL, AGENT_SESSION_APPEND_PROTOCOL, AGENT_SESSION_CREATE_PROTOCOL,
-    AGENT_SESSION_FORK_PROTOCOL, AGENT_SESSION_GET_PROTOCOL,
+    AgentError, AgentEvent, AgentEventEnvelope, AgentEventMeta, AgentMessage,
+    AgentModelGenerateRequest, AgentPermissionMode, AgentRole, AgentRunRequest, AgentRunResult,
+    AgentRunStatus, AgentRuntimeProfile, AgentSession, AgentSessionAppendRequest,
+    AgentSessionCreateRequest, AgentSessionForkRequest, AgentSessionGetRequest, AgentToolCall,
+    AgentToolResultMetadata, AgentWorkspaceRef, InteractionRequest, InteractionResolution,
+    ModelGenerateRequest, PermissionDecision, PermissionDecisionKind, AGENT_RUN_PROTOCOL,
+    AGENT_SESSION_APPEND_PROTOCOL, AGENT_SESSION_CREATE_PROTOCOL, AGENT_SESSION_FORK_PROTOCOL,
+    AGENT_SESSION_GET_PROTOCOL,
 };
 use mutsuki_agent_runtime::{SessionEventSubscription, SessionPersistence};
 use mutsuki_runtime_contracts::TaskHandle;
@@ -36,6 +43,7 @@ use crate::model_turn::{
 };
 use crate::profile::{build_product_coding_profile, profile_has_credential_refs};
 use crate::projection::project_agent_events;
+use crate::subagent::NativeSubagentDefinition;
 
 const AGENTKIT_SESSION_PREFIX: &str = "agentkit-session/";
 const WIRE_SESSION_PREFIX: &str = "wire-session/";
@@ -51,10 +59,43 @@ pub enum NativeRuntimeMode {
     Service,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeModelRuntimeConfiguration {
+    pub openai_endpoint_override: Option<String>,
+    pub anthropic_endpoint_override: Option<String>,
+    pub model_override: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeControlModelRequest {
+    pub system_instruction: String,
+    pub prompt: String,
+    #[serde(default = "default_control_model_output_tokens")]
+    pub max_output_tokens: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeControlModelResult {
+    pub provider_id: String,
+    pub model: String,
+    pub text: String,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+const fn default_control_model_output_tokens() -> u64 {
+    600
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TurnCancellationDisposition {
     ActiveRun,
-    PausedApproval,
+    PausedAction,
     PendingRegistration,
 }
 
@@ -93,11 +134,30 @@ impl NativeRuntimeBootstrap {
         Self::reference_with_mode(NativeRuntimeMode::Embedded)
     }
 
+    pub fn embedded_reference_with_credentials(
+        credentials: ProductCredentialBridge,
+    ) -> Result<Self, NativeRuntimeError> {
+        Self::reference_with_mode_and_credentials(NativeRuntimeMode::Embedded, credentials)
+    }
+
     pub fn service_reference() -> Result<Self, NativeRuntimeError> {
         Self::reference_with_mode(NativeRuntimeMode::Service)
     }
 
+    pub fn service_reference_with_credentials(
+        credentials: ProductCredentialBridge,
+    ) -> Result<Self, NativeRuntimeError> {
+        Self::reference_with_mode_and_credentials(NativeRuntimeMode::Service, credentials)
+    }
+
     fn reference_with_mode(mode: NativeRuntimeMode) -> Result<Self, NativeRuntimeError> {
+        Self::reference_with_mode_and_credentials(mode, ProductCredentialBridge::new())
+    }
+
+    fn reference_with_mode_and_credentials(
+        mode: NativeRuntimeMode,
+        credentials: ProductCredentialBridge,
+    ) -> Result<Self, NativeRuntimeError> {
         let bundle =
             NativeCodingAgentBundle::reference(crate::host_backends::native_coding_backends());
         bundle.assert_shared_service_identity()?;
@@ -105,7 +165,7 @@ impl NativeRuntimeBootstrap {
         Ok(Self {
             mode,
             bundle,
-            credentials: ProductCredentialBridge::new(),
+            credentials,
         })
     }
 
@@ -160,7 +220,9 @@ pub struct NativeTurnStreamPage {
     pub events: Vec<AgentEventEnvelope>,
     pub next_sequence: u64,
     pub waiting_approval: bool,
+    pub waiting_interaction: bool,
     pub completed: bool,
+    pub cancelled: bool,
     pub tool_summary: Option<Value>,
     pub official_agent_server: bool,
     pub credential_bound: bool,
@@ -168,7 +230,7 @@ pub struct NativeTurnStreamPage {
     pub profile_id: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct ProductSessionBinding {
     task_id: String,
     profile_id: String,
@@ -233,8 +295,8 @@ pub struct NativeAgentKitRuntime {
     projections: SqliteTimelineProjectionStore,
     runtime_state: Arc<SqliteAgentRuntimeStateStore>,
     product_profile: Mutex<Option<AgentRuntimeProfile>>,
-    model_endpoint_override: Mutex<Option<String>>,
-    anthropic_endpoint_override: Mutex<Option<String>>,
+    model_runtime_configuration: Mutex<NativeModelRuntimeConfiguration>,
+    subagent_configuration: Mutex<Vec<NativeSubagentDefinition>>,
     host: Mutex<Option<CachedHost>>,
     active_runs: Mutex<BTreeMap<String, ActiveRun>>,
     pending_turn_cancellations: Mutex<BTreeSet<(String, String)>>,
@@ -281,8 +343,8 @@ impl NativeAgentKitRuntime {
             projections,
             runtime_state,
             product_profile: Mutex::new(profile),
-            model_endpoint_override: Mutex::new(None),
-            anthropic_endpoint_override: Mutex::new(None),
+            model_runtime_configuration: Mutex::new(NativeModelRuntimeConfiguration::default()),
+            subagent_configuration: Mutex::new(Vec::new()),
             host: Mutex::new(None),
             active_runs: Mutex::new(BTreeMap::new()),
             pending_turn_cancellations: Mutex::new(BTreeSet::new()),
@@ -292,17 +354,173 @@ impl NativeAgentKitRuntime {
     }
 
     pub fn set_model_endpoint_override(&self, endpoint: Option<String>) {
-        if let Ok(mut guard) = self.model_endpoint_override.lock() {
-            *guard = endpoint;
+        if let Ok(mut configuration) = self.model_runtime_configuration.lock() {
+            configuration.openai_endpoint_override = endpoint;
         }
         self.invalidate_host();
     }
 
     pub fn set_anthropic_endpoint_override(&self, endpoint: Option<String>) {
-        if let Ok(mut guard) = self.anthropic_endpoint_override.lock() {
-            *guard = endpoint;
+        if let Ok(mut configuration) = self.model_runtime_configuration.lock() {
+            configuration.anthropic_endpoint_override = endpoint;
         }
         self.invalidate_host();
+    }
+
+    pub fn set_model_override(&self, model: Option<String>) {
+        if let Ok(mut configuration) = self.model_runtime_configuration.lock() {
+            configuration.model_override = model;
+        }
+        self.invalidate_host();
+    }
+
+    pub fn configure_model_runtime(
+        &self,
+        configuration: NativeModelRuntimeConfiguration,
+    ) -> Result<(), NativeRuntimeError> {
+        *self.model_runtime_configuration.lock().map_err(|_| {
+            NativeRuntimeError::Agent("model runtime configuration lock poisoned".into())
+        })? = configuration;
+        self.invalidate_host();
+        Ok(())
+    }
+
+    pub fn model_runtime_configuration(
+        &self,
+    ) -> Result<NativeModelRuntimeConfiguration, NativeRuntimeError> {
+        self.model_runtime_configuration
+            .lock()
+            .map(|configuration| configuration.clone())
+            .map_err(|_| {
+                NativeRuntimeError::Agent("model runtime configuration lock poisoned".into())
+            })
+    }
+
+    pub fn generate_control_text(
+        &self,
+        request: NativeControlModelRequest,
+    ) -> Result<NativeControlModelResult, NativeRuntimeError> {
+        if request.system_instruction.trim().is_empty() || request.prompt.trim().is_empty() {
+            return Err(NativeRuntimeError::Agent(
+                "control model system instruction and prompt are required".into(),
+            ));
+        }
+        let (mut plan, _) = self
+            .turn_plan(None)
+            .map_err(|error| NativeRuntimeError::Agent(error.to_string()))?;
+        plan.provider
+            .compatibility
+            .insert("timeout_ms".into(), json!(12_000));
+        plan.provider
+            .compatibility
+            .insert("max_retries".into(), json!(0));
+        let credentials = adapter_credential_broker(self.credentials().broker().clone());
+        let adapter: Arc<dyn ModelProtocolAdapter> = match plan.driver {
+            crate::model_turn::LiveModelDriver::OpenAiCompatible => Arc::new(
+                OpenAiCompatibleAdapter::new(
+                    OpenAiCompatibleAdapter::default_descriptor(),
+                    credentials,
+                )
+                .map_err(|error| NativeRuntimeError::Agent(protocol_error_message(&error)))?,
+            ),
+            crate::model_turn::LiveModelDriver::AnthropicMessages => Arc::new(
+                MutsukiAnthropicMessagesAdapter::new(
+                    MutsukiAnthropicMessagesAdapter::default_descriptor(),
+                    credentials,
+                )
+                .map_err(|error| NativeRuntimeError::Agent(protocol_error_message(&error)))?,
+            ),
+        };
+        let provider_id = plan.provider.provider_id.clone();
+        let model = plan.model.clone();
+        let generate = ModelGenerateRequest {
+            request: AgentModelGenerateRequest {
+                model: model.clone(),
+                messages: vec![
+                    AgentMessage::system(request.system_instruction),
+                    AgentMessage::user(request.prompt),
+                ],
+                temperature: Some(0.1),
+                max_output_tokens: Some(request.max_output_tokens.clamp(1, 4_096)),
+                provider_hint: Some(provider_id.clone()),
+                metadata: Some(json!({"purpose": "lilia-control-model"})),
+                result_protocol_id: None,
+                result_context: None,
+                session_id: None,
+            },
+            tools: Vec::new(),
+            structured_output: None,
+            reasoning: request.reasoning.map(Value::String),
+        };
+        let provider = plan.provider;
+        let worker = std::thread::Builder::new()
+            .name("lilia-agentkit-control-model".into())
+            .spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|error| error.to_string())?;
+                runtime
+                    .block_on(adapter.generate(provider, generate))
+                    .map_err(|error| protocol_error_message(&error))
+            })
+            .map_err(|error| NativeRuntimeError::Agent(error.to_string()))?;
+        let generated = worker
+            .join()
+            .map_err(|_| NativeRuntimeError::Agent("control model worker panicked".into()))?
+            .map_err(NativeRuntimeError::Agent)?;
+        if generated.message.content.trim().is_empty() {
+            return Err(NativeRuntimeError::Agent(
+                "control model response did not contain text".into(),
+            ));
+        }
+        Ok(NativeControlModelResult {
+            provider_id,
+            model,
+            text: generated.message.content,
+            input_tokens: generated.usage.input_tokens,
+            output_tokens: generated.usage.output_tokens,
+        })
+    }
+
+    pub fn configure_subagents(
+        &self,
+        definitions: Vec<NativeSubagentDefinition>,
+    ) -> Result<(), NativeRuntimeError> {
+        let mut ids = BTreeSet::new();
+        let mut names = BTreeSet::new();
+        for definition in &definitions {
+            definition
+                .validate()
+                .map_err(|message| NativeRuntimeError::Agent(message.into()))?;
+            if !ids.insert(definition.id.trim().to_owned()) {
+                return Err(NativeRuntimeError::Agent(format!(
+                    "duplicate custom subagent id `{}`",
+                    definition.id
+                )));
+            }
+            let normalized_name = definition.name.trim().to_lowercase();
+            if !names.insert(normalized_name) {
+                return Err(NativeRuntimeError::Agent(format!(
+                    "duplicate custom subagent name `{}`",
+                    definition.name
+                )));
+            }
+        }
+        *self.subagent_configuration.lock().map_err(|_| {
+            NativeRuntimeError::Agent("subagent configuration lock poisoned".into())
+        })? = definitions;
+        self.invalidate_host();
+        Ok(())
+    }
+
+    pub fn subagent_configuration(
+        &self,
+    ) -> Result<Vec<NativeSubagentDefinition>, NativeRuntimeError> {
+        self.subagent_configuration
+            .lock()
+            .map(|definitions| definitions.clone())
+            .map_err(|_| NativeRuntimeError::Agent("subagent configuration lock poisoned".into()))
     }
 
     pub fn bootstrap(&self) -> &NativeRuntimeBootstrap {
@@ -315,6 +533,10 @@ impl NativeAgentKitRuntime {
 
     pub fn projections(&self) -> &SqliteTimelineProjectionStore {
         &self.projections
+    }
+
+    pub fn product_open_pending(&self) -> Vec<lilia_contracts::PendingProjection> {
+        self.projections.list_open_pending()
     }
 
     pub fn product_artifacts_for_task(
@@ -337,6 +559,16 @@ impl NativeAgentKitRuntime {
 
     pub fn product_timeline_for_task(&self, task_id: &TaskId) -> Vec<TimelineProjectionEvent> {
         self.projections.list_for_task(task_id)
+    }
+
+    pub fn product_timeline_page_before(
+        &self,
+        task_id: &TaskId,
+        before: Option<&TimelineProjectionCursor>,
+        limit: usize,
+    ) -> ProductResult<TimelineProjectionPage> {
+        self.projections
+            .list_task_page_before(task_id, before, limit)
     }
 
     pub fn task_for_session(&self, session_id: &str) -> Result<TaskId, AgentKitPortError> {
@@ -470,28 +702,56 @@ impl NativeAgentKitRuntime {
                 .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))?;
         }
         let host = self.host_for_plan(Some(&plan), workspace.is_some())?;
-        let mut messages = Vec::new();
-        if let Some(context) = &context {
-            messages.push(AgentMessage::system(format!(
-                "Product-provided workspace and turn context (authoritative for this turn): {context}"
-            )));
+        let snapshot = self.session_snapshot_on_host(&host, session.as_str())?;
+        if let Some((persisted_prompt, persisted_context)) =
+            persisted_turn_user_request(&snapshot, turn_id)
+        {
+            if persisted_prompt != prompt || persisted_context != context.as_ref() {
+                return Err(AgentKitPortError::InvalidInput(format!(
+                    "turn_id `{turn_id}` is already bound to a different request"
+                )));
+            }
         }
-        let mut user = AgentMessage::user(prompt);
-        user.metadata = context.clone();
-        messages.push(user);
+        if let Some(status) = persisted_turn_status(&snapshot, turn_id) {
+            if matches!(
+                status,
+                "completed"
+                    | "cancelled"
+                    | "failed"
+                    | "budget_exceeded"
+                    | "waiting_approval"
+                    | "waiting_interaction"
+            ) {
+                return Ok(self.page_from_persisted_turn(
+                    &snapshot,
+                    turn_id,
+                    &binding,
+                    &plan,
+                    credential_bound,
+                    status,
+                ));
+            }
+        }
+        let resume_without_prompt = persisted_turn_has_durable_progress(&snapshot, turn_id);
+        let mut messages = Vec::new();
+        if !resume_without_prompt {
+            if let Some(context) = &context {
+                messages.push(AgentMessage::system(format!(
+                    "Product-provided workspace and turn context (authoritative for this turn): {context}"
+                )));
+            }
+            let mut user = AgentMessage::user(prompt);
+            user.metadata = context.clone();
+            messages.push(user);
+        }
         let mut request = AgentRunRequest::new(binding.profile_id.clone(), messages);
         request.session_id = Some(session.as_str().to_string());
         request.turn_id = Some(turn_id.to_string());
         request.model = Some(plan.model.clone());
         request.provider_hint = Some(plan.provider.provider_id.clone());
+        request.budget.max_context_tokens = plan.input_context_token_budget();
         request.permission_mode = permission_mode(context.as_ref());
-        request.metadata = workspace.map(|workspace| {
-            serde_json::to_value(NativeCodingRunContext {
-                workspace,
-                turn_id: turn_id.to_string(),
-            })
-            .expect("Native Coding run context serializes")
-        });
+        request.metadata = agent_run_metadata(workspace, turn_id, context.as_ref());
         let result = self.run_agent(host, session.as_str(), request)?;
         self.page_from_result(
             session.as_str(),
@@ -501,6 +761,51 @@ impl NativeAgentKitRuntime {
             credential_bound,
             result,
         )
+    }
+
+    fn page_from_persisted_turn(
+        &self,
+        session: &AgentSession,
+        turn_id: &str,
+        binding: &ProductSessionBinding,
+        plan: &LiveModelTurnPlan,
+        credential_bound: bool,
+        status: &str,
+    ) -> NativeTurnStreamPage {
+        let events = session
+            .events
+            .iter()
+            .filter(|event| event.meta.turn_id.as_deref() == Some(turn_id))
+            .cloned()
+            .collect::<Vec<_>>();
+        let completed_tools = events
+            .iter()
+            .filter(|event| matches!(event.event, AgentEvent::ToolCallCompleted { .. }))
+            .count();
+        NativeTurnStreamPage {
+            session_id: session.session_id.clone(),
+            turn_id: turn_id.to_owned(),
+            events,
+            next_sequence: session.next_event_sequence,
+            waiting_approval: status == "waiting_approval",
+            waiting_interaction: status == "waiting_interaction",
+            completed: status == "completed",
+            cancelled: status == "cancelled",
+            tool_summary: Some(json!({
+                "driver": plan.driver.as_str(),
+                "official_servers": 0,
+                "waiting_approval": status == "waiting_approval",
+                "waiting_interaction": status == "waiting_interaction",
+                "auto_executed": completed_tools,
+                "blocked": 0,
+                "model_steps": 0,
+                "replayed": true,
+            })),
+            official_agent_server: false,
+            credential_bound,
+            live_model_adapter_drives_turn: credential_bound,
+            profile_id: binding.profile_id.clone(),
+        }
     }
 
     pub fn respond_approval_streaming(
@@ -529,14 +834,9 @@ impl NativeAgentKitRuntime {
         request.turn_id = Some(decision.turn_id.clone());
         request.model = Some(plan.model.clone());
         request.provider_hint = Some(plan.provider.provider_id.clone());
+        request.budget.max_context_tokens = plan.input_context_token_budget();
         request.permission_mode = permission_mode(context.as_ref());
-        request.metadata = workspace.map(|workspace| {
-            serde_json::to_value(NativeCodingRunContext {
-                workspace,
-                turn_id: decision.turn_id.clone(),
-            })
-            .expect("Native Coding run context serializes")
-        });
+        request.metadata = agent_run_metadata(workspace, &decision.turn_id, context.as_ref());
         request.permission_decisions = vec![PermissionDecision {
             session_id: decision.session_id.clone(),
             turn_id: decision.turn_id.clone(),
@@ -548,8 +848,8 @@ impl NativeAgentKitRuntime {
                 PermissionDecisionKind::Rejected
             },
         }];
-        let result = self.run_agent(host, session.as_str(), request)?;
-        let page = self.page_from_result(
+        let result = self.run_agent(Arc::clone(&host), session.as_str(), request)?;
+        let mut page = self.page_from_result(
             session.as_str(),
             &decision.turn_id,
             &binding,
@@ -557,8 +857,220 @@ impl NativeAgentKitRuntime {
             credential_bound,
             result,
         )?;
+        if !decision.approved {
+            if let Some(event) =
+                self.append_cancelled_turn_event(&host, session.as_str(), &decision.turn_id)?
+            {
+                self.project_and_observe_turn_events(
+                    session.as_str(),
+                    &decision.turn_id,
+                    std::slice::from_ref(&event),
+                )?;
+                self.resolve_open_pending_for_turn(
+                    session.as_str(),
+                    &decision.turn_id,
+                    PendingProjectionStatus::Cancelled,
+                    event.sequence,
+                    json!({ "approved": false, "cancelled": true }),
+                )?;
+                page.next_sequence = event.sequence;
+                page.events.push(event);
+            }
+            page.waiting_approval = false;
+            page.waiting_interaction = false;
+            page.completed = false;
+            page.cancelled = true;
+        }
         self.resolve_product_approval(&binding, decision, page.next_sequence)?;
         Ok(page)
+    }
+
+    pub fn respond_interaction_streaming(
+        &self,
+        session: &AgentSessionRef,
+        resolution: InteractionResolution,
+    ) -> Result<NativeTurnStreamPage, AgentKitPortError> {
+        self.respond_interactions_streaming(session, vec![resolution])
+    }
+
+    pub fn respond_interactions_streaming(
+        &self,
+        session: &AgentSessionRef,
+        resolutions: Vec<InteractionResolution>,
+    ) -> Result<NativeTurnStreamPage, AgentKitPortError> {
+        let first = resolutions.first().ok_or_else(|| {
+            AgentKitPortError::InvalidInput(
+                "at least one interaction resolution is required".into(),
+            )
+        })?;
+        let turn_id = first.turn_id.clone();
+        if resolutions
+            .iter()
+            .any(|resolution| resolution.session_id != session.as_str())
+        {
+            return Err(AgentKitPortError::InvalidInput(
+                "interaction session_id does not match target session".into(),
+            ));
+        }
+        if first.turn_id.trim().is_empty()
+            || resolutions.iter().any(|resolution| {
+                resolution.turn_id != first.turn_id || resolution.interaction_id.trim().is_empty()
+            })
+        {
+            return Err(AgentKitPortError::InvalidInput(
+                "interaction resolutions must have one non-empty turn_id and interaction_id".into(),
+            ));
+        }
+        let binding = self.binding(session.as_str())?;
+        let credential_bound = self.gate_credentials_for_turn()?;
+        let snapshot = self.session_snapshot(session.as_str())?;
+        let context = snapshot
+            .messages
+            .iter()
+            .rev()
+            .find(|message| message.role == AgentRole::User)
+            .and_then(|message| message.metadata.clone());
+        let (plan, workspace) = self.turn_plan(context.as_ref())?;
+        let host = self.host_for_plan(Some(&plan), workspace.is_some())?;
+        let mut request = AgentRunRequest::new(binding.profile_id.clone(), Vec::new());
+        request.session_id = Some(session.as_str().to_owned());
+        request.turn_id = Some(turn_id.clone());
+        request.model = Some(plan.model.clone());
+        request.provider_hint = Some(plan.provider.provider_id.clone());
+        request.budget.max_context_tokens = plan.input_context_token_budget();
+        request.permission_mode = permission_mode(context.as_ref());
+        request.metadata = agent_run_metadata(workspace, &turn_id, context.as_ref());
+        request.interaction_resolutions = resolutions;
+        let result = self.run_agent(host, session.as_str(), request)?;
+        self.page_from_result(
+            session.as_str(),
+            &turn_id,
+            &binding,
+            &plan,
+            credential_bound,
+            result,
+        )
+    }
+
+    pub fn request_interaction(
+        &self,
+        session: &AgentSessionRef,
+        turn_id: &str,
+        interaction: InteractionRequest,
+    ) -> Result<AgentEventEnvelope, AgentKitPortError> {
+        if interaction.interaction_id.trim().is_empty() {
+            return Err(AgentKitPortError::InvalidInput(
+                "interaction_id is required".into(),
+            ));
+        }
+        if interaction.prompt.trim().is_empty() {
+            return Err(AgentKitPortError::InvalidInput(
+                "interaction prompt is required".into(),
+            ));
+        }
+        self.binding(session.as_str())?;
+        let host = self.host_for_plan(None, false)?;
+        let snapshot = self.session_snapshot_on_host(&host, session.as_str())?;
+        if let Some(existing) = snapshot.events.iter().find(|event| {
+            matches!(
+                &event.event,
+                AgentEvent::InteractionRequested {
+                    turn_id: event_turn_id,
+                    interaction: existing,
+                } if event_turn_id == turn_id
+                    && existing.interaction_id == interaction.interaction_id
+            )
+        }) {
+            if matches!(
+                &existing.event,
+                AgentEvent::InteractionRequested {
+                    interaction: existing,
+                    ..
+                } if existing == &interaction
+            ) {
+                return Ok(existing.clone());
+            }
+            return Err(AgentKitPortError::InvalidInput(format!(
+                "interaction `{}` was already requested with different content",
+                interaction.interaction_id
+            )));
+        }
+        self.append_interaction_event(
+            &host,
+            session.as_str(),
+            turn_id,
+            "interaction requested",
+            AgentEvent::InteractionRequested {
+                turn_id: turn_id.to_owned(),
+                interaction,
+            },
+        )
+    }
+
+    pub fn respond_interaction(
+        &self,
+        session: &AgentSessionRef,
+        turn_id: &str,
+        resolution: InteractionResolution,
+    ) -> Result<AgentEventEnvelope, AgentKitPortError> {
+        if resolution.interaction_id.trim().is_empty() {
+            return Err(AgentKitPortError::InvalidInput(
+                "interaction_id is required".into(),
+            ));
+        }
+        self.binding(session.as_str())?;
+        let host = self.host_for_plan(None, false)?;
+        let snapshot = self.session_snapshot_on_host(&host, session.as_str())?;
+        let requested = snapshot.events.iter().any(|event| {
+            matches!(
+                &event.event,
+                AgentEvent::InteractionRequested {
+                    turn_id: event_turn_id,
+                    interaction,
+                } if event_turn_id == turn_id
+                    && interaction.interaction_id == resolution.interaction_id
+            )
+        });
+        if !requested {
+            return Err(AgentKitPortError::NotFound(format!(
+                "interaction `{}` for turn `{turn_id}`",
+                resolution.interaction_id
+            )));
+        }
+        if let Some(existing) = snapshot.events.iter().find(|event| {
+            matches!(
+                &event.event,
+                AgentEvent::InteractionResolved {
+                    turn_id: event_turn_id,
+                    resolution: existing,
+                } if event_turn_id == turn_id
+                    && existing.interaction_id == resolution.interaction_id
+            )
+        }) {
+            if matches!(
+                &existing.event,
+                AgentEvent::InteractionResolved {
+                    resolution: existing,
+                    ..
+                } if existing == &resolution
+            ) {
+                return Ok(existing.clone());
+            }
+            return Err(AgentKitPortError::InvalidInput(format!(
+                "interaction `{}` was already resolved with a different response",
+                resolution.interaction_id
+            )));
+        }
+        self.append_interaction_event(
+            &host,
+            session.as_str(),
+            turn_id,
+            "interaction resolved",
+            AgentEvent::InteractionResolved {
+                turn_id: turn_id.to_owned(),
+                resolution,
+            },
+        )
     }
 
     pub fn events_after(
@@ -572,6 +1084,170 @@ impl NativeAgentKitRuntime {
             .into_iter()
             .filter(|event| event.sequence > after_sequence)
             .collect())
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn seed_debug_interaction(
+        &self,
+        task_id: &TaskId,
+        session_id: &str,
+        turn_id: &str,
+        interaction: InteractionRequest,
+    ) -> Result<AgentEventEnvelope, AgentKitPortError> {
+        if interaction.session_id != session_id
+            || interaction.turn_id != turn_id
+            || interaction.interaction_id.trim().is_empty()
+        {
+            return Err(AgentKitPortError::InvalidInput(
+                "debug interaction identity does not match its session and turn".into(),
+            ));
+        }
+        match self.session_snapshot(session_id) {
+            Ok(_) => {
+                self.restore_product_session_binding(task_id, session_id, None)?;
+            }
+            Err(AgentKitPortError::NotFound(_)) => {
+                self.open_bound_session(task_id, session_id, None)?;
+            }
+            Err(error) => return Err(error),
+        }
+        if let Some(existing) =
+            self.session_snapshot(session_id)?
+                .events
+                .into_iter()
+                .find(|event| {
+                    matches!(
+                        &event.event,
+                        AgentEvent::InteractionRequested {
+                            turn_id: event_turn_id,
+                            interaction: existing,
+                        } if event_turn_id == turn_id
+                            && existing.interaction_id == interaction.interaction_id
+                    )
+                })
+        {
+            return Ok(existing);
+        }
+        let host = self.host_for_plan(None, false)?;
+        self.append_interaction_event(
+            &host,
+            session_id,
+            turn_id,
+            "debug interaction requested",
+            AgentEvent::InteractionRequested {
+                turn_id: turn_id.to_owned(),
+                interaction,
+            },
+        )
+    }
+
+    #[cfg(debug_assertions)]
+    pub fn seed_interrupted_tool_for_debug(
+        &self,
+        task_id: &TaskId,
+        session_id: &str,
+        turn_id: &str,
+        user_message: AgentMessage,
+        tool_call: AgentToolCall,
+    ) -> Result<Vec<AgentEventEnvelope>, AgentKitPortError> {
+        if turn_id.trim().is_empty()
+            || tool_call.call_id.trim().is_empty()
+            || user_message.role != AgentRole::User
+            || user_message.content.trim().is_empty()
+        {
+            return Err(AgentKitPortError::InvalidInput(
+                "debug interrupted tool requires a turn, call and user message".into(),
+            ));
+        }
+        self.restore_product_session_binding(task_id, session_id, None)?;
+        let host = self.host_for_plan(None, false)?;
+        let snapshot = self.session_snapshot_on_host(&host, session_id)?;
+        if let Some(existing) = snapshot.events.iter().find(|event| {
+            matches!(
+                &event.event,
+                AgentEvent::ToolCallStarted {
+                    turn_id: event_turn_id,
+                    call_id,
+                    name,
+                    input,
+                } if event_turn_id == turn_id
+                    && call_id == &tool_call.call_id
+                    && name == &tool_call.name
+                    && input == &tool_call.input
+            )
+        }) {
+            return Ok(vec![existing.clone()]);
+        }
+        if snapshot
+            .events
+            .iter()
+            .any(|event| event.meta.turn_id.as_deref() == Some(turn_id))
+        {
+            return Err(AgentKitPortError::InvalidInput(format!(
+                "debug turn `{turn_id}` already has different durable state"
+            )));
+        }
+        let defaults = AgentRunRequest::new(snapshot.profile_id.clone(), Vec::new());
+        let mut assistant = AgentMessage::assistant(String::new());
+        assistant.metadata = Some(json!({
+            "tool_calls": [tool_call.clone()],
+            "run_continuation": {
+                "next_step_index": 1,
+                "max_steps": defaults.max_steps,
+                "budget": defaults.budget,
+                "usage": mutsuki_agent_contracts::AgentUsage::default(),
+                "cost_microunits": 0
+            }
+        }));
+        let mut sequence = snapshot.next_event_sequence;
+        let mut next_event = |summary: &str, event| {
+            sequence = sequence.saturating_add(1);
+            AgentEventEnvelope {
+                session_id: session_id.to_owned(),
+                sequence,
+                meta: timestamped_event_meta(format!("{turn_id}:{sequence}"), summary, turn_id),
+                event,
+            }
+        };
+        let events = vec![
+            next_event(
+                "turn started",
+                AgentEvent::TurnState {
+                    turn_id: turn_id.to_owned(),
+                    status: "running".into(),
+                },
+            ),
+            next_event(
+                "user message",
+                AgentEvent::UserMessage {
+                    turn_id: turn_id.to_owned(),
+                    content: user_message.content.clone(),
+                    metadata: user_message.metadata.clone(),
+                },
+            ),
+            next_event(
+                "tool call started",
+                AgentEvent::ToolCallStarted {
+                    turn_id: turn_id.to_owned(),
+                    call_id: tool_call.call_id,
+                    name: tool_call.name,
+                    input: tool_call.input,
+                },
+            ),
+        ];
+        let _: AgentSession = self.call(
+            &host,
+            "session-seed-interrupted-tool",
+            AGENT_SESSION_APPEND_PROTOCOL,
+            AgentSessionAppendRequest {
+                session_id: session_id.to_owned(),
+                messages: vec![user_message, assistant],
+                events: events.clone(),
+                advance_turn: false,
+            },
+        )?;
+        self.project_and_observe_turn_events(session_id, turn_id, &events)?;
+        Ok(events)
     }
 
     pub fn open_bound_session(
@@ -634,14 +1310,63 @@ impl NativeAgentKitRuntime {
             .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))
     }
 
+    pub fn restore_product_session_binding(
+        &self,
+        task_id: &TaskId,
+        session_id: &str,
+        profile_id: Option<&str>,
+    ) -> Result<AgentSessionRef, AgentKitPortError> {
+        if session_id.trim().is_empty() {
+            return Err(AgentKitPortError::InvalidInput(
+                "session_id is required".into(),
+            ));
+        }
+        let session = self.session_snapshot(session_id)?;
+        let profile_id = profile_id.unwrap_or(session.profile_id.as_str());
+        if session.profile_id != profile_id {
+            return Err(AgentKitPortError::InvalidInput(format!(
+                "session `{session_id}` profile does not match its product binding"
+            )));
+        }
+        let binding = ProductSessionBinding {
+            task_id: task_id.as_str().to_owned(),
+            profile_id: profile_id.to_owned(),
+        };
+        let mut bindings = self
+            .bindings
+            .lock()
+            .map_err(|_| AgentKitPortError::Unavailable("session binding lock poisoned".into()))?;
+        if let Some(existing) = bindings.get(session_id) {
+            if existing != &binding {
+                return Err(AgentKitPortError::InvalidInput(format!(
+                    "session `{session_id}` is already bound to a different task or profile"
+                )));
+            }
+        } else {
+            bindings.insert(session_id.to_owned(), binding);
+        }
+        AgentSessionRef::new(session_id.to_owned())
+            .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))
+    }
+
     pub(crate) fn fork_session_state(
         &self,
         source_session_id: &str,
         target_session_id: &str,
     ) -> Result<(), AgentKitPortError> {
+        self.fork_session_state_through_turn(source_session_id, target_session_id, None)
+            .map(|_| ())
+    }
+
+    pub(crate) fn fork_session_state_through_turn(
+        &self,
+        source_session_id: &str,
+        target_session_id: &str,
+        through_turn_id: Option<&str>,
+    ) -> Result<AgentSession, AgentKitPortError> {
         let source = self.binding(source_session_id)?;
         let host = self.host_for_plan(None, false)?;
-        let _: AgentSession = self.call(
+        let forked: AgentSession = self.call(
             &host,
             "session-fork",
             AGENT_SESSION_FORK_PROTOCOL,
@@ -649,13 +1374,14 @@ impl NativeAgentKitRuntime {
                 source_session_id: source_session_id.to_string(),
                 target_session_id: target_session_id.to_string(),
                 title: None,
+                through_turn_id: through_turn_id.map(str::to_owned),
             },
         )?;
         self.bindings
             .lock()
             .map_err(|_| AgentKitPortError::Unavailable("session binding lock poisoned".into()))?
             .insert(target_session_id.to_string(), source);
-        Ok(())
+        Ok(forked)
     }
 
     pub(crate) fn persist_wire_session(
@@ -693,10 +1419,7 @@ impl NativeAgentKitRuntime {
             .ok_or_else(|| AgentKitPortError::NotFound(session_id.to_string()))
     }
 
-    pub(crate) fn session_snapshot(
-        &self,
-        session_id: &str,
-    ) -> Result<AgentSession, AgentKitPortError> {
+    pub fn session_snapshot(&self, session_id: &str) -> Result<AgentSession, AgentKitPortError> {
         let host = self.host_for_plan(None, false)?;
         self.session_snapshot_on_host(&host, session_id)
     }
@@ -913,6 +1636,9 @@ impl NativeAgentKitRuntime {
             .collect::<Vec<_>>();
         drop(active);
         for run in &runs {
+            run.host
+                .cancel_subagents(&run.session_id)
+                .map_err(agent_port_error)?;
             run.host.cancel(&run.handle).map_err(agent_port_error)?;
             if let Some(turn_id) = run.turn_id.as_deref() {
                 self.append_cancelled_turn_event(&run.host, &run.session_id, turn_id)?;
@@ -955,7 +1681,7 @@ impl NativeAgentKitRuntime {
         turn_id: &str,
     ) -> Result<Option<AgentEventEnvelope>, AgentKitPortError> {
         let snapshot = self.session_snapshot_on_host(host, session_id)?;
-        if snapshot.events.iter().any(|event| {
+        let already_cancelled = snapshot.events.iter().any(|event| {
             matches!(
                 &event.event,
                 AgentEvent::TurnState {
@@ -963,32 +1689,74 @@ impl NativeAgentKitRuntime {
                     status,
                 } if event_turn_id == turn_id && status == "cancelled"
             )
-        }) {
+        });
+        let messages = cancelled_pending_tool_messages(&snapshot, turn_id)?;
+        if already_cancelled && messages.is_empty() {
             return Ok(None);
         }
-        let sequence = snapshot.next_event_sequence.saturating_add(1);
-        let event = AgentEventEnvelope {
-            session_id: session_id.to_string(),
-            sequence,
-            meta: AgentEventMeta::new(format!("{turn_id}:{sequence}"), "turn cancelled")
-                .with_turn(turn_id),
-            event: AgentEvent::TurnState {
-                turn_id: turn_id.to_string(),
-                status: "cancelled".into(),
-            },
-        };
+        let event = (!already_cancelled).then(|| {
+            let sequence = snapshot.next_event_sequence.saturating_add(1);
+            AgentEventEnvelope {
+                session_id: session_id.to_string(),
+                sequence,
+                meta: timestamped_event_meta(
+                    format!("{turn_id}:{sequence}"),
+                    "turn cancelled",
+                    turn_id,
+                ),
+                event: AgentEvent::TurnState {
+                    turn_id: turn_id.to_string(),
+                    status: "cancelled".into(),
+                },
+            }
+        });
         let _: AgentSession = self.call(
             host,
             "session-cancel-event",
             AGENT_SESSION_APPEND_PROTOCOL,
             AgentSessionAppendRequest {
                 session_id: session_id.to_string(),
+                messages,
+                events: event.iter().cloned().collect(),
+                advance_turn: false,
+            },
+        )?;
+        Ok(event)
+    }
+
+    fn append_interaction_event(
+        &self,
+        host: &Arc<AgentKitHost>,
+        session_id: &str,
+        turn_id: &str,
+        summary: &str,
+        event: AgentEvent,
+    ) -> Result<AgentEventEnvelope, AgentKitPortError> {
+        let snapshot = self.session_snapshot_on_host(host, session_id)?;
+        let sequence = snapshot.next_event_sequence.saturating_add(1);
+        let event = AgentEventEnvelope {
+            session_id: session_id.to_owned(),
+            sequence,
+            meta: timestamped_event_meta(
+                format!("{turn_id}:interaction:{sequence}"),
+                summary.to_owned(),
+                turn_id,
+            ),
+            event,
+        };
+        let _: AgentSession = self.call(
+            host,
+            "session-interaction-event",
+            AGENT_SESSION_APPEND_PROTOCOL,
+            AgentSessionAppendRequest {
+                session_id: session_id.to_owned(),
                 messages: Vec::new(),
                 events: vec![event.clone()],
                 advance_turn: false,
             },
         )?;
-        Ok(Some(event))
+        self.project_and_observe_turn_events(session_id, turn_id, std::slice::from_ref(&event))?;
+        Ok(event)
     }
 
     pub fn cancel_session_turn(
@@ -1002,7 +1770,7 @@ impl NativeAgentKitRuntime {
             self.take_pending_turn_cancellation(session_id, turn_id)?;
             return Ok(TurnCancellationDisposition::ActiveRun);
         }
-        if turn_is_waiting_approval(&snapshot, turn_id) {
+        if turn_is_waiting_for_action(&snapshot, turn_id) {
             let host = self.host_for_plan(None, false)?;
             if let Some(event) = self.append_cancelled_turn_event(&host, session_id, turn_id)? {
                 self.project_and_observe_turn_events(
@@ -1019,7 +1787,7 @@ impl NativeAgentKitRuntime {
                 )?;
             }
             self.take_pending_turn_cancellation(session_id, turn_id)?;
-            return Ok(TurnCancellationDisposition::PausedApproval);
+            return Ok(TurnCancellationDisposition::PausedAction);
         }
         Ok(TurnCancellationDisposition::PendingRegistration)
     }
@@ -1157,11 +1925,14 @@ impl NativeAgentKitRuntime {
             events: result.events,
             next_sequence,
             waiting_approval: result.status == AgentRunStatus::WaitingApproval,
+            waiting_interaction: result.status == AgentRunStatus::WaitingInteraction,
             completed: result.status == AgentRunStatus::Completed,
+            cancelled: result.status == AgentRunStatus::Cancelled,
             tool_summary: Some(json!({
                 "driver": plan.driver.as_str(),
                 "official_servers": 0,
                 "waiting_approval": result.status == AgentRunStatus::WaitingApproval,
+                "waiting_interaction": result.status == AgentRunStatus::WaitingInteraction,
                 "auto_executed": executed,
                 "blocked": blocked,
                 "model_steps": model_steps,
@@ -1181,10 +1952,13 @@ impl NativeAgentKitRuntime {
         let profile = self
             .current_product_profile()
             .ok_or_else(|| AgentKitPortError::Unavailable("product profile missing".into()))?;
+        let configuration = self
+            .model_runtime_configuration()
+            .map_err(|error| AgentKitPortError::Unavailable(error.to_string()))?;
         let mut plan = build_live_turn_plan(
             &profile,
-            &self.model_endpoint(),
-            self.anthropic_endpoint().as_deref(),
+            &resolve_model_endpoint(configuration.openai_endpoint_override.as_deref()),
+            configuration.anthropic_endpoint_override.as_deref(),
         )
         .ok_or_else(|| {
             AgentKitPortError::Unavailable(
@@ -1196,8 +1970,9 @@ impl NativeAgentKitRuntime {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|model| !model.is_empty() && *model != "auto")
+            .or(configuration.model_override.as_deref())
         {
-            plan.model = model.to_string();
+            plan.select_model(model);
         }
         let workspace = workspace_cwd(context).map(|root| AgentWorkspaceRef {
             workspace_id: root.clone(),
@@ -1209,11 +1984,11 @@ impl NativeAgentKitRuntime {
     fn host_for_plan(
         &self,
         plan: Option<&LiveModelTurnPlan>,
-        enable_tools: bool,
+        enable_workspace_tools: bool,
     ) -> Result<Arc<AgentKitHost>, AgentKitPortError> {
         let key = match plan {
             Some(plan) => format!(
-                "{}:{enable_tools}:{}:{}",
+                "{}:{enable_workspace_tools}:{}:{}",
                 plan.driver.as_str(),
                 plan.model,
                 serde_json::to_string(&plan.provider)
@@ -1228,12 +2003,18 @@ impl NativeAgentKitRuntime {
         if let Some(cached) = cached.as_ref().filter(|cached| cached.key == key) {
             return Ok(cached.host.clone());
         }
+        let subagents = self.subagent_configuration().map_err(|error| {
+            AgentKitPortError::Unavailable(format!(
+                "custom subagent configuration is unavailable: {error}"
+            ))
+        })?;
         let host = Arc::new(
             AgentKitHost::build(
                 self.bootstrap.bundle.clone(),
                 plan,
                 adapter_credential_broker(self.credentials().broker().clone()),
-                enable_tools,
+                enable_workspace_tools,
+                &subagents,
             )
             .map_err(agent_port_error)?,
         );
@@ -1248,23 +2029,6 @@ impl NativeAgentKitRuntime {
         if let Ok(mut host) = self.host.lock() {
             *host = None;
         }
-    }
-
-    fn model_endpoint(&self) -> String {
-        resolve_model_endpoint(
-            self.model_endpoint_override
-                .lock()
-                .ok()
-                .and_then(|value| value.clone())
-                .as_deref(),
-        )
-    }
-
-    fn anthropic_endpoint(&self) -> Option<String> {
-        self.anthropic_endpoint_override
-            .lock()
-            .ok()
-            .and_then(|value| value.clone())
     }
 
     fn gate_credentials_for_turn(&self) -> Result<bool, AgentKitPortError> {
@@ -1299,6 +2063,21 @@ impl NativeAgentKitRuntime {
                 .map(|profile| profile.profile_id),
         }
     }
+}
+
+fn timestamped_event_meta(
+    event_id: impl Into<String>,
+    summary: impl Into<String>,
+    turn_id: &str,
+) -> AgentEventMeta {
+    let mut meta = AgentEventMeta::new(event_id, summary).with_turn(turn_id);
+    meta.timestamp_unix_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX);
+    meta
 }
 
 impl AgentKitClientPort for NativeAgentKitRuntime {
@@ -1403,6 +2182,61 @@ fn workspace_cwd(context: Option<&Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn agent_run_metadata(
+    workspace: Option<AgentWorkspaceRef>,
+    turn_id: &str,
+    context: Option<&Value>,
+) -> Option<Value> {
+    let mut metadata = workspace
+        .map(|workspace| {
+            serde_json::to_value(NativeCodingRunContext {
+                workspace,
+                turn_id: turn_id.to_owned(),
+            })
+            .expect("Native Coding run context serializes")
+        })
+        .unwrap_or_else(|| json!({}));
+    if let Some(reasoning_effort) = context
+        .and_then(|value| value.get("reasoningEffort"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        metadata
+            .as_object_mut()
+            .expect("Native Agent run metadata is an object")
+            .insert(
+                "reasoningEffort".into(),
+                Value::String(reasoning_effort.to_owned()),
+            );
+    }
+    for (field, value) in [
+        (
+            "productTaskId",
+            context.and_then(|value| value.pointer("/workspace/metadata/productTaskId")),
+        ),
+        (
+            "productProjectId",
+            context.and_then(|value| value.pointer("/workspace/metadata/productProjectId")),
+        ),
+        (
+            "projectArchitectureVersion",
+            context.and_then(|value| value.pointer("/projectArchitecture/version")),
+        ),
+    ] {
+        if let Some(value) = value.filter(|value| !value.is_null()) {
+            metadata
+                .as_object_mut()
+                .expect("Native Agent run metadata is an object")
+                .insert(field.to_owned(), value.clone());
+        }
+    }
+    metadata
+        .as_object()
+        .is_some_and(|metadata| !metadata.is_empty())
+        .then_some(metadata)
+}
+
 fn permission_mode(context: Option<&Value>) -> AgentPermissionMode {
     match context
         .and_then(|value| value.get("permission"))
@@ -1414,7 +2248,60 @@ fn permission_mode(context: Option<&Value>) -> AgentPermissionMode {
     }
 }
 
-fn turn_is_waiting_approval(session: &AgentSession, turn_id: &str) -> bool {
+fn cancelled_pending_tool_messages(
+    session: &AgentSession,
+    turn_id: &str,
+) -> Result<Vec<AgentMessage>, AgentKitPortError> {
+    let Some(metadata) = session
+        .messages
+        .last()
+        .filter(|message| message.role == AgentRole::Assistant)
+        .and_then(|message| message.metadata.as_ref())
+    else {
+        return Ok(Vec::new());
+    };
+    let pending_matches_turn = ["pending_approvals", "pending_interactions"]
+        .into_iter()
+        .filter_map(|key| metadata.get(key).and_then(Value::as_array))
+        .flatten()
+        .any(|pending| pending.get("turn_id").and_then(Value::as_str) == Some(turn_id));
+    if !pending_matches_turn {
+        return Ok(Vec::new());
+    }
+    let calls = metadata
+        .get("tool_calls")
+        .cloned()
+        .map(serde_json::from_value::<Vec<AgentToolCall>>)
+        .transpose()
+        .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?
+        .unwrap_or_default();
+    calls
+        .into_iter()
+        .map(|call| {
+            let error = AgentError::new(
+                "agent.tool.cancelled",
+                "the user cancelled the pending action",
+            );
+            Ok(AgentMessage {
+                role: AgentRole::Tool,
+                content: json!({ "cancelled": true }).to_string(),
+                name: Some(call.name),
+                metadata: Some(
+                    serde_json::to_value(AgentToolResultMetadata {
+                        call_id: call.call_id,
+                        output_ref: None,
+                        is_error: true,
+                        error: Some(error),
+                    })
+                    .map_err(|error| AgentKitPortError::InvalidInput(error.to_string()))?,
+                ),
+                parts: Vec::new(),
+            })
+        })
+        .collect()
+}
+
+fn turn_is_waiting_for_action(session: &AgentSession, turn_id: &str) -> bool {
     session
         .events
         .iter()
@@ -1426,7 +2313,60 @@ fn turn_is_waiting_approval(session: &AgentSession, turn_id: &str) -> bool {
             } if event_turn_id == turn_id => Some(status.as_str()),
             _ => None,
         })
-        == Some("waiting_approval")
+        .is_some_and(|status| matches!(status, "waiting_approval" | "waiting_interaction"))
+}
+
+fn persisted_turn_status<'a>(session: &'a AgentSession, turn_id: &str) -> Option<&'a str> {
+    session
+        .events
+        .iter()
+        .rev()
+        .find_map(|event| match &event.event {
+            AgentEvent::TurnState {
+                turn_id: event_turn_id,
+                status,
+            } if event_turn_id == turn_id => Some(status.as_str()),
+            _ => None,
+        })
+}
+
+fn persisted_turn_user_request<'a>(
+    session: &'a AgentSession,
+    turn_id: &str,
+) -> Option<(&'a str, Option<&'a Value>)> {
+    session.events.iter().find_map(|event| match &event.event {
+        AgentEvent::UserMessage {
+            turn_id: event_turn_id,
+            content,
+            metadata,
+        } if event_turn_id == turn_id => Some((content.as_str(), metadata.as_ref())),
+        _ => None,
+    })
+}
+
+fn persisted_turn_has_durable_progress(session: &AgentSession, turn_id: &str) -> bool {
+    if session.events.iter().any(|event| {
+        event.meta.turn_id.as_deref() == Some(turn_id)
+            && matches!(
+                event.event,
+                AgentEvent::ToolCallStarted { .. } | AgentEvent::ToolCallCompleted { .. }
+            )
+    }) {
+        return true;
+    }
+    session
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == AgentRole::Assistant)
+        .and_then(|message| message.metadata.as_ref())
+        .is_some_and(|metadata| {
+            ["pending_approvals", "pending_interactions"]
+                .into_iter()
+                .filter_map(|key| metadata.get(key).and_then(Value::as_array))
+                .flatten()
+                .any(|pending| pending.get("turn_id").and_then(Value::as_str) == Some(turn_id))
+        })
 }
 
 fn uuid_like_turn_id(session_id: &str, prompt: &str) -> u64 {
@@ -1446,6 +2386,10 @@ fn agent_port_error(error: AgentError) -> AgentKitPortError {
     } else {
         AgentKitPortError::Unavailable(error.to_string())
     }
+}
+
+fn protocol_error_message(error: &mutsuki_agent_contracts::ProtocolError) -> String {
+    format!("{}: {}", error.code, error.message)
 }
 
 fn product_store_error(error: lilia_contracts::ProductError) -> AgentError {
@@ -1527,6 +2471,49 @@ mod tests {
         (runtime, server)
     }
 
+    #[test]
+    fn configured_model_runtime_drives_default_plan_but_task_context_can_override_model() {
+        let runtime = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        runtime
+            .credentials()
+            .login(ProductCredentialLoginInput {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: "sk-test-openai-api-key-0123456789abcdef".into(),
+                account_label: None,
+                source: Some("runtime-settings-test".into()),
+            })
+            .unwrap();
+        runtime.refresh_product_profile(None).unwrap();
+        runtime
+            .configure_model_runtime(NativeModelRuntimeConfiguration {
+                openai_endpoint_override: Some(
+                    "https://models.example.test/v1/chat/completions".into(),
+                ),
+                anthropic_endpoint_override: Some(
+                    "https://anthropic.example.test/v1/messages".into(),
+                ),
+                model_override: Some("configured-model".into()),
+            })
+            .unwrap();
+
+        let (configured, _) = runtime.turn_plan(None).unwrap();
+        assert_eq!(
+            configured.provider.endpoint,
+            "https://models.example.test/v1/chat/completions"
+        );
+        assert_eq!(configured.model, "configured-model");
+        assert!(configured.provider.models.contains_key("configured-model"));
+
+        let (task_override, _) = runtime
+            .turn_plan(Some(&json!({ "model": "task-model" })))
+            .unwrap();
+        assert_eq!(task_override.model, "task-model");
+        assert!(task_override.provider.models.contains_key("task-model"));
+    }
+
     fn write_call() -> Value {
         json!({
             "choices": [{
@@ -1548,6 +2535,58 @@ mod tests {
         })
     }
 
+    fn plan_confirmation_call() -> Value {
+        json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "confirm-plan-1",
+                        "type": "function",
+                        "function": {
+                            "name": "confirm_plan",
+                            "arguments": "{\"plan\":\"Inspect, implement, and verify\",\"question\":\"Run this plan?\"}"
+                        }
+                    }]
+                }
+            }],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
+        })
+    }
+
+    fn delegate_agent_call() -> Value {
+        json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "delegate-1",
+                        "type": "function",
+                        "function": {
+                            "name": "delegate_agent",
+                            "arguments": "{\"agentId\":\"reviewer\",\"task\":\"Review the current design\"}"
+                        }
+                    }]
+                }
+            }],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3}
+        })
+    }
+
+    fn text_response(content: &str) -> Value {
+        json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": content}
+            }],
+            "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4}
+        })
+    }
+
     fn final_response() -> Value {
         json!({
             "choices": [{
@@ -1566,6 +2605,178 @@ mod tests {
                 Some("mutsuki.reference.coding-agent"),
             )
             .unwrap()
+    }
+
+    #[test]
+    fn product_session_binding_restores_from_the_durable_agentkit_session() {
+        let workspace = TestWorkspace::new("binding-restart");
+        let projection_path = workspace.0.join("projections.db");
+        let runtime_path = workspace.0.join("runtime.db");
+        let task_id = TaskId::new("task-binding-restart").unwrap();
+        let session_id = "session-binding-restart";
+        {
+            let runtime = NativeRuntimeBootstrap::embedded_reference()
+                .unwrap()
+                .into_runtime_with_stores(
+                    SqliteTimelineProjectionStore::open(&projection_path).unwrap(),
+                    SqliteAgentRuntimeStateStore::open(&runtime_path).unwrap(),
+                );
+            runtime
+                .open_bound_session(&task_id, session_id, Some("mutsuki.reference.coding-agent"))
+                .unwrap();
+        }
+
+        let recovered = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime_with_stores(
+                SqliteTimelineProjectionStore::open(&projection_path).unwrap(),
+                SqliteAgentRuntimeStateStore::open(&runtime_path).unwrap(),
+            );
+        assert!(matches!(
+            recovered.binding(session_id),
+            Err(AgentKitPortError::NotFound(_))
+        ));
+        recovered
+            .restore_product_session_binding(
+                &task_id,
+                session_id,
+                Some("mutsuki.reference.coding-agent"),
+            )
+            .unwrap();
+        assert_eq!(
+            recovered.binding(session_id).unwrap(),
+            ProductSessionBinding {
+                task_id: task_id.as_str().to_owned(),
+                profile_id: "mutsuki.reference.coding-agent".to_owned(),
+            }
+        );
+    }
+
+    #[test]
+    fn interaction_response_is_appended_to_the_same_session_and_resolves_projection() {
+        let runtime = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        let session = session(&runtime, "interaction-response");
+        let task = TaskId::new("task-interaction-response").unwrap();
+        let request = InteractionRequest {
+            session_id: session.as_str().to_owned(),
+            turn_id: "turn-question".into(),
+            version: 1,
+            interaction_id: "question-1".into(),
+            kind: mutsuki_agent_contracts::InteractionKind::Clarification,
+            source_tool: Some("ask_user_question".into()),
+            permission_mode: mutsuki_agent_contracts::AgentPermissionMode::Ask,
+            prompt: "Which target?".into(),
+            options: json!({"choices": ["A", "B"]}),
+            context: None,
+            details: None,
+        };
+
+        let requested = runtime
+            .request_interaction(&session, "turn-question", request.clone())
+            .unwrap();
+        assert!(matches!(
+            requested.event,
+            AgentEvent::InteractionRequested { .. }
+        ));
+        assert!(runtime
+            .product_pending_for_task(&task)
+            .iter()
+            .any(|pending| {
+                pending.request_id == "question-1"
+                    && pending.kind == "ask_user"
+                    && pending.status == PendingProjectionStatus::Open
+            }));
+
+        let resolution = InteractionResolution {
+            session_id: session.as_str().to_owned(),
+            turn_id: "turn-question".into(),
+            version: 1,
+            interaction_id: "question-1".into(),
+            accepted: true,
+            response: json!({"answer": "A"}),
+        };
+        let resolved = runtime
+            .respond_interaction(&session, "turn-question", resolution.clone())
+            .unwrap();
+        assert_eq!(resolved.sequence, requested.sequence + 1);
+        assert!(runtime
+            .product_pending_for_task(&task)
+            .iter()
+            .any(|pending| {
+                pending.request_id == "question-1"
+                    && pending.status == PendingProjectionStatus::Resolved
+            }));
+        assert_eq!(
+            runtime
+                .respond_interaction(&session, "turn-question", resolution)
+                .unwrap()
+                .sequence,
+            resolved.sequence
+        );
+        let snapshot = runtime.session_snapshot(session.as_str()).unwrap();
+        assert!(snapshot.events.iter().any(|event| event == &resolved));
+    }
+
+    #[test]
+    fn debug_mcp_interaction_seed_is_idempotent_and_projects_the_native_contract() {
+        let runtime = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        let task = TaskId::new("task-debug-mcp-seed").unwrap();
+        let request = InteractionRequest {
+            session_id: "session-debug-mcp-seed".into(),
+            turn_id: "turn-debug-mcp-seed".into(),
+            version: 1,
+            interaction_id: "request-debug-mcp-seed".into(),
+            kind: mutsuki_agent_contracts::InteractionKind::Custom,
+            source_tool: None,
+            permission_mode: mutsuki_agent_contracts::AgentPermissionMode::Ask,
+            prompt: "Choose a project".into(),
+            options: json!({
+                "interaction": "mcp_elicitation",
+                "threadId": "task-debug-mcp-seed",
+                "serverName": "debug-mcp",
+                "mode": "form",
+                "requestedSchema": {
+                    "type": "object",
+                    "required": ["project"],
+                    "properties": {
+                        "project": {"type": "string", "enum": ["A", "B"]}
+                    }
+                }
+            }),
+            context: None,
+            details: None,
+        };
+
+        let first = runtime
+            .seed_debug_interaction(
+                &task,
+                "session-debug-mcp-seed",
+                "turn-debug-mcp-seed",
+                request.clone(),
+            )
+            .unwrap();
+        let repeated = runtime
+            .seed_debug_interaction(
+                &task,
+                "session-debug-mcp-seed",
+                "turn-debug-mcp-seed",
+                request,
+            )
+            .unwrap();
+
+        assert_eq!(first.sequence, repeated.sequence);
+        assert!(runtime
+            .product_pending_for_task(&task)
+            .iter()
+            .any(|pending| {
+                pending.request_id == "request-debug-mcp-seed"
+                    && pending.kind == "mcp_elicitation"
+                    && pending.status == PendingProjectionStatus::Open
+            }));
     }
 
     #[test]
@@ -1644,6 +2855,271 @@ mod tests {
         assert!(page.events.iter().any(|event| matches!(
             event.event,
             mutsuki_agent_contracts::AgentEvent::FinalResponse { .. }
+        )));
+        assert!(page
+            .events
+            .iter()
+            .any(|event| matches!(event.event, AgentEvent::ToolCallStarted { .. })));
+        assert!(page
+            .events
+            .iter()
+            .any(|event| matches!(event.event, AgentEvent::ToolCallCompleted { .. })));
+        assert!(page
+            .events
+            .iter()
+            .all(|event| event.meta.timestamp_unix_ms > 0));
+        let snapshot = runtime.session_snapshot(session.as_str()).unwrap();
+        assert!(snapshot.messages.iter().any(|message| {
+            message.role == AgentRole::Tool
+                && message
+                    .metadata
+                    .as_ref()
+                    .is_some_and(|metadata| metadata.get("tool_execution_resume_receipt").is_some())
+        }));
+        let replayed = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "write the fixture",
+                "turn-full",
+                Some(json!({
+                    "workspace": {"folders": [workspace.0.to_string_lossy()]},
+                    "permission": "full"
+                })),
+            )
+            .unwrap();
+        assert!(replayed.completed);
+        assert_eq!(replayed.tool_summary.as_ref().unwrap()["replayed"], true);
+        assert_eq!(
+            std::fs::read_to_string(workspace.0.join("created.txt")).unwrap(),
+            "agentkit"
+        );
+        assert!(matches!(
+            runtime.submit_turn_with_context_streaming(
+                &session,
+                "different request",
+                "turn-full",
+                Some(json!({
+                    "workspace": {"folders": [workspace.0.to_string_lossy()]},
+                    "permission": "full"
+                })),
+            ),
+            Err(AgentKitPortError::InvalidInput(_))
+        ));
+        let usage = runtime
+            .product_timeline_for_task(&TaskId::new("task-full").unwrap())
+            .into_iter()
+            .find(|event| event.kind == "usage")
+            .expect("usage projection");
+        assert!(usage.payload["createdAt"].as_u64().unwrap_or_default() > 0);
+    }
+
+    #[test]
+    fn interrupted_tool_start_requires_user_recovery_without_reexecuting_side_effect() {
+        let workspace = TestWorkspace::new("tool-recovery");
+        let (runtime, server) = configured_runtime(Vec::new());
+        server.join().unwrap();
+        let session = session(&runtime, "tool-recovery");
+        let host = runtime.host_for_plan(None, false).unwrap();
+        let snapshot = runtime
+            .session_snapshot_on_host(&host, session.as_str())
+            .unwrap();
+        let tool_call = AgentToolCall {
+            call_id: "write-crash-1".into(),
+            name: "computer.fs.write".into(),
+            input: json!({
+                "path": "created.txt",
+                "content": "must-not-run-without-confirmation"
+            }),
+        };
+        let mut assistant = AgentMessage::assistant(String::new());
+        assistant.metadata = Some(json!({
+            "tool_calls": [tool_call.clone()],
+            "run_continuation": {
+                "next_step_index": 1,
+                "max_steps": 8,
+                "budget": mutsuki_agent_contracts::AgentRunBudget::default(),
+                "usage": mutsuki_agent_contracts::AgentUsage::default(),
+                "cost_microunits": 0
+            }
+        }));
+        let sequence = snapshot.next_event_sequence.saturating_add(1);
+        let _: AgentSession = runtime
+            .call(
+                &host,
+                "session-seed-interrupted-tool",
+                AGENT_SESSION_APPEND_PROTOCOL,
+                AgentSessionAppendRequest {
+                    session_id: session.as_str().to_owned(),
+                    messages: vec![AgentMessage::user("write once"), assistant],
+                    events: vec![AgentEventEnvelope {
+                        session_id: session.as_str().to_owned(),
+                        sequence,
+                        meta: timestamped_event_meta(
+                            format!("turn-tool-recovery:{sequence}"),
+                            "tool call started",
+                            "turn-tool-recovery",
+                        ),
+                        event: AgentEvent::ToolCallStarted {
+                            turn_id: "turn-tool-recovery".into(),
+                            call_id: tool_call.call_id.clone(),
+                            name: tool_call.name.clone(),
+                            input: tool_call.input.clone(),
+                        },
+                    }],
+                    advance_turn: false,
+                },
+            )
+            .unwrap();
+
+        let page = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "write once",
+                "turn-tool-recovery",
+                Some(json!({
+                    "workspace": {"folders": [workspace.0.to_string_lossy()]},
+                    "permission": "full"
+                })),
+            )
+            .unwrap();
+        assert!(page.waiting_interaction);
+        assert!(!workspace.0.join("created.txt").exists());
+        let recovery = page
+            .events
+            .iter()
+            .find_map(|event| match &event.event {
+                AgentEvent::InteractionRequested { interaction, .. }
+                    if interaction.interaction_id == tool_call.call_id =>
+                {
+                    Some(interaction.clone())
+                }
+                _ => None,
+            })
+            .expect("interrupted tool must project a recovery interaction");
+        assert_eq!(recovery.options["recovery"], "ambiguous_tool_execution");
+        assert_eq!(recovery.options["choices"].as_array().unwrap().len(), 2);
+
+        let cancelled = runtime
+            .respond_interaction_streaming(
+                &session,
+                InteractionResolution {
+                    session_id: recovery.session_id,
+                    turn_id: recovery.turn_id,
+                    version: recovery.version,
+                    interaction_id: recovery.interaction_id,
+                    accepted: false,
+                    response: json!({"cancelled": true}),
+                },
+            )
+            .unwrap();
+        assert!(cancelled.cancelled);
+        assert!(!workspace.0.join("created.txt").exists());
+        let snapshot = runtime.session_snapshot(session.as_str()).unwrap();
+        assert!(snapshot.events.iter().any(|event| matches!(
+            &event.event,
+            AgentEvent::ToolCallCompleted { call_id, .. } if call_id == "write-crash-1"
+        )));
+    }
+
+    #[test]
+    fn configured_custom_subagent_executes_as_a_real_readonly_agent_tool() {
+        let runtime = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        runtime
+            .credentials()
+            .login(ProductCredentialLoginInput {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: "sk-test-openai-api-key-0123456789abcdef".into(),
+                account_label: None,
+                source: Some("subagent-test".into()),
+            })
+            .unwrap();
+        runtime.refresh_product_profile(None).unwrap();
+        runtime
+            .configure_subagents(vec![NativeSubagentDefinition {
+                id: "reviewer".into(),
+                name: "Reviewer".into(),
+                description: "Review architecture decisions".into(),
+                instruction: "Find correctness and ownership risks.".into(),
+                enabled: true,
+            }])
+            .unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (requests_tx, requests_rx) = mpsc::channel();
+        let responses = vec![
+            delegate_agent_call(),
+            text_response("child finding: keep the service boundary typed"),
+            text_response("parent incorporated the child finding"),
+        ];
+        let server = std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let mut responses = responses.into_iter();
+            while let Some(response) = responses.next() {
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break Some(stream),
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            if Instant::now() >= deadline {
+                                break None;
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("subagent test listener failed: {error}"),
+                    }
+                };
+                let Some(mut stream) = stream.take() else {
+                    break;
+                };
+                stream.set_nonblocking(false).unwrap();
+                let mut bytes = [0_u8; 65_536];
+                let read = stream.read(&mut bytes).unwrap();
+                requests_tx
+                    .send(String::from_utf8_lossy(&bytes[..read]).to_string())
+                    .unwrap();
+                let body = response.to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        runtime.set_model_endpoint_override(Some(format!("http://{address}/v1/chat/completions")));
+        let session = session(&runtime, "custom-subagent");
+        let page = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "Ask the configured reviewer",
+                "turn-custom-subagent",
+                Some(json!({"permission": "full"})),
+            )
+            .unwrap();
+        server.join().unwrap();
+        let requests = requests_rx.try_iter().collect::<Vec<_>>();
+        assert_eq!(
+            requests.len(),
+            3,
+            "unexpected model request count: {requests:#?}"
+        );
+        assert!(requests[0].contains("delegate_agent"));
+        assert!(requests[1].contains("Find correctness and ownership risks."));
+        assert!(!requests[1].contains("computer.fs.write"));
+        assert!(!requests[1].contains("delegate_agent"));
+        assert!(requests[2].contains("child finding: keep the service boundary typed"));
+        assert!(page.events.iter().any(|event| matches!(
+            &event.event,
+            AgentEvent::ToolCallCompleted { summary, .. } if summary == "delegate_agent"
+        )));
+        assert!(page.events.iter().any(|event| matches!(
+            &event.event,
+            AgentEvent::FinalResponse { summary, .. }
+                if summary == "parent incorporated the child finding"
         )));
     }
 
@@ -1740,6 +3216,69 @@ mod tests {
     }
 
     #[test]
+    fn rejected_approval_is_terminal_and_allows_a_new_turn() {
+        let workspace = TestWorkspace::new("reject-approval");
+        let (runtime, server) = configured_runtime(vec![write_call(), final_response()]);
+        let session = session(&runtime, "reject-approval");
+        let waiting = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "ask before writing",
+                "turn-reject-approval",
+                Some(json!({
+                    "workspace": {"folders": [workspace.0.to_string_lossy()]},
+                    "permission": "ask"
+                })),
+            )
+            .unwrap();
+        let approval = waiting
+            .events
+            .iter()
+            .find_map(|event| match &event.event {
+                AgentEvent::ApprovalRequest { request } => Some(request.clone()),
+                _ => None,
+            })
+            .unwrap();
+
+        let rejected = runtime
+            .respond_approval_streaming(
+                &session,
+                &ProductApprovalDecision {
+                    session_id: approval.session_id,
+                    turn_id: approval.turn_id,
+                    action_id: approval.action_id,
+                    version: approval.version,
+                    approved: false,
+                },
+            )
+            .unwrap();
+        assert!(rejected.cancelled);
+        assert!(!rejected.waiting_approval);
+        assert!(runtime
+            .session_snapshot(session.as_str())
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| matches!(
+                &event.event,
+                AgentEvent::TurnState { turn_id, status }
+                    if turn_id == "turn-reject-approval" && status == "cancelled"
+            )));
+        assert!(!workspace.0.join("created.txt").exists());
+
+        let next = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "continue after rejection",
+                "turn-after-rejection",
+                Some(json!({ "permission": "full" })),
+            )
+            .unwrap();
+        server.join().unwrap();
+        assert!(next.completed);
+    }
+
+    #[test]
     fn cancelling_paused_approval_is_terminal_in_session_and_product_projection() {
         let workspace = TestWorkspace::new("cancel-paused-approval");
         let (runtime, server) = configured_runtime(vec![write_call()]);
@@ -1766,7 +3305,7 @@ mod tests {
             runtime
                 .cancel_session_turn(session.as_str(), "turn-cancel-paused")
                 .unwrap(),
-            TurnCancellationDisposition::PausedApproval
+            TurnCancellationDisposition::PausedAction
         );
 
         let snapshot = runtime.session_snapshot(session.as_str()).unwrap();
@@ -1792,6 +3331,53 @@ mod tests {
                     && event.payload.get("turnStatus").and_then(Value::as_str) == Some("cancelled")
             }));
         assert!(!workspace.0.join("created.txt").exists());
+    }
+
+    #[test]
+    fn cancelling_paused_plan_is_terminal_in_session_and_product_projection() {
+        let (runtime, server) = configured_runtime(vec![plan_confirmation_call()]);
+        let session = session(&runtime, "cancel-paused-plan");
+        let task = TaskId::new("task-cancel-paused-plan").unwrap();
+        let waiting = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "prepare a plan",
+                "turn-cancel-paused-plan",
+                Some(json!({"permission": "full", "planMode": true})),
+            )
+            .unwrap();
+        server.join().unwrap();
+        assert!(waiting.waiting_interaction);
+        assert!(runtime
+            .product_pending_for_task(&task)
+            .iter()
+            .any(|pending| {
+                pending.kind == "plan_approval" && pending.status == PendingProjectionStatus::Open
+            }));
+
+        assert_eq!(
+            runtime
+                .cancel_session_turn(session.as_str(), "turn-cancel-paused-plan")
+                .unwrap(),
+            TurnCancellationDisposition::PausedAction
+        );
+        assert!(runtime
+            .product_pending_for_task(&task)
+            .iter()
+            .any(|pending| {
+                pending.kind == "plan_approval"
+                    && pending.status == PendingProjectionStatus::Cancelled
+            }));
+        assert!(runtime
+            .session_snapshot(session.as_str())
+            .unwrap()
+            .events
+            .iter()
+            .any(|event| matches!(
+                &event.event,
+                AgentEvent::TurnState { turn_id, status }
+                    if turn_id == "turn-cancel-paused-plan" && status == "cancelled"
+            )));
     }
 
     #[test]
@@ -1855,12 +3441,14 @@ mod tests {
                     release_response_rx.recv().unwrap();
                 }
                 let body = final_response().to_string();
-                write!(
+                let response = write!(
                     stream,
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
-                )
-                .unwrap();
+                );
+                if index != 0 {
+                    response.unwrap();
+                }
             }
         });
         runtime.set_model_endpoint_override(Some(format!("http://{address}/v1/chat/completions")));

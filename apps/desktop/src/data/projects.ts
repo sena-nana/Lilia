@@ -5,11 +5,10 @@
 import { ref } from "vue";
 import type {
   ProductEntity,
-  ProductConversation,
   ProductProject,
-  ProductTask,
   Project,
 } from "@lilia/contracts";
+import { PROJECT_REMOVE_COMMAND } from "@lilia/contracts";
 import { singleFlight } from "@lilia/ui/utils/singleFlight";
 import {
   createProductEntity,
@@ -19,6 +18,7 @@ import {
   newProductId,
   updateProductEntity,
 } from "../services/productCore";
+import { invoke } from "../tauri/runtime";
 
 export const PROJECTS = ref<Project[]>([]);
 const PRODUCT_PROJECTS = new Map<string, ProductProject>();
@@ -209,34 +209,8 @@ export async function renameProject(id: string, nextName: string): Promise<boole
 export async function removeProject(id: string): Promise<boolean> {
   const current = await loadProductProject(id);
   if (!current || current.archive === "archived") return false;
-
-  const conversationEntities = await listProductEntities("conversation");
-  for (const entity of conversationEntities) {
-    if (entity.kind !== "conversation" || entity.value.projectId !== id || entity.value.archived) {
-      continue;
-    }
-    const conversation: ProductConversation = { ...entity.value, projectId: null };
-    await updateProductEntity(
-      newProductCommandMeta("detach-project-conversation", conversation.revision),
-      { kind: "conversation", value: conversation },
-      "detached_from_project",
-    );
-  }
-  const taskEntities = await listProductEntities("task");
-  for (const entity of taskEntities) {
-    if (entity.kind !== "task" || entity.value.projectId !== id || entity.value.archived) continue;
-    const task: ProductTask = { ...entity.value, projectId: null };
-    await updateProductEntity(
-      newProductCommandMeta("detach-project-task", task.revision),
-      { kind: "task", value: task },
-      "detached_from_project",
-    );
-  }
-  await updateProductEntity(
-    newProductCommandMeta("archive-project", current.revision),
-    { kind: "project", value: { ...current, archive: "archived" } },
-    "archived",
-  );
+  const removed = await invoke<boolean>(PROJECT_REMOVE_COMMAND, { id });
+  if (!removed) return false;
   PRODUCT_PROJECTS.delete(id);
   await refresh();
   await onProjectRemoved?.(id);

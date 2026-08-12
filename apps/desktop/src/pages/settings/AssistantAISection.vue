@@ -26,7 +26,6 @@ const assistantAIForm = ref<AssistantAIConfig>({
   apiKey: null,
   model: null,
   modelPool: [],
-  codexAccountSparkEnabled: false,
   hasApiKey: false,
 });
 const savingAssistantAI = ref(false);
@@ -68,7 +67,6 @@ function normalizedAssistantAI(): AssistantAIConfig {
     apiKey: assistantAIForm.value.apiKey?.trim() || null,
     model: assistantAIForm.value.model?.trim() || null,
     modelPool: modelPool(),
-    codexAccountSparkEnabled: assistantAIForm.value.codexAccountSparkEnabled === true,
     hasApiKey: assistantAIForm.value.hasApiKey,
   };
 }

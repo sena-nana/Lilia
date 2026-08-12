@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   PLUGINS_CREATE_HOOK_SOURCE_COMMAND,
   PLUGINS_CREATE_MCP_SERVER_COMMAND,
+  PLUGINS_DELETE_PACKAGE_COMMAND,
   PLUGINS_DELETE_SKILL_COMMAND,
   PLUGINS_SET_MCP_SERVER_ENABLED_COMMAND,
+  PLUGINS_SET_PACKAGE_ENABLED_COMMAND,
   PLUGINS_SET_SKILL_ENABLED_COMMAND,
   PLUGINS_UPDATE_HOOK_SOURCE_COMMAND,
 } from "@lilia/contracts";
@@ -87,6 +89,29 @@ describe("Plugins page", () => {
     expect(within(list).queryByRole("button", { name: /mock-skill/ })).not.toBeInTheDocument();
     expect(view.queryByRole("tab", { name: /Claude|Codex/ })).not.toBeInTheDocument();
     expect(view.queryByRole("button", { name: "新建 Skill" })).not.toBeInTheDocument();
+    expect(view.getByRole("button", { name: "安装 Plugin" })).toBeInTheDocument();
+
+    await fireEvent.click(within(list).getByRole("button", { name: /demo-plugin/ }));
+    mockInvoke.mockClear();
+    await fireEvent.click(view.getByRole("button", { name: "停用" }));
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith(
+        PLUGINS_SET_PACKAGE_ENABLED_COMMAND,
+        expect.objectContaining({ name: "demo-plugin", enabled: false }),
+        undefined,
+      );
+    });
+
+    await fireEvent.click(view.getByRole("button", { name: "删除" }));
+    const deleteButtons = view.getAllByRole("button", { name: "删除" });
+    await fireEvent.click(deleteButtons[deleteButtons.length - 1]);
+    await waitFor(() => {
+      expect(mockInvoke).toHaveBeenCalledWith(
+        PLUGINS_DELETE_PACKAGE_COMMAND,
+        expect.objectContaining({ name: "demo-plugin" }),
+        undefined,
+      );
+    });
   });
 
   it("展示并管理 MCP server", async () => {

@@ -138,31 +138,35 @@ fn build_workspace_runtime(
     bootstrapper
         .use_shared_services(shared_services)
         .map_err(|error| error.to_string())?;
-    bootstrapper.register_runner(Box::new(NativeRunner::new(descriptor, move |_context, task| {
-        let task_id = task.task_id.clone();
-        let payload: Value = task.payload.into();
-        let path = payload
-            .get("path")
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| {
-                RuntimeFailure::new(RuntimeError::new(
-                    "lilia.workspace.invalid_input",
-                    WORKSPACE_PLUGIN_ID,
-                    "workspace worktree list payload 缺少 path",
-                ))
-            })?;
-        let worktrees = crate::worktrees::list_git_worktrees(Path::new(path)).map_err(|message| {
-            RuntimeFailure::new(RuntimeError::new(
-                "lilia.workspace.failed",
-                WORKSPACE_PLUGIN_ID,
-                message,
-            ))
-        })?;
-        let mut result = RunnerResult::completed(task_id);
-        result.output = Some(json!({ "worktrees": worktrees }));
-        Ok(result)
-    })));
+    bootstrapper.register_runner(Box::new(NativeRunner::new(
+        descriptor,
+        move |_context, task| {
+            let task_id = task.task_id.clone();
+            let payload: Value = task.payload.into();
+            let path = payload
+                .get("path")
+                .and_then(Value::as_str)
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    RuntimeFailure::new(RuntimeError::new(
+                        "lilia.workspace.invalid_input",
+                        WORKSPACE_PLUGIN_ID,
+                        "workspace worktree list payload 缺少 path",
+                    ))
+                })?;
+            let worktrees =
+                crate::worktrees::list_git_worktrees(Path::new(path)).map_err(|message| {
+                    RuntimeFailure::new(RuntimeError::new(
+                        "lilia.workspace.failed",
+                        WORKSPACE_PLUGIN_ID,
+                        message,
+                    ))
+                })?;
+            let mut result = RunnerResult::completed(task_id);
+            result.output = Some(json!({ "worktrees": worktrees }));
+            Ok(result)
+        },
+    )));
     bootstrapper
         .into_host_runtime_with_config(
             RuntimeProfile {
@@ -194,21 +198,18 @@ fn build_workspace_runtime(
         .map_err(|error| error.to_string())
 }
 
-fn wait_completed(
-    group: &RuntimeGroupHost,
-    handle: &DomainTaskHandle,
-) -> Result<Value, String> {
+fn wait_completed(group: &RuntimeGroupHost, handle: &DomainTaskHandle) -> Result<Value, String> {
     let outcome = group
         .wait_outcome(handle, Duration::from_secs(20))
         .map_err(|error| error.to_string())?
         .ok_or_else(|| "workspace domain task timed out".to_string())?;
     match outcome {
-        TaskOutcome::Completed { output, .. } => output
-            .ok_or_else(|| "workspace domain completed without output".to_string()),
-        TaskOutcome::Failed { error, .. } => Err(format!(
-            "{}:{}:{}",
-            error.code, error.source, error.route
-        )),
+        TaskOutcome::Completed { output, .. } => {
+            output.ok_or_else(|| "workspace domain completed without output".to_string())
+        }
+        TaskOutcome::Failed { error, .. } => {
+            Err(format!("{}:{}:{}", error.code, error.source, error.route))
+        }
         other => Err(format!("workspace domain unexpected outcome: {other:?}")),
     }
 }

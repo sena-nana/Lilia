@@ -195,6 +195,7 @@ const emit = defineEmits<{
   "select-draft-project": [projectId: string];
   "created-draft-project": [project: Project];
   "draft-project-picker-error": [message: string];
+  "composer-draft-change": [content: string];
 }>();
 
 interface ChatComposerHandle {
@@ -514,6 +515,7 @@ function selectSuggestion(suggestion: SuggestionItem) {
                 @resolve-tool-consent="(decision, message, updatedInput) => emit('resolve-tool-consent', decision, message, updatedInput)"
                 @open-image="emit('open-image', $event)"
                 @draft-empty-change="composerDraftEmpty = $event"
+                @draft-change="emit('composer-draft-change', $event)"
                 @clear-branch-anchor="emit('clear-branch-anchor')"
               />
               <div

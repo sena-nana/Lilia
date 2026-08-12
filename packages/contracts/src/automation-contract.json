@@ -48,6 +48,7 @@
     "succeeded",
     "failed",
     "skipped",
+    "cancelled",
     "waiting_user"
   ],
   "automationChangedEventName": "automation:changed",
@@ -71,6 +72,7 @@
     "succeeded": "ok",
     "failed": "err",
     "skipped": "muted",
+    "cancelled": "muted",
     "waiting_user": "accent"
   },
   "automationToolActions": [

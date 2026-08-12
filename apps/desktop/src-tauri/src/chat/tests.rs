@@ -282,7 +282,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-1".to_string(),
             backend: BACKEND_CODEX.to_string(),
-            native_approval_pause: None,
+            native_action_pause: None,
         };
         persist_runtime_state(
             &conn,
@@ -1358,7 +1358,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-running".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
         store
@@ -1396,7 +1396,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-reset".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
 
@@ -1428,7 +1428,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-reset".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
 
@@ -1454,7 +1454,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-stop".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
         store.interrupted_turns.lock().unwrap().insert(
@@ -1462,7 +1462,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-stop".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
 
@@ -1525,7 +1525,7 @@ mod agent_event_sink_tests {
     }
 
     #[test]
-    fn native_approval_pause_and_interrupt_have_one_lifecycle_owner() {
+    fn native_action_pause_and_interrupt_have_one_lifecycle_owner() {
         let store = ChatStore::default();
         register_running_turn(
             &store,
@@ -1533,7 +1533,7 @@ mod agent_event_sink_tests {
             "turn-native",
             crate::native_agent::BACKEND_NATIVE_AGENTKIT,
         );
-        assert!(pause_native_running_turn(
+        assert!(pause_native_action_turn(
             &store,
             "task-native",
             "turn-native",
@@ -1542,10 +1542,10 @@ mod agent_event_sink_tests {
         ));
 
         let prepared = prepare_running_turn_stop(&store, "task-native", true, false).unwrap();
-        let pause = prepared.running_turn.native_approval_pause.unwrap();
+        let pause = prepared.running_turn.native_action_pause.unwrap();
         assert_eq!(pause.automation_run_id.as_deref(), Some("automation-1"));
         assert_eq!(pause.last_session_id.as_deref(), Some("session-native"));
-        assert!(!pause_native_running_turn(
+        assert!(!pause_native_action_turn(
             &store,
             "task-native",
             "turn-native",
@@ -1567,7 +1567,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-reset".to_string(),
                 backend: BACKEND_CLAUDE.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
         store
@@ -1607,7 +1607,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-interrupt".to_string(),
                 backend: BACKEND_CODEX.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
         store
@@ -1659,7 +1659,7 @@ mod agent_event_sink_tests {
             restored_content: "restore".to_string(),
             restored_attachments: vec![ChatAttachment {
                 id: "att-1".to_string(),
-                kind: "file".to_string(),
+                kind: lilia_contracts::ChatAttachmentKind::File,
                 path: "C:\\Files\\workspace\\Lilia\\README.md".to_string(),
                 name: "README.md".to_string(),
                 size: Some(12),
@@ -1714,7 +1714,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-reset".to_string(),
             backend: BACKEND_CODEX.to_string(),
-            native_approval_pause: None,
+            native_action_pause: None,
         };
         let rollback = ChatRollbackResult {
             rolled_back: true,
@@ -1849,7 +1849,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-builtin".to_string(),
             backend: BACKEND_CLAUDE.to_string(),
-            native_approval_pause: None,
+            native_action_pause: None,
         };
         store
             .pending_turns
@@ -1900,7 +1900,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-1".to_string(),
                 backend: BACKEND_CODEX.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
         store
@@ -1929,7 +1929,7 @@ mod agent_event_sink_tests {
             RunningTurn {
                 turn_id: "turn-reset".to_string(),
                 backend: BACKEND_CODEX.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
         mark_pending_reset_cleanup(&store, "task-1");
@@ -1959,7 +1959,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-persisted".to_string(),
             backend: BACKEND_NATIVE_AGENTKIT.to_string(),
-            native_approval_pause: None,
+            native_action_pause: None,
         };
 
         persist_runtime_state(
@@ -2061,7 +2061,7 @@ mod agent_event_sink_tests {
             &RunningTurn {
                 turn_id: "turn-live".to_string(),
                 backend: BACKEND_CODEX.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
             "running",
             None,
@@ -2081,7 +2081,7 @@ mod agent_event_sink_tests {
         let running_turn = RunningTurn {
             turn_id: "turn-live".to_string(),
             backend: BACKEND_CODEX.to_string(),
-            native_approval_pause: None,
+            native_action_pause: None,
         };
 
         persist_runtime_state(

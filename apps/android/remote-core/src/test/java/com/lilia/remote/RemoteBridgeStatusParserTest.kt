@@ -28,6 +28,8 @@ class RemoteBridgeStatusParserTest {
         assertEquals("listening", status.state)
         assertEquals("Workstation", status.pcName)
         assertTrue(status.capabilities.supportsChatSend)
+        assertFalse(status.capabilities.supportsSessionFork)
+        assertFalse(status.capabilities.supportsProcessSession)
     }
 
     @Test
@@ -46,7 +48,9 @@ class RemoteBridgeStatusParserTest {
                       "supportsTimelineSubscription": false,
                       "supportsChatSend": false,
                       "supportsInteractionResponse": false,
-                      "supportsInterrupt": false
+                      "supportsInterrupt": false,
+                      "supportsSessionFork": true,
+                      "supportsProcessSession": false
                     }
                   }
                 }
@@ -59,6 +63,8 @@ class RemoteBridgeStatusParserTest {
         assertFalse(status.capabilities.supportsChatSend)
         assertFalse(status.capabilities.supportsInteractionResponse)
         assertFalse(status.capabilities.supportsInterrupt)
+        assertTrue(status.capabilities.supportsSessionFork)
+        assertFalse(status.capabilities.supportsProcessSession)
     }
 
     @Test
@@ -102,7 +108,9 @@ class RemoteBridgeStatusParserTest {
 	                      "supportsTimelinePagination": true,
 	                      "supportsChatSend": true,
                       "supportsInteractionResponse": true,
-                      "supportsInterrupt": true
+                      "supportsInterrupt": true,
+                      "supportsSessionFork": true,
+                      "supportsProcessSession": false
                     }
                   }
                 }
@@ -119,6 +127,8 @@ class RemoteBridgeStatusParserTest {
 	        assertTrue(status.capabilities.supportsChatSend)
         assertTrue(status.capabilities.supportsInteractionResponse)
         assertTrue(status.capabilities.supportsInterrupt)
+        assertTrue(status.capabilities.supportsSessionFork)
+        assertFalse(status.capabilities.supportsProcessSession)
     }
 
     @Test

@@ -22,6 +22,7 @@ import {
   CHAT_CHECK_ENV_COMMAND,
   CHAT_DESCRIBE_ATTACHMENTS_COMMAND,
   CHAT_DONE_EVENT_NAME,
+  CHAT_GET_COMPOSER_DRAFT_COMMAND,
   CHAT_GET_COMPOSER_STATE_COMMAND,
   CHAT_GET_RUNTIME_SNAPSHOT_COMMAND,
   CHAT_INTERRUPT_TURN_COMMAND,
@@ -35,6 +36,7 @@ import {
   CHAT_SEARCH_SLASH_COMMANDS_COMMAND,
   CHAT_SEND_MESSAGE_COMMAND,
   CHAT_SEND_PROCESS_SESSION_COMMAND,
+  CHAT_SET_COMPOSER_DRAFT_COMMAND,
   CHAT_SET_COMPOSER_STATE_COMMAND,
   CHAT_TURN_STARTED_EVENT_NAME,
   CLI_PROJECT_OPEN_CONSUME_PENDING_COMMAND,
@@ -87,7 +89,9 @@ import {
   PLUGINS_DELETE_SKILL_COMMAND,
   PLUGINS_DELETE_HOOK_SOURCE_COMMAND,
   PLUGINS_DELETE_MCP_SERVER_COMMAND,
+  PLUGINS_DELETE_PACKAGE_COMMAND,
   PLUGINS_HOOKS_OVERVIEW_COMMAND,
+  PLUGINS_INSTALL_PACKAGE_COMMAND,
   PLUGINS_OPEN_HOOK_CONFIG_COMMAND,
   PLUGINS_OPEN_MCP_CONFIG_COMMAND,
   PLUGINS_OVERVIEW_COMMAND,
@@ -141,6 +145,7 @@ import {
   TODO_CREATE_COMMAND,
   TODO_DELETE_COMMAND,
   TODO_LIST_COMMAND,
+  TODO_SUBMIT_GUIDE_COMMAND,
   TODO_UPDATE_COMMAND,
   WORKTREE_ATTACH_TASK_COMMAND,
   WORKTREE_CLEANUP_ARCHIVE_COMMAND,
@@ -336,6 +341,7 @@ interface TodoRow {
   priority: "high" | "normal" | "low";
   guideStatus: "pending" | "queued" | "sent" | null;
   attachments: unknown[];
+  conversationReferences: unknown[];
   createdAt: number;
   updatedAt: number;
 }
@@ -377,7 +383,7 @@ interface AutomationRunRow {
   id: string;
   workflowId: string;
   workflowVersionId: string;
-  status: "pending" | "running" | "succeeded" | "failed" | "skipped" | "waiting_user";
+  status: "pending" | "running" | "succeeded" | "failed" | "skipped" | "cancelled" | "waiting_user";
   trigger: {
     id: string;
     kind: string;
@@ -918,6 +924,7 @@ let codexAppServerStatus = {
   updateProgressPercent: null as number | null,
 };
 let composerStateHandler: ((taskId: string) => unknown | Promise<unknown>) | null = null;
+const composerDrafts = new Map<string, { content: string; revision: number }>();
 type MockHookTrustState = "unknown" | "required" | "managed" | "n_a";
 interface MockHookSourceSummary {
   id: string;
@@ -971,13 +978,21 @@ const CODEX_REQUIREMENTS_LIMITATIONS = [
   "requirements.toml 约束 features.hooks = false",
 ];
 const baseClaudePlugins = [{
+  id: "demo-plugin",
   backend: "native-agentkit",
   scope: "user",
   name: "demo-plugin",
   description: "测试用 Claude plugin",
   version: "1.0.0",
   enabled: true,
+  editable: true,
+  runtimeAvailable: true,
   path: "C:\\Users\\mock\\.claude\\plugins\\demo-plugin",
+  packageSha256: "0".repeat(64),
+  skillCount: 1,
+  hookCount: 1,
+  mcpServerCount: 0,
+  warnings: [],
 }];
 const baseClaudeMcpServers = [{
   backend: "native-agentkit",
@@ -1783,7 +1798,11 @@ function getProjectRoadmap(projectId: string): ProjectRoadmapRow {
 }
 
 function cloneTodo(row: TodoRow): TodoRow {
-  return { ...row, attachments: [...row.attachments] };
+  return {
+    ...row,
+    attachments: [...row.attachments],
+    conversationReferences: [...row.conversationReferences],
+  };
 }
 
 function nextTodoId(): string {
@@ -1869,6 +1888,7 @@ function applyMockAgentTodos(taskId: string, todos: unknown[]): TodoRow[] {
       priority: normalizeTodoPriority((todo as AgentTodoInput)?.priority),
       guideStatus: null,
       attachments: [],
+      conversationReferences: [],
       createdAt: matched?.createdAt ?? now,
       updatedAt: now,
     };
@@ -2127,6 +2147,7 @@ export function resetTauriMockData() {
     updateProgressPercent: null,
   };
   composerStateHandler = null;
+  composerDrafts.clear();
   claudePlugins = baseClaudePlugins.map((plugin) => ({ ...plugin }));
   claudeMcpServers = baseClaudeMcpServers.map((server) => ({
     ...server,
@@ -2913,6 +2934,19 @@ function finishMockProductCommand(
   return result;
 }
 
+function emitMockDesktopProductEvent(entity: ProductEntity, action: string): void {
+  const event: ProductEvent = {
+    sequence: productEvents.length + 1,
+    commandId: `mock-desktop-${productEvents.length + 1}`,
+    entity: entity.kind,
+    entityId: entity.kind === "binding" ? entity.value.bindingId : entity.value.id,
+    action,
+    revision: entity.value.revision,
+  };
+  productEvents.push(event);
+  emitTauriEvent(PRODUCT_EVENT_NAME, structuredClone(event));
+}
+
 export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown> = {}) => {
   switch (cmd) {
     case APP_RESTART_COMMAND:
@@ -3303,17 +3337,17 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       const before = projects.length;
       projects = projects.filter((project) => project.id !== id);
       tasks = tasks.map((task) =>
-        task.projectId === id ? { ...task, projectId: null } : task
+        task.projectId === id && !task.archived ? { ...task, projectId: null } : task
       );
-      const removedMilestoneIds = new Set(
-        milestones
-          .filter((milestone) => milestone.projectId === id)
-          .map((milestone) => milestone.id),
-      );
-      milestones = milestones.filter((milestone) => milestone.projectId !== id);
-      taskMilestoneLinks = taskMilestoneLinks.filter((link) =>
-        !removedMilestoneIds.has(link.milestoneId)
-      );
+      for (const [conversationId, conversation] of productConversations) {
+        if (conversation.projectId !== id || conversation.archived) continue;
+        productConversations.set(conversationId, {
+          ...conversation,
+          projectId: null,
+          revision: conversation.revision + 1,
+          updatedAt: Date.now(),
+        });
+      }
       refreshSessionCounts();
       return projects.length !== before;
     }
@@ -3592,12 +3626,40 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       const projectId = args.projectId as string | null | undefined;
       const targetProjectId = projectId ?? null;
       const orderedIds = Array.isArray(args.orderedIds) ? args.orderedIds.map(String) : [];
-      tasks = tasks.map((task) => {
-        if (task.projectId !== targetProjectId) return task;
-        const index = orderedIds.indexOf(task.id);
-        return index >= 0 ? { ...task, sortOrder: index } : task;
-      });
-      return undefined;
+      if (orderedIds.length === 0 || new Set(orderedIds).size !== orderedIds.length) {
+        throw new Error("task_reorder: task order must be a non-empty unique group");
+      }
+      const first = tasks.find((task) =>
+        task.archived !== true && task.projectId === targetProjectId && task.id === orderedIds[0]
+      );
+      if (!first) throw new Error("task_reorder: task is not active in the target location");
+      const group = tasks.filter((task) =>
+        task.archived !== true &&
+        task.projectId === targetProjectId &&
+        task.pinned === first.pinned
+      );
+      if (
+        group.length !== orderedIds.length ||
+        group.some((task) => !orderedIds.includes(task.id))
+      ) {
+        throw new Error("task_reorder: task order must contain one complete pinned group");
+      }
+      for (const [sortOrder, id] of orderedIds.entries()) {
+        const task = tasks.find((candidate) => candidate.id === id);
+        if (!task || task.sortOrder === sortOrder) continue;
+        task.sortOrder = sortOrder;
+        productTaskRevisions.set(id, (productTaskRevisions.get(id) ?? 0) + 1);
+        emitMockDesktopProductEvent(productTaskEntity(task), "desktop_update_task");
+      }
+      return tasks
+        .filter((task) => task.archived !== true && task.projectId === targetProjectId)
+        .sort((left, right) =>
+          Number(right.pinned) - Number(left.pinned) ||
+          left.sortOrder - right.sortOrder ||
+          right.createdAt - left.createdAt ||
+          left.id.localeCompare(right.id)
+        )
+        .map((task) => productTaskEntity(task).value);
     }
 
     case TASK_REPARENT_COMMAND: {
@@ -3608,19 +3670,55 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       const newParentId = args.newParentId === null || args.newParentId === undefined
         ? null
         : String(args.newParentId);
-      tasks = tasks.map((task) =>
-        task.id === taskId
-          ? {
-              ...task,
-              projectId: newProjectId,
-              parentId: newParentId,
-              sortOrder: Number.MAX_SAFE_INTEGER,
-            }
-          : task.parentId === taskId && task.projectId !== newProjectId
-            ? { ...task, projectId: newProjectId }
-          : task
-      );
-      return undefined;
+      const task = tasks.find((candidate) => candidate.id === taskId && candidate.archived !== true);
+      if (!task) throw new Error("task_reparent: task is not active");
+      if (newProjectId && !projects.some((project) => project.id === newProjectId)) {
+        throw new Error("task_reparent: target project is not active");
+      }
+      if (newParentId) {
+        const parent = tasks.find((candidate) =>
+          candidate.id === newParentId &&
+          candidate.archived !== true &&
+          candidate.projectId === newProjectId
+        );
+        if (!parent || parent.id === taskId) {
+          throw new Error("task_reparent: parent task is invalid");
+        }
+        let ancestor: TaskRow | undefined = parent;
+        while (ancestor?.parentId) {
+          if (ancestor.parentId === taskId) throw new Error("task_reparent: parent cycle");
+          ancestor = tasks.find((candidate) => candidate.id === ancestor?.parentId);
+        }
+      }
+      if (task.projectId === newProjectId && task.parentId === newParentId) {
+        return productTaskEntity(task).value;
+      }
+      for (const [id, conversation] of productConversations) {
+        if (conversation.taskId !== taskId || conversation.projectId === newProjectId) continue;
+        const updated = {
+          ...conversation,
+          projectId: newProjectId,
+          updatedAt: Date.now(),
+          revision: conversation.revision + 1,
+        };
+        productConversations.set(id, updated);
+        emitMockDesktopProductEvent(
+          { kind: "conversation", value: structuredClone(updated) },
+          "desktop_move_task_conversation",
+        );
+      }
+      if (task.projectId !== newProjectId) {
+        task.sortOrder = tasks
+          .filter((candidate) => candidate.archived !== true && candidate.projectId === newProjectId)
+          .reduce((maximum, candidate) => Math.max(maximum, candidate.sortOrder), -1) + 1;
+      }
+      task.projectId = newProjectId;
+      task.parentId = newParentId;
+      productTaskRevisions.set(task.id, (productTaskRevisions.get(task.id) ?? 0) + 1);
+      const result = productTaskEntity(task);
+      emitMockDesktopProductEvent(result, "desktop_move_task");
+      refreshSessionCounts();
+      return result.value;
     }
 
     case TASK_UPDATE_DEPENDENCIES_COMMAND: {
@@ -4206,6 +4304,9 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       };
     }
 
+    case CHAT_GET_COMPOSER_DRAFT_COMMAND:
+      return composerDrafts.get(String(args.taskId))?.content ?? "";
+
     case CHAT_GET_RUNTIME_SNAPSHOT_COMMAND: {
       const taskId = String(args.taskId);
       if (runtimeSnapshotDelayMs > 0) {
@@ -4239,7 +4340,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
         ? "tools-skill"
         : "project-skill";
       const projectSkillPath = projectCwd
-        ? `${projectCwd}\\.claude\\skills\\${projectSkillName}\\SKILL.md`
+        ? `${projectCwd}\\.lilia\\skills\\${projectSkillName}\\SKILL.md`
         : null;
       return {
         skills: [
@@ -4249,7 +4350,8 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
             name: "mock-skill",
             description: "测试用 Skill",
             enabled: true,
-            path: "C:\\Users\\mock\\.claude\\skills\\mock-skill\\SKILL.md",
+            editable: true,
+            path: "C:\\Users\\mock\\.lilia\\skills\\mock-skill\\SKILL.md",
           },
           ...(projectSkillPath
             ? [{
@@ -4258,6 +4360,7 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
                 name: projectSkillName,
                 description: "项目 Skill",
                 enabled: true,
+                editable: true,
                 path: projectSkillPath,
               }]
             : []),
@@ -4278,6 +4381,8 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
         configPaths: {
           "native-agentkit": "C:\\Users\\mock\\.lilia\\config\\mcp-servers.json",
         },
+        pluginsRegistryRevision: 1,
+        pluginsRegistryPath: "C:\\Users\\mock\\.lilia\\config\\agentkit-plugins-registry.json",
         warnings: [],
       };
     }
@@ -4391,8 +4496,16 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
       const name = String(args.name);
       const enabled = args.enabled === true;
       claudePlugins = claudePlugins.map((plugin) =>
-        plugin.name === name ? { ...plugin, enabled } : plugin
+        plugin.id === name ? { ...plugin, enabled, runtimeAvailable: enabled } : plugin
       );
+      return undefined;
+    }
+
+    case PLUGINS_INSTALL_PACKAGE_COMMAND:
+      return null;
+
+    case PLUGINS_DELETE_PACKAGE_COMMAND: {
+      claudePlugins = claudePlugins.filter((plugin) => plugin.id !== String(args.name));
       return undefined;
     }
 
@@ -4483,6 +4596,17 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
 
     case CHAT_SET_COMPOSER_STATE_COMMAND:
       return undefined;
+
+    case CHAT_SET_COMPOSER_DRAFT_COMMAND: {
+      const taskId = String(args.taskId);
+      const content = String(args.content ?? "");
+      const previous = composerDrafts.get(taskId) ?? { content: "", revision: 0 };
+      const next = previous.content === content
+        ? previous
+        : { content, revision: previous.revision + 1 };
+      composerDrafts.set(taskId, next);
+      return next.revision;
+    }
 
     case AGENT_INTERACTION_GET_SETTINGS_COMMAND:
       return { ...agentInteractionSettings };
@@ -4812,10 +4936,51 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
         priority: normalizeTodoPriority(args.priority),
         guideStatus: "pending",
         attachments: Array.isArray(args.attachments) ? args.attachments : [],
+        conversationReferences: Array.isArray(args.conversationReferences)
+          ? args.conversationReferences
+          : [],
         createdAt: now,
         updatedAt: now,
       };
       todosByTaskId[taskId] = [...(todosByTaskId[taskId] ?? []), todo];
+      emitTauriEvent(TODO_CHANGED_EVENT_NAME, createTodoChangedEvent(taskId));
+      return cloneTodo(todo);
+    }
+
+    case TODO_SUBMIT_GUIDE_COMMAND: {
+      const taskId = String(args.taskId);
+      const draft = composerDrafts.get(taskId) ?? { content: "", revision: 0 };
+      if (draft.revision !== Number(args.expectedComposerRevision)) {
+        throw new Error(
+          `composer revision conflict: expected ${String(args.expectedComposerRevision)}, actual ${draft.revision}`,
+        );
+      }
+      const text = String(args.text ?? "").trim();
+      const now = Date.now();
+      const order = (todosByTaskId[taskId] ?? []).reduce(
+        (max, todo) => Math.max(max, todo.order),
+        -1,
+      ) + 1;
+      const todo: TodoRow = {
+        id: nextTodoId(),
+        taskId,
+        text,
+        done: false,
+        order,
+        source: "lilia",
+        priority: normalizeTodoPriority(args.priority),
+        guideStatus: "pending",
+        attachments: Array.isArray(args.attachments) ? args.attachments : [],
+        conversationReferences: Array.isArray(args.conversationReferences)
+          ? args.conversationReferences
+          : [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      todosByTaskId[taskId] = [...(todosByTaskId[taskId] ?? []), todo];
+      if (draft.content) {
+        composerDrafts.set(taskId, { content: "", revision: draft.revision + 1 });
+      }
       emitTauriEvent(TODO_CHANGED_EVENT_NAME, createTodoChangedEvent(taskId));
       return cloneTodo(todo);
     }

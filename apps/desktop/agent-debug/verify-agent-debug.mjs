@@ -28,6 +28,7 @@ function resolveRepoRoot() {
 
 const repoRoot = resolveRepoRoot();
 const runsRoot = path.join(repoRoot, "agent-debug-runs");
+const viteBin = path.join(repoRoot, "node_modules", "vite", "bin", "vite.js");
 const runId = new Date().toISOString().replace(/[:.]/g, "-");
 const runDir = path.join(runsRoot, runId);
 const driverPort = Number.parseInt(process.env.LILIA_AGENT_DEBUG_DRIVER_PORT ?? "4444", 10);
@@ -51,6 +52,7 @@ const PROVIDER_BLOCK_ERROR_MARKERS = [
   "Codex app-server 环境不满足",
   "Provider 设置",
   "Responses API",
+  "requires a configured model provider credential",
 ];
 const SCENARIOS = {
   ordinarySend: {
@@ -458,13 +460,6 @@ function stopProcessTree(child) {
     return;
   }
   child.kill();
-}
-
-function spawnYarn(args, options) {
-  if (process.platform === "win32") {
-    return spawn("cmd.exe", ["/d", "/s", "/c", "yarn", ...args], options);
-  }
-  return spawn("yarn", args, options);
 }
 
 async function waitForDriver() {
@@ -1130,6 +1125,22 @@ async function runSendScenario(sessionId, scenario, input, options = {}) {
   }
   const marker = sendErrorText(snapshot);
   if (marker && marker !== beforeErrorMarker && !options.allowExistingSendError) {
+    if (isProviderBlockError(snapshot?.visibleText)) {
+      await recordScenarioResult(sessionId, scenario, "blocked", {
+        reason: "provider is not ready for agent debug smoke",
+        commandStatus: invoke.status,
+        commandError: null,
+        durationMs: invoke.durationMs,
+      });
+      throw new SmokeBlockedError(
+        "Provider is not ready for agent debug smoke: model provider credential is not configured",
+        {
+          scenario: scenario.id,
+          command: CHAT_SEND_MESSAGE_COMMAND,
+          error: "model provider credential is not configured",
+        },
+      );
+    }
     throw new Error(`${scenario.id} still shows send error text: ${marker}`);
   }
   return await finishScenario(sessionId, scenario, {
@@ -1269,8 +1280,8 @@ async function main() {
       devServerPlan.port,
     );
     if (!(await isUrlReady(devServerPlan.devUrl))) {
-      devServer = spawnYarn(["--cwd", "apps/desktop", "dev", "--host", "127.0.0.1"], {
-        cwd: repoRoot,
+      devServer = spawn(process.execPath, [viteBin, "--host", "127.0.0.1"], {
+        cwd: path.join(repoRoot, "apps", "desktop"),
         stdio: ["ignore", "pipe", "pipe"],
         env: childEnv,
       });
@@ -1427,6 +1438,7 @@ function isDirectRun() {
 export {
   AgentDebugRunArtifacts,
   SmokeBlockedError,
+  ensureAgentDebugTools,
   main,
   writeRunSummary,
 };

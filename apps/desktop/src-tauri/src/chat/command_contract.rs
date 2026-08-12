@@ -21,9 +21,11 @@ struct ChatCommandsContract {
     chat_save_clipboard_image_command: String,
     chat_save_clipboard_text_command: String,
     chat_get_composer_state_command: String,
+    chat_get_composer_draft_command: String,
     chat_list_models_command: String,
     chat_get_runtime_snapshot_command: String,
     chat_set_composer_state_command: String,
+    chat_set_composer_draft_command: String,
     chat_ack_restored_rollback_command: String,
     chat_respond_agent_interaction_command: String,
     chat_respond_title_update_command: String,
@@ -49,8 +51,9 @@ mod tests {
         chat_save_clipboard_text, chat_search_context_attachments,
     };
     use crate::chat::commands::{
-        chat_ack_restored_rollback, chat_get_composer_state, chat_get_runtime_snapshot,
-        chat_interrupt_turn, chat_list_models, chat_respond_agent_interaction, chat_send_message,
+        chat_ack_restored_rollback, chat_get_composer_draft, chat_get_composer_state,
+        chat_get_runtime_snapshot, chat_interrupt_turn, chat_list_models,
+        chat_respond_agent_interaction, chat_send_message, chat_set_composer_draft,
         chat_set_composer_state,
     };
     use crate::chat::slash_commands::chat_search_slash_commands;
@@ -71,9 +74,11 @@ mod tests {
         let _ = chat_save_clipboard_image;
         let _ = chat_save_clipboard_text;
         let _ = chat_get_composer_state;
+        let _ = chat_get_composer_draft;
         let _ = chat_list_models;
         let _ = chat_get_runtime_snapshot;
         let _ = chat_set_composer_state;
+        let _ = chat_set_composer_draft;
         let _ = chat_ack_restored_rollback;
         let _ = chat_respond_agent_interaction;
         let _ = chat_respond_title_update;
@@ -125,6 +130,10 @@ mod tests {
             stringify!(chat_get_composer_state)
         );
         assert_eq!(
+            contract.chat_get_composer_draft_command,
+            stringify!(chat_get_composer_draft)
+        );
+        assert_eq!(
             contract.chat_list_models_command,
             stringify!(chat_list_models)
         );
@@ -135,6 +144,10 @@ mod tests {
         assert_eq!(
             contract.chat_set_composer_state_command,
             stringify!(chat_set_composer_state)
+        );
+        assert_eq!(
+            contract.chat_set_composer_draft_command,
+            stringify!(chat_set_composer_draft)
         );
         assert_eq!(
             contract.chat_ack_restored_rollback_command,

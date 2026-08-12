@@ -63,6 +63,7 @@ pub(crate) struct RunnerOutput {
     pub(crate) interrupted: bool,
     pub(crate) reset: bool,
     pub(crate) waiting_approval: bool,
+    pub(crate) waiting_interaction: bool,
     pub(crate) terminal_failed: bool,
 }
 
@@ -234,7 +235,7 @@ pub(crate) fn spawn_agent_turn<R: Runtime>(
                 RunnerOutput::default()
             }
         };
-        if output.waiting_approval {
+        if output.waiting_approval || output.waiting_interaction {
             return;
         }
         let finished = {

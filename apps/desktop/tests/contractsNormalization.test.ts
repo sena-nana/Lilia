@@ -396,6 +396,7 @@ import {
   TODO_CREATE_COMMAND,
   TODO_DELETE_COMMAND,
   TODO_LIST_COMMAND,
+  TODO_SUBMIT_GUIDE_COMMAND,
   TODO_UPDATE_COMMAND,
   TASK_TODO_GUIDE_STATUSES,
   TASK_TODO_PRIORITIES,
@@ -726,7 +727,10 @@ function collectContractCommandStrings(
 
 function registeredTauriCommandNames(): string[] {
   const lib = readFileSync(join(repoRoot, "apps/desktop/src-tauri/src/lib.rs"), "utf8");
-  return [...lib.matchAll(/^\s+([a-zA-Z_][a-zA-Z0-9_:]*),\s*$/gm)]
+  const registered = lib.match(
+    /\.invoke_handler\(tauri::generate_handler!\[([\s\S]*?)\]\)/,
+  )?.[1] ?? "";
+  return [...registered.matchAll(/^\s+([a-zA-Z_][a-zA-Z0-9_:]*),\s*$/gm)]
     .map((match) => match[1].split("::").at(-1) ?? "")
     .filter((name) => name && name !== "app" && name !== "event" && name !== "ping")
     .sort();
@@ -4008,6 +4012,7 @@ describe("contracts normalization helpers", () => {
       "succeeded",
       "failed",
       "skipped",
+      "cancelled",
       "waiting_user",
     ]);
     expect(AUTOMATION_CHANGED_EVENT_NAME).toBe("automation:changed");
@@ -4052,8 +4057,10 @@ describe("contracts normalization helpers", () => {
       succeeded: "ok",
       failed: "err",
       skipped: "muted",
+      cancelled: "muted",
       waiting_user: "accent",
     });
+    expect(isAutomationRunStatus("cancelled")).toBe(true);
     expect(isAutomationRunStatus("waiting_user")).toBe(true);
     expect(isAutomationRunStatus("waiting")).toBe(false);
     expect(normalizeAutomationRunStatus("failed")).toBe("failed");
@@ -4166,6 +4173,7 @@ describe("contracts normalization helpers", () => {
     expect(SENT_TASK_TODO_GUIDE_STATUS).toBe("sent");
     expect(TODO_LIST_COMMAND).toBe("todo_list");
     expect(TODO_CREATE_COMMAND).toBe("todo_create");
+    expect(TODO_SUBMIT_GUIDE_COMMAND).toBe("todo_submit_guide");
     expect(TODO_UPDATE_COMMAND).toBe("todo_update");
     expect(TODO_DELETE_COMMAND).toBe("todo_delete");
     expect(TODO_APPLY_AGENT_EVENT_COMMAND).toBe("todo_apply_agent_event");

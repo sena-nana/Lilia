@@ -29,6 +29,8 @@ object RemotePayloadParser {
             supportsInteractionResponse = capabilities.optBoolean("supportsInteractionResponse", true),
             supportsInterrupt = capabilities.optBoolean("supportsInterrupt", true),
             supportsAgentWire = capabilities.optBoolean("supportsAgentWire", false),
+            supportsSessionFork = capabilities.optBoolean("supportsSessionFork", false),
+            supportsProcessSession = capabilities.optBoolean("supportsProcessSession", false),
         )
     }
 

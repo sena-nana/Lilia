@@ -25,13 +25,16 @@ import {
   PLUGINS_CREATE_SKILL_COMMAND,
   PLUGINS_DELETE_HOOK_SOURCE_COMMAND,
   PLUGINS_DELETE_MCP_SERVER_COMMAND,
+  PLUGINS_DELETE_PACKAGE_COMMAND,
   PLUGINS_DELETE_SKILL_COMMAND,
   PLUGINS_HOOKS_OVERVIEW_COMMAND,
+  PLUGINS_INSTALL_PACKAGE_COMMAND,
   PLUGINS_OPEN_HOOK_CONFIG_COMMAND,
   PLUGINS_OPEN_MCP_CONFIG_COMMAND,
   PLUGINS_OVERVIEW_COMMAND,
   PLUGINS_READ_HOOK_SOURCE_COMMAND,
   PLUGINS_SET_MCP_SERVER_ENABLED_COMMAND,
+  PLUGINS_SET_HOOK_SOURCE_ENABLED_COMMAND,
   PLUGINS_SET_PACKAGE_ENABLED_COMMAND,
   PLUGINS_SET_SKILL_ENABLED_COMMAND,
   PLUGINS_UPDATE_HOOK_SOURCE_COMMAND,
@@ -160,6 +163,26 @@ export function updateHookSource(
   input: HookDocumentUpdateInput,
 ): Promise<HookDocumentView> {
   return invoke<HookDocumentView>(PLUGINS_UPDATE_HOOK_SOURCE_COMMAND, { source, input });
+}
+
+export function installPackage(
+  backend: PluginBackendKind,
+): Promise<PluginPackage | null> {
+  return invoke<PluginPackage | null>(PLUGINS_INSTALL_PACKAGE_COMMAND, { backend });
+}
+
+export function deletePackage(
+  backend: PluginBackendKind,
+  name: string,
+): Promise<void> {
+  return invoke<void>(PLUGINS_DELETE_PACKAGE_COMMAND, { backend, name });
+}
+
+export function setHookSourceEnabled(
+  source: HookSourceSummary,
+  enabled: boolean,
+): Promise<HookSourceSummary> {
+  return invoke<HookSourceSummary>(PLUGINS_SET_HOOK_SOURCE_ENABLED_COMMAND, { source, enabled });
 }
 
 export function createHookSource(

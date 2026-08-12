@@ -15,8 +15,6 @@ export interface HookHandlerDraftRow {
   commandWindows: string;
   timeoutSeconds: string;
   statusMessage: string;
-  groupAdvancedJson: string;
-  advancedJson: string;
 }
 
 function createDraftRow(): HookHandlerDraftRow {
@@ -29,8 +27,6 @@ function createDraftRow(): HookHandlerDraftRow {
     commandWindows: "",
     timeoutSeconds: "",
     statusMessage: "",
-    groupAdvancedJson: "",
-    advancedJson: "",
   };
 }
 
@@ -44,23 +40,12 @@ function draftFromHandler(handler: HookDocumentView["handlers"][number]): HookHa
     commandWindows: handler.commandWindows ?? "",
     timeoutSeconds: handler.timeoutSeconds == null ? "" : String(handler.timeoutSeconds),
     statusMessage: handler.statusMessage ?? "",
-    groupAdvancedJson: handler.groupAdvancedJson ?? "",
-    advancedJson: handler.advancedJson ?? "",
   };
 }
 
 function normalizeOptionalText(value: string) {
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
-}
-
-function validateJsonField(value: string, label: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return;
-  const parsed = JSON.parse(trimmed);
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
-    throw new Error(`${label} 必须是 JSON 对象`);
-  }
 }
 
 export function useHookSourceEditor({
@@ -115,8 +100,6 @@ export function useHookSourceEditor({
         row.commandWindows,
         row.timeoutSeconds,
         row.statusMessage,
-        row.groupAdvancedJson,
-        row.advancedJson,
       ].some((value) => value.trim());
       if (!hasContent && !row.type.trim()) return [];
       if (!row.event.trim()) {
@@ -125,14 +108,12 @@ export function useHookSourceEditor({
       if (!row.type.trim()) {
         throw new Error("每条 hook 都需要 type");
       }
-      validateJsonField(row.groupAdvancedJson, "Group JSON");
-      validateJsonField(row.advancedJson, "Handler JSON");
       const timeoutText = row.timeoutSeconds.trim();
       let timeoutSeconds: number | null = null;
       if (timeoutText) {
         const parsed = Number.parseInt(timeoutText, 10);
-        if (!Number.isFinite(parsed) || parsed < 0) {
-          throw new Error("Timeout 必须是非负整数");
+        if (!Number.isFinite(parsed) || parsed < 1 || parsed > 300) {
+          throw new Error("Timeout 必须是 1 到 300 秒之间的整数");
         }
         timeoutSeconds = parsed;
       }
@@ -145,8 +126,6 @@ export function useHookSourceEditor({
         commandWindows: normalizeOptionalText(row.commandWindows),
         timeoutSeconds,
         statusMessage: normalizeOptionalText(row.statusMessage),
-        groupAdvancedJson: normalizeOptionalText(row.groupAdvancedJson),
-        advancedJson: normalizeOptionalText(row.advancedJson),
       }];
     });
   }
@@ -157,6 +136,7 @@ export function useHookSourceEditor({
     hookSaving.value = true;
     try {
       const saved = await updateHookSource(editingSource.value, {
+        expectedRevision: editingSource.value.revision,
         handlers: buildHookHandlersInput(),
       });
       if (disposed()) return;

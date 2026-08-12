@@ -30,9 +30,11 @@ tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 lilia-contracts = { workspace = true }
+lilia-desktop-application = { workspace = true }
 lilia-core = { workspace = true }
 lilia-client = { workspace = true }
 lilia-agent-integration = { workspace = true }
+lilia-service = { workspace = true }
 lilia-storage = { workspace = true }
 tauri = { version = "2.11.3", features = ["protocol-asset", "image-png", "tray-icon"] }
 tauri-plugin-opener = "2.5.4"
@@ -61,8 +63,7 @@ rusqlite = { version = "0.39", features = ["bundled"] }
 r2d2 = "0.8.10"
 r2d2_sqlite = "0.34.0"
 dirs = "6.0.0"
-uuid = { version = "1.23.4", features = ["v4"] }
-ignore = "0.4.26"
+uuid = { workspace = true }
 # Tauri command 中的同步 HTTP 客户端，用于模型连通性测试和 GitHub API。
 # rustls：避免依赖 OpenSSL；form/query：GitHub OAuth 与分页请求需要。
 reqwest = { version = "0.13.4", default-features = false, features = ["blocking", "form", "json", "query", "rustls"] }

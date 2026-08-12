@@ -1,17 +1,20 @@
 import {
-  createTodo,
   listTodos,
+  submitGuide,
   updateTodo,
   type TaskTodo,
   type TaskTodoPriority,
 } from "../services/todos";
+import { setComposerDraft } from "../services/chat";
 import {
   DEFAULT_TASK_TODO_PRIORITY,
   PENDING_TASK_TODO_GUIDE_STATUS,
   TASK_TODO_PRIORITIES,
   serializeChatAttachmentReference,
+  serializeConversationReference,
   taskTodoPriorityLabel,
   type ChatAttachment,
+  type ChatConversationReference,
 } from "@lilia/contracts";
 
 export type GuideDispatchWindow = "tool" | "user" | "idle";
@@ -20,7 +23,12 @@ export interface GuideDispatchOptions {
   taskId: () => string;
   ensureDispatchReady: () => Promise<void>;
   ensureReady: (content: string, attachments: ChatAttachment[]) => Promise<void>;
-  sendAgentMessage: (content: string, attachments: ChatAttachment[], guideId?: string) => Promise<void>;
+  sendAgentMessage: (
+    content: string,
+    attachments: ChatAttachment[],
+    conversationReferences: ChatConversationReference[],
+    guideId?: string,
+  ) => Promise<void>;
   hasBlockingPendingAgentAction: () => boolean;
   isTurnRunning: () => boolean;
   clearAttachments: () => void;
@@ -33,11 +41,14 @@ const guidePriorityOrder: TaskTodoPriority[] = [...TASK_TODO_PRIORITIES];
 function guideTextForComposer(
   content: string,
   outgoingAttachments: ChatAttachment[],
+  outgoingConversationReferences: ChatConversationReference[],
 ): string {
   const text = content.trim();
   if (text) return text;
-  if (outgoingAttachments.length === 0) return "";
-  return outgoingAttachments.map(serializeChatAttachmentReference).join("\n");
+  return [
+    ...outgoingAttachments.map(serializeChatAttachmentReference),
+    ...outgoingConversationReferences.map(serializeConversationReference),
+  ].join("\n");
 }
 
 function guideMessage(todo: TaskTodo): string {
@@ -81,7 +92,12 @@ export function useGuideDispatch(options: GuideDispatchOptions) {
     if (todo.source !== "lilia" || dispatchingGuideIds.has(todo.id)) return;
     dispatchingGuideIds.add(todo.id);
     try {
-      await options.sendAgentMessage(guideMessage(todo), todo.attachments ?? [], todo.id);
+      await options.sendAgentMessage(
+        guideMessage(todo),
+        todo.attachments ?? [],
+        todo.conversationReferences ?? [],
+        todo.id,
+      );
     } catch (err) {
       await updateTodo(todo.id, { guideStatus: PENDING_TASK_TODO_GUIDE_STATUS }).catch(() => undefined);
       options.reportError(`插入引导失败：${String(err)}`);
@@ -112,13 +128,31 @@ export function useGuideDispatch(options: GuideDispatchOptions) {
   async function createGuideFromComposer(
     content: string,
     outgoingAttachments: ChatAttachment[] = [],
+    outgoingConversationReferences: ChatConversationReference[] = [],
   ) {
-    if (!content.trim() && outgoingAttachments.length === 0) return;
+    if (
+      !content.trim() &&
+      outgoingAttachments.length === 0 &&
+      outgoingConversationReferences.length === 0
+    ) return;
     try {
       await options.ensureDispatchReady();
-      const guideText = guideTextForComposer(content, outgoingAttachments);
+      const guideText = guideTextForComposer(
+        content,
+        outgoingAttachments,
+        outgoingConversationReferences,
+      );
       await options.ensureReady(guideText, outgoingAttachments);
-      await createTodo(options.taskId(), guideText, DEFAULT_TASK_TODO_PRIORITY, outgoingAttachments);
+      const taskId = options.taskId();
+      const composerRevision = await setComposerDraft(taskId, content);
+      await submitGuide(
+        taskId,
+        composerRevision,
+        guideText,
+        DEFAULT_TASK_TODO_PRIORITY,
+        outgoingAttachments,
+        outgoingConversationReferences,
+      );
       options.clearAttachments();
       if (options.hasBlockingPendingAgentAction()) {
         void scheduleGuideInsertion("user");

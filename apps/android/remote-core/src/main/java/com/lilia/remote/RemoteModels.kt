@@ -123,6 +123,8 @@ data class RemoteCapabilities(
     val supportsInteractionResponse: Boolean = true,
     val supportsInterrupt: Boolean = true,
     val supportsAgentWire: Boolean = false,
+    val supportsSessionFork: Boolean = false,
+    val supportsProcessSession: Boolean = false,
 )
 
 data class RemoteProviderStatus(

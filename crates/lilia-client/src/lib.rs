@@ -14,8 +14,10 @@ use std::sync::{Arc, Mutex};
 use lilia_contracts::{
     AgentSessionBinding, BindingId, ConversationId, ExpectedRevision, Page, PageRequest,
     ProductApprovalDecision, ProductCommandMeta, ProductCommandResult, ProductEntity, ProductEvent,
-    ProductResult, ProductTask, Project, ProjectId, TaskId, TimelineProjectionCommand,
-    TimelineProjectionEvent,
+    ProductProjectRemovalOutcome, ProductProjectReorderEntry, ProductProjectReorderOutcome,
+    ProductResult, ProductTask, ProductTaskMoveInput, ProductTaskMoveOutcome,
+    ProductTaskReorderEntry, ProductTaskReorderOutcome, Project, ProjectId, TaskId,
+    TimelineProjectionCommand, TimelineProjectionEvent,
 };
 use lilia_core::{
     AgentKitClientPort, InMemoryProductStore, NativeAgentCapabilitySnapshot, ProductRepository,
@@ -144,6 +146,40 @@ impl<P: AgentKitClientPort> LiliaClient<P> {
         self.products.update_entity_command(meta, entity, action)
     }
 
+    pub fn remove_project(
+        &self,
+        meta: &ProductCommandMeta,
+        project_id: &ProjectId,
+        removed_at: i64,
+    ) -> ProductResult<ProductCommandResult<ProductProjectRemovalOutcome>> {
+        self.products
+            .remove_project_command(meta, project_id, removed_at)
+    }
+
+    pub fn reorder_projects(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductProjectReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductProjectReorderOutcome>> {
+        self.products.reorder_projects_command(meta, entries)
+    }
+
+    pub fn reorder_tasks(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductTaskReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductTaskReorderOutcome>> {
+        self.products.reorder_tasks_command(meta, entries)
+    }
+
+    pub fn move_task(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskMoveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskMoveOutcome>> {
+        self.products.move_task_command(meta, input)
+    }
+
     pub fn product_events(&self, request: &PageRequest) -> ProductResult<Page<ProductEvent>> {
         self.products.product_events(request)
     }
@@ -169,6 +205,13 @@ impl<P: AgentKitClientPort> LiliaClient<P> {
 
     pub fn clear_bindings(&self, task_id: &TaskId) -> ProductResult<usize> {
         self.products.clear_bindings_for_task(task_id)
+    }
+
+    pub fn replace_binding(
+        &self,
+        binding: AgentSessionBinding,
+    ) -> ProductResult<AgentSessionBinding> {
+        self.products.replace_binding_for_task(binding)
     }
 
     /// Submit a turn through the shared AgentKit client port (Desktop / CLI / Service).

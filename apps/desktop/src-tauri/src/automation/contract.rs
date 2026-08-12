@@ -14,6 +14,7 @@ struct AutomationContract {
     default_automation_trigger_kind: String,
     default_automation_logic_kind: String,
     default_automation_logic_path: String,
+    #[cfg(test)]
     automation_run_statuses: Vec<String>,
     automation_changed_event_name: String,
     automation_run_started_event_name: String,
@@ -37,6 +38,7 @@ struct AutomationContract {
     automation_list_runs_command: String,
     #[allow(dead_code)]
     automation_get_run_command: String,
+    #[cfg(test)]
     default_automation_run_status: String,
     automation_scope_event_kinds: Vec<String>,
     automation_scope_task_statuses: Vec<String>,
@@ -115,14 +117,12 @@ pub(crate) fn default_human_prompt() -> &'static str {
     crate::prompt_contract::default_automation_human_prompt()
 }
 
+#[cfg(test)]
 pub(crate) fn scope_event_kinds() -> &'static [String] {
     &automation_contract().automation_scope_event_kinds
 }
 
-pub(crate) fn scope_task_statuses() -> &'static [String] {
-    &automation_contract().automation_scope_task_statuses
-}
-
+#[cfg(test)]
 pub(crate) fn run_statuses() -> &'static [String] {
     &automation_contract().automation_run_statuses
 }
@@ -143,6 +143,7 @@ pub(crate) fn run_finished_event_name() -> &'static str {
     &automation_contract().automation_run_finished_event_name
 }
 
+#[cfg(test)]
 pub(crate) fn default_run_status() -> &'static str {
     &automation_contract().default_automation_run_status
 }

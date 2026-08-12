@@ -37,11 +37,11 @@ pub(crate) struct PendingChatTurn {
 pub(crate) struct RunningTurn {
     pub(crate) turn_id: String,
     pub(crate) backend: String,
-    pub(crate) native_approval_pause: Option<NativeApprovalPause>,
+    pub(crate) native_action_pause: Option<NativeActionPause>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub(crate) struct NativeApprovalPause {
+pub(crate) struct NativeActionPause {
     pub(crate) automation_run_id: Option<String>,
     pub(crate) last_session_id: Option<String>,
 }
@@ -80,12 +80,12 @@ pub(crate) fn register_running_turn(
         RunningTurn {
             turn_id: turn_id.into(),
             backend: backend.into(),
-            native_approval_pause: None,
+            native_action_pause: None,
         },
     );
 }
 
-pub(crate) fn pause_native_running_turn(
+pub(crate) fn pause_native_action_turn(
     store: &ChatStore,
     task_id: &str,
     turn_id: &str,
@@ -98,7 +98,7 @@ pub(crate) fn pause_native_running_turn(
     }) else {
         return false;
     };
-    turn.native_approval_pause = Some(NativeApprovalPause {
+    turn.native_action_pause = Some(NativeActionPause {
         automation_run_id,
         last_session_id,
     });
@@ -228,7 +228,7 @@ pub(crate) fn load_runtime_state(
                 turn: RunningTurn {
                     turn_id: row.get(1)?,
                     backend: row.get(2)?,
-                    native_approval_pause: None,
+                    native_action_pause: None,
                 },
                 phase: row.get(3)?,
                 process_session_id: row.get(4)?,
@@ -259,7 +259,7 @@ pub(crate) fn load_any_runtime_state(
                 turn: RunningTurn {
                     turn_id: row.get(1)?,
                     backend: row.get(2)?,
-                    native_approval_pause: None,
+                    native_action_pause: None,
                 },
                 phase: row.get(3)?,
                 process_session_id: row.get(4)?,
@@ -288,7 +288,7 @@ pub(crate) fn list_runtime_states(conn: &Connection) -> Result<Vec<PersistedRunt
                 turn: RunningTurn {
                     turn_id: row.get(1)?,
                     backend: row.get(2)?,
-                    native_approval_pause: None,
+                    native_action_pause: None,
                 },
                 phase: row.get(3)?,
                 process_session_id: row.get(4)?,

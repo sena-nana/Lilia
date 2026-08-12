@@ -2,6 +2,24 @@ use serde::{Deserialize, Serialize};
 
 use crate::{BindingId, ConversationId, ProductRevision, ProjectId, TaskId};
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatConversationReference {
+    pub task_id: String,
+    pub title: String,
+    pub route: String,
+    #[serde(default)]
+    pub project_id: Option<String>,
+    #[serde(default)]
+    pub project_name: Option<String>,
+}
+
+impl ChatConversationReference {
+    pub fn reference_text(&self) -> String {
+        format!("[对话引用: {} | {}]", self.title, self.task_id)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProductConversationStatus {
@@ -155,5 +173,28 @@ mod tests {
             conversation.advance_timeline_cursor(3),
             Err(crate::ProductError::InvalidState { .. })
         ));
+    }
+
+    #[test]
+    fn conversation_reference_matches_the_frontend_wire_format() {
+        let reference = ChatConversationReference {
+            task_id: "task-1".to_owned(),
+            title: "相关设计".to_owned(),
+            route: "/projects/project-1/tasks/task-1".to_owned(),
+            project_id: Some("project-1".to_owned()),
+            project_name: Some("Lilia".to_owned()),
+        };
+
+        assert_eq!(reference.reference_text(), "[对话引用: 相关设计 | task-1]");
+        assert_eq!(
+            serde_json::to_value(reference).unwrap(),
+            serde_json::json!({
+                "taskId": "task-1",
+                "title": "相关设计",
+                "route": "/projects/project-1/tasks/task-1",
+                "projectId": "project-1",
+                "projectName": "Lilia",
+            })
+        );
     }
 }

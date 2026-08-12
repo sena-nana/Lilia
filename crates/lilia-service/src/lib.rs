@@ -22,7 +22,8 @@ use std::sync::{Arc, Mutex};
 
 use lilia_agent_integration::{
     IndependentDiagnostics, NativeAgentWireService, NativeQuotaSurface, NativeRuntimeBootstrap,
-    NativeRuntimeError, NativeRuntimeMode, SharedNativeAgentKitRuntime,
+    NativeRuntimeError, NativeRuntimeMode, NativeTurnStreamPage, ProductCredentialBridge,
+    SharedNativeAgentKitRuntime,
 };
 use lilia_client::LiliaClient;
 use lilia_contracts::{
@@ -30,7 +31,8 @@ use lilia_contracts::{
     TimelineProjectionCommand, TimelineProjectionEvent,
 };
 use lilia_core::{
-    AgentKitClientPort, InMemoryProductStore, NativeAgentCapabilitySnapshot, ProductRepository,
+    AgentKitClientPort, AgentKitPortError, InMemoryProductStore, NativeAgentCapabilitySnapshot,
+    ProductRepository,
 };
 use lilia_storage::{
     InMemoryTimelineProjectionStore, LiliaDataPaths, ProjectionApplyResult,
@@ -39,7 +41,8 @@ use lilia_storage::{
 };
 use mutsuki_agent_client::dispatch_agent_request;
 use mutsuki_agent_contracts::{
-    AgentWireError, AgentWireRequestEnvelope, AgentWireResponseEnvelope,
+    AgentEventEnvelope, AgentMessage, AgentSession, AgentWireError, AgentWireRequestEnvelope,
+    AgentWireResponseEnvelope, InteractionResolution,
 };
 use serde::Serialize;
 
@@ -134,11 +137,23 @@ impl ServiceAuthority {
         storage_key: impl Into<String>,
         owner_id: impl Into<String>,
     ) -> Result<Self, ServiceAuthorityError> {
+        Self::bootstrap_in_memory_named_with_credentials(
+            storage_key,
+            owner_id,
+            ProductCredentialBridge::new(),
+        )
+    }
+
+    pub fn bootstrap_in_memory_named_with_credentials(
+        storage_key: impl Into<String>,
+        owner_id: impl Into<String>,
+        credentials: ProductCredentialBridge,
+    ) -> Result<Self, ServiceAuthorityError> {
         let storage_key = storage_key.into();
         let owner_id = owner_id.into();
         let writer =
             StorageWriterGuard::try_acquire(storage_key.clone(), owner_id, WriterMode::Service)?;
-        let bootstrap = NativeRuntimeBootstrap::service_reference()?;
+        let bootstrap = NativeRuntimeBootstrap::service_reference_with_credentials(credentials)?;
         debug_assert_eq!(bootstrap.mode(), NativeRuntimeMode::Service);
         let product_repository: Arc<dyn ProductRepository> =
             Arc::new(Mutex::new(InMemoryProductStore::new()));
@@ -168,6 +183,13 @@ impl ServiceAuthority {
     /// assembly as Desktop `native_agent`. Acquires `$home/db/writer.lock` for
     /// single-machine dual-writer exclusion (not distributed epoch fencing).
     pub fn bootstrap_with_home(home: impl Into<PathBuf>) -> Result<Self, ServiceAuthorityError> {
+        Self::bootstrap_with_home_and_credentials(home, ProductCredentialBridge::new())
+    }
+
+    pub fn bootstrap_with_home_and_credentials(
+        home: impl Into<PathBuf>,
+        credentials: ProductCredentialBridge,
+    ) -> Result<Self, ServiceAuthorityError> {
         let paths = LiliaDataPaths::from_home(home.into());
         paths.ensure_layout().map_err(|err| {
             ServiceAuthorityError::Product(format!("ensure lilia data layout: {err}"))
@@ -192,12 +214,29 @@ impl ServiceAuthority {
         );
         let timeline = Arc::new(InMemoryTimelineProjectionStore::new());
         hydrate_timeline_from_sqlite(&timeline, product.as_ref(), &projections)?;
-        let bootstrap = NativeRuntimeBootstrap::service_reference()?;
+        let bootstrap = NativeRuntimeBootstrap::service_reference_with_credentials(credentials)?;
         debug_assert_eq!(bootstrap.mode(), NativeRuntimeMode::Service);
         let runtime = SharedNativeAgentKitRuntime::new(
             bootstrap.into_runtime_with_stores(projections, runtime_state),
         );
         runtime.inner().apply_migrated_skill_roots(&paths)?;
+        for binding in product
+            .list_all_bindings()
+            .map_err(ServiceAuthorityError::from)?
+        {
+            match runtime.inner().restore_product_session_binding(
+                &binding.task_id,
+                binding.agent_session.as_str(),
+                binding.profile_id.as_deref(),
+            ) {
+                Ok(_) | Err(AgentKitPortError::NotFound(_)) => {}
+                Err(error) => {
+                    return Err(ServiceAuthorityError::Product(format!(
+                        "restore AgentKit product session binding: {error}"
+                    )))
+                }
+            }
+        }
         let wire = NativeAgentWireService::try_new(runtime.clone()).map_err(|error| {
             ServiceAuthorityError::Product(format!("{}: {}", error.code, error.message))
         })?;
@@ -245,17 +284,83 @@ impl ServiceAuthority {
         &self,
         request: AgentWireRequestEnvelope,
     ) -> Result<AgentWireResponseEnvelope, AgentWireError> {
-        self.ensure_running().map_err(|error| AgentWireError {
-            code: "agent.service.stopped".into(),
-            message: error.to_string(),
-            retryable: true,
-        })?;
-        let mut wire = self.inner.wire.lock().map_err(|_| AgentWireError {
-            code: "agent.service.lock_poisoned".into(),
-            message: "agent wire service lock is poisoned".into(),
-            retryable: true,
-        })?;
+        let mut wire = self.agent_wire_lock()?;
         dispatch_agent_request(&mut *wire, request)
+    }
+
+    pub fn open_agent_task_session(
+        &self,
+        task_id: &TaskId,
+        requested_session_id: Option<&str>,
+        profile_id: &str,
+        title: Option<String>,
+    ) -> Result<AgentSession, AgentWireError> {
+        self.agent_wire_lock()?
+            .open_task_session(task_id, requested_session_id, profile_id, title)
+    }
+
+    pub fn fork_agent_task_session_through_turn(
+        &self,
+        source_session_id: &str,
+        target_session_id: &str,
+        through_turn_id: &str,
+    ) -> Result<AgentSession, AgentWireError> {
+        self.agent_wire_lock()?.fork_task_session_through_turn(
+            source_session_id,
+            target_session_id,
+            through_turn_id,
+        )
+    }
+
+    pub fn fork_agent_task_session(
+        &self,
+        source_session_id: &str,
+        target_session_id: &str,
+    ) -> Result<AgentSession, AgentWireError> {
+        self.agent_wire_lock()?
+            .fork_task_session(source_session_id, target_session_id)
+    }
+
+    pub fn submit_agent_task_turn_observed<O>(
+        &self,
+        session_id: &str,
+        turn_id: &str,
+        messages: Vec<AgentMessage>,
+        idempotency_key: &str,
+        observer: O,
+    ) -> Result<NativeTurnStreamPage, AgentWireError>
+    where
+        O: Fn(&[AgentEventEnvelope]) + Send + Sync + 'static,
+    {
+        self.agent_wire_lock()?
+            .submit_task_turn_observed(session_id, turn_id, messages, idempotency_key, observer)
+            .map(|result| result.page)
+    }
+
+    pub fn respond_agent_task_approval_observed<O>(
+        &self,
+        decision: ProductApprovalDecision,
+        observer: O,
+    ) -> Result<NativeTurnStreamPage, AgentWireError>
+    where
+        O: Fn(&[AgentEventEnvelope]) + Send + Sync + 'static,
+    {
+        self.agent_wire_lock()?
+            .respond_task_approval_observed(decision, observer)
+            .map(|result| result.page)
+    }
+
+    pub fn respond_agent_task_interaction_observed<O>(
+        &self,
+        resolution: InteractionResolution,
+        observer: O,
+    ) -> Result<NativeTurnStreamPage, AgentWireError>
+    where
+        O: Fn(&[AgentEventEnvelope]) + Send + Sync + 'static,
+    {
+        self.agent_wire_lock()?
+            .respond_task_interaction_observed(resolution, observer)
+            .map(|result| result.page)
     }
 
     pub fn shared_timeline(&self) -> Arc<InMemoryTimelineProjectionStore> {
@@ -433,7 +538,8 @@ impl ServiceAuthority {
             .as_ref()
             .map(|c| c.supports_session && !c.official_agent_server && !c.node_runner_default)
             .unwrap_or(false);
-        let credential_ok = diagnostics.credential.broker_ready;
+        let credential_ok =
+            diagnostics.credential.broker_ready && !diagnostics.credential.broker_degraded;
         let projection_ok = true;
         let writer = writer_lease_health(&self.inner.storage_key);
         let writer_ok = writer.held && writer.single_writer;
@@ -465,7 +571,9 @@ impl ServiceAuthority {
             },
             credential: ComponentHealth {
                 ok: credential_ok,
-                detail: if credential_ok {
+                detail: if diagnostics.credential.broker_degraded {
+                    "broker_degraded"
+                } else if credential_ok {
                     "broker_ready"
                 } else {
                     "broker_not_ready"
@@ -502,11 +610,12 @@ impl ServiceAuthority {
         let storage_key = self.storage_key().to_string();
         let owner = self.writer_lease().owner_id.clone();
         let previous_generation = self.generation();
+        let credentials = self.inner.runtime.inner().credentials().clone();
         self.shutdown();
         let next = if let Some(home) = home {
-            Self::bootstrap_with_home(home)?
+            Self::bootstrap_with_home_and_credentials(home, credentials)?
         } else {
-            Self::bootstrap_in_memory_named(storage_key, owner)?
+            Self::bootstrap_in_memory_named_with_credentials(storage_key, owner, credentials)?
         };
         next.inner
             .generation
@@ -545,6 +654,21 @@ impl ServiceAuthority {
         } else {
             Ok(())
         }
+    }
+
+    fn agent_wire_lock(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, NativeAgentWireService>, AgentWireError> {
+        self.ensure_running().map_err(|error| AgentWireError {
+            code: "agent.service.stopped".into(),
+            message: error.to_string(),
+            retryable: true,
+        })?;
+        self.inner.wire.lock().map_err(|_| AgentWireError {
+            code: "agent.service.lock_poisoned".into(),
+            message: "agent wire service lock is poisoned".into(),
+            retryable: true,
+        })
     }
 }
 
@@ -589,11 +713,12 @@ pub fn health_http_response(report: &ServiceHealthReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lilia_agent_integration::QuotaApiAvailability;
+    use lilia_agent_integration::{ProductCredentialLoginInput, QuotaApiAvailability};
     use lilia_contracts::{
         AgentSessionRef, BindingId, ProjectId, ProjectionEventId, TaskId,
         TimelineProjectionCommand, TimelineProjectionEvent, PRODUCT_TIMELINE_STORE_ID,
     };
+    use mutsuki_agent_contracts::{CredentialKind, OPENAI_CREDENTIAL_PROVIDER_ID};
     use serde_json::json;
     use std::io::{Read, Write};
     use std::net::{TcpListener, TcpStream};
@@ -653,6 +778,32 @@ mod tests {
         assert!(health.writer.single_writer);
         assert!(!health.writer.cross_process_epoch_fencing);
         assert_eq!(health.writer.mode, Some(WriterMode::Service));
+    }
+
+    #[test]
+    fn service_authority_uses_injected_persistent_credential_bridge() {
+        let credentials = ProductCredentialBridge::new();
+        credentials
+            .login(ProductCredentialLoginInput {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: "sk-test-openai-api-key-0123456789abcdef".into(),
+                account_label: Some("service".into()),
+                source: Some("injected".into()),
+            })
+            .unwrap();
+
+        let authority = ServiceAuthority::bootstrap_in_memory_named_with_credentials(
+            "test:credential-injection",
+            "owner-credential-injection",
+            credentials,
+        )
+        .unwrap();
+        let authority = authority.restart().unwrap();
+        let diagnostics = authority.credential_diagnostics();
+        assert_eq!(diagnostics.credential.active_count, 1);
+        assert!(diagnostics.profile_has_credential_refs);
+        assert!(diagnostics.live_model_adapter_drives_turn);
     }
 
     #[test]
@@ -906,6 +1057,7 @@ mod tests {
         .unwrap();
         let registry = lilia_storage::AgentkitSkillsRegistry {
             version: 1,
+            revision: 0,
             secret_free: true,
             user_skill_roots: vec![skill_root.to_string_lossy().into_owned()],
             packages: Vec::new(),

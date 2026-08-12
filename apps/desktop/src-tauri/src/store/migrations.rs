@@ -39,7 +39,30 @@ pub(super) const SCHEMA_MIGRATIONS: &[SchemaMigration] = &[
         name: "task_handoffs",
         apply: create_task_handoff_table,
     },
+    SchemaMigration {
+        version: 31,
+        name: "todo_conversation_references",
+        apply: add_todo_conversation_references_column,
+    },
 ];
+
+fn add_todo_conversation_references_column(conn: &Connection) -> Result<(), String> {
+    let exists: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('task_todos') WHERE name = 'conversation_references_json'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|error| format!("lilia-store: 检查 Todo 对话引用字段失败：{error}"))?;
+    if exists == 0 {
+        conn.execute(
+            "ALTER TABLE task_todos ADD COLUMN conversation_references_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        )
+        .map_err(|error| format!("lilia-store: 添加 Todo 对话引用字段失败：{error}"))?;
+    }
+    Ok(())
+}
 
 fn create_task_handoff_table(conn: &Connection) -> Result<(), String> {
     conn.execute_batch(

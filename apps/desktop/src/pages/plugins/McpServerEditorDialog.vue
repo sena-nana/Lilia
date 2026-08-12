@@ -50,6 +50,7 @@ const emit = defineEmits<{
               <input
                 :value="name" type="text"
                 class="ui-input"
+                :disabled="!!editingMcp"
                 data-agent-id="plugins.mcp-editor.name"
                 placeholder="weather-mcp"
                 @input="emit('update:name', ($event.target as HTMLInputElement).value)"

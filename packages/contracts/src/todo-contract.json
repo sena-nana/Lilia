@@ -25,6 +25,7 @@
   "commands": {
     "list": "todo_list",
     "create": "todo_create",
+    "submitGuide": "todo_submit_guide",
     "update": "todo_update",
     "delete": "todo_delete",
     "applyAgentEvent": "todo_apply_agent_event"

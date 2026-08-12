@@ -3,9 +3,10 @@
 //! Native AgentKit is the Desktop execution backend after Host pin alignment
 //! (`Mutsuki@873af51`).
 
+#[cfg(test)]
 use std::path::Path;
-use std::sync::Arc;
 
+use lilia_agent_integration::SharedNativeAgentKitRuntime;
 use lilia_client::LiliaClient;
 use lilia_contracts::{
     AgentSessionBinding, AgentSessionRef, BindingId, ConversationId, ExpectedRevision,
@@ -13,28 +14,37 @@ use lilia_contracts::{
     ProductEntityKind, ProductError, ProductEvent, ProductRevision, ProductTaskStatus, ProjectId,
     TaskId,
 };
-use lilia_core::UnavailableAgentKitPort;
-use lilia_storage::SqliteProductStore;
+use lilia_service::ServiceAuthority;
 use serde::Serialize;
 use tauri::{Emitter, State};
 
 use crate::native_agent::{self, BACKEND_NATIVE_AGENTKIT, LEGACY_NODE_RUNNER_COMPAT_UNTIL};
 
 pub struct EmbeddedProductCore {
-    client: LiliaClient,
+    client: LiliaClient<SharedNativeAgentKitRuntime>,
+    _authority: ServiceAuthority,
 }
 
 impl EmbeddedProductCore {
+    #[cfg(test)]
     pub fn open(home: &Path) -> Result<Self, ProductError> {
-        let paths = lilia_storage::LiliaDataPaths::from_home(home.to_path_buf());
-        paths
-            .ensure_layout()
+        let authority = ServiceAuthority::bootstrap_with_home(home).map_err(|err| {
+            ProductError::Unavailable {
+                message: format!("initialize product authority: {err}"),
+            }
+        })?;
+        Self::from_authority(authority)
+    }
+
+    pub fn from_authority(authority: ServiceAuthority) -> Result<Self, ProductError> {
+        let client = authority
+            .client()
             .map_err(|err| ProductError::Unavailable {
-                message: format!("prepare product data layout: {err}"),
+                message: format!("connect product authority: {err}"),
             })?;
-        let repository = Arc::new(SqliteProductStore::open(paths.product_db())?);
         Ok(Self {
-            client: LiliaClient::with_repository(repository, UnavailableAgentKitPort),
+            client,
+            _authority: authority,
         })
     }
 
@@ -46,10 +56,7 @@ impl EmbeddedProductCore {
     }
 
     /// Clear product Agent session bindings so a user reset does not resume the old session.
-    pub(crate) fn clear_bindings_for_task(
-        &self,
-        task_id: &TaskId,
-    ) -> Result<usize, ProductError> {
+    pub(crate) fn clear_bindings_for_task(&self, task_id: &TaskId) -> Result<usize, ProductError> {
         self.client.clear_bindings(task_id)
     }
 
@@ -189,7 +196,7 @@ pub fn product_core_status() -> ProductCoreStatus {
         legacy_runner_feature_compiled: host.legacy_runner_feature_compiled,
         execution_backend_env_override: host.env_override.clone(),
         agent_capabilities: host.capabilities,
-        mutsuki_core_pin: "873af51f5391f7bd5f1d3216c2bcfe8680c839f8",
+        mutsuki_core_pin: "fea58012240dac944c688f5e164ccf454614db7b",
         credential_broker_wired: host
             .diagnostics
             .as_ref()
@@ -396,6 +403,27 @@ mod tests {
                 Some("task-automation")
             );
         }
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn embedded_product_core_holds_the_home_writer_lock() {
+        let home = std::env::temp_dir().join(format!(
+            "lilia-product-writer-lock-{}-{}",
+            std::process::id(),
+            crate::util::now_millis()
+        ));
+        let core = EmbeddedProductCore::open(&home).unwrap();
+        let second = EmbeddedProductCore::open(&home);
+        match second {
+            Err(ProductError::Unavailable { message }) => assert!(
+                message.contains("writer") || message.contains("already held"),
+                "unexpected authority error: {message}"
+            ),
+            _ => panic!("a second authority unexpectedly acquired the home writer"),
+        }
+        drop(core);
+        EmbeddedProductCore::open(&home).unwrap();
         let _ = std::fs::remove_dir_all(home);
     }
 }

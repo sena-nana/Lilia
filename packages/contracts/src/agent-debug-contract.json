@@ -3,6 +3,7 @@
     "status": "agent_debug_status",
     "logs": "agent_debug_logs",
     "runtimeSnapshot": "agent_debug_runtime_snapshot",
+    "equivalenceSnapshot": "agent_debug_equivalence_snapshot",
     "recordAction": "agent_debug_record_action",
     "resetState": "agent_debug_reset_state"
   }

@@ -6,11 +6,13 @@
  */
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { ref } from "vue";
-import type {
-  ProductConversation,
-  ProductEvent,
-  ProductTask,
-  Task,
+import {
+  TASK_REORDER_COMMAND,
+  TASK_REPARENT_COMMAND,
+  type ProductConversation,
+  type ProductEvent,
+  type ProductTask,
+  type Task,
 } from "@lilia/contracts";
 import {
   ensureProjectsLoaded,
@@ -27,6 +29,7 @@ import {
   onProductEvent,
   updateProductEntity,
 } from "../services/productCore";
+import { invoke } from "../tauri/runtime";
 
 // OrphanConversation 形状沿用 Task 的子集，project_id 为 null。
 export interface OrphanConversation {
@@ -707,32 +710,11 @@ export async function reorderTasks(
   projectId: string | null,
   orderedIds: string[],
 ): Promise<void> {
-  await loadProductTasks();
-  for (const [sortOrder, id] of orderedIds.entries()) {
-    const current = PRODUCT_TASKS.get(id);
-    if (!current || current.projectId !== projectId || current.sortOrder === sortOrder) continue;
-    const result = await updateProductEntity(
-      newProductCommandMeta("reorder-task", current.revision),
-      {
-        kind: "task",
-        value: { ...current, sortOrder, updatedAt: Date.now() },
-      },
-      "reordered",
-    );
-    if (result.value.kind === "task") rememberProductTask(result.value.value);
-  }
+  await invoke<ProductTask[]>(TASK_REORDER_COMMAND, { projectId, orderedIds });
   if (projectId) {
-    const list = TASKS.value[projectId] ?? [];
-    const byId = new Map(list.map((t) => [t.id, t]));
-    TASKS.value = {
-      ...TASKS.value,
-      [projectId]: orderedIds.map((id) => byId.get(id)).filter(Boolean) as Task[],
-    };
+    await refreshTasks(projectId);
   } else {
-    const byId = new Map(ORPHAN_LIST.value.map((o) => [o.id, o]));
-    ORPHAN_LIST.value = orderedIds
-      .map((id) => byId.get(id))
-      .filter(Boolean) as OrphanConversation[];
+    await refreshOrphans();
   }
 }
 
@@ -742,32 +724,11 @@ export async function reparentTask(
   targetProjectId: string | null,
   targetParentId: string | null = null,
 ): Promise<void> {
-  const current = await loadTaskRow(taskId);
-  if (!current) return;
-  await updateTaskConversations(
+  const row = await invoke<ProductTask>(TASK_REPARENT_COMMAND, {
     taskId,
-    (conversation) => ({
-      ...conversation,
-      projectId: targetProjectId,
-      updatedAt: Date.now(),
-    }),
-    "reparented",
-  );
-  const result = await updateProductEntity(
-    newProductCommandMeta("reparent-task", current.revision),
-    {
-      kind: "task",
-      value: {
-        ...current,
-        projectId: targetProjectId,
-        parentId: targetParentId,
-        updatedAt: Date.now(),
-      },
-    },
-    "reparented",
-  );
-  if (result.value.kind !== "task") throw new Error("Product Core 返回了错误的任务实体。");
-  rememberProductTask(result.value.value);
+    newProjectId: targetProjectId,
+    newParentId: targetParentId,
+  });
   if (sourceProjectId) {
     const list = TASKS.value[sourceProjectId] ?? [];
     TASKS.value = {
@@ -777,7 +738,7 @@ export async function reparentTask(
   } else {
     ORPHAN_LIST.value = ORPHAN_LIST.value.filter((o) => o.id !== taskId);
   }
-  upsertTaskRow(result.value.value);
+  upsertTaskRow(row);
 }
 
 export async function updateTaskDependencies(

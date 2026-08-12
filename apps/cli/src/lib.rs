@@ -684,5 +684,4 @@ mod tests {
         let timeline = session.product_timeline(&task.id).unwrap();
         assert!(timeline.is_empty());
     }
-
 }

@@ -18,3 +18,7 @@ export const TASK_TOGGLE_PIN_COMMAND = manifest.commands.togglePin;
 export const TASK_REORDER_COMMAND = manifest.commands.reorder;
 export const TASK_REPARENT_COMMAND = manifest.commands.reparent;
 export const TASK_UPDATE_DEPENDENCIES_COMMAND = manifest.commands.updateDependencies;
+export const TASK_GOAL_GET_COMMAND = manifest.commands.goalGet;
+export const TASK_GOAL_SET_COMMAND = manifest.commands.goalSet;
+export const TASK_GOAL_REFRESH_COMMAND = manifest.commands.goalRefresh;
+export const TASK_GOAL_CLEAR_COMMAND = manifest.commands.goalClear;

@@ -8,8 +8,8 @@ use std::sync::Mutex;
 
 use lilia_contracts::{
     AgentSessionRef, ArtifactProjection, PendingProjection, PendingProjectionStatus, ProductError,
-    ProductResult, ProjectionEventId, TaskId, TimelineProjectionCommand, TimelineProjectionEvent,
-    TodoProjection,
+    ProductResult, ProjectionEventId, TaskId, TimelineProjectionCommand, TimelineProjectionCursor,
+    TimelineProjectionEvent, TimelineProjectionPage, TodoProjection,
 };
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -452,7 +452,7 @@ impl TimelineProjectionRepository for SqliteTimelineProjectionStore {
                         message: err.to_string(),
                     }
                 })?;
-                conn.execute(
+                let affected = conn.execute(
                     r#"INSERT INTO pending_projections
                        (id, task_id, agent_session, sequence, turn_id, request_id, kind, status,
                         prompt, action_revision, payload)
@@ -464,7 +464,9 @@ impl TimelineProjectionRepository for SqliteTimelineProjectionStore {
                          status=excluded.status,
                          prompt=excluded.prompt,
                          action_revision=excluded.action_revision,
-                         payload=excluded.payload"#,
+                         payload=excluded.payload
+                       WHERE pending_projections.status = 'open'
+                         AND excluded.sequence >= pending_projections.sequence"#,
                     params![
                         pending.id,
                         pending.task_id.as_str(),
@@ -481,7 +483,9 @@ impl TimelineProjectionRepository for SqliteTimelineProjectionStore {
                 )
                 .map_err(db_err)?;
                 Self::bump_cursor(conn, pending.agent_session.as_str(), pending.sequence)?;
-                Ok(if exists {
+                Ok(if affected == 0 {
+                    ProjectionApplyResult::DuplicateIgnored
+                } else if exists {
                     ProjectionApplyResult::Updated
                 } else {
                     ProjectionApplyResult::Inserted
@@ -495,18 +499,21 @@ impl TimelineProjectionRepository for SqliteTimelineProjectionStore {
                 response,
             } => {
                 let key = format!("{session_id}:{request_id}");
-                let existing: Option<String> = conn
+                let existing: Option<(String, String, i64)> = conn
                     .query_row(
-                        "SELECT payload FROM pending_projections WHERE id = ?1",
+                        "SELECT payload, status, sequence FROM pending_projections WHERE id = ?1",
                         params![key],
-                        |row| row.get(0),
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                     )
                     .optional()
                     .map_err(db_err)?;
                 Self::bump_cursor(conn, &session_id, sequence)?;
-                let Some(payload_text) = existing else {
+                let Some((payload_text, existing_status, existing_sequence)) = existing else {
                     return Ok(ProjectionApplyResult::SkippedUnknown);
                 };
+                if existing_status != "open" || sequence as i64 <= existing_sequence {
+                    return Ok(ProjectionApplyResult::DuplicateIgnored);
+                }
                 let mut payload: serde_json::Value =
                     serde_json::from_str(&payload_text).unwrap_or(serde_json::Value::Null);
                 if let Some(obj) = payload.as_object_mut() {
@@ -520,12 +527,14 @@ impl TimelineProjectionRepository for SqliteTimelineProjectionStore {
                         message: err.to_string(),
                     }
                 })?;
-                conn.execute(
+                let affected = conn.execute(
                     r#"UPDATE pending_projections
                        SET status = ?1,
                            sequence = CASE WHEN sequence > ?2 THEN sequence ELSE ?2 END,
                            payload = ?3
-                       WHERE id = ?4"#,
+                       WHERE id = ?4
+                         AND status = 'open'
+                         AND sequence < ?2"#,
                     params![
                         pending_status_to_str(&status),
                         sequence as i64,
@@ -534,7 +543,11 @@ impl TimelineProjectionRepository for SqliteTimelineProjectionStore {
                     ],
                 )
                 .map_err(db_err)?;
-                Ok(ProjectionApplyResult::Updated)
+                Ok(if affected == 1 {
+                    ProjectionApplyResult::Updated
+                } else {
+                    ProjectionApplyResult::DuplicateIgnored
+                })
             }
             TimelineProjectionCommand::SkipUnknown {
                 session_id,
@@ -652,6 +665,93 @@ impl TimelineProjectionRepository for SqliteTimelineProjectionStore {
             let rows = stmt
                 .query_map(params![task_id.as_str()], map_pending_row)
                 .map_err(db_err)?;
+            let mut out = Vec::new();
+            for row in rows {
+                out.push(row.map_err(db_err)?);
+            }
+            Ok(out)
+        })
+        .unwrap_or_default()
+    }
+
+    fn list_task_page_before(
+        &self,
+        task_id: &TaskId,
+        before: Option<&TimelineProjectionCursor>,
+        limit: usize,
+    ) -> ProductResult<TimelineProjectionPage> {
+        let limit = limit.max(1);
+        self.with_conn(|conn| {
+            let fetch_limit = i64::try_from(limit.saturating_add(1)).unwrap_or(i64::MAX);
+            let mut events = if let Some(before) = before {
+                let mut stmt = conn
+                    .prepare(
+                        r#"SELECT id, task_id, agent_session, sequence, turn_id, kind, status, title,
+                                  summary, payload, projected
+                           FROM timeline_projection_events
+                           WHERE task_id = ?1
+                             AND (sequence < ?2 OR (sequence = ?2 AND id < ?3))
+                           ORDER BY sequence DESC, id DESC
+                           LIMIT ?4"#,
+                    )
+                    .map_err(db_err)?;
+                let rows = stmt
+                    .query_map(
+                        params![
+                            task_id.as_str(),
+                            before.sequence as i64,
+                            before.event_id,
+                            fetch_limit
+                        ],
+                        map_timeline_row,
+                    )
+                    .map_err(db_err)?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(db_err)?
+            } else {
+                let mut stmt = conn
+                    .prepare(
+                        r#"SELECT id, task_id, agent_session, sequence, turn_id, kind, status, title,
+                                  summary, payload, projected
+                           FROM timeline_projection_events
+                           WHERE task_id = ?1
+                           ORDER BY sequence DESC, id DESC
+                           LIMIT ?2"#,
+                    )
+                    .map_err(db_err)?;
+                let rows = stmt
+                    .query_map(params![task_id.as_str(), fetch_limit], map_timeline_row)
+                    .map_err(db_err)?;
+                rows.collect::<Result<Vec<_>, _>>().map_err(db_err)?
+            };
+            let has_more_before = events.len() > limit;
+            if has_more_before {
+                events.truncate(limit);
+            }
+            events.reverse();
+            let before_cursor = has_more_before.then(|| TimelineProjectionCursor {
+                sequence: events[0].sequence,
+                event_id: events[0].id.as_str().to_owned(),
+            });
+            Ok(TimelineProjectionPage {
+                events,
+                before_cursor,
+                has_more_before,
+            })
+        })
+    }
+
+    fn list_open_pending(&self) -> Vec<PendingProjection> {
+        self.with_conn(|conn| {
+            let mut stmt = conn
+                .prepare(
+                    r#"SELECT id, task_id, agent_session, sequence, turn_id, request_id, kind, status,
+                              prompt, action_revision, payload
+                       FROM pending_projections
+                       WHERE status = 'open'
+                       ORDER BY sequence ASC, id ASC"#,
+                )
+                .map_err(db_err)?;
+            let rows = stmt.query_map([], map_pending_row).map_err(db_err)?;
             let mut out = Vec::new();
             for row in rows {
                 out.push(row.map_err(db_err)?);
@@ -852,6 +952,143 @@ mod tests {
         assert_eq!(reopened.list_for_session(&session).len(), 2);
         assert!(reopened.list_artifacts_for_task(&task).is_empty());
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn sqlite_task_pages_match_chronological_keyset_order() {
+        let store = SqliteTimelineProjectionStore::open_in_memory().unwrap();
+        let task = TaskId::new("task-sqlite").unwrap();
+        for sequence in 1..=5 {
+            store
+                .apply(TimelineProjectionCommand::UpsertTimelineEvent {
+                    event: sample_event("sess-page", sequence),
+                })
+                .unwrap();
+        }
+
+        let latest = store.list_task_page_before(&task, None, 2).unwrap();
+        assert_eq!(
+            latest
+                .events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+        let middle = store
+            .list_task_page_before(&task, latest.before_cursor.as_ref(), 2)
+            .unwrap();
+        assert_eq!(
+            middle
+                .events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        let oldest = store
+            .list_task_page_before(&task, middle.before_cursor.as_ref(), 2)
+            .unwrap();
+        assert_eq!(
+            oldest
+                .events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![1]
+        );
+        assert!(!oldest.has_more_before);
+
+        let tie_store = SqliteTimelineProjectionStore::open_in_memory().unwrap();
+        for session in ["sess-a", "sess-b"] {
+            tie_store
+                .apply(TimelineProjectionCommand::UpsertTimelineEvent {
+                    event: sample_event(session, 7),
+                })
+                .unwrap();
+        }
+        let tie_latest = tie_store.list_task_page_before(&task, None, 1).unwrap();
+        let tie_older = tie_store
+            .list_task_page_before(&task, tie_latest.before_cursor.as_ref(), 1)
+            .unwrap();
+        assert_eq!(tie_latest.events[0].id.as_str(), "sess-b:7");
+        assert_eq!(tie_older.events[0].id.as_str(), "sess-a:7");
+        assert!(!tie_older.has_more_before);
+    }
+
+    #[test]
+    fn sqlite_pending_terminal_state_cannot_be_reopened_or_redecided() {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lilia-pending-state-{nanos}.db"));
+        let _ = std::fs::remove_file(&path);
+        let store = SqliteTimelineProjectionStore::open(&path).unwrap();
+        let session = AgentSessionRef::new("sess-pending-state").unwrap();
+        let task = TaskId::new("task-pending-state").unwrap();
+        let pending = PendingProjection {
+            id: format!("{}:request", session.as_str()),
+            task_id: task.clone(),
+            agent_session: session.clone(),
+            sequence: 1,
+            turn_id: Some("turn-1".into()),
+            request_id: "request".into(),
+            kind: "permission_approval".into(),
+            status: PendingProjectionStatus::Open,
+            prompt: Some("allow?".into()),
+            action_revision: Some(1),
+            payload: json!({}),
+        };
+        assert_eq!(
+            store
+                .apply(TimelineProjectionCommand::UpsertPending {
+                    pending: pending.clone(),
+                })
+                .unwrap(),
+            ProjectionApplyResult::Inserted
+        );
+        let open = store.list_open_pending();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].request_id, "request");
+        assert_eq!(
+            store
+                .apply(TimelineProjectionCommand::ResolvePending {
+                    session_id: session.as_str().into(),
+                    request_id: pending.request_id.clone(),
+                    status: PendingProjectionStatus::Resolved,
+                    sequence: 2,
+                    response: json!({ "approved": true }),
+                })
+                .unwrap(),
+            ProjectionApplyResult::Updated
+        );
+        let mut reopened = pending;
+        reopened.sequence = 3;
+        assert_eq!(
+            store
+                .apply(TimelineProjectionCommand::UpsertPending { pending: reopened })
+                .unwrap(),
+            ProjectionApplyResult::DuplicateIgnored
+        );
+        assert_eq!(
+            store
+                .apply(TimelineProjectionCommand::ResolvePending {
+                    session_id: session.as_str().into(),
+                    request_id: "request".into(),
+                    status: PendingProjectionStatus::Cancelled,
+                    sequence: 4,
+                    response: json!({ "approved": false }),
+                })
+                .unwrap(),
+            ProjectionApplyResult::DuplicateIgnored
+        );
+        let rows = store.list_pending_for_task(&task);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].status, PendingProjectionStatus::Resolved);
+        assert!(store.list_open_pending().is_empty());
+        drop(store);
         let _ = std::fs::remove_file(&path);
     }
 

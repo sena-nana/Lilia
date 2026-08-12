@@ -520,7 +520,7 @@ mod tests {
                 id: "att-1".to_string(),
                 name: "ChatComposer.vue".to_string(),
                 path: "apps/desktop/src/components/chat/ChatComposer.vue".to_string(),
-                kind: "file".to_string(),
+                kind: lilia_contracts::ChatAttachmentKind::File,
                 size: Some(42),
                 exists: true,
                 mime: None,

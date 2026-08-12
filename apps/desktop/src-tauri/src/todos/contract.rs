@@ -26,6 +26,7 @@ struct TodoContract {
 pub(crate) struct TodoCommandsContract {
     pub(crate) list: String,
     pub(crate) create: String,
+    pub(crate) submit_guide: String,
     pub(crate) update: String,
     pub(crate) delete: String,
     pub(crate) apply_agent_event: String,

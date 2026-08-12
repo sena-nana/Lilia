@@ -956,6 +956,7 @@ watch(
     @start-lilia-batch-apply="composerController.onStartLiliaBatchApply"
     @interrupt="composerController.onInterrupt"
     @update-composer="composerController.onComposerUpdate"
+    @composer-draft-change="composerController.onComposerDraftChange"
     @select-worktree="composerController.onSelectWorktree"
     @remove-attachment="attachmentController.removeAttachment"
     @pick-attachments="attachmentController.onPickAttachments"

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted } from "vue";
 import { RouterLink, type RouteLocationRaw } from "vue-router";
 import AlertTriangle from "@lucide/vue/dist/esm/icons/triangle-alert.mjs";
 import Sparkles from "@lucide/vue/dist/esm/icons/sparkles.mjs";
@@ -39,6 +39,7 @@ const activeStatus = computed(() => statusFor(activeBackend.value));
 let startupSeq = 0;
 let idleHandle: ReturnType<typeof runWhenIdle> | null = null;
 let cancelPaint: (() => void) | null = null;
+let startupTimer: ReturnType<typeof setTimeout> | null = null;
 let disposed = false;
 
 const backendLabel = computed(() => chatBackendLabel(activeBackend.value));
@@ -73,6 +74,10 @@ function cancelStartupRefreshSchedule() {
   }
   cancelPaint?.();
   cancelPaint = null;
+  if (startupTimer !== null) {
+    clearTimeout(startupTimer);
+    startupTimer = null;
+  }
 }
 
 function scheduleStartupRefresh() {
@@ -81,10 +86,14 @@ function scheduleStartupRefresh() {
   idleHandle = runWhenIdle(() => {
     idleHandle = null;
     if (disposed || seq !== startupSeq) return;
-    cancelPaint = scheduleAfterPaint(() => {
-      cancelPaint = null;
+    startupTimer = setTimeout(() => {
+      startupTimer = null;
       if (disposed || seq !== startupSeq) return;
-      void refresh(true);
+      cancelPaint = scheduleAfterPaint(() => {
+        cancelPaint = null;
+        if (disposed || seq !== startupSeq) return;
+        void refresh(true);
+      });
     }, STARTUP_CONNECTION_REFRESH_DELAY_MS);
   });
 }

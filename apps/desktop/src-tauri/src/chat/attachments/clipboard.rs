@@ -213,7 +213,7 @@ mod tests {
         let attachment = save_clipboard_image_to_cache(&home, input, 12345, 1).unwrap();
 
         assert_eq!(attachment.name, "图片 1.png");
-        assert_eq!(attachment.kind, "file");
+        assert_eq!(attachment.kind, lilia_contracts::ChatAttachmentKind::File);
         assert_eq!(attachment.exists, true);
         assert_eq!(attachment.mime.as_deref(), Some("image/png"));
         let path = PathBuf::from(&attachment.path);
@@ -237,7 +237,7 @@ mod tests {
         let attachment = save_clipboard_text_to_cache(&home, input, 12345, 1).unwrap();
 
         assert_eq!(attachment.name, "粘贴文本 1.txt");
-        assert_eq!(attachment.kind, "file");
+        assert_eq!(attachment.kind, lilia_contracts::ChatAttachmentKind::File);
         assert_eq!(attachment.exists, true);
         assert_eq!(attachment.mime, None);
         assert_eq!(

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use tauri::{utils::config::Color, Manager, Runtime, WindowEvent};
 use tauri_plugin_global_shortcut::ShortcutState;
 
@@ -15,6 +17,7 @@ mod chat_backends_contract;
 mod cli_project;
 mod contract_manifest;
 mod conversation_suggestions;
+mod desktop_event_bridge;
 mod github;
 #[cfg(test)]
 mod github_command_contract;
@@ -34,6 +37,7 @@ mod plugins_command_contract;
 mod popup_windows;
 mod process_command;
 mod product_core;
+mod production_workspace_domain;
 mod project_architecture_contract;
 #[cfg(test)]
 mod project_contract;
@@ -42,10 +46,10 @@ mod projects_tasks;
 mod prompt_contract;
 mod provider;
 mod quota_usage;
+#[cfg(test)]
 mod quota_usage_contract;
 mod remote_control;
 mod runner_protocol_contract;
-mod production_workspace_domain;
 #[cfg(feature = "runtime-domain-reference")]
 pub mod runtime_domains;
 mod settings_store;
@@ -56,7 +60,9 @@ mod system_wake;
 #[cfg(test)]
 mod task_command_contract;
 mod task_contract;
+mod task_goal;
 mod task_handoff;
+mod tauri_desktop_host;
 #[cfg(test)]
 mod todo_command_contract;
 mod todos;
@@ -116,6 +122,15 @@ fn restore_runtime_sessions_on_startup<R: Runtime>(app: &tauri::AppHandle<R>) {
                         "legacy-node",
                         "Node agent-runner 已移除；仅支持 Native AgentKit".to_string(),
                     );
+                }
+                match native_agent::restore_paused_native_turns(app) {
+                    Ok(restored) if restored > 0 => {
+                        eprintln!("[native-agent] restored {restored} paused turn(s)");
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        eprintln!("[native-agent] restore paused turns failed: {err}");
+                    }
                 }
                 if let Err(err) = automation::recover_abandoned_agent_runs(app, &chat_store) {
                     eprintln!("[automation] recover abandoned agent runs failed: {err}");
@@ -220,10 +235,58 @@ pub fn run() {
             let home = store::resolve_lilia_home();
             let legacy_store = store::LiliaStore::new(&home)
                 .map_err(|err| std::io::Error::other(format!("legacy store init failed: {err}")))?;
-            let product_core = product_core::EmbeddedProductCore::open(&home)
-                .map_err(|err| std::io::Error::other(format!("product core init failed: {err}")))?;
+            let desktop_config =
+                lilia_desktop_application::DesktopApplicationConfig::new(home.clone(), "liliacode")
+                    .map_err(|err| {
+                        std::io::Error::other(format!("desktop application config failed: {err}"))
+                    })?;
+            let equivalence_fixture_mode = cfg!(debug_assertions)
+                && std::env::var_os("LILIA_EQUIVALENCE_FIXTURE_ID").is_some();
+            let desktop_config = if equivalence_fixture_mode {
+                desktop_config
+            } else {
+                desktop_config.with_legacy_desktop_domain_database()
+            };
+            let desktop_host = Arc::new(tauri_desktop_host::TauriDesktopHost::new(
+                app.handle().clone(),
+            ));
+            let desktop = if equivalence_fixture_mode {
+                lilia_desktop_application::DesktopApplication::bootstrap(
+                    desktop_config,
+                    desktop_host,
+                )
+            } else {
+                lilia_desktop_application::DesktopApplication::bootstrap_with_memory_settings(
+                    desktop_config,
+                    desktop_host,
+                    memory::TauriMemorySettingsStore::new(app.handle().clone()),
+                )
+            }
+            .map_err(|err| {
+                std::io::Error::other(format!("desktop application init failed: {err}"))
+            })?;
+            native_agent::install_shared_runtime(desktop.authority().shared_runtime()).map_err(
+                |err| {
+                    std::io::Error::other(format!("Native AgentKit authority init failed: {err}"))
+                },
+            )?;
+            let product_core =
+                product_core::EmbeddedProductCore::from_authority(desktop.authority().clone())
+                    .map_err(|err| {
+                        std::io::Error::other(format!("product core init failed: {err}"))
+                    })?;
+            let automation_service = desktop.automation_service();
+            let memory_service = desktop.memory_service();
+            let roadmap_service = desktop.roadmap_service();
+            desktop_event_bridge::start(app.handle(), &desktop).map_err(|err| {
+                std::io::Error::other(format!("desktop event bridge init failed: {err}"))
+            })?;
             app.manage(product_core);
             app.manage(legacy_store);
+            app.manage(automation_service);
+            app.manage(memory_service);
+            app.manage(roadmap_service);
+            app.manage(desktop);
             remote_control::restore_http_bridge_if_enabled(app.handle());
             restore_runtime_sessions_on_startup(app.handle());
             cli_project::handle_initial_args(app.handle());
@@ -271,9 +334,11 @@ pub fn run() {
             chat::title_update::chat_respond_title_update,
             chat::commands::chat_list_models,
             chat::commands::chat_get_composer_state,
+            chat::commands::chat_get_composer_draft,
             chat::commands::chat_get_runtime_snapshot,
             chat::commands::chat_ack_restored_rollback,
             chat::commands::chat_set_composer_state,
+            chat::commands::chat_set_composer_draft,
             lilia_iab::lilia_iab_open,
             lilia_iab::lilia_iab_submit,
             memory::memory_list,
@@ -342,6 +407,8 @@ pub fn run() {
             plugins::plugins_create_skill,
             plugins::plugins_delete_skill,
             plugins::plugins_set_skill_enabled,
+            plugins::plugins_install_package,
+            plugins::plugins_delete_package,
             plugins::plugins_set_package_enabled,
             plugins::plugins_create_mcp_server,
             plugins::plugins_update_mcp_server,
@@ -356,9 +423,14 @@ pub fn run() {
             plugins::plugins_open_hook_config,
             todos::todo_list,
             todos::todo_create,
+            todos::todo_submit_guide,
             todos::todo_update,
             todos::todo_delete,
             todos::todo_apply_agent_event,
+            task_goal::task_goal_get,
+            task_goal::task_goal_set,
+            task_goal::task_goal_refresh,
+            task_goal::task_goal_clear,
             projects_tasks::project_list,
             projects_tasks::project_dashboard_list,
             projects_tasks::project_get,
@@ -416,6 +488,7 @@ pub fn run() {
             agent_debug::agent_debug_status,
             agent_debug::agent_debug_logs,
             agent_debug::agent_debug_runtime_snapshot,
+            agent_debug::agent_debug_equivalence_snapshot,
             agent_debug::agent_debug_record_action,
             agent_debug::agent_debug_reset_state,
             product_core::product_core_status,

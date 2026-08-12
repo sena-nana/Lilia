@@ -82,6 +82,7 @@ fn create_current_schema(conn: &Connection) -> Result<(), String> {
           priority     TEXT NOT NULL DEFAULT 'normal' CHECK (priority IN ('high','normal','low')),
           guide_status TEXT CHECK (guide_status IS NULL OR guide_status IN ('pending','queued','sent')),
           attachments_json TEXT NOT NULL DEFAULT '[]',
+          conversation_references_json TEXT NOT NULL DEFAULT '[]',
           created_at   INTEGER NOT NULL,
           updated_at   INTEGER NOT NULL
         );
@@ -402,7 +403,7 @@ fn create_current_schema(conn: &Connection) -> Result<(), String> {
           workflow_id         TEXT NOT NULL,
           workflow_version_id TEXT NOT NULL,
           status              TEXT NOT NULL CHECK (status IN
-                                ('pending','running','succeeded','failed','skipped','waiting_user')),
+                                ('pending','running','succeeded','failed','skipped','cancelled','waiting_user')),
           trigger_json        TEXT NOT NULL,
           scope_json          TEXT NOT NULL,
           started_at          INTEGER NOT NULL,
@@ -422,7 +423,7 @@ fn create_current_schema(conn: &Connection) -> Result<(), String> {
           run_id      TEXT NOT NULL,
           node_id     TEXT NOT NULL,
           status      TEXT NOT NULL CHECK (status IN
-                        ('pending','running','succeeded','failed','skipped','waiting_user')),
+                        ('pending','running','succeeded','failed','skipped','cancelled','waiting_user')),
           input_json  TEXT NOT NULL DEFAULT '{}',
           output_json TEXT,
           error       TEXT,
@@ -474,6 +475,45 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn todo_conversation_reference_migration_preserves_existing_rows() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE task_todos (
+              id TEXT PRIMARY KEY,
+              task_id TEXT NOT NULL,
+              text TEXT NOT NULL,
+              done INTEGER NOT NULL DEFAULT 0,
+              "order" INTEGER NOT NULL,
+              source TEXT NOT NULL,
+              priority TEXT NOT NULL,
+              guide_status TEXT,
+              attachments_json TEXT NOT NULL DEFAULT '[]',
+              created_at INTEGER NOT NULL,
+              updated_at INTEGER NOT NULL
+            );
+            INSERT INTO task_todos
+              (id, task_id, text, "order", source, priority, created_at, updated_at)
+              VALUES ('guide-1', 'task-1', '保留现有引导', 0, 'lilia', 'normal', 1, 1);
+            PRAGMA user_version = 30;
+            "#,
+        )
+        .unwrap();
+
+        ensure_current_schema(&mut conn).unwrap();
+
+        let row: (String, String) = conn
+            .query_row(
+                "SELECT text, conversation_references_json FROM task_todos WHERE id = 'guide-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("保留现有引导".to_owned(), "[]".to_owned()));
+        assert_eq!(current_schema_version(), 31);
     }
 
     #[test]

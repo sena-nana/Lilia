@@ -2,6 +2,11 @@ use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use tauri::{AppHandle, Manager, State};
 
+use lilia_contracts::TaskId;
+use lilia_desktop_application::{
+    DesktopApplication, DesktopComposerCommand, DesktopExecutionPermission,
+};
+
 use crate::agent_events::{
     runner_interaction_response_control_type, runner_interrupt_turn_control_type,
     runner_settings_update_control_type,
@@ -254,10 +259,10 @@ pub fn chat_interrupt_turn(
     };
     let stopped = stop_running_turn(&app, &store, &task_id, true, false)?;
     if native_cancellation
-        == Some(lilia_agent_integration::TurnCancellationDisposition::PausedApproval)
+        == Some(lilia_agent_integration::TurnCancellationDisposition::PausedAction)
     {
-        if let Some(turn) = stopped.filter(|turn| turn.native_approval_pause.is_some()) {
-            crate::native_agent::finish_cancelled_native_approval_turn(&app, &task_id, turn);
+        if let Some(turn) = stopped.filter(|turn| turn.native_action_pause.is_some()) {
+            crate::native_agent::finish_cancelled_native_paused_turn(&app, &task_id, turn);
         }
     }
     Ok(ChatInterruptResult::default())
@@ -388,14 +393,18 @@ pub fn chat_respond_agent_interaction(
     request_id: String,
     kind: String,
     result: JsonValue,
-    _app: AppHandle,
+    app: AppHandle,
     store: State<'_, ChatStore>,
 ) -> Result<(), String> {
     if running_turn_is_native(&store, &task_id) {
-        return Err(
-            "当前任务由 AgentKit Native 执行；权限与交互请走 native_respond_approval，禁止写入 Node runner stdin"
-                .into(),
-        );
+        return crate::native_agent::respond_native_agent_interaction(
+            &app,
+            &task_id,
+            &request_id,
+            &kind,
+            result,
+        )
+        .map(|_| ());
     }
     let payload = agent_interaction_response_payload(request_id.clone(), kind.clone(), result);
     let mut attributes = control_event_attributes([("requestId", request_id), ("kind", kind)]);
@@ -471,15 +480,78 @@ pub fn chat_list_models(app: AppHandle, backend: String) -> Vec<ChatModelOption>
     options
 }
 
+fn shared_composer_settings(
+    application: &DesktopApplication,
+    state: &ChatComposerState,
+) -> Result<(), String> {
+    let task_id = TaskId::new(&state.task_id).map_err(|error| error.to_string())?;
+    let permission = DesktopExecutionPermission::parse(&state.permission)
+        .ok_or_else(|| format!("未知 Composer 权限：{}", state.permission))?;
+    let explicit_model = (state.model_selection_mode == "manual").then(|| state.model.clone());
+    for command in [
+        DesktopComposerCommand::SetModel(explicit_model),
+        DesktopComposerCommand::SetReasoningEffort(state.reasoning_effort.clone()),
+        DesktopComposerCommand::SetPermission(permission),
+        DesktopComposerCommand::SetPlanMode(state.plan_mode),
+        DesktopComposerCommand::SetGoalMode(state.goal_mode),
+    ] {
+        application
+            .execute_composer_command(&task_id, command)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
-pub fn chat_get_composer_state(task_id: String, store: State<'_, ChatStore>) -> ChatComposerState {
-    store
+pub fn chat_get_composer_state(
+    task_id: String,
+    store: State<'_, ChatStore>,
+    application: State<'_, DesktopApplication>,
+) -> Result<ChatComposerState, String> {
+    let mut state = store
         .composers
         .lock()
         .unwrap()
         .get(&task_id)
         .cloned()
-        .unwrap_or_else(|| default_composer(&task_id))
+        .unwrap_or_else(|| default_composer(&task_id));
+    let task_id = TaskId::new(task_id).map_err(|error| error.to_string())?;
+    let shared = application
+        .composer_state(&task_id)
+        .map_err(|error| error.to_string())?;
+    if let Some(model) = shared.model {
+        state.model = model;
+    }
+    state.reasoning_effort = shared.reasoning_effort;
+    state.permission = shared.permission.as_str().to_owned();
+    state.plan_mode = shared.plan_mode;
+    state.goal_mode = shared.goal_mode;
+    Ok(state)
+}
+
+#[tauri::command]
+pub fn chat_get_composer_draft(
+    task_id: String,
+    application: State<'_, DesktopApplication>,
+) -> Result<String, String> {
+    let task_id = TaskId::new(task_id).map_err(|error| error.to_string())?;
+    application
+        .composer_state(&task_id)
+        .map(|state| state.content)
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn chat_set_composer_draft(
+    task_id: String,
+    content: String,
+    application: State<'_, DesktopApplication>,
+) -> Result<u64, String> {
+    let task_id = TaskId::new(task_id).map_err(|error| error.to_string())?;
+    application
+        .execute_composer_command(&task_id, DesktopComposerCommand::SetContent(content))
+        .map(|state| state.revision)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -508,7 +580,9 @@ pub fn chat_set_composer_state(
     state: ChatComposerState,
     _app: AppHandle,
     store: State<'_, ChatStore>,
-) {
+    application: State<'_, DesktopApplication>,
+) -> Result<(), String> {
+    shared_composer_settings(&application, &state)?;
     let payload = {
         let mut composers = store.composers.lock().unwrap();
         let previous = composers.get(&state.task_id);
@@ -517,11 +591,11 @@ pub fn chat_set_composer_state(
         payload
     };
     let Some(payload) = payload else {
-        return;
+        return Ok(());
     };
     // Native turns do not consume Node runner stdin control messages.
     if running_turn_is_native(&store, &state.task_id) {
-        return;
+        return Ok(());
     }
     let mut attributes = composer_runtime_settings_update_attributes(&payload);
     let write_result = write_runner_stdin(&store, &state.task_id, payload);
@@ -529,4 +603,5 @@ pub fn chat_set_composer_state(
     if let Err(err) = write_result {
         eprintln!("[chat] runtime settings update failed: {err}");
     }
+    Ok(())
 }

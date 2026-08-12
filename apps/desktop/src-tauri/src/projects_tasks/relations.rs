@@ -86,23 +86,6 @@ pub(super) fn task_project_id(
     .map_err(|e| format!("{context}: 查询任务失败：{e}"))
 }
 
-pub(super) fn update_descendant_projects(
-    conn: &Connection,
-    task_id: &str,
-    project_id: Option<&str>,
-    context: &str,
-) -> Result<(), String> {
-    let descendants = descendant_ids(conn, task_id, context)?;
-    for descendant_id in descendants {
-        conn.execute(
-            "UPDATE tasks SET project_id = ?1 WHERE id = ?2",
-            params![project_id, descendant_id],
-        )
-        .map_err(|e| format!("{context}: 更新子任务项目失败：{e}"))?;
-    }
-    Ok(())
-}
-
 fn ensure_parent_does_not_create_cycle(
     conn: &Connection,
     task_id: &str,
@@ -157,28 +140,6 @@ fn ensure_dependency_does_not_create_cycle(
         }
     }
     Ok(())
-}
-
-fn descendant_ids(conn: &Connection, task_id: &str, context: &str) -> Result<Vec<String>, String> {
-    let mut out = Vec::new();
-    let mut stack = vec![task_id.to_string()];
-    let mut seen = HashSet::new();
-    while let Some(parent_id) = stack.pop() {
-        let mut stmt = conn
-            .prepare("SELECT id FROM tasks WHERE parent_id = ?1 AND archived = 0")
-            .map_err(|e| format!("{context}: 查询子任务失败：{e}"))?;
-        let rows = stmt
-            .query_map(params![parent_id], |row| row.get::<_, String>(0))
-            .map_err(|e| format!("{context}: 查询子任务失败：{e}"))?;
-        for row in rows {
-            let id = row.map_err(|e| format!("{context}: 读取子任务失败：{e}"))?;
-            if seen.insert(id.clone()) {
-                stack.push(id.clone());
-                out.push(id);
-            }
-        }
-    }
-    Ok(out)
 }
 
 #[cfg(test)]

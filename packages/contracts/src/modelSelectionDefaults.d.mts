@@ -4,6 +4,7 @@ import type {
 } from "./chatBackendsContract.mjs";
 
 export type ModelTier = "light" | "normal" | "deep";
+export type ModelProviderFamily = "openai" | "anthropic";
 export type ModelSelectionContextScale = "small" | "medium" | "large";
 export type BuiltinModelPresetId = "fast" | "default" | "plan" | "review";
 export type ModelPresetKind = "builtin" | "custom";
@@ -37,12 +38,16 @@ export interface ModelFeatureSettingsShape {
 }
 
 export const MODEL_SELECTION_TIERS: readonly ["light", "normal", "deep"];
+export const MODEL_PROVIDER_FAMILIES: readonly ["openai", "anthropic"];
 export const MODEL_SELECTION_CONTEXT_SCALES: readonly ["medium", "large"];
 export const MODEL_SELECTION_CONTEXT_SCALE_ALL: readonly ["small", "medium", "large"];
 export const BUILTIN_MODEL_PRESET_IDS: readonly ["fast", "default", "plan", "review"];
 
 export const AUTO_MODEL_BY_BACKEND_AND_TIER: Readonly<
   Record<ChatBackendKind, Readonly<Record<ModelTier, string>>>
+>;
+export const AUTO_MODEL_BY_FAMILY_AND_TIER: Readonly<
+  Record<ModelProviderFamily, Readonly<Record<ModelTier, string>>>
 >;
 export const AUTO_REASONING_EFFORT_BY_TIER: Readonly<
   Record<ModelTier, ReasoningEffort>
@@ -77,6 +82,11 @@ export function autoModelForBackendTier(
   backend: ChatBackendKind,
   tier: ModelTier,
 ): string;
+
+export function autoModelForProviderFamilyTier(
+  family: ModelProviderFamily,
+  tier: ModelTier,
+): string | null;
 
 export function autoReasoningEffortForTier(tier: ModelTier): ReasoningEffort;
 

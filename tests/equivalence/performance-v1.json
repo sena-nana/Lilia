@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "fixtureId": "equivalence-performance-v1",
+  "projects": [
+    {
+      "id": "equivalence-performance-v1-project",
+      "name": "Native 性能基准",
+      "pinned": false,
+      "sortOrder": 0
+    }
+  ],
+  "tasks": [
+    {
+      "id": "equivalence-performance-v1-task",
+      "projectId": "equivalence-performance-v1-project",
+      "parentId": null,
+      "title": "千条时间线与核心交互",
+      "description": "固定性能基准语料",
+      "status": "waiting",
+      "priority": "normal",
+      "pinned": false,
+      "sortOrder": 0
+    }
+  ],
+  "timeline": [],
+  "timelineSeries": [
+    {
+      "idPrefix": "equivalence-performance-v1-event",
+      "taskId": "equivalence-performance-v1-task",
+      "agentSession": "equivalence-performance-v1-session",
+      "startSequence": 1,
+      "count": 1000,
+      "turnIdPrefix": "equivalence-performance-v1-turn",
+      "kind": "assistant_message",
+      "status": "completed",
+      "titlePrefix": "性能事件",
+      "summaryPrefix": "固定摘要",
+      "payloadContentPrefix": "固定 Markdown **性能语料**",
+      "projected": true
+    }
+  ]
+}

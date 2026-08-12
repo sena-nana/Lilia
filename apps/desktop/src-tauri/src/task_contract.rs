@@ -13,6 +13,7 @@ static TASK_EVENTS_CONTRACT: OnceLock<TaskEventsContract> = OnceLock::new();
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+#[cfg(test)]
 pub(crate) struct MemorySettingsDefaults {
     pub(crate) enabled: bool,
     pub(crate) baseline_injection_enabled: bool,
@@ -26,7 +27,9 @@ struct TaskStatusManifest {
     project_dashboard_active_statuses: Vec<String>,
     project_dashboard_blocked_statuses: Vec<String>,
     milestone_statuses: Vec<String>,
+    #[cfg(test)]
     default_milestone_status: String,
+    #[cfg(test)]
     default_memory_settings: MemorySettingsDefaults,
 }
 
@@ -85,10 +88,12 @@ pub(crate) fn project_dashboard_blocked_statuses() -> &'static [String] {
     &task_status_manifest().project_dashboard_blocked_statuses
 }
 
+#[cfg(test)]
 pub(crate) fn default_milestone_status() -> &'static str {
     &task_status_manifest().default_milestone_status
 }
 
+#[cfg(test)]
 pub(crate) fn default_memory_settings() -> MemorySettingsDefaults {
     task_status_manifest().default_memory_settings
 }

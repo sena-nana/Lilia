@@ -70,8 +70,6 @@ pub(crate) struct NativeSubagentPrompts {
     pub(crate) delegation_rules: Vec<String>,
 }
 
-
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AssistantPrompts {
@@ -299,7 +297,8 @@ mod tests {
         let built_main_agent_prompt = build_main_agent_prompt("aggressive", None);
         assert!(built_main_agent_prompt.len() > main_agent.base_prompt.len());
         assert!(
-            built_main_agent_prompt.contains("不替代 Mutsuki AgentKit / 模型协议 adapter 的系统提示"),
+            built_main_agent_prompt
+                .contains("不替代 Mutsuki AgentKit / 模型协议 adapter 的系统提示"),
             "mainAgent prompt must preserve AgentKit / adapter system prompt precedence"
         );
         for key in main_agent.workflow_types.keys() {

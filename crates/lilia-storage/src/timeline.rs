@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 use lilia_contracts::{
-    AgentSessionRef, ArtifactProjection, PendingProjection, ProductError, ProductResult, TaskId,
-    TimelineProjectionCommand, TimelineProjectionEvent, TodoProjection,
+    AgentSessionRef, ArtifactProjection, PendingProjection, PendingProjectionStatus, ProductError,
+    ProductResult, TaskId, TimelineProjectionCommand, TimelineProjectionCursor,
+    TimelineProjectionEvent, TimelineProjectionPage, TodoProjection,
 };
 
 /// Port for product timeline / artifact / todo / pending projection persistence.
@@ -13,10 +14,37 @@ use lilia_contracts::{
 pub trait TimelineProjectionRepository: Send + Sync {
     fn apply(&self, command: TimelineProjectionCommand) -> ProductResult<ProjectionApplyResult>;
     fn list_for_task(&self, task_id: &TaskId) -> Vec<TimelineProjectionEvent>;
+    fn list_task_page_before(
+        &self,
+        task_id: &TaskId,
+        before: Option<&TimelineProjectionCursor>,
+        limit: usize,
+    ) -> ProductResult<TimelineProjectionPage> {
+        let mut events = self.list_for_task(task_id);
+        if let Some(before) = before {
+            events.retain(|event| {
+                event.sequence < before.sequence
+                    || (event.sequence == before.sequence
+                        && event.id.as_str() < before.event_id.as_str())
+            });
+        }
+        let limit = limit.max(1);
+        let has_more_before = events.len() > limit;
+        if has_more_before {
+            events.drain(..events.len() - limit);
+        }
+        let before_cursor = has_more_before.then(|| timeline_cursor(&events[0]));
+        Ok(TimelineProjectionPage {
+            events,
+            before_cursor,
+            has_more_before,
+        })
+    }
     fn list_for_session(&self, session: &AgentSessionRef) -> Vec<TimelineProjectionEvent>;
     fn list_artifacts_for_task(&self, task_id: &TaskId) -> Vec<ArtifactProjection>;
     fn list_todos_for_task(&self, task_id: &TaskId) -> Vec<TodoProjection>;
     fn list_pending_for_task(&self, task_id: &TaskId) -> Vec<PendingProjection>;
+    fn list_open_pending(&self) -> Vec<PendingProjection>;
     fn clear_session(&self, session: &AgentSessionRef) -> ProductResult<()>;
     /// Apply commands without clearing. Duplicate ids are ignored.
     fn rebuild_from(&self, commands: Vec<TimelineProjectionCommand>) -> ProductResult<usize>;
@@ -27,6 +55,13 @@ pub trait TimelineProjectionRepository: Send + Sync {
         commands: Vec<TimelineProjectionCommand>,
     ) -> ProductResult<usize>;
     fn cursor_for_session(&self, session: &AgentSessionRef) -> Option<u64>;
+}
+
+fn timeline_cursor(event: &TimelineProjectionEvent) -> TimelineProjectionCursor {
+    TimelineProjectionCursor {
+        sequence: event.sequence,
+        event_id: event.id.as_str().to_owned(),
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,10 +153,16 @@ pub(crate) fn apply_command_to_maps(
             let key = pending.id.clone();
             let session_id = pending.agent_session.as_str().to_string();
             let sequence = pending.sequence;
-            let result = if pendings.contains_key(&key) {
-                ProjectionApplyResult::Updated
-            } else {
-                ProjectionApplyResult::Inserted
+            let result = match pendings.get(&key) {
+                Some(existing)
+                    if existing.status != PendingProjectionStatus::Open
+                        || pending.sequence < existing.sequence =>
+                {
+                    bump_cursor(cursors, &session_id, sequence);
+                    return ProjectionApplyResult::DuplicateIgnored;
+                }
+                Some(_) => ProjectionApplyResult::Updated,
+                None => ProjectionApplyResult::Inserted,
             };
             pendings.insert(key, pending);
             bump_cursor(cursors, &session_id, sequence);
@@ -137,6 +178,9 @@ pub(crate) fn apply_command_to_maps(
             let key = format!("{session_id}:{request_id}");
             bump_cursor(cursors, &session_id, sequence);
             if let Some(pending) = pendings.get_mut(&key) {
+                if pending.status != PendingProjectionStatus::Open || sequence <= pending.sequence {
+                    return ProjectionApplyResult::DuplicateIgnored;
+                }
                 pending.status = status;
                 if let Some(obj) = pending.payload.as_object_mut() {
                     obj.insert("resolution".into(), response);
@@ -199,7 +243,7 @@ impl TimelineProjectionRepository for InMemoryTimelineProjectionStore {
             .filter(|event| &event.agent_session == session)
             .cloned()
             .collect();
-        events.sort_by(|a, b| a.sequence.cmp(&b.sequence));
+        events.sort_by_key(|event| event.sequence);
         events
     }
 
@@ -235,6 +279,18 @@ impl TimelineProjectionRepository for InMemoryTimelineProjectionStore {
             .filter(|row| &row.task_id == task_id)
             .cloned()
             .collect();
+        rows.sort_by(|a, b| a.sequence.cmp(&b.sequence).then_with(|| a.id.cmp(&b.id)));
+        rows
+    }
+
+    fn list_open_pending(&self) -> Vec<PendingProjection> {
+        let store = self.inner.lock().expect("timeline projection store lock");
+        let mut rows = store
+            .pendings
+            .values()
+            .filter(|row| row.status == PendingProjectionStatus::Open)
+            .cloned()
+            .collect::<Vec<_>>();
         rows.sort_by(|a, b| a.sequence.cmp(&b.sequence).then_with(|| a.id.cmp(&b.id)));
         rows
     }
@@ -327,6 +383,50 @@ mod tests {
         );
         assert_eq!(store.list_for_task(&event.task_id).len(), 1);
         assert_eq!(store.cursor_for_session(&event.agent_session), Some(3));
+    }
+
+    #[test]
+    fn task_pages_use_a_stable_exclusive_cursor() {
+        let store = InMemoryTimelineProjectionStore::new();
+        let task = TaskId::new("task-1").unwrap();
+        for sequence in 1..=5 {
+            store
+                .apply(TimelineProjectionCommand::UpsertTimelineEvent {
+                    event: sample_event("sess-page", sequence),
+                })
+                .unwrap();
+        }
+
+        let latest = store.list_task_page_before(&task, None, 2).unwrap();
+        assert_eq!(
+            latest
+                .events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![4, 5]
+        );
+        assert!(latest.has_more_before);
+
+        let middle = store
+            .list_task_page_before(&task, latest.before_cursor.as_ref(), 2)
+            .unwrap();
+        assert_eq!(
+            middle
+                .events
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert!(middle.has_more_before);
+
+        let oldest = store
+            .list_task_page_before(&task, middle.before_cursor.as_ref(), 2)
+            .unwrap();
+        assert_eq!(oldest.events[0].sequence, 1);
+        assert!(!oldest.has_more_before);
+        assert!(oldest.before_cursor.is_none());
     }
 
     #[test]
@@ -444,6 +544,9 @@ mod tests {
                 },
             })
             .unwrap();
+        let open = store.list_open_pending();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].request_id, "req-1");
         store
             .apply(TimelineProjectionCommand::ResolvePending {
                 session_id: session.as_str().into(),
@@ -453,12 +556,45 @@ mod tests {
                 response: json!({ "accepted": true }),
             })
             .unwrap();
+        assert_eq!(
+            store
+                .apply(TimelineProjectionCommand::UpsertPending {
+                    pending: PendingProjection {
+                        id: format!("{}:req-1", session.as_str()),
+                        task_id: task.clone(),
+                        agent_session: session.clone(),
+                        sequence: 5,
+                        turn_id: Some("t1".into()),
+                        request_id: "req-1".into(),
+                        kind: "approval".into(),
+                        status: PendingProjectionStatus::Open,
+                        prompt: Some("stale retry".into()),
+                        action_revision: Some(1),
+                        payload: json!({ "tool": "write" }),
+                    },
+                })
+                .unwrap(),
+            ProjectionApplyResult::DuplicateIgnored
+        );
+        assert_eq!(
+            store
+                .apply(TimelineProjectionCommand::ResolvePending {
+                    session_id: session.as_str().into(),
+                    request_id: "req-1".into(),
+                    status: PendingProjectionStatus::Cancelled,
+                    sequence: 6,
+                    response: json!({ "accepted": false }),
+                })
+                .unwrap(),
+            ProjectionApplyResult::DuplicateIgnored
+        );
 
         assert_eq!(store.list_artifacts_for_task(&task).len(), 1);
         assert_eq!(store.list_todos_for_task(&task).len(), 1);
         let pending = store.list_pending_for_task(&task);
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].status, PendingProjectionStatus::Resolved);
-        assert_eq!(store.cursor_for_session(&session), Some(4));
+        assert!(store.list_open_pending().is_empty());
+        assert_eq!(store.cursor_for_session(&session), Some(6));
     }
 }

@@ -73,11 +73,11 @@ const emit = defineEmits<{
               <div class="plugins-hook-editor__grid">
                 <label>
                   <span>Event</span>
-                  <input v-model="row.event" type="text" class="ui-input" :data-agent-id="`plugins.hook-editor.handler.${index}.event`" placeholder="PostToolUse" />
+                  <input v-model="row.event" type="text" class="ui-input" :data-agent-id="`plugins.hook-editor.handler.${index}.event`" placeholder="UserPromptSubmit 或 Stop" />
                 </label>
                 <label>
                   <span>Matcher</span>
-                  <input v-model="row.matcher" type="text" class="ui-input" :data-agent-id="`plugins.hook-editor.handler.${index}.matcher`" placeholder="Bash" />
+                  <input v-model="row.matcher" type="text" class="ui-input" :data-agent-id="`plugins.hook-editor.handler.${index}.matcher`" placeholder="可选通配表达式，例如 *发布*" />
                 </label>
                 <label>
                   <span>Type</span>
@@ -98,26 +98,6 @@ const emit = defineEmits<{
                 <label class="plugins-hook-editor__field-wide">
                   <span>Status Message</span>
                   <input v-model="row.statusMessage" type="text" class="ui-input" :data-agent-id="`plugins.hook-editor.handler.${index}.status-message`" placeholder="Running hook…" />
-                </label>
-                <label class="plugins-hook-editor__field-wide">
-                  <span>Group JSON</span>
-                  <textarea
-                    v-model="row.groupAdvancedJson"
-                    class="ui-input"
-                    :data-agent-id="`plugins.hook-editor.handler.${index}.group-json`"
-                    rows="4"
-                    placeholder='{"share": "group fields"}'
-                  />
-                </label>
-                <label class="plugins-hook-editor__field-wide">
-                  <span>Handler JSON</span>
-                  <textarea
-                    v-model="row.advancedJson"
-                    class="ui-input"
-                    :data-agent-id="`plugins.hook-editor.handler.${index}.handler-json`"
-                    rows="5"
-                    placeholder='{"env": {"FOO": "bar"}}'
-                  />
                 </label>
               </div>
             </div>

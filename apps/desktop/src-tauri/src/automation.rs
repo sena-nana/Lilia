@@ -5,12 +5,17 @@ use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use uuid::Uuid;
 
+use lilia_desktop_application::{
+    AutomationBeginRunInput, AutomationCompleteAgentInput, AutomationExecutionResult,
+    AutomationStoreError, DesktopApplication, DesktopAutomationError, DesktopAutomationService,
+};
+
 use crate::chat::state::ChatStore;
 use crate::store::LiliaStore;
 use crate::util::now_millis;
 
 pub(crate) mod commands;
-mod contract;
+pub(crate) mod contract;
 mod node_handlers;
 mod repository;
 mod signals;
@@ -20,7 +25,7 @@ pub(crate) use contract::{
     task_created_event_kind, task_status_changed_event_kind, task_updated_event_kind,
 };
 use node_handlers::execute_node;
-use repository::{json_text, node_states_for_run, run_by_id, version_by_id, workflow_by_id};
+use repository::{json_text, node_states_for_run, run_by_id, version_by_id};
 pub use signals::{
     emit_interaction_signal, emit_task_changed_signal, emit_timeline_signal, emit_todo_signal,
 };
@@ -40,15 +45,23 @@ fn merge_json_objects(base: JsonValue, patch: JsonValue) -> JsonValue {
     JsonValue::Object(out)
 }
 
-fn emit_changed<R: Runtime>(app: &AppHandle<R>, workflow_id: Option<String>) {
+pub(crate) fn emit_changed<R: Runtime>(app: &AppHandle<R>, workflow_id: Option<String>) {
     let _ = app.emit(
         contract::changed_event_name(),
         AutomationChangedEvent { workflow_id },
     );
 }
 
-fn emit_run<R: Runtime>(app: &AppHandle<R>, event: &str, run: AutomationRun) {
+pub(crate) fn emit_run<R: Runtime>(app: &AppHandle<R>, event: &str, run: AutomationRun) {
     let _ = app.emit(event, AutomationRunEvent { run });
+}
+
+fn emit_execution_result<R: Runtime>(app: &AppHandle<R>, result: &AutomationExecutionResult) {
+    let run = result.detail.run.clone();
+    emit_run(app, contract::run_updated_event_name(), run.clone());
+    if !run.status.is_active() {
+        emit_run(app, contract::run_finished_event_name(), run);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,9 +76,9 @@ pub(crate) fn recover_abandoned_agent_runs<R: Runtime>(
     app: &AppHandle<R>,
     chat_store: &ChatStore,
 ) -> Result<Vec<AutomationRun>, String> {
+    let mut recovered = recover_shared_abandoned_agent_runs(app)?;
     let conn = app.state::<LiliaStore>().conn()?;
     let abandoned = abandoned_agent_turns(&conn, chat_store)?;
-    let mut recovered = Vec::new();
     for turn in abandoned {
         let Some(run) = run_by_id(&conn, &turn.run_id)? else {
             continue;
@@ -117,6 +130,72 @@ pub(crate) fn recover_abandoned_agent_runs<R: Runtime>(
                 "[automation] clear abandoned agent runtime state failed for task {}: {err}",
                 turn.task_id
             );
+        }
+    }
+    Ok(recovered)
+}
+
+fn recover_shared_abandoned_agent_runs<R: Runtime>(
+    app: &AppHandle<R>,
+) -> Result<Vec<AutomationRun>, String> {
+    let Some(desktop) = app.try_state::<DesktopApplication>() else {
+        return Ok(Vec::new());
+    };
+    let automation = desktop.automation_service();
+    let runs = automation
+        .list_runs(None)
+        .map_err(|error| format!("automation shared recovery list: {error}"))?;
+    let mut recovered = Vec::new();
+    for summary in runs
+        .into_iter()
+        .filter(|run| run.status == AutomationRunStatus::Running)
+    {
+        let Some(detail) = automation
+            .run_detail(&summary.id)
+            .map_err(|error| format!("automation shared recovery detail: {error}"))?
+        else {
+            continue;
+        };
+        let Some(waiting) = detail.nodes.into_iter().find(|node| {
+            node.status == AutomationRunStatus::Running
+                && node
+                    .output
+                    .as_ref()
+                    .and_then(|output| output.get("waitingAgent"))
+                    .and_then(JsonValue::as_bool)
+                    == Some(true)
+        }) else {
+            continue;
+        };
+        let Some(turn_id) = waiting
+            .output
+            .as_ref()
+            .and_then(|output| output.get("turnId"))
+            .and_then(JsonValue::as_str)
+            .filter(|turn_id| !turn_id.trim().is_empty())
+        else {
+            continue;
+        };
+        let error = "Agent 节点运行恢复失败：桌面宿主重启后原执行线程已丢失".to_owned();
+        match desktop.complete_automation_agent_turn(AutomationCompleteAgentInput {
+            run_id: summary.id.clone(),
+            node_id: Some(waiting.node_id),
+            turn_id: turn_id.to_owned(),
+            success: false,
+            payload: Some(serde_json::json!({
+                "recovered": false,
+                "reason": "host_restarted",
+            })),
+            error: Some(error),
+        }) {
+            Ok(result) => {
+                emit_execution_result(app, &result);
+                recovered.push(result.detail.run);
+            }
+            Err(error) => eprintln!(
+                "[automation] shared recovery rejected run {}; trying legacy recovery: {error}",
+                summary.id
+            ),
         }
     }
     Ok(recovered)
@@ -229,6 +308,26 @@ pub fn automation_complete_agent_turn<R: Runtime>(
     let Some(run_id) = automation_run_id else {
         return;
     };
+    if let Some(desktop) = app.try_state::<DesktopApplication>() {
+        match desktop.complete_automation_agent_turn(AutomationCompleteAgentInput {
+            run_id: run_id.clone(),
+            node_id: None,
+            turn_id: turn_id.to_owned(),
+            success,
+            payload: None,
+            error: (!success).then(|| "Agent 节点运行失败或被中断".to_owned()),
+        }) {
+            Ok(result) => {
+                emit_execution_result(app, &result);
+                return;
+            }
+            Err(error) => {
+                eprintln!(
+                    "[automation] shared completion rejected run {run_id}; trying legacy recovery: {error}"
+                );
+            }
+        }
+    }
     if let Err(err) = complete_agent_turn(app, chat_store, &run_id, turn_id, success) {
         eprintln!("[automation] complete agent turn failed for run {run_id}: {err}");
     }
@@ -238,6 +337,39 @@ pub(crate) fn automation_run_id_for_waiting_turn<R: Runtime>(
     app: &AppHandle<R>,
     turn_id: &str,
 ) -> Result<Option<String>, String> {
+    if let Some(desktop) = app.try_state::<DesktopApplication>() {
+        let automation = desktop.automation_service();
+        for run in automation
+            .list_runs(None)
+            .map_err(|error| format!("query shared Automation runs: {error}"))?
+            .into_iter()
+            .filter(|run| run.status == AutomationRunStatus::Running)
+        {
+            let Some(detail) = automation
+                .run_detail(&run.id)
+                .map_err(|error| format!("query shared Automation run detail: {error}"))?
+            else {
+                continue;
+            };
+            if detail.nodes.into_iter().any(|node| {
+                node.status == AutomationRunStatus::Running
+                    && node
+                        .output
+                        .as_ref()
+                        .and_then(|output| output.get("waitingAgent"))
+                        .and_then(JsonValue::as_bool)
+                        == Some(true)
+                    && node
+                        .output
+                        .as_ref()
+                        .and_then(|output| output.get("turnId"))
+                        .and_then(JsonValue::as_str)
+                        == Some(turn_id)
+            }) {
+                return Ok(Some(run.id));
+            }
+        }
+    }
     let conn = app.state::<LiliaStore>().conn()?;
     automation_run_id_for_waiting_turn_with_conn(&conn, turn_id)
 }
@@ -259,20 +391,6 @@ fn automation_run_id_for_waiting_turn_with_conn(
     )
     .optional()
     .map_err(|error| format!("查询等待 Agent Turn 的 Automation 失败：{error}"))
-}
-
-pub(crate) fn waiting_node_state(
-    states: &[AutomationRunNodeState],
-    node_id: Option<&str>,
-) -> Result<AutomationRunNodeState, String> {
-    states
-        .iter()
-        .find(|state| {
-            state.status == AutomationRunStatus::WaitingUser
-                && node_id.map(|id| id == state.node_id).unwrap_or(true)
-        })
-        .cloned()
-        .ok_or_else(|| "automation_resume_run: 未找到等待中的人工节点".to_string())
 }
 
 pub(crate) fn outputs_from_node_states(
@@ -412,74 +530,67 @@ fn complete_agent_turn<R: Runtime>(
             None,
             false,
         ),
+        Ok(GraphExecution::Failed) => finish_run(
+            &conn,
+            app,
+            &run.id,
+            AutomationRunStatus::Failed,
+            Some("Automation 图执行失败".to_string()),
+        ),
         Err(err) => finish_run(&conn, app, &run.id, AutomationRunStatus::Failed, Some(err)),
     }
 }
 
 fn run_workflow<R: Runtime>(
     app: &AppHandle<R>,
-    chat_store: &ChatStore,
+    _chat_store: &ChatStore,
     workflow_id: &str,
     signal: AutomationSignalEnvelope,
 ) -> Result<AutomationRun, String> {
-    let conn = app.state::<LiliaStore>().conn()?;
-    let workflow = workflow_by_id(&conn, workflow_id)?
-        .ok_or_else(|| "automation_run_once: 自动化不存在".to_string())?;
-    let version_id = workflow
-        .published_version_id
-        .clone()
-        .ok_or_else(|| "automation_run_once: 运行前需要先发布".to_string())?;
-    let version = version_by_id(&conn, &version_id)?
-        .ok_or_else(|| "automation_run_once: 发布版本不存在".to_string())?;
-    validate_workflow_graph(&version.snapshot.nodes, &version.snapshot.edges)?;
-    if workflow_has_active_run(&conn, workflow_id)? {
-        return create_skipped_run(&conn, app, &workflow, &version, signal);
-    }
-    let run = create_run(&conn, app, &workflow, &version, signal)?;
-    emit_run(app, contract::run_started_event_name(), run.clone());
-    let result = execute_graph(
-        app,
-        chat_store,
-        &conn,
-        &run,
-        &version.snapshot,
-        None,
-        BTreeMap::new(),
-    );
-    match result {
-        Ok(GraphExecution::Finished) => {
-            finish_run(&conn, app, &run.id, AutomationRunStatus::Succeeded, None)
+    let automation = app.state::<DesktopAutomationService>();
+    let detail = match automation.try_begin_run(AutomationBeginRunInput {
+        workflow_id: workflow_id.to_owned(),
+        trigger: signal.clone(),
+    }) {
+        Ok(detail) => detail,
+        Err(DesktopAutomationError::Store(AutomationStoreError::ActiveRunExists { .. })) => {
+            let conn = app.state::<LiliaStore>().conn()?;
+            let workflow = automation
+                .workflow(workflow_id)
+                .map_err(|error| format!("automation_run_once: {error}"))?
+                .ok_or_else(|| "automation_run_once: 自动化不存在".to_string())?;
+            let version_id = workflow
+                .published_version_id
+                .as_deref()
+                .ok_or_else(|| "automation_run_once: 运行前需要先发布".to_string())?;
+            let version = automation
+                .version(version_id)
+                .map_err(|error| format!("automation_run_once: {error}"))?
+                .ok_or_else(|| "automation_run_once: 发布版本不存在".to_string())?;
+            return create_skipped_run(&conn, app, &workflow, &version, signal);
         }
-        Ok(GraphExecution::WaitingUser) => update_run_status(
-            &conn,
-            app,
-            &run.id,
-            AutomationRunStatus::WaitingUser,
-            None,
-            false,
-        ),
-        Ok(GraphExecution::WaitingAgent) => update_run_status(
-            &conn,
-            app,
-            &run.id,
-            AutomationRunStatus::Running,
-            None,
-            false,
-        ),
-        Err(err) => finish_run(&conn, app, &run.id, AutomationRunStatus::Failed, Some(err)),
-    }
-}
-
-fn workflow_has_active_run(conn: &Connection, workflow_id: &str) -> Result<bool, String> {
-    let count: i64 = conn
-        .query_row(
-            r#"SELECT COUNT(*) FROM automation_runs
-               WHERE workflow_id = ?1 AND status IN ('pending', 'running', 'waiting_user')"#,
-            params![workflow_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("automation_active_run: {e}"))?;
-    Ok(count > 0)
+        Err(DesktopAutomationError::Store(AutomationStoreError::WorkflowNotFound { .. })) => {
+            return Err("automation_run_once: 自动化不存在".to_string());
+        }
+        Err(DesktopAutomationError::Store(AutomationStoreError::PublishedVersionRequired {
+            ..
+        })) => {
+            return Err("automation_run_once: 运行前需要先发布".to_string());
+        }
+        Err(DesktopAutomationError::Store(AutomationStoreError::VersionNotFound { .. })) => {
+            return Err("automation_run_once: 发布版本不存在".to_string());
+        }
+        Err(error) => return Err(format!("automation_run_once: {error}")),
+    };
+    let run = detail.run;
+    emit_run(app, contract::run_updated_event_name(), run.clone());
+    emit_run(app, contract::run_started_event_name(), run.clone());
+    let desktop = app.state::<DesktopApplication>();
+    let result = desktop
+        .execute_automation_run(&run.id)
+        .map_err(|error| format!("automation_run_once: {error}"))?;
+    emit_execution_result(app, &result);
+    Ok(result.detail.run)
 }
 
 fn create_skipped_run<R: Runtime>(
@@ -504,37 +615,6 @@ fn create_skipped_run<R: Runtime>(
     )
     .map_err(|e| format!("automation_skipped_run: update 失败：{e}"))?;
     emit_run(app, contract::run_finished_event_name(), run.clone());
-    Ok(run)
-}
-
-fn create_run<R: Runtime>(
-    conn: &Connection,
-    app: &AppHandle<R>,
-    workflow: &AutomationWorkflow,
-    version: &AutomationWorkflowVersion,
-    signal: AutomationSignalEnvelope,
-) -> Result<AutomationRun, String> {
-    let run = insert_run(
-        conn,
-        workflow,
-        version,
-        signal,
-        AutomationRunStatus::Running,
-        None,
-    )?;
-    for node in &version.snapshot.nodes {
-        insert_node_state(
-            conn,
-            &run.id,
-            &node.id,
-            AutomationRunStatus::Pending,
-            serde_json::json!({}),
-            None,
-            None,
-            None,
-        )?;
-    }
-    emit_run(app, contract::run_updated_event_name(), run.clone());
     Ok(run)
 }
 
@@ -987,6 +1067,7 @@ mod tests {
     use crate::automation::types::{AutomationNodePosition, AutomationScopeFilter};
     use crate::chat::state::{ChatStore, RunningTurn};
     use crate::BACKEND_CODEX;
+    use lilia_desktop_application::{AutomationStore, SqliteAutomationStore};
     use rusqlite::Connection;
 
     fn node(id: &str, kind: &str) -> AutomationNode {
@@ -1215,11 +1296,11 @@ mod tests {
             "automation:run-finished"
         );
         assert_eq!(
-            AutomationRunStatus::from_str("waiting_user"),
+            AutomationRunStatus::from_contract("waiting_user"),
             AutomationRunStatus::WaitingUser
         );
         assert_eq!(
-            AutomationRunStatus::from_str("unknown"),
+            AutomationRunStatus::from_contract("unknown"),
             AutomationRunStatus::Pending
         );
         assert_eq!(node_handlers::normalize_task_priority("high"), "high");
@@ -1264,7 +1345,8 @@ mod tests {
             .unwrap();
         }
 
-        let summaries = repository::list_runs(&conn, Some("wf-1")).unwrap();
+        let store = SqliteAutomationStore::from_connection(conn).unwrap();
+        let summaries = store.list_runs(Some("wf-1")).unwrap();
 
         assert_eq!(
             summaries
@@ -1404,7 +1486,7 @@ mod tests {
             RunningTurn {
                 turn_id: "turn-1".to_string(),
                 backend: BACKEND_CODEX.to_string(),
-                native_approval_pause: None,
+                native_action_pause: None,
             },
         );
 

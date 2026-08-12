@@ -28,6 +28,11 @@ struct TaskCommandsContract {
     toggle_pin: String,
     reorder: String,
     reparent: String,
+    update_dependencies: String,
+    goal_get: String,
+    goal_set: String,
+    goal_refresh: String,
+    goal_clear: String,
 }
 
 fn task_command_contract() -> &'static TaskCommandContract {
@@ -45,8 +50,9 @@ mod tests {
     use crate::projects_tasks::{
         task_archive, task_archive_project, task_create, task_delete, task_get, task_list,
         task_list_sidebar_conversations, task_promote, task_reorder, task_reparent,
-        task_toggle_pin, task_update,
+        task_toggle_pin, task_update, task_update_dependencies,
     };
+    use crate::task_goal::{task_goal_clear, task_goal_get, task_goal_refresh, task_goal_set};
     use crate::task_handoff::task_handoff_get;
 
     #[test]
@@ -65,6 +71,11 @@ mod tests {
         let _ = task_toggle_pin;
         let _ = task_reorder;
         let _ = task_reparent;
+        let _ = task_update_dependencies;
+        let _ = task_goal_get;
+        let _ = task_goal_set;
+        let _ = task_goal_refresh;
+        let _ = task_goal_clear;
 
         assert_eq!(commands.list, stringify!(task_list));
         assert_eq!(
@@ -82,5 +93,13 @@ mod tests {
         assert_eq!(commands.toggle_pin, stringify!(task_toggle_pin));
         assert_eq!(commands.reorder, stringify!(task_reorder));
         assert_eq!(commands.reparent, stringify!(task_reparent));
+        assert_eq!(
+            commands.update_dependencies,
+            stringify!(task_update_dependencies)
+        );
+        assert_eq!(commands.goal_get, stringify!(task_goal_get));
+        assert_eq!(commands.goal_set, stringify!(task_goal_set));
+        assert_eq!(commands.goal_refresh, stringify!(task_goal_refresh));
+        assert_eq!(commands.goal_clear, stringify!(task_goal_clear));
     }
 }

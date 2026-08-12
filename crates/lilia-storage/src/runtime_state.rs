@@ -2,12 +2,18 @@ use std::path::Path;
 use std::sync::Mutex;
 
 use lilia_contracts::{ProductError, ProductResult};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 
 const MIGRATION: &str = r#"
 CREATE TABLE IF NOT EXISTS agent_runtime_sessions (
   session_id TEXT PRIMARY KEY NOT NULL,
+  payload TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS agent_runtime_settings (
+  settings_key TEXT PRIMARY KEY NOT NULL,
   payload TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -114,6 +120,62 @@ impl SqliteAgentRuntimeStateStore {
         .map_err(db_error)?;
         Ok(())
     }
+
+    pub fn put_setting(&self, settings_key: &str, payload: &Value) -> ProductResult<()> {
+        let payload =
+            serde_json::to_string(payload).map_err(|error| ProductError::InvalidInput {
+                field: "agent_runtime_setting".into(),
+                message: error.to_string(),
+            })?;
+        let conn = self.conn.lock().map_err(|_| ProductError::Unavailable {
+            message: "agent runtime state store lock poisoned".into(),
+        })?;
+        conn.execute(
+            r#"INSERT INTO agent_runtime_settings(settings_key, payload)
+               VALUES (?1, ?2)
+               ON CONFLICT(settings_key) DO UPDATE SET
+                 payload = excluded.payload,
+                 updated_at = datetime('now')"#,
+            params![settings_key, payload],
+        )
+        .map_err(db_error)?;
+        Ok(())
+    }
+
+    pub fn setting(&self, settings_key: &str) -> ProductResult<Option<Value>> {
+        let conn = self.conn.lock().map_err(|_| ProductError::Unavailable {
+            message: "agent runtime state store lock poisoned".into(),
+        })?;
+        let payload = conn
+            .query_row(
+                "SELECT payload FROM agent_runtime_settings WHERE settings_key = ?1",
+                params![settings_key],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(db_error)?;
+        payload
+            .map(|payload| {
+                serde_json::from_str(&payload).map_err(|error| ProductError::Unavailable {
+                    message: format!(
+                        "decode agent runtime setting `{settings_key}` from sqlite: {error}"
+                    ),
+                })
+            })
+            .transpose()
+    }
+
+    pub fn delete_setting(&self, settings_key: &str) -> ProductResult<()> {
+        let conn = self.conn.lock().map_err(|_| ProductError::Unavailable {
+            message: "agent runtime state store lock poisoned".into(),
+        })?;
+        conn.execute(
+            "DELETE FROM agent_runtime_settings WHERE settings_key = ?1",
+            params![settings_key],
+        )
+        .map_err(db_error)?;
+        Ok(())
+    }
 }
 
 fn db_error(error: rusqlite::Error) -> ProductError {
@@ -152,6 +214,41 @@ mod tests {
         );
         reopened.delete_session("session-1").unwrap();
         assert!(reopened.list_sessions().unwrap().is_empty());
+        drop(reopened);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_settings_are_isolated_from_agentkit_sessions_and_survive_reopen() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("lilia-agent-settings-{nonce}"));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("agent_runtime.db");
+        {
+            let store = SqliteAgentRuntimeStateStore::open(&path).unwrap();
+            store
+                .put_session("session-1", &serde_json::json!({ "version": 1 }))
+                .unwrap();
+            store
+                .put_setting(
+                    "provider.runtime",
+                    &serde_json::json!({ "model": "gpt-4.1" }),
+                )
+                .unwrap();
+        }
+
+        let reopened = SqliteAgentRuntimeStateStore::open(&path).unwrap();
+        assert_eq!(
+            reopened.setting("provider.runtime").unwrap(),
+            Some(serde_json::json!({ "model": "gpt-4.1" }))
+        );
+        assert_eq!(reopened.list_sessions().unwrap().len(), 1);
+        reopened.delete_setting("provider.runtime").unwrap();
+        assert_eq!(reopened.setting("provider.runtime").unwrap(), None);
+        assert_eq!(reopened.list_sessions().unwrap().len(), 1);
         drop(reopened);
         std::fs::remove_dir_all(root).unwrap();
     }

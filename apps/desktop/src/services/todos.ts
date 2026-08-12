@@ -8,6 +8,7 @@ import { invoke } from "../tauri/runtime";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   ChatAttachment,
+  ChatConversationReference,
   TaskTodo,
   TodoChangedEvent,
   TaskTodoGuideStatus,
@@ -20,6 +21,7 @@ import {
   TODO_CREATE_COMMAND,
   TODO_DELETE_COMMAND,
   TODO_LIST_COMMAND,
+  TODO_SUBMIT_GUIDE_COMMAND,
   TODO_UPDATE_COMMAND,
 } from "@lilia/contracts";
 
@@ -46,8 +48,33 @@ export function createTodo(
   text: string,
   priority: TaskTodoPriority = DEFAULT_TASK_TODO_PRIORITY,
   attachments: ChatAttachment[] = [],
+  conversationReferences: ChatConversationReference[] = [],
 ): Promise<TaskTodo> {
-  return invoke<TaskTodo>(TODO_CREATE_COMMAND, { taskId, text, priority, attachments });
+  return invoke<TaskTodo>(TODO_CREATE_COMMAND, {
+    taskId,
+    text,
+    priority,
+    attachments,
+    conversationReferences,
+  });
+}
+
+export function submitGuide(
+  taskId: string,
+  expectedComposerRevision: number,
+  text: string,
+  priority: TaskTodoPriority = DEFAULT_TASK_TODO_PRIORITY,
+  attachments: ChatAttachment[] = [],
+  conversationReferences: ChatConversationReference[] = [],
+): Promise<TaskTodo> {
+  return invoke<TaskTodo>(TODO_SUBMIT_GUIDE_COMMAND, {
+    taskId,
+    expectedComposerRevision,
+    text,
+    priority,
+    attachments,
+    conversationReferences,
+  });
 }
 
 export interface TodoPatch {

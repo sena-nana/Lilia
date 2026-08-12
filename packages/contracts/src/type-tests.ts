@@ -474,10 +474,12 @@ export type HooksOverviewShapeTypeTest = Assert<
           format: "settings_json";
           name: "Native User Hooks";
           path: "C:/Users/mock/.lilia/settings.json";
+          projectCwd: null;
           exists: true;
           editable: true;
           managed: false;
           enabled: true;
+          revision: 3;
           handlerCount: 1;
           warnings: [];
           limitations: [];
@@ -494,6 +496,7 @@ export type HooksOverviewShapeTypeTest = Assert<
 export type HookDocumentUpdateInputShapeTypeTest = Assert<
   Extends<
     {
+      expectedRevision: 3;
       handlers: [
         {
           id: "handler-1";

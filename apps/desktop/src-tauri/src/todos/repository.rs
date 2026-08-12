@@ -1,3 +1,4 @@
+use lilia_contracts::ChatConversationReference;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value as JsonValue;
 use tauri::{AppHandle, Emitter, Runtime};
@@ -12,9 +13,8 @@ fn parse_attachments_json(value: String) -> Vec<JsonValue> {
     serde_json::from_str::<Vec<JsonValue>>(&value).unwrap_or_default()
 }
 
-pub(super) fn attachments_json(attachments: Option<Vec<JsonValue>>) -> Result<String, String> {
-    serde_json::to_string(&attachments.unwrap_or_default())
-        .map_err(|e| format!("todo attachments: serialize 失败：{e}"))
+fn parse_conversation_references_json(value: String) -> Vec<ChatConversationReference> {
+    serde_json::from_str::<Vec<ChatConversationReference>>(&value).unwrap_or_default()
 }
 
 fn row_to_todo(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskTodo> {
@@ -28,15 +28,17 @@ fn row_to_todo(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskTodo> {
         priority: row.get(6)?,
         guide_status: row.get(7)?,
         attachments: parse_attachments_json(row.get(8)?),
-        created_at: row.get(9)?,
-        updated_at: row.get(10)?,
+        conversation_references: parse_conversation_references_json(row.get(9)?),
+        created_at: row.get(10)?,
+        updated_at: row.get(11)?,
     })
 }
 
 pub(super) fn select_by_task(conn: &Connection, task_id: &str) -> Result<Vec<TaskTodo>, String> {
     let mut stmt = conn
         .prepare(
-            r#"SELECT id, task_id, text, done, "order", source, priority, guide_status, attachments_json, created_at, updated_at
+            r#"SELECT id, task_id, text, done, "order", source, priority, guide_status, attachments_json,
+                      conversation_references_json, created_at, updated_at
                FROM task_todos WHERE task_id = ?1 ORDER BY "order" ASC, created_at ASC"#,
         )
         .map_err(|e| format!("todo_list: prepare 失败：{e}"))?;
@@ -48,19 +50,6 @@ pub(super) fn select_by_task(conn: &Connection, task_id: &str) -> Result<Vec<Tas
         out.push(r.map_err(|e| format!("todo_list: 行解析失败：{e}"))?);
     }
     Ok(out)
-}
-
-pub(super) fn next_order(conn: &Connection, task_id: &str) -> Result<i64, String> {
-    let max: Option<i64> = conn
-        .query_row(
-            r#"SELECT MAX("order") FROM task_todos WHERE task_id = ?1"#,
-            params![task_id],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(|e| format!("todo: 查询 max(order) 失败：{e}"))?
-        .flatten();
-    Ok(max.unwrap_or(-1) + 1)
 }
 
 pub(super) fn emit_todo_changed<R: Runtime>(

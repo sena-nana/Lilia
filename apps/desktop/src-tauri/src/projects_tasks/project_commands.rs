@@ -8,6 +8,9 @@ use rusqlite::{params, Connection, OptionalExtension};
 use tauri::State;
 use uuid::Uuid;
 
+use lilia_contracts::ProjectId;
+use lilia_desktop_application::DesktopApplication;
+
 use crate::store::LiliaStore;
 use crate::task_contract;
 use crate::util::now_millis;
@@ -408,17 +411,16 @@ pub fn project_rename(
 }
 
 #[tauri::command]
-pub fn project_remove(id: String, store: State<'_, LiliaStore>) -> Result<bool, String> {
-    let conn = store.conn()?;
-    conn.execute(
-        "UPDATE tasks SET project_id = NULL WHERE project_id = ?1",
-        params![id],
-    )
-    .map_err(|e| format!("project_remove: orphan tasks 失败：{e}"))?;
-    let deleted = conn
-        .execute("DELETE FROM projects WHERE id = ?1", params![id])
-        .map_err(|e| format!("project_remove: {e}"))?;
-    Ok(deleted > 0)
+pub fn project_remove(
+    id: String,
+    application: State<'_, DesktopApplication>,
+) -> Result<bool, String> {
+    let project_id =
+        ProjectId::new(id).map_err(|error| format!("project_remove: project id 无效：{error}"))?;
+    application
+        .remove_project(&project_id)
+        .map(|outcome| !outcome.already_removed)
+        .map_err(|error| format!("project_remove: {error}"))
 }
 
 #[tauri::command]

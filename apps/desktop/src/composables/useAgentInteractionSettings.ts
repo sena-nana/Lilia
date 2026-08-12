@@ -27,10 +27,6 @@ function sameJsonValue(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-export function sameCodexProfile(a: unknown, b: unknown): boolean {
-  return sameJsonValue(a, b);
-}
-
 export function sameSubagentMode(a: unknown, b: unknown): boolean {
   return sameJsonValue(a, b);
 }
@@ -84,7 +80,6 @@ export async function updateAgentInteractionSettings(
     sameJsonValue(next.permissionModeAvailability, previous.permissionModeAvailability) &&
     next.mainAgentPromptMode === previous.mainAgentPromptMode &&
     next.mainAgentCustomPrompt === previous.mainAgentCustomPrompt &&
-    sameCodexProfile(next.codexProfile, previous.codexProfile) &&
     sameSubagentMode(next.subagentMode, previous.subagentMode) &&
     sameJsonValue(next.autoTurnDecision, previous.autoTurnDecision)
   ) {

@@ -499,16 +499,11 @@ fn context_scale_for_turn(
     let attachment_count = attachments.len();
     let reference_count = conversation_references.len();
     let has_large_directory = attachments.iter().any(|attachment| {
-        attachment
-            .directory
-            .as_ref()
-            .is_some_and(|directory| directory.truncated || directory.file_count >= 200 || directory.total_size >= 20_971_520)
+        attachment.directory.as_ref().is_some_and(|directory| {
+            directory.truncated || directory.file_count >= 200 || directory.total_size >= 20_971_520
+        })
     });
-    if prompt_len >= 8000
-        || attachment_count >= 6
-        || reference_count >= 3
-        || has_large_directory
-    {
+    if prompt_len >= 8000 || attachment_count >= 6 || reference_count >= 3 || has_large_directory {
         signals.push("上下文规模 large".to_string());
         return "large";
     }
@@ -1326,10 +1321,7 @@ mod tests {
         assert_eq!(model_for_tier(backend, ModelTier::Light), "gpt-5.4-mini");
         assert_eq!(model_for_tier(backend, ModelTier::Normal), "gpt-5.4");
         assert_eq!(model_for_tier(backend, ModelTier::Deep), "gpt-5.5");
-        assert_eq!(
-            tier_for_model(backend, "gpt-5.5"),
-            ModelTier::Deep
-        );
+        assert_eq!(tier_for_model(backend, "gpt-5.5"), ModelTier::Deep);
         assert_eq!(
             tier_for_model(backend, "claude-opus-4-7"),
             ModelTier::Normal

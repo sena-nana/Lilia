@@ -2,6 +2,7 @@ import {
   CHAT_BACKENDS,
   APP_RESTART_COMMAND,
   AGENT_TIMELINE_LIST_COMMAND,
+  AGENT_DEBUG_EQUIVALENCE_SNAPSHOT_COMMAND,
   AGENT_DEBUG_LOGS_COMMAND,
   AGENT_DEBUG_RECORD_ACTION_COMMAND,
   AGENT_DEBUG_RESET_STATE_COMMAND,
@@ -10,6 +11,7 @@ import {
   CHAT_ACK_RESTORED_ROLLBACK_COMMAND,
   CHAT_CHECK_ENV_COMMAND,
   CHAT_DESCRIBE_ATTACHMENTS_COMMAND,
+  CHAT_GET_COMPOSER_DRAFT_COMMAND,
   CHAT_GET_COMPOSER_STATE_COMMAND,
   CHAT_GET_RUNTIME_SNAPSHOT_COMMAND,
   CHAT_INTERRUPT_TURN_COMMAND,
@@ -21,6 +23,7 @@ import {
   CHAT_SEARCH_SLASH_COMMANDS_COMMAND,
   CHAT_SEND_MESSAGE_COMMAND,
   CHAT_SET_COMPOSER_STATE_COMMAND,
+  CHAT_SET_COMPOSER_DRAFT_COMMAND,
   CLI_PROJECT_OPEN_CONSUME_PENDING_COMMAND,
   DEFAULT_MODEL_BY_BACKEND,
   MODEL_OPTIONS_BY_BACKEND,
@@ -348,6 +351,7 @@ const noops = new Set<string>([
   CHAT_RESPOND_AGENT_INTERACTION_COMMAND,
   CHAT_RESPOND_TITLE_UPDATE_COMMAND,
   CHAT_SET_COMPOSER_STATE_COMMAND,
+  CHAT_SET_COMPOSER_DRAFT_COMMAND,
   CONVERSATION_SUGGESTIONS_SET_SETTINGS_COMMAND,
   GITHUB_UNBIND_COMMAND,
   LILIA_IAB_OPEN_COMMAND,
@@ -375,8 +379,6 @@ const noops = new Set<string>([
   SYSTEM_OPEN_IN_VSCODE_COMMAND,
   SYSTEM_OPEN_PATH_COMMAND,
   SYSTEM_OPEN_URL_COMMAND,
-  TASK_REORDER_COMMAND,
-  TASK_REPARENT_COMMAND,
 ]);
 
 let agentInteractionSubagents = [{
@@ -661,6 +663,19 @@ function updateDevProductEntity(
   return updated;
 }
 
+function emitDevDesktopProductEvent(entity: ProductEntity, action: string): void {
+  const event: ProductEvent = {
+    sequence: productEvents.length + 1,
+    commandId: `dev-desktop-${productEvents.length + 1}`,
+    entity: entity.kind,
+    entityId: productEntityId(entity),
+    action,
+    revision: entity.value.revision,
+  };
+  productEvents.push(event);
+  emitDevEvent(PRODUCT_EVENT_NAME, event);
+}
+
 function defaultDevRouterModes(): Record<ChatBackendKind, RouterMode> {
   return createChatBackendRecord(defaultRouterModeForBackend);
 }
@@ -719,10 +734,6 @@ function record(value: unknown): Args {
 
 function dayStart(timestamp: number) {
   return Math.floor(timestamp / dayMs) * dayMs;
-}
-
-function dateOnly(timestamp: number) {
-  return new Date(timestamp).toISOString().slice(0, 10);
 }
 
 function quotaUsageStatsDays(value: unknown): QuotaUsageStatsDays {
@@ -1055,6 +1066,8 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
         runningTaskCount: 0,
         queuedTaskCount: 0,
       } as T;
+    case AGENT_DEBUG_EQUIVALENCE_SNAPSHOT_COMMAND:
+      throw new Error("equivalence snapshots require a real debug desktop host");
     case TAURI_PLUGIN_DIALOG_OPEN_COMMAND:
       return null as T;
     case PRODUCT_LIST_ENTITIES_COMMAND:
@@ -1106,6 +1119,92 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
       const updated = updateDevProductEntity(meta, input);
       return finishDevProductCommand(meta, updated, text(args, "action") || "updated") as T;
     }
+    case TASK_REORDER_COMMAND: {
+      const projectId = typeof args.projectId === "string" ? args.projectId : null;
+      const orderedIds = Array.isArray(args.orderedIds) ? args.orderedIds.map(String) : [];
+      if (orderedIds.length === 0 || new Set(orderedIds).size !== orderedIds.length) {
+        throw new Error("task_reorder: task order must be a non-empty unique group");
+      }
+      const first = tasks.find((task) =>
+        !task.archived && task.projectId === projectId && task.id === orderedIds[0]
+      );
+      if (!first) throw new Error("task_reorder: task is not active in the target location");
+      const group = tasks.filter((task) =>
+        !task.archived && task.projectId === projectId && task.pinned === first.pinned
+      );
+      if (
+        group.length !== orderedIds.length ||
+        group.some((task) => !orderedIds.includes(task.id))
+      ) {
+        throw new Error("task_reorder: task order must contain one complete pinned group");
+      }
+      for (const [sortOrder, id] of orderedIds.entries()) {
+        const task = tasks.find((candidate) => candidate.id === id);
+        if (!task || task.sortOrder === sortOrder) continue;
+        task.sortOrder = sortOrder;
+        productTaskRevisions.set(id, (productTaskRevisions.get(id) ?? 0) + 1);
+        emitDevDesktopProductEvent(productTaskEntity(task), "desktop_update_task");
+      }
+      return clone(tasks
+        .filter((task) => !task.archived && task.projectId === projectId)
+        .sort((left, right) =>
+          Number(right.pinned) - Number(left.pinned) ||
+          left.sortOrder - right.sortOrder ||
+          right.createdAt - left.createdAt ||
+          left.id.localeCompare(right.id)
+        )
+        .map((task) => productTaskEntity(task).value)) as T;
+    }
+    case TASK_REPARENT_COMMAND: {
+      const taskId = text(args, "taskId");
+      const targetProjectId = typeof args.newProjectId === "string" ? args.newProjectId : null;
+      const targetParentId = typeof args.newParentId === "string" ? args.newParentId : null;
+      const task = tasks.find((candidate) => candidate.id === taskId && !candidate.archived);
+      if (!task) throw new Error("task_reparent: task is not active");
+      if (targetProjectId && !projects.some((project) => project.id === targetProjectId)) {
+        throw new Error("task_reparent: target project is not active");
+      }
+      if (targetParentId) {
+        const parent = tasks.find((candidate) =>
+          candidate.id === targetParentId &&
+          !candidate.archived &&
+          candidate.projectId === targetProjectId
+        );
+        if (!parent || parent.id === taskId) {
+          throw new Error("task_reparent: parent task is invalid");
+        }
+        let ancestor: DevTask | undefined = parent;
+        while (ancestor?.parentId) {
+          if (ancestor.parentId === taskId) throw new Error("task_reparent: parent cycle");
+          ancestor = tasks.find((candidate) => candidate.id === ancestor?.parentId);
+        }
+      }
+      if (task.projectId === targetProjectId && task.parentId === targetParentId) {
+        return clone(productTaskEntity(task).value) as T;
+      }
+      for (const [id, conversation] of productConversations) {
+        if (conversation.taskId !== taskId || conversation.projectId === targetProjectId) continue;
+        const updated = {
+          ...conversation,
+          projectId: targetProjectId,
+          updatedAt: Date.now(),
+          revision: conversation.revision + 1,
+        };
+        productConversations.set(id, updated);
+        emitDevDesktopProductEvent({ kind: "conversation", value: updated }, "desktop_move_task_conversation");
+      }
+      if (task.projectId !== targetProjectId) {
+        task.sortOrder = tasks
+          .filter((candidate) => !candidate.archived && candidate.projectId === targetProjectId)
+          .reduce((maximum, candidate) => Math.max(maximum, candidate.sortOrder), -1) + 1;
+      }
+      task.projectId = targetProjectId;
+      task.parentId = targetParentId;
+      productTaskRevisions.set(task.id, (productTaskRevisions.get(task.id) ?? 0) + 1);
+      const result = productTaskEntity(task);
+      emitDevDesktopProductEvent(result, "desktop_move_task");
+      return clone(result.value) as T;
+    }
     case PROJECT_LIST_COMMAND:
       return clone(projects) as T;
     case PROJECT_DASHBOARD_LIST_COMMAND:
@@ -1119,8 +1218,29 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
         Array.isArray(args.paths) ? args.paths.map(String) : [],
       )) as T;
     case PROJECT_RENAME_COMMAND:
-    case PROJECT_REMOVE_COMMAND:
       return true as T;
+    case PROJECT_REMOVE_COMMAND: {
+      const projectId = text(args, "id");
+      const index = projects.findIndex((project) => project.id === projectId);
+      if (index < 0) return false as T;
+      for (const task of tasks) {
+        if (task.projectId !== projectId || task.archived) continue;
+        task.projectId = null;
+        productTaskRevisions.set(task.id, (productTaskRevisions.get(task.id) ?? 0) + 1);
+      }
+      for (const [id, conversation] of productConversations) {
+        if (conversation.projectId !== projectId || conversation.archived) continue;
+        productConversations.set(id, {
+          ...conversation,
+          projectId: null,
+          revision: conversation.revision + 1,
+          updatedAt: Date.now(),
+        });
+      }
+      projects.splice(index, 1);
+      productProjectRevisions.delete(projectId);
+      return true as T;
+    }
     case PROJECT_TOGGLE_PIN_COMMAND:
       return false as T;
     case PROJECT_GET_SETTINGS_COMMAND:
@@ -1458,6 +1578,8 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
         goalMode: false,
         permission: normalizePermissionMode(null),
       } as T;
+    case CHAT_GET_COMPOSER_DRAFT_COMMAND:
+      return "" as T;
     case CHAT_GET_RUNTIME_SNAPSHOT_COMMAND:
       return { taskId: text(args, "taskId"), phase: "idle", backend: null, turnId: null, queuedCount: 0, pendingRollback: false, pendingResetCleanup: false, rollback: null } as T;
     case AGENT_INTERACTION_GET_SETTINGS_COMMAND:
@@ -1541,18 +1663,25 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
         format: "hooks_json",
         name: "Mock Hooks",
         path: "C:\\Users\\dev\\.lilia\\hooks.json",
+        projectCwd: null,
         exists: true,
         editable: true,
         managed: false,
         enabled: false,
+        revision: 1,
         handlerCount: 0,
         warnings: [],
         limitations: [],
         trustState: "unknown",
         description: null,
       } as T;
-    case PLUGINS_DELETE_HOOK_SOURCE_COMMAND:
     case PLUGINS_SET_HOOK_SOURCE_ENABLED_COMMAND:
+      return {
+        ...(args.source as Args),
+        enabled: Boolean(args.enabled),
+        revision: Number((args.source as Args)?.revision ?? 0) + 1,
+      } as T;
+    case PLUGINS_DELETE_HOOK_SOURCE_COMMAND:
     case PLUGINS_OPEN_HOOK_CONFIG_COMMAND:
       return undefined as T;
     case POPUP_GET_WINDOW_SETTINGS_COMMAND:

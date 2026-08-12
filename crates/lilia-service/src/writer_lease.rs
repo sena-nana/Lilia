@@ -102,7 +102,9 @@ impl FileWriterLock {
         }
         let file = open_lock_file(&path).map_err(|err| {
             if err.kind() == io::ErrorKind::WouldBlock
-                || err.raw_os_error() == Some(16) // EBUSY / ERROR_SHARING_VIOLATION-ish
+                || err.raw_os_error() == Some(16) // EBUSY
+                || err.raw_os_error() == Some(32) // ERROR_SHARING_VIOLATION
+                || err.raw_os_error() == Some(33) // ERROR_LOCK_VIOLATION
                 || err.kind() == io::ErrorKind::PermissionDenied
             {
                 WriterLeaseError::FileLockBusy {
@@ -152,6 +154,7 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
     // share_mode(0) → exclusive open; another process gets a sharing violation.
     let mut file = OpenOptions::new()
         .create(true)
+        .truncate(false)
         .read(true)
         .write(true)
         .share_mode(0)

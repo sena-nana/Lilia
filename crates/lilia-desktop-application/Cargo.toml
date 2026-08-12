@@ -1,0 +1,34 @@
+[package]
+name = "lilia-desktop-application"
+description = "Host-neutral desktop application boundary for LiliaCode"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+base64 = "0.22.1"
+ignore = "0.4.26"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+lilia-agent-integration = { workspace = true }
+lilia-contracts = { workspace = true }
+lilia-service = { workspace = true }
+lilia-storage = { workspace = true }
+mutsuki-agent-contracts = { workspace = true }
+rusqlite = { workspace = true, features = ["backup"] }
+reqwest = { workspace = true, features = ["form", "query"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_System_JobObjects",
+  "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

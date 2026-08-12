@@ -65,6 +65,34 @@ pub struct LiveModelTurnPlan {
     pub driver: LiveModelDriver,
 }
 
+impl LiveModelTurnPlan {
+    pub fn input_context_token_budget(&self) -> Option<u64> {
+        self.provider
+            .models
+            .get(&self.model)
+            .map(|capability| capability.context_window)
+            .filter(|context_window| *context_window > 0)
+            .map(|context_window| context_window.saturating_mul(4) / 5)
+    }
+
+    pub fn select_model(&mut self, model: impl Into<String>) {
+        let model = model.into();
+        if self.model == model {
+            return;
+        }
+        let capability = self
+            .provider
+            .models
+            .get(&self.model)
+            .cloned()
+            .or_else(|| self.provider.models.values().next().cloned())
+            .unwrap_or_default();
+        self.provider.models.clear();
+        self.provider.models.insert(model.clone(), capability);
+        self.model = model;
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LiveModelDriver {
     OpenAiCompatible,
@@ -238,5 +266,75 @@ pub(crate) fn openai_adapter_descriptor() -> ModelProtocolAdapterDescriptor {
             structured_output: true,
             ..ModelCapability::default()
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_context_budget_reserves_one_fifth_for_model_output() {
+        let model = "model-with-context".to_owned();
+        let plan = LiveModelTurnPlan {
+            provider: ProviderInstanceDescriptor {
+                provider_id: "provider".into(),
+                adapter_id: OPENAI_COMPATIBLE_ADAPTER_ID.into(),
+                endpoint: "https://example.invalid".into(),
+                credential: CredentialRef {
+                    credential_id: "credential".into(),
+                    revision: 1,
+                },
+                models: BTreeMap::from([(
+                    model.clone(),
+                    ModelCapability {
+                        context_window: 128_000,
+                        ..ModelCapability::default()
+                    },
+                )]),
+                headers: BTreeMap::new(),
+                compatibility: BTreeMap::new(),
+                remote_execution_allowed: true,
+            },
+            model,
+            driver: LiveModelDriver::OpenAiCompatible,
+        };
+
+        assert_eq!(plan.input_context_token_budget(), Some(102_400));
+    }
+
+    #[test]
+    fn selecting_a_model_keeps_provider_capabilities_bound_to_the_selected_id() {
+        let model = "default-model".to_owned();
+        let mut plan = LiveModelTurnPlan {
+            provider: ProviderInstanceDescriptor {
+                provider_id: "provider".into(),
+                adapter_id: OPENAI_COMPATIBLE_ADAPTER_ID.into(),
+                endpoint: "https://example.invalid".into(),
+                credential: CredentialRef {
+                    credential_id: "credential".into(),
+                    revision: 1,
+                },
+                models: BTreeMap::from([(
+                    model.clone(),
+                    ModelCapability {
+                        context_window: 128_000,
+                        ..ModelCapability::default()
+                    },
+                )]),
+                headers: BTreeMap::new(),
+                compatibility: BTreeMap::new(),
+                remote_execution_allowed: true,
+            },
+            model,
+            driver: LiveModelDriver::OpenAiCompatible,
+        };
+
+        plan.select_model("configured-model");
+
+        assert_eq!(plan.model, "configured-model");
+        assert_eq!(plan.provider.models.len(), 1);
+        assert!(plan.provider.models.contains_key("configured-model"));
+        assert_eq!(plan.input_context_token_budget(), Some(102_400));
     }
 }

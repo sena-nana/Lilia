@@ -26,11 +26,14 @@ import {
   createSkill,
   deleteHookSource,
   deleteMcpServer,
+  deletePackage,
   deleteSkill,
+  installPackage,
   openHookConfig,
   openMcpConfig,
   readHookSource,
   setMcpServerEnabled,
+  setHookSourceEnabled,
   setPackageEnabled,
   setSkillEnabled,
   type HookDocumentView,
@@ -122,9 +125,11 @@ const newDesc = ref("");
 const creating = ref(false);
 const createError = ref<string | null>(null);
 const pendingRemoveSkill = ref<PluginSkill | null>(null);
+const pendingRemovePlugin = ref<PluginPackage | null>(null);
 const pendingRemoveMcp = ref<PluginMcpServer | null>(null);
 const pendingRemoveHook = ref<HookSourceSummary | null>(null);
 const removing = ref(false);
+const installing = ref(false);
 const query = ref("");
 const selectedKey = ref<string | null>(null);
 const selectedHookDocument = ref<HookDocumentView | null>(null);
@@ -133,7 +138,7 @@ const hookDocumentError = ref<string | null>(null);
 let hookDocumentRequestId = 0;
 let disposed = false;
 
-const showTopbar = computed(() => props.section === "skills");
+const showTopbar = computed(() => props.section === "skills" || props.section === "packages");
 
 const mcpEditor = useMcpServerEditor<PluginMcpServer>({
   backend: "native-agentkit",
@@ -242,6 +247,7 @@ function projectCwdForSkill(skill: PluginSkill) {
 }
 
 function projectCwdForHookSource(source: HookSourceSummary) {
+  if (source.projectCwd) return source.projectCwd;
   if (source.scope !== "project" && source.scope !== "local") return null;
   return projectCwdFromPath(source.path, HOOK_PROJECT_MARKERS);
 }
@@ -449,6 +455,15 @@ const detailRows = computed<DetailRow[]>(() => {
     return [
       { label: "描述", value: entry.item.description || "无描述" },
       { label: "版本", value: entry.item.version || "-" },
+      {
+        label: "能力",
+        value: [
+          `${entry.item.skillCount} Skill`,
+          `${entry.item.hookCount} Hook`,
+          `${entry.item.mcpServerCount} MCP`,
+        ].join(" · "),
+      },
+      { label: "运行状态", value: entry.item.runtimeAvailable ? "可用" : "不可用" },
       { label: "路径", value: entry.item.path, code: true },
     ];
   }
@@ -592,11 +607,11 @@ async function toggleSkill(skill: PluginSkill) {
 }
 
 async function togglePlugin(plugin: PluginPackage) {
-  if (disposed) return;
+  if (disposed || !plugin.editable) return;
   try {
-    await setPackageEnabled(plugin.backend, plugin.scope, plugin.name, !plugin.enabled);
+    await setPackageEnabled(plugin.backend, plugin.scope, plugin.id, !plugin.enabled);
     if (disposed) return;
-    plugin.enabled = !plugin.enabled;
+    await refresh();
   } catch (err) {
     if (!disposed) errorText.value = String(err);
   }
@@ -661,6 +676,10 @@ async function confirmRemove() {
       );
       if (disposed) return;
       pendingRemoveSkill.value = null;
+    } else if (pendingRemovePlugin.value) {
+      await deletePackage(pendingRemovePlugin.value.backend, pendingRemovePlugin.value.id);
+      if (disposed) return;
+      pendingRemovePlugin.value = null;
     } else if (pendingRemoveMcp.value) {
       await deleteMcpServer(pendingRemoveMcp.value.backend, pendingRemoveMcp.value.name);
       if (disposed) return;
@@ -727,6 +746,37 @@ function toggleSelected(entry: PluginEntry) {
   if (entry.kind === "skill") void toggleSkill(entry.item);
   else if (entry.kind === "plugin") void togglePlugin(entry.item);
   else if (entry.kind === "mcp") void toggleMcp(entry.item);
+  else if (entry.kind === "hook") void toggleHook(entry.item);
+}
+
+async function installSelectedPackage() {
+  if (disposed || installing.value) return;
+  installing.value = true;
+  errorText.value = null;
+  try {
+    const installed = await installPackage("native-agentkit");
+    if (disposed || !installed) return;
+    await refresh();
+    selectedKey.value = `plugin:${installed.path}`;
+  } catch (err) {
+    if (!disposed) errorText.value = String(err);
+  } finally {
+    if (!disposed) installing.value = false;
+  }
+}
+
+async function toggleHook(source: HookSourceSummary) {
+  if (disposed || !source.editable || !source.exists) return;
+  try {
+    const updated = await setHookSourceEnabled(source, !source.enabled);
+    if (disposed) return;
+    Object.assign(source, updated);
+    selectedHookDocument.value = selectedHookDocument.value?.source.id === source.id
+      ? { ...selectedHookDocument.value, source: updated }
+      : selectedHookDocument.value;
+  } catch (err) {
+    if (!disposed) errorText.value = String(err);
+  }
 }
 
 function editSelected(entry: PluginEntry) {
@@ -741,6 +791,7 @@ function editSelected(entry: PluginEntry) {
 function removeSelected(entry: PluginEntry) {
   if (disposed) return;
   if (entry.kind === "skill") pendingRemoveSkill.value = entry.item;
+  else if (entry.kind === "plugin" && entry.item.editable) pendingRemovePlugin.value = entry.item;
   else if (entry.kind === "mcp" && entry.item.editable) pendingRemoveMcp.value = entry.item;
   else if (isHookEntry(entry)) pendingRemoveHook.value = entry.item;
 }
@@ -760,8 +811,9 @@ function actionLabel(entry: PluginEntry) {
 }
 
 function canToggle(entry: PluginEntry) {
-  if (isHookEntry(entry)) return false;
-  return entry.kind !== "mcp" || entry.item.editable;
+  if (isHookEntry(entry)) return entry.item.editable && entry.item.exists;
+  if (entry.kind === "skill") return entry.item.editable;
+  return entry.item.editable;
 }
 
 function canEdit(entry: PluginEntry) {
@@ -771,11 +823,13 @@ function canEdit(entry: PluginEntry) {
 
 function canRemove(entry: PluginEntry) {
   if (isHookEntry(entry)) return entry.item.editable && entry.item.exists;
-  return entry.kind === "skill" || (entry.kind === "mcp" && entry.item.editable);
+  return (entry.kind === "skill" && entry.item.editable)
+    || (entry.kind === "plugin" && entry.item.editable)
+    || (entry.kind === "mcp" && entry.item.editable);
 }
 
 function canOpenConfig(entry: PluginEntry) {
-  return entry.kind === "mcp" || isHookEntry(entry);
+  return entry.kind === "mcp" || (isHookEntry(entry) && entry.item.exists);
 }
 </script>
 
@@ -812,6 +866,17 @@ function canOpenConfig(entry: PluginEntry) {
           >
             <Plus :size="14" aria-hidden="true" />
             <span>新建 Skill</span>
+          </button>
+          <button
+            v-if="props.section === 'packages'"
+            type="button"
+            class="ui-button ui-button--ghost"
+            data-agent-id="plugins.package.install"
+            :disabled="installing"
+            @click="installSelectedPackage"
+          >
+            <FolderOpen :size="14" aria-hidden="true" />
+            <span>{{ installing ? "安装中…" : "安装 Plugin" }}</span>
           </button>
         </div>
       </div>
@@ -996,6 +1061,14 @@ function canOpenConfig(entry: PluginEntry) {
                   <div v-else class="plugins-browser__notice">当前来源没有原始文档内容</div>
                 </div>
               </template>
+              <template v-else-if="selectedEntry.kind === 'plugin' && selectedEntry.item.warnings.length">
+                <div class="plugins-hook-section">
+                  <div class="plugins-hook-section__title">状态</div>
+                  <ul class="plugins-hook-section__list">
+                    <li v-for="warning in selectedEntry.item.warnings" :key="warning">{{ warning }}</li>
+                  </ul>
+                </div>
+              </template>
             </div>
           </template>
           <template v-else>
@@ -1066,22 +1139,26 @@ function canOpenConfig(entry: PluginEntry) {
     />
 
     <ConfirmDialog
-      :open="pendingRemoveSkill !== null || pendingRemoveMcp !== null || pendingRemoveHook !== null"
+      :open="pendingRemoveSkill !== null || pendingRemovePlugin !== null || pendingRemoveMcp !== null || pendingRemoveHook !== null"
       :title="pendingRemoveSkill
         ? `删除 skill「${pendingRemoveSkill?.name ?? ''}」？`
-        : pendingRemoveMcp
-          ? `删除 ${pluginMcpBackendLabel(pendingRemoveMcp.backend)}「${pendingRemoveMcp?.name ?? ''}」？`
-          : `删除 Hooks 来源「${pendingRemoveHook?.name ?? ''}」？`"
+        : pendingRemovePlugin
+          ? `删除 Plugin「${pendingRemovePlugin?.name ?? ''}」？`
+          : pendingRemoveMcp
+            ? `删除 ${pluginMcpBackendLabel(pendingRemoveMcp.backend)}「${pendingRemoveMcp?.name ?? ''}」？`
+            : `删除 Hooks 来源「${pendingRemoveHook?.name ?? ''}」？`"
       :message="pendingRemoveSkill
         ? '该 skill 目录会被整体删除，不可恢复。'
-        : pendingRemoveMcp
-          ? '该 MCP server 会从 Lilia 配置中删除，不可恢复。'
-          : '该 hooks 来源会从对应配置文件中移除，不可恢复。'"
+        : pendingRemovePlugin
+          ? '该 Plugin 的托管副本会被整体删除，不影响原始目录。'
+          : pendingRemoveMcp
+            ? '该 MCP server 会从 Lilia 配置中删除，不可恢复。'
+            : '该 hooks 来源会从对应配置文件中移除，不可恢复。'"
       confirm-text="删除"
       busy-text="删除中…"
       :busy="removing"
       danger
-      @cancel="pendingRemoveSkill = null; pendingRemoveMcp = null; pendingRemoveHook = null"
+      @cancel="pendingRemoveSkill = null; pendingRemovePlugin = null; pendingRemoveMcp = null; pendingRemoveHook = null"
       @confirm="confirmRemove"
     />
   </section>

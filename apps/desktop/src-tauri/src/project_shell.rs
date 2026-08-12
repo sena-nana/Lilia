@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use lilia_desktop_application::{DesktopApplication, DesktopProjectCloneRequest};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Runtime, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::process_command::hide_console_window;
@@ -240,18 +241,16 @@ pub fn system_open_in_vscode(path: String) -> Result<(), String> {
 
 /// 同步调用 `git clone <url> <target>`；成功后返回 target 绝对路径。
 #[tauri::command]
-pub fn git_clone_repo(url: String, parent_dir: String) -> Result<String, String> {
-    let url_trim = url.trim();
-    if url_trim.is_empty() {
-        return Err("仓库 URL 不能为空".to_string());
-    }
-    let parent_path = Path::new(parent_dir.trim());
-    if !parent_path.is_dir() {
-        return Err(format!("目标父目录不存在：{}", parent_path.display()));
-    }
-    let base = derive_repo_dir_name(url_trim);
-    let target = unique_target_path(parent_path, &base);
-    run_git_clone(url_trim, &target, None)?;
-
-    Ok(target.to_string_lossy().to_string())
+pub fn git_clone_repo(
+    application: State<'_, DesktopApplication>,
+    url: String,
+    parent_dir: String,
+) -> Result<String, String> {
+    application
+        .clone_project_repository(DesktopProjectCloneRequest {
+            repository: url,
+            parent_directory: PathBuf::from(parent_dir.trim()),
+        })
+        .map(|result| result.workspace_path.to_string_lossy().into_owned())
+        .map_err(|error| error.to_string())
 }

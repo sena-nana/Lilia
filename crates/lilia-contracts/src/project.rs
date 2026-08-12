@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ProductRevision, ProjectAssetId, ProjectId};
+use crate::{ConversationId, ExpectedRevision, ProductRevision, ProjectAssetId, ProjectId, TaskId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -47,6 +47,28 @@ pub struct Project {
     #[serde(default)]
     pub asset_ids: Vec<ProjectAssetId>,
     pub revision: ProductRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductProjectRemovalOutcome {
+    pub project: Project,
+    pub moved_task_ids: Vec<TaskId>,
+    pub moved_conversation_ids: Vec<ConversationId>,
+    pub already_removed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductProjectReorderEntry {
+    pub project_id: ProjectId,
+    pub expected_revision: ExpectedRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductProjectReorderOutcome {
+    pub projects: Vec<Project>,
 }
 
 impl Project {

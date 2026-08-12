@@ -7,6 +7,7 @@ import {
 } from "./chatBackendsContract.mjs";
 
 export const MODEL_SELECTION_TIERS = Object.freeze(["light", "normal", "deep"]);
+export const MODEL_PROVIDER_FAMILIES = Object.freeze(["openai", "anthropic"]);
 export const MODEL_SELECTION_CONTEXT_SCALES = Object.freeze(["medium", "large"]);
 export const MODEL_SELECTION_CONTEXT_SCALE_ALL = Object.freeze(["small", "medium", "large"]);
 export const BUILTIN_MODEL_PRESET_IDS = Object.freeze(["fast", "default", "plan", "review"]);
@@ -14,6 +15,7 @@ export const BUILTIN_MODEL_PRESET_IDS = Object.freeze(["fast", "default", "plan"
 const manifest = readModelSelectionDefaultsManifest(modelSelectionDefaults);
 
 export const AUTO_MODEL_BY_BACKEND_AND_TIER = manifest.autoModels;
+export const AUTO_MODEL_BY_FAMILY_AND_TIER = manifest.autoModelFamilies;
 export const AUTO_REASONING_EFFORT_BY_TIER = manifest.autoReasoningEfforts;
 export const AUTO_PRESET_REASONING_EFFORT = manifest.autoPresetReasoningEfforts;
 export const PRESET_TIER_MAP = manifest.presetTierMap;
@@ -36,6 +38,10 @@ export function autoModelForBackendTier(backend, tier) {
     AUTO_MODEL_BY_BACKEND_AND_TIER[DEFAULT_CHAT_BACKEND] ??
     AUTO_MODEL_BY_BACKEND_AND_TIER[CHAT_BACKENDS[0]];
   return row?.[tier] ?? null;
+}
+
+export function autoModelForProviderFamilyTier(family, tier) {
+  return AUTO_MODEL_BY_FAMILY_AND_TIER[family]?.[tier] ?? null;
 }
 
 export function autoReasoningEffortForTier(tier) {
@@ -308,6 +314,29 @@ function readModelSelectionDefaultsManifest(value) {
       return [backend, tiers];
     }),
   ));
+  const familyModelsRow = recordValue(manifest?.autoModelFamilies);
+  if (!familyModelsRow) {
+    throw new Error("model-selection-defaults.json must define autoModelFamilies");
+  }
+  const autoModelFamilies = Object.freeze(Object.fromEntries(
+    MODEL_PROVIDER_FAMILIES.map((family) => {
+      const tierRow = recordValue(familyModelsRow[family]);
+      if (!tierRow) {
+        throw new Error(`model-selection-defaults.json missing autoModelFamilies.${family}`);
+      }
+      return [family, Object.freeze(Object.fromEntries(
+        MODEL_SELECTION_TIERS.map((tier) => {
+          const model = tierRow[tier];
+          if (typeof model !== "string" || !model.trim()) {
+            throw new Error(
+              `model-selection-defaults.json missing autoModelFamilies.${family}.${tier}`,
+            );
+          }
+          return [tier, model];
+        }),
+      ))];
+    }),
+  ));
 
   const autoReasoningEfforts = Object.freeze(Object.fromEntries(
     MODEL_SELECTION_TIERS.map((tier) => {
@@ -394,6 +423,7 @@ function readModelSelectionDefaultsManifest(value) {
 
   return Object.freeze({
     autoModels,
+    autoModelFamilies,
     autoReasoningEfforts,
     autoPresetReasoningEfforts,
     presetTierMap,

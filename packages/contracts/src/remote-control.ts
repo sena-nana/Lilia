@@ -9,6 +9,7 @@ import type {
   ChatSendResult,
   ChatWorkflow,
   ProviderRuntimeOptions,
+  SessionForkMode,
 } from "./chat";
 import type { Task, SidebarConversationSummary } from "./task";
 import type { AgentTimelineEvent } from "./timeline";
@@ -97,6 +98,15 @@ export interface RemoteCapabilitySet {
   supportsChatSend: boolean;
   supportsInteractionResponse: boolean;
   supportsInterrupt: boolean;
+  supportsAgentWire?: boolean;
+  supportsSessionFork?: boolean;
+  supportsProcessSession?: boolean;
+}
+
+export interface RemoteSessionForkResult {
+  sessionId: string;
+  sourceTurnId: string;
+  mode: SessionForkMode;
 }
 
 export interface RemoteError {
@@ -246,7 +256,7 @@ export type RemoteResponsePayload =
   | { type: "tasks.get"; task: Task | null; runtime: ChatRuntimeSnapshot | null }
   | { type: "timeline.snapshot"; taskId: string; events: AgentTimelineEvent[]; page?: RemoteTimelinePage }
   | { type: "timeline.subscribe"; taskId: string; events: AgentTimelineEvent[]; page?: RemoteTimelinePage }
-  | { type: "chat.send"; result: ChatSendResult }
+  | { type: "chat.send"; result: ChatSendResult; sessionFork?: RemoteSessionForkResult | null }
   | { type: "chat.interrupt"; result: ChatInterruptResult }
   | { type: "chat.retry"; result: ChatSendResult }
   | { type: "interaction.pending"; interactions: AgentInteractionRequest[] }

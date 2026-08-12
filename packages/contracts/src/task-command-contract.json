@@ -13,6 +13,10 @@
     "togglePin": "task_toggle_pin",
     "reorder": "task_reorder",
     "reparent": "task_reparent",
-    "updateDependencies": "task_update_dependencies"
+    "updateDependencies": "task_update_dependencies",
+    "goalGet": "task_goal_get",
+    "goalSet": "task_goal_set",
+    "goalRefresh": "task_goal_refresh",
+    "goalClear": "task_goal_clear"
   }
 }

@@ -210,7 +210,6 @@ pub(crate) fn load_custom_subagents() -> Result<Vec<CustomSubagentDefinition>, S
     Ok(subagents)
 }
 
-
 pub(crate) fn upsert_custom_subagent(
     input: CustomSubagentUpsertInput,
 ) -> Result<CustomSubagentDefinition, String> {
@@ -245,8 +244,6 @@ pub(crate) fn delete_custom_subagent(id: &str) -> Result<(), String> {
     }
     save_custom_subagents_to_path(&path, &subagents)
 }
-
-
 
 #[cfg(test)]
 mod tests {

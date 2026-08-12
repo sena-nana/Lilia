@@ -6,6 +6,18 @@
       "deep": "gpt-5.5"
     }
   },
+  "autoModelFamilies": {
+    "openai": {
+      "light": "gpt-5.4-mini",
+      "normal": "gpt-5.4",
+      "deep": "gpt-5.5"
+    },
+    "anthropic": {
+      "light": "claude-haiku-4-5",
+      "normal": "claude-sonnet-4-6",
+      "deep": "claude-opus-4-7"
+    }
+  },
   "autoReasoningEfforts": {
     "light": "low",
     "normal": "medium",

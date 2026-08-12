@@ -125,13 +125,17 @@ async function togglePin() {
 
 async function deleteProject() {
   if (disposed) return;
-  await removeProject(props.project.id);
-  if (disposed) return;
-  if (
-    route.params.projectId &&
-    String(route.params.projectId) === props.project.id
-  ) {
-    emit("deleted");
+  try {
+    const removed = await removeProject(props.project.id);
+    if (disposed || !removed) return;
+    if (
+      route.params.projectId &&
+      String(route.params.projectId) === props.project.id
+    ) {
+      emit("deleted");
+    }
+  } catch (err) {
+    if (!disposed) emit("error", `移除项目失败：${String(err)}`);
   }
 }
 

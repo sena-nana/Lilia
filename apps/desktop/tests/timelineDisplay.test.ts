@@ -557,11 +557,15 @@ describe("timeline event expansion", () => {
     expect(view.container.querySelector('[data-scroll-anchor-id="message-1"]')).toBeNull();
     expect(view.container.querySelector('[data-scroll-anchor-id="message-11"]')).toBeInTheDocument();
     expect(view.container.querySelector('[data-scroll-anchor-id="message-170"]')).toBeInTheDocument();
+    const surface = view.container.querySelector<HTMLElement>('[data-agent-id="timeline.surface"]');
+    expect(surface?.dataset.agentTotalCount).toBe("170");
+    expect(surface?.dataset.agentRenderedCount).toBe("160");
 
     await fireEvent.click(view.getByRole("button", { name: "显示更早 10 项" }));
 
     expect(view.container.querySelector('[data-scroll-anchor-id="message-1"]')).toBeInTheDocument();
     expect(view.queryByRole("button", { name: /显示更早/ })).toBeNull();
+    expect(surface?.dataset.agentRenderedCount).toBe("170");
   });
 
   it("有详情事件仍可展开", async () => {

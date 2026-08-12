@@ -4,8 +4,10 @@ import {
   PLUGINS_CREATE_SKILL_COMMAND,
   PLUGINS_DELETE_HOOK_SOURCE_COMMAND,
   PLUGINS_DELETE_MCP_SERVER_COMMAND,
+  PLUGINS_DELETE_PACKAGE_COMMAND,
   PLUGINS_DELETE_SKILL_COMMAND,
   PLUGINS_HOOKS_OVERVIEW_COMMAND,
+  PLUGINS_INSTALL_PACKAGE_COMMAND,
   PLUGINS_OPEN_HOOK_CONFIG_COMMAND,
   PLUGINS_OPEN_MCP_CONFIG_COMMAND,
   PLUGINS_OVERVIEW_COMMAND,
@@ -37,8 +39,10 @@ export {
   PLUGINS_CREATE_SKILL_COMMAND,
   PLUGINS_DELETE_HOOK_SOURCE_COMMAND,
   PLUGINS_DELETE_MCP_SERVER_COMMAND,
+  PLUGINS_DELETE_PACKAGE_COMMAND,
   PLUGINS_DELETE_SKILL_COMMAND,
   PLUGINS_HOOKS_OVERVIEW_COMMAND,
+  PLUGINS_INSTALL_PACKAGE_COMMAND,
   PLUGINS_OPEN_HOOK_CONFIG_COMMAND,
   PLUGINS_OPEN_MCP_CONFIG_COMMAND,
   PLUGINS_OVERVIEW_COMMAND,
@@ -98,17 +102,26 @@ export interface PluginSkill {
   name: string;
   description: string;
   enabled: boolean;
+  editable: boolean;
   path: string;
 }
 
 export interface PluginPackage {
+  id: string;
   backend: PluginBackendKind;
   scope: PluginScope;
   name: string;
   description: string;
   version: string;
   enabled: boolean;
+  editable: boolean;
+  runtimeAvailable: boolean;
   path: string;
+  packageSha256: string;
+  skillCount: number;
+  hookCount: number;
+  mcpServerCount: number;
+  warnings: string[];
 }
 
 export interface PluginMcpServer {
@@ -175,5 +188,7 @@ export interface PluginsOverview {
   packages: PluginPackage[];
   mcpServers: PluginMcpServer[];
   configPaths: Partial<Record<PluginBackendKind, string | null>>;
+  pluginsRegistryRevision: number;
+  pluginsRegistryPath: string | null;
   warnings: string[];
 }

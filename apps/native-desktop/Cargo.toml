@@ -1,0 +1,61 @@
+[package]
+name = "lilia-native-preview"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "lilia-native-preview"
+path = "src/main.rs"
+
+[lib]
+name = "lilia_native_host"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+arboard = "3.6.1"
+base64 = "0.22.1"
+fs2 = "0.4.3"
+iced = { git = "https://github.com/sena-nana/iced.git", rev = "31bde4e4bac6de08f5ba581a8ea9c55ad0031e67", default-features = false, features = ["wgpu", "canvas", "image", "svg", "advanced", "smol", "thread-pool", "x11", "wayland"] }
+keyring = "4.1.2"
+lilia-contracts = { workspace = true }
+lilia-desktop-application = { workspace = true }
+lilia-agent-integration = { workspace = true }
+lilia-storage = { workspace = true }
+minisign-verify = "0.2.5"
+mutsuki-agent-contracts = { workspace = true }
+nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "3a6d819d3a8d835110a9790231df7172391cc9f3", features = ["bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "math", "overlays", "qr-code", "rich-text", "settings-components", "surfaces"] }
+rfd = "0.17.2"
+reqwest = { workspace = true }
+rusqlite = { workspace = true }
+semver = "1.0.28"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+uuid = { workspace = true }
+zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
+
+# The pinned Iced runtime fixes this Web API generation as one unit. Keeping the
+# same constraint here lets the workspace resolver converge with reqwest's
+# broader web-sys range instead of selecting a newer incompatible generation.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = "=0.3.85"
+
+[target.'cfg(windows)'.dependencies]
+global-hotkey = "0.8.0"
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+libloading = "0.9.0"
+tray-icon = { version = "0.24.2", default-features = false }
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Power",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }

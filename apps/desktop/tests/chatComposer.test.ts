@@ -377,6 +377,19 @@ describe("ChatComposer", () => {
     expect(view.emitted("send")).toBeUndefined();
   });
 
+  it("主输入草稿变更和清空都会同步给桌面宿主", async () => {
+    const view = renderComposer();
+    const input = await setComposerText(view, "保留这段草稿");
+
+    expect(view.emitted("draft-change")?.at(-1)).toEqual(["保留这段草稿"]);
+
+    input.replaceChildren(document.createElement("br"));
+    placeEditableCaret(input, 0);
+    await fireEvent.input(input);
+
+    expect(view.emitted("draft-change")?.at(-1)).toEqual([""]);
+  });
+
   it("空输入时禁用提示词优化", async () => {
     const view = renderComposer();
 

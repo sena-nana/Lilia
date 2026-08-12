@@ -15,6 +15,8 @@ export const PLUGINS_HOOKS_OVERVIEW_COMMAND = manifest.commands.hooksOverview;
 export const PLUGINS_CREATE_SKILL_COMMAND = manifest.commands.createSkill;
 export const PLUGINS_DELETE_SKILL_COMMAND = manifest.commands.deleteSkill;
 export const PLUGINS_SET_SKILL_ENABLED_COMMAND = manifest.commands.setSkillEnabled;
+export const PLUGINS_INSTALL_PACKAGE_COMMAND = manifest.commands.installPackage;
+export const PLUGINS_DELETE_PACKAGE_COMMAND = manifest.commands.deletePackage;
 export const PLUGINS_SET_PACKAGE_ENABLED_COMMAND =
   manifest.commands.setPackageEnabled;
 export const PLUGINS_CREATE_MCP_SERVER_COMMAND = manifest.commands.createMcpServer;

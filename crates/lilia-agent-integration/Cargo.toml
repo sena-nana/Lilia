@@ -32,6 +32,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 reqwest = { workspace = true }
+rusqlite = { workspace = true }
 
 [dev-dependencies]
 mutsuki-agent-testkit = { workspace = true }

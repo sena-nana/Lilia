@@ -11,6 +11,7 @@ import {
   POPUP_OPEN_TASK_COMMAND,
   TASK_LIST_COMMAND,
   TASK_LIST_SIDEBAR_CONVERSATIONS_COMMAND,
+  TASK_REPARENT_COMMAND,
   type Task,
 } from "@lilia/contracts";
 import SecondaryPanel from "../src/layouts/SecondaryPanel.vue";
@@ -946,18 +947,13 @@ describe("SecondaryPanel project tree drag", () => {
     });
 
     await waitFor(() => {
-      expect(mockInvoke.mock.calls.some(([cmd, args]) =>
-        cmd === "product_update_entity" &&
-        args?.action === "reparented" &&
-        (args?.entity as { kind?: string; value?: {
-          id?: string;
-          projectId?: string | null;
-          parentId?: string | null;
-        } })?.kind === "task" &&
-        (args?.entity as { value?: { id?: string } }).value?.id === "t-003" &&
-        (args?.entity as { value?: { projectId?: string | null } }).value?.projectId === "lilia" &&
-        (args?.entity as { value?: { parentId?: string | null } }).value?.parentId === "t-001"
-      )).toBe(true);
+      const args = mockInvoke.mock.calls.find(([cmd]) => cmd === TASK_REPARENT_COMMAND)?.[1];
+      expect(args).toEqual({
+        taskId: "t-003",
+        newProjectId: "lilia",
+        newParentId: "t-001",
+      });
+      expect(getTask("lilia", "t-003")?.parentId).toBe("t-001");
     });
   });
 
@@ -995,9 +991,7 @@ describe("SecondaryPanel project tree drag", () => {
       clientY: 54,
     });
 
-    expect(mockInvoke.mock.calls.some(([cmd, args]) =>
-      cmd === "product_update_entity" && args?.action === "reparented"
-    )).toBe(false);
+    expect(mockInvoke.mock.calls.some(([cmd]) => cmd === TASK_REPARENT_COMMAND)).toBe(false);
   });
 
   it("文件夹拖到未置顶项目行时显示项目落点，松手后创建并插入", async () => {

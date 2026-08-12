@@ -9,7 +9,9 @@ use lilia_contracts::{
     ProjectionEventId, TaskId, TimelineProjectionCommand, TimelineProjectionEvent, TodoProjection,
     PRODUCT_TIMELINE_STORE_ID,
 };
-use mutsuki_agent_contracts::{AgentEvent, AgentEventEnvelope, InteractionKind};
+use mutsuki_agent_contracts::{
+    AgentEvent, AgentEventEnvelope, AgentPermissionMode, InteractionKind, InteractionRequest,
+};
 use serde_json::{json, Value as JsonValue};
 
 /// Convert one AgentKit envelope into product projection command(s).
@@ -31,6 +33,30 @@ pub fn project_agent_event(
     let mut commands = Vec::new();
 
     let mapped = match &envelope.event {
+        AgentEvent::UserMessage {
+            turn_id,
+            content,
+            metadata,
+        } => Some((
+            "message",
+            "success",
+            "用户输入",
+            Some(content.clone()),
+            json!({
+                "role": "user",
+                "content": content,
+                "attachments": metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("attachments"))
+                    .cloned()
+                    .unwrap_or_else(|| json!([])),
+                "context": metadata,
+                "source": "native-agentkit",
+                "sequence": envelope.sequence,
+                "projected": true,
+            }),
+            Some(turn_id.clone()),
+        )),
         AgentEvent::ModelDelta { text, turn_id, .. } => Some((
             "message",
             "streaming",
@@ -58,46 +84,77 @@ pub fn project_agent_event(
             }),
             Some(turn_id.clone()),
         )),
-        AgentEvent::ToolCallStarted {
-            name,
-            call_id,
-            turn_id,
-            ..
-        } => Some((
-            "tool",
-            "running",
-            "Native 工具调用",
-            Some(name.clone()),
+        AgentEvent::Usage { turn_id, usage } => Some((
+            "usage",
+            "success",
+            "Native 用量",
+            Some(format!("{} tokens", usage.total_tokens)),
             json!({
-                "tool": name,
-                "callId": call_id,
+                "inputTokens": usage.input_tokens,
+                "outputTokens": usage.output_tokens,
+                "totalTokens": usage.total_tokens,
                 "source": "native-agentkit",
                 "sequence": envelope.sequence,
                 "projected": true,
             }),
             Some(turn_id.clone()),
         )),
+        AgentEvent::ToolCallStarted {
+            name,
+            call_id,
+            turn_id,
+            ..
+        } => {
+            let subagent = name == "delegate_agent";
+            Some((
+                if subagent { "subagent" } else { "tool" },
+                "running",
+                if subagent {
+                    "Native 子 Agent"
+                } else {
+                    "Native 工具调用"
+                },
+                Some(name.clone()),
+                json!({
+                    "tool": name,
+                    "callId": call_id,
+                    "agentType": subagent.then_some("custom"),
+                    "source": "native-agentkit",
+                    "sequence": envelope.sequence,
+                    "projected": true,
+                }),
+                Some(turn_id.clone()),
+            ))
+        }
         AgentEvent::ToolCallCompleted {
             call_id,
             summary,
             turn_id,
             details,
             ..
-        } => Some((
-            "tool",
-            "success",
-            "Native 工具完成",
-            Some(summary.clone()),
-            json!({
-                "callId": call_id,
-                "summary": summary,
-                "detailsRef": details,
-                "source": "native-agentkit",
-                "sequence": envelope.sequence,
-                "projected": true,
-            }),
-            Some(turn_id.clone()),
-        )),
+        } => {
+            let subagent = summary == "delegate_agent";
+            Some((
+                if subagent { "subagent" } else { "tool" },
+                "success",
+                if subagent {
+                    "Native 子 Agent 完成"
+                } else {
+                    "Native 工具完成"
+                },
+                Some(summary.clone()),
+                json!({
+                    "callId": call_id,
+                    "summary": summary,
+                    "detailsRef": details,
+                    "agentType": subagent.then_some("custom"),
+                    "source": "native-agentkit",
+                    "sequence": envelope.sequence,
+                    "projected": true,
+                }),
+                Some(turn_id.clone()),
+            ))
+        }
         AgentEvent::CommandStarted { command, turn_id } => Some((
             "command",
             "running",
@@ -390,6 +447,26 @@ pub fn project_agent_event(
             interaction,
             turn_id,
         } => {
+            let product_kind = product_interaction_kind(interaction);
+            let (timeline_kind, timeline_title) = match product_kind {
+                "plan_approval" => ("plan", "Native 计划确认"),
+                "architecture_change" => ("architecture_change", "Native 架构变更"),
+                _ => ("ask_user", "Native 交互请求"),
+            };
+            let spec = interaction_ask_user_spec(interaction);
+            let pending_payload = match product_kind {
+                "mcp_elicitation" => mcp_elicitation_payload(interaction),
+                "architecture_change" => architecture_interaction_payload(task_id, interaction),
+                _ => json!({
+                    "interaction": product_kind,
+                    "sessionId": interaction.session_id,
+                    "turnId": interaction.turn_id,
+                    "version": interaction.version,
+                    "options": interaction.options,
+                    "spec": spec,
+                    "detailsRef": interaction.details,
+                }),
+            };
             commands.push(TimelineProjectionCommand::UpsertPending {
                 pending: PendingProjection {
                     id: format!("{}:{}", session.as_str(), interaction.interaction_id),
@@ -398,36 +475,39 @@ pub fn project_agent_event(
                     sequence: envelope.sequence,
                     turn_id: Some(turn_id.clone()),
                     request_id: interaction.interaction_id.clone(),
-                    kind: match interaction.kind {
-                        InteractionKind::Approval => "approval".into(),
-                        InteractionKind::Clarification => "clarification".into(),
-                        InteractionKind::PlanConfirm => "plan_confirm".into(),
-                        InteractionKind::Custom => "custom".into(),
-                    },
+                    kind: product_kind.into(),
                     status: PendingProjectionStatus::Open,
                     prompt: Some(interaction.prompt.clone()),
-                    action_revision: None,
-                    payload: json!({
-                        "options": interaction.options,
-                        "detailsRef": interaction.details,
-                    }),
+                    action_revision: Some(interaction.version),
+                    payload: pending_payload.clone(),
                 },
             });
-            Some((
-                "plan",
-                "requires_action",
-                "Native 交互请求",
-                Some(interaction.prompt.clone()),
-                json!({
-                    "interaction": interaction.kind,
+            let mut timeline_payload = match product_kind {
+                "mcp_elicitation" | "architecture_change" => pending_payload,
+                _ => json!({
+                    "interaction": product_kind,
                     "requestId": interaction.interaction_id,
+                    "sessionId": interaction.session_id,
+                    "turnId": interaction.turn_id,
+                    "version": interaction.version,
                     "prompt": interaction.prompt,
                     "options": interaction.options,
+                    "questions": spec.get("questions").cloned().unwrap_or_else(|| json!([])),
+                    "spec": spec,
+                    "plan": interaction.options.get("plan"),
                     "detailsRef": interaction.details,
-                    "source": "native-agentkit",
-                    "sequence": envelope.sequence,
-                    "projected": true,
                 }),
+            };
+            if let Some(payload) = timeline_payload.as_object_mut() {
+                payload.insert("requestId".to_owned(), json!(interaction.interaction_id));
+                payload.insert("prompt".to_owned(), json!(interaction.prompt));
+            }
+            Some((
+                timeline_kind,
+                "requires_action",
+                timeline_title,
+                Some(interaction.prompt.clone()),
+                timeline_payload,
                 Some(turn_id.clone()),
             ))
         }
@@ -449,14 +529,27 @@ pub fn project_agent_event(
                     "response": resolution.response,
                 }),
             });
+            let architecture_change = resolution
+                .response
+                .get("interaction")
+                .and_then(JsonValue::as_str)
+                == Some("architecture_change");
             Some((
-                "plan",
+                if architecture_change {
+                    "architecture_change"
+                } else {
+                    "plan"
+                },
                 if resolution.accepted {
                     "success"
                 } else {
                     "cancelled"
                 },
-                "Native 交互已决",
+                if architecture_change {
+                    "Native 架构变更已决"
+                } else {
+                    "Native 交互已决"
+                },
                 Some(resolution.interaction_id.clone()),
                 json!({
                     "requestId": resolution.interaction_id,
@@ -480,6 +573,10 @@ pub fn project_agent_event(
                 obj.entry("projected").or_insert_with(|| json!(true));
                 obj.entry("notExecutionFactSource")
                     .or_insert_with(|| json!(true));
+                obj.entry("createdAt")
+                    .or_insert_with(|| json!(envelope.meta.timestamp_unix_ms));
+                obj.entry("backend")
+                    .or_insert_with(|| json!("native-agentkit"));
             }
             commands.push(TimelineProjectionCommand::UpsertTimelineEvent {
                 event: TimelineProjectionEvent {
@@ -515,6 +612,212 @@ pub fn project_agent_event(
     }
 }
 
+fn product_interaction_kind(interaction: &InteractionRequest) -> &'static str {
+    match interaction.kind {
+        InteractionKind::PlanConfirm => "plan_approval",
+        InteractionKind::Custom if is_architecture_change(interaction) => "architecture_change",
+        InteractionKind::Custom if is_mcp_elicitation(interaction) => "mcp_elicitation",
+        InteractionKind::Approval | InteractionKind::Clarification | InteractionKind::Custom => {
+            "ask_user"
+        }
+    }
+}
+
+fn is_architecture_change(interaction: &InteractionRequest) -> bool {
+    interaction.source_tool.as_deref() == Some("update_project_architecture")
+        || ["interaction", "interactionKind", "kind", "type"]
+            .into_iter()
+            .any(|field| {
+                interaction.options.get(field).and_then(JsonValue::as_str)
+                    == Some("architecture_change")
+            })
+}
+
+fn architecture_interaction_payload(
+    task_id: &TaskId,
+    interaction: &InteractionRequest,
+) -> JsonValue {
+    let context = interaction.context.as_ref();
+    let project_id = context
+        .and_then(|context| context.get("productProjectId"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or_default();
+    let product_task_id = context
+        .and_then(|context| context.get("productTaskId"))
+        .and_then(JsonValue::as_str)
+        .unwrap_or_else(|| task_id.as_str());
+    let expected_version = context
+        .and_then(|context| context.get("projectArchitectureVersion"))
+        .and_then(JsonValue::as_i64)
+        .or_else(|| {
+            interaction
+                .options
+                .get("expectedVersion")
+                .and_then(JsonValue::as_i64)
+        });
+    let permission = match interaction.permission_mode {
+        AgentPermissionMode::Full => "full",
+        AgentPermissionMode::Ask => "ask",
+        AgentPermissionMode::ReadOnly => "readonly",
+    };
+    json!({
+        "interaction": "architecture_change",
+        "projectId": project_id,
+        "taskId": product_task_id,
+        "turnId": interaction.turn_id,
+        "backend": "native-agentkit",
+        "permission": permission,
+        "reason": interaction.options.get("reason").and_then(JsonValue::as_str).unwrap_or(&interaction.prompt),
+        "changes": interaction.options.get("changes").cloned().unwrap_or_else(|| json!([])),
+        "requestId": interaction.interaction_id,
+        "expectedVersion": expected_version,
+        "status": if interaction.permission_mode == AgentPermissionMode::ReadOnly { "proposed" } else { "pending" },
+        "requiresConfirmation": interaction.permission_mode != AgentPermissionMode::Full,
+        "sourceTool": interaction.source_tool,
+        "sessionId": interaction.session_id,
+        "version": interaction.version,
+        "detailsRef": interaction.details,
+    })
+}
+
+fn is_mcp_elicitation(interaction: &InteractionRequest) -> bool {
+    if interaction.kind != InteractionKind::Custom {
+        return false;
+    }
+    let options = &interaction.options;
+    ["interaction", "interactionKind", "kind", "type"]
+        .into_iter()
+        .any(|field| options.get(field).and_then(JsonValue::as_str) == Some("mcp_elicitation"))
+        || (options
+            .get("serverName")
+            .and_then(JsonValue::as_str)
+            .is_some()
+            && matches!(
+                options.get("mode").and_then(JsonValue::as_str),
+                Some("form" | "url")
+            ))
+}
+
+fn mcp_elicitation_payload(interaction: &InteractionRequest) -> JsonValue {
+    let options = interaction.options.as_object();
+    let string = |camel: &str, snake: &str| {
+        options
+            .and_then(|options| options.get(camel).or_else(|| options.get(snake)))
+            .and_then(JsonValue::as_str)
+            .map(str::to_owned)
+    };
+    let requested_schema = options
+        .and_then(|options| {
+            options
+                .get("requestedSchema")
+                .or_else(|| options.get("requested_schema"))
+        })
+        .cloned();
+    let url = string("url", "url");
+    let mode = string("mode", "mode").unwrap_or_else(|| {
+        if url.is_some() && requested_schema.is_none() {
+            "url".to_owned()
+        } else {
+            "form".to_owned()
+        }
+    });
+    let mut payload = json!({
+        "interaction": "mcp_elicitation",
+        "sessionId": interaction.session_id,
+        "threadId": string("threadId", "thread_id").unwrap_or_else(|| interaction.session_id.clone()),
+        "turnId": string("turnId", "turn_id").unwrap_or_else(|| interaction.turn_id.clone()),
+        "version": interaction.version,
+        "serverName": string("serverName", "server_name").unwrap_or_else(|| "MCP".to_owned()),
+        "mode": mode,
+        "message": string("message", "message").unwrap_or_else(|| interaction.prompt.clone()),
+        "requestedSchema": requested_schema,
+        "url": url,
+        "elicitationId": string("elicitationId", "elicitation_id"),
+        "_meta": options.and_then(|options| options.get("_meta")).cloned(),
+        "detailsRef": interaction.details,
+    });
+    if let Some(payload) = payload.as_object_mut() {
+        payload.retain(|_, value| !value.is_null());
+    }
+    payload
+}
+
+fn interaction_ask_user_spec(interaction: &InteractionRequest) -> JsonValue {
+    if interaction.kind == InteractionKind::PlanConfirm {
+        return json!({
+            "title": interaction.options.get("title").and_then(JsonValue::as_str).unwrap_or("确认 Native Agent 计划"),
+            "source": "Native AgentKit",
+            "intent": "plan_approval",
+            "dismissable": true,
+            "questions": [{
+                "id": "approve-plan",
+                "header": "计划确认",
+                "question": interaction.prompt,
+                "mode": "confirm",
+                "confirmLabel": "按计划执行",
+                "cancelLabel": "先不执行",
+            }],
+        });
+    }
+    if let Some(questions) = interaction
+        .options
+        .get("questions")
+        .and_then(JsonValue::as_array)
+    {
+        return json!({
+            "title": interaction.options.get("title").and_then(JsonValue::as_str).unwrap_or("需要你的回答"),
+            "source": "Native AgentKit",
+            "dismissable": true,
+            "questions": questions,
+        });
+    }
+
+    let options = interaction
+        .options
+        .get("options")
+        .or_else(|| interaction.options.as_array().map(|_| &interaction.options))
+        .and_then(JsonValue::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, option)| {
+            if let Some(label) = option.as_str() {
+                return Some(json!({ "id": label, "label": label }));
+            }
+            let object = option.as_object()?;
+            let label = object
+                .get("label")
+                .or_else(|| object.get("title"))
+                .or_else(|| object.get("name"))
+                .and_then(JsonValue::as_str)?;
+            Some(json!({
+                "id": object
+                    .get("id")
+                    .and_then(JsonValue::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("option-{}", index + 1)),
+                "label": label,
+                "description": object.get("description"),
+                "preview": object.get("preview"),
+                "recommended": object.get("recommended"),
+            }))
+        })
+        .collect::<Vec<_>>();
+    json!({
+        "title": interaction.options.get("title").and_then(JsonValue::as_str).unwrap_or("需要你的回答"),
+        "source": "Native AgentKit",
+        "dismissable": true,
+        "questions": [{
+            "id": interaction.interaction_id,
+            "header": interaction.options.get("header").and_then(JsonValue::as_str).unwrap_or("确认"),
+            "question": interaction.prompt,
+            "mode": "single",
+            "options": options,
+            "allowOther": true,
+        }],
+    })
+}
+
 pub fn project_agent_events(
     task_id: &TaskId,
     events: &[AgentEventEnvelope],
@@ -529,8 +832,8 @@ pub fn project_agent_events(
 mod tests {
     use super::*;
     use mutsuki_agent_contracts::{
-        AgentEventMeta, ArtifactRef, InteractionKind, InteractionRequest, InteractionResolution,
-        TodoItem, TodoItemStatus, TodoState,
+        AgentEventMeta, AgentUsage, ArtifactRef, InteractionKind, InteractionRequest,
+        InteractionResolution, TodoItem, TodoItemStatus, TodoState,
     };
 
     #[test]
@@ -555,6 +858,104 @@ mod tests {
                 assert!(event.projected);
                 assert_eq!(event.sequence, 7);
                 assert_eq!(event.kind, "tool");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn projects_custom_agent_completion_as_subagent_timeline_kind() {
+        let task = TaskId::new("task-subagent").unwrap();
+        let commands = project_agent_event(
+            &task,
+            &AgentEventEnvelope {
+                session_id: "session-subagent".into(),
+                sequence: 9,
+                meta: AgentEventMeta::new("evt-subagent", "subagent"),
+                event: AgentEvent::ToolCallCompleted {
+                    turn_id: "turn-subagent".into(),
+                    call_id: "delegate-1".into(),
+                    summary: "delegate_agent".into(),
+                    details: None,
+                },
+            },
+        );
+        match &commands[..] {
+            [TimelineProjectionCommand::UpsertTimelineEvent { event }] => {
+                assert_eq!(event.kind, "subagent");
+                assert_eq!(event.payload["agentType"], "custom");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn projects_usage_with_authoritative_timestamp_and_backend() {
+        let task = TaskId::new("task-usage").unwrap();
+        let mut meta = AgentEventMeta::new("evt-usage", "usage");
+        meta.timestamp_unix_ms = 1_725_000_000_000;
+        let commands = project_agent_event(
+            &task,
+            &AgentEventEnvelope {
+                session_id: "session-usage".into(),
+                sequence: 8,
+                meta,
+                event: AgentEvent::Usage {
+                    turn_id: "turn-usage".into(),
+                    usage: AgentUsage {
+                        input_tokens: 21,
+                        output_tokens: 13,
+                        total_tokens: 34,
+                    },
+                },
+            },
+        );
+        match &commands[..] {
+            [TimelineProjectionCommand::UpsertTimelineEvent { event }] => {
+                assert_eq!(event.kind, "usage");
+                assert_eq!(event.payload["inputTokens"], 21);
+                assert_eq!(event.payload["outputTokens"], 13);
+                assert_eq!(event.payload["totalTokens"], 34);
+                assert_eq!(event.payload["createdAt"], 1_725_000_000_000_u64);
+                assert_eq!(event.payload["backend"], "native-agentkit");
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    #[test]
+    fn projects_user_message_with_structured_attachments() {
+        let task = TaskId::new("task-user-message").unwrap();
+        let envelope = AgentEventEnvelope {
+            session_id: "sess-user-message".into(),
+            sequence: 1,
+            meta: AgentEventMeta::new("evt-user", "user message"),
+            event: AgentEvent::UserMessage {
+                turn_id: "turn-1".into(),
+                content: "Inspect this".into(),
+                metadata: Some(json!({
+                    "attachments": [{
+                        "id": "att-1",
+                        "name": "README.md",
+                        "path": "C:/repo/README.md",
+                        "kind": "file",
+                        "size": 42,
+                        "exists": true,
+                        "mime": null,
+                        "directory": null
+                    }]
+                })),
+            },
+        };
+
+        let commands = project_agent_event(&task, &envelope);
+
+        match &commands[..] {
+            [TimelineProjectionCommand::UpsertTimelineEvent { event }] => {
+                assert_eq!(event.kind, "message");
+                assert_eq!(event.title, "用户输入");
+                assert_eq!(event.payload["role"], "user");
+                assert_eq!(event.payload["attachments"][0]["id"], "att-1");
             }
             other => panic!("unexpected {other:?}"),
         }
@@ -609,10 +1010,16 @@ mod tests {
             event: AgentEvent::InteractionRequested {
                 turn_id: "t1".into(),
                 interaction: InteractionRequest {
+                    session_id: "sess-side".into(),
+                    turn_id: "t1".into(),
+                    version: 1,
                     interaction_id: "int-1".into(),
                     kind: InteractionKind::Clarification,
+                    source_tool: Some("ask_user_question".into()),
+                    permission_mode: AgentPermissionMode::Ask,
                     prompt: "which?".into(),
                     options: json!(["a", "b"]),
+                    context: None,
                     details: None,
                 },
             },
@@ -624,6 +1031,9 @@ mod tests {
             event: AgentEvent::InteractionResolved {
                 turn_id: "t1".into(),
                 resolution: InteractionResolution {
+                    session_id: "sess-side".into(),
+                    turn_id: "t1".into(),
+                    version: 1,
                     interaction_id: "int-1".into(),
                     accepted: true,
                     response: json!({ "choice": "a" }),
@@ -645,13 +1055,211 @@ mod tests {
             .any(|c| matches!(c, TimelineProjectionCommand::UpsertArtifact { .. })));
 
         let pending_cmds = project_agent_event(&task, &pending_env);
-        assert!(pending_cmds
+        let pending = pending_cmds
             .iter()
-            .any(|c| matches!(c, TimelineProjectionCommand::UpsertPending { .. })));
+            .find_map(|command| match command {
+                TimelineProjectionCommand::UpsertPending { pending } => Some(pending),
+                _ => None,
+            })
+            .expect("pending projection");
+        assert_eq!(pending.kind, "ask_user");
+        assert_eq!(pending.payload["interaction"], "ask_user");
+        assert_eq!(pending.payload["spec"]["questions"][0]["id"], "int-1");
+        assert_eq!(pending.payload["spec"]["questions"][0]["allowOther"], true);
+        let interaction_event = pending_cmds
+            .iter()
+            .find_map(|command| match command {
+                TimelineProjectionCommand::UpsertTimelineEvent { event } => Some(event),
+                _ => None,
+            })
+            .expect("interaction timeline event");
+        assert_eq!(interaction_event.kind, "ask_user");
+        assert_eq!(interaction_event.payload["interaction"], "ask_user");
 
         let resolved_cmds = project_agent_event(&task, &resolved_env);
         assert!(resolved_cmds
             .iter()
             .any(|c| matches!(c, TimelineProjectionCommand::ResolvePending { .. })));
+    }
+
+    #[test]
+    fn projects_plan_confirmation_as_product_plan_approval() {
+        let task = TaskId::new("task-plan").unwrap();
+        let envelope = AgentEventEnvelope {
+            session_id: "sess-plan".into(),
+            sequence: 9,
+            meta: AgentEventMeta::new("evt-plan", "plan"),
+            event: AgentEvent::InteractionRequested {
+                turn_id: "turn-plan".into(),
+                interaction: InteractionRequest {
+                    session_id: "sess-plan".into(),
+                    turn_id: "turn-plan".into(),
+                    version: 3,
+                    interaction_id: "plan-1".into(),
+                    kind: InteractionKind::PlanConfirm,
+                    source_tool: Some("confirm_plan".into()),
+                    permission_mode: AgentPermissionMode::Ask,
+                    prompt: "Execute this plan?".into(),
+                    options: json!({ "plan": "1. inspect\n2. change" }),
+                    context: None,
+                    details: None,
+                },
+            },
+        };
+
+        let commands = project_agent_event(&task, &envelope);
+        let pending = commands
+            .iter()
+            .find_map(|command| match command {
+                TimelineProjectionCommand::UpsertPending { pending } => Some(pending),
+                _ => None,
+            })
+            .expect("pending projection");
+        assert_eq!(pending.kind, "plan_approval");
+        assert_eq!(pending.payload["spec"]["intent"], "plan_approval");
+        assert_eq!(
+            pending.payload["spec"]["questions"][0]["id"],
+            "approve-plan"
+        );
+        let timeline = commands
+            .iter()
+            .find_map(|command| match command {
+                TimelineProjectionCommand::UpsertTimelineEvent { event } => Some(event),
+                _ => None,
+            })
+            .expect("timeline projection");
+        assert_eq!(timeline.kind, "plan");
+        assert_eq!(timeline.payload["plan"], "1. inspect\n2. change");
+    }
+
+    #[test]
+    fn projects_architecture_tool_with_authoritative_scope_and_permission() {
+        let task = TaskId::new("task-architecture").unwrap();
+        let envelope = AgentEventEnvelope {
+            session_id: "sess-architecture".into(),
+            sequence: 10,
+            meta: AgentEventMeta::new("evt-architecture", "interaction"),
+            event: AgentEvent::InteractionRequested {
+                turn_id: "turn-architecture".into(),
+                interaction: InteractionRequest {
+                    session_id: "sess-architecture".into(),
+                    turn_id: "turn-architecture".into(),
+                    version: 4,
+                    interaction_id: "architecture-1".into(),
+                    kind: InteractionKind::Custom,
+                    source_tool: Some("update_project_architecture".into()),
+                    permission_mode: AgentPermissionMode::Ask,
+                    prompt: "Add the native application boundary".into(),
+                    options: json!({
+                        "reason": "Represent the UI-to-application dependency",
+                        "changes": [{
+                            "type": "set_summary",
+                            "summary": "Native UI depends on typed application services."
+                        }]
+                    }),
+                    context: Some(json!({
+                        "productTaskId": "task-architecture",
+                        "productProjectId": "project-architecture",
+                        "projectArchitectureVersion": 7
+                    })),
+                    details: None,
+                },
+            },
+        };
+
+        let commands = project_agent_event(&task, &envelope);
+        let pending = commands
+            .iter()
+            .find_map(|command| match command {
+                TimelineProjectionCommand::UpsertPending { pending } => Some(pending),
+                _ => None,
+            })
+            .expect("architecture pending projection");
+        assert_eq!(pending.kind, "architecture_change");
+        assert_eq!(pending.payload["projectId"], "project-architecture");
+        assert_eq!(pending.payload["taskId"], "task-architecture");
+        assert_eq!(pending.payload["permission"], "ask");
+        assert_eq!(pending.payload["expectedVersion"], 7);
+        assert_eq!(pending.payload["requiresConfirmation"], true);
+        let timeline = commands
+            .iter()
+            .find_map(|command| match command {
+                TimelineProjectionCommand::UpsertTimelineEvent { event } => Some(event),
+                _ => None,
+            })
+            .expect("architecture timeline projection");
+        assert_eq!(timeline.kind, "architecture_change");
+        assert_eq!(timeline.title, "Native 架构变更");
+    }
+
+    #[test]
+    fn projects_custom_mcp_elicitation_without_losing_its_form_contract() {
+        let task = TaskId::new("task-mcp").unwrap();
+        let envelope = AgentEventEnvelope {
+            session_id: "sess-mcp".into(),
+            sequence: 10,
+            meta: AgentEventMeta::new("evt-mcp", "interaction"),
+            event: AgentEvent::InteractionRequested {
+                turn_id: "turn-mcp".into(),
+                interaction: InteractionRequest {
+                    session_id: "sess-mcp".into(),
+                    turn_id: "turn-mcp".into(),
+                    version: 4,
+                    interaction_id: "mcp-1".into(),
+                    kind: InteractionKind::Custom,
+                    source_tool: None,
+                    permission_mode: AgentPermissionMode::Ask,
+                    prompt: "选择 Linear 项目".into(),
+                    options: json!({
+                        "interaction": "mcp_elicitation",
+                        "threadId": "thread-1",
+                        "serverName": "linear",
+                        "mode": "form",
+                        "message": "选择 Linear 项目",
+                        "requestedSchema": {
+                            "type": "object",
+                            "required": ["project"],
+                            "properties": {
+                                "project": {"type": "string", "enum": ["A", "B"]}
+                            }
+                        },
+                        "elicitationId": "elicitation-1",
+                        "_meta": {"trace": "trace-1"}
+                    }),
+                    context: None,
+                    details: None,
+                },
+            },
+        };
+
+        let commands = project_agent_event(&task, &envelope);
+        let pending = commands
+            .iter()
+            .find_map(|command| match command {
+                TimelineProjectionCommand::UpsertPending { pending } => Some(pending),
+                _ => None,
+            })
+            .expect("MCP pending projection");
+        assert_eq!(pending.kind, "mcp_elicitation");
+        assert_eq!(pending.payload["threadId"], "thread-1");
+        assert_eq!(pending.payload["serverName"], "linear");
+        assert_eq!(pending.payload["mode"], "form");
+        assert_eq!(
+            pending.payload["requestedSchema"]["properties"]["project"]["enum"],
+            json!(["A", "B"])
+        );
+        assert_eq!(pending.payload["_meta"]["trace"], "trace-1");
+        assert!(pending.payload.get("spec").is_none());
+
+        let timeline = commands
+            .iter()
+            .find_map(|command| match command {
+                TimelineProjectionCommand::UpsertTimelineEvent { event } => Some(event),
+                _ => None,
+            })
+            .expect("MCP timeline projection");
+        assert_eq!(timeline.payload["interaction"], "mcp_elicitation");
+        assert_eq!(timeline.payload["requestId"], "mcp-1");
+        assert_eq!(timeline.payload["serverName"], "linear");
     }
 }

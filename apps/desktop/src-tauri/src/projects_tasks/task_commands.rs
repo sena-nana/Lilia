@@ -222,45 +222,6 @@ pub fn task_create(
     Ok(row)
 }
 
-pub(crate) fn create_handoff_task(
-    conn: &rusqlite::Connection,
-    project_id: &str,
-    title: &str,
-) -> Result<TaskRow, String> {
-    let id = Uuid::new_v4().to_string();
-    let now = now_millis();
-    let sort_order = next_task_sort_order(conn, Some(project_id), "task_handoff")?;
-    let status = task_contract::waiting_task_status();
-    insert_task_with_deps(
-        conn,
-        NewTask {
-            id: &id,
-            project_id: Some(project_id),
-            session_id: &id,
-            title,
-            status,
-            created_at: now,
-            parent_id: None,
-            sort_order,
-            depends_on: &[],
-        },
-        "task_handoff",
-    )?;
-    Ok(TaskRow {
-        id: id.clone(),
-        project_id: Some(project_id.to_string()),
-        session_id: id,
-        title: title.to_string(),
-        title_source: "auto".to_string(),
-        status: status.to_string(),
-        created_at: now,
-        parent_id: None,
-        depends_on: Vec::new(),
-        sort_order,
-        pinned: false,
-    })
-}
-
 #[tauri::command]
 pub fn task_update(
     id: String,

@@ -35,6 +35,8 @@
     "createSkill": "plugins_create_skill",
     "deleteSkill": "plugins_delete_skill",
     "setSkillEnabled": "plugins_set_skill_enabled",
+    "installPackage": "plugins_install_package",
+    "deletePackage": "plugins_delete_package",
     "setPackageEnabled": "plugins_set_package_enabled",
     "createMcpServer": "plugins_create_mcp_server",
     "updateMcpServer": "plugins_update_mcp_server",

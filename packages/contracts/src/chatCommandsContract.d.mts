@@ -10,9 +10,11 @@ export const CHAT_COMMANDS_CONTRACT: {
   chatSaveClipboardImageCommand: "chat_save_clipboard_image";
   chatSaveClipboardTextCommand: "chat_save_clipboard_text";
   chatGetComposerStateCommand: "chat_get_composer_state";
+  chatGetComposerDraftCommand: "chat_get_composer_draft";
   chatListModelsCommand: "chat_list_models";
   chatGetRuntimeSnapshotCommand: "chat_get_runtime_snapshot";
   chatSetComposerStateCommand: "chat_set_composer_state";
+  chatSetComposerDraftCommand: "chat_set_composer_draft";
   chatAckRestoredRollbackCommand: "chat_ack_restored_rollback";
   chatSendProcessSessionCommand: "chat_send_process_session_command";
   chatRespondAgentInteractionCommand: "chat_respond_agent_interaction";
@@ -32,9 +34,11 @@ export const CHAT_READ_CLIPBOARD_FILE_PATHS_COMMAND: "chat_read_clipboard_file_p
 export const CHAT_SAVE_CLIPBOARD_IMAGE_COMMAND: "chat_save_clipboard_image";
 export const CHAT_SAVE_CLIPBOARD_TEXT_COMMAND: "chat_save_clipboard_text";
 export const CHAT_GET_COMPOSER_STATE_COMMAND: "chat_get_composer_state";
+export const CHAT_GET_COMPOSER_DRAFT_COMMAND: "chat_get_composer_draft";
 export const CHAT_LIST_MODELS_COMMAND: "chat_list_models";
 export const CHAT_GET_RUNTIME_SNAPSHOT_COMMAND: "chat_get_runtime_snapshot";
 export const CHAT_SET_COMPOSER_STATE_COMMAND: "chat_set_composer_state";
+export const CHAT_SET_COMPOSER_DRAFT_COMMAND: "chat_set_composer_draft";
 export const CHAT_ACK_RESTORED_ROLLBACK_COMMAND: "chat_ack_restored_rollback";
 export const CHAT_SEND_PROCESS_SESSION_COMMAND: "chat_send_process_session_command";
 export const CHAT_RESPOND_AGENT_INTERACTION_COMMAND: "chat_respond_agent_interaction";

@@ -21,6 +21,8 @@ export const PLUGINS_HOOKS_OVERVIEW_COMMAND: "plugins_hooks_overview";
 export const PLUGINS_CREATE_SKILL_COMMAND: "plugins_create_skill";
 export const PLUGINS_DELETE_SKILL_COMMAND: "plugins_delete_skill";
 export const PLUGINS_SET_SKILL_ENABLED_COMMAND: "plugins_set_skill_enabled";
+export const PLUGINS_INSTALL_PACKAGE_COMMAND: "plugins_install_package";
+export const PLUGINS_DELETE_PACKAGE_COMMAND: "plugins_delete_package";
 export const PLUGINS_SET_PACKAGE_ENABLED_COMMAND: "plugins_set_package_enabled";
 export const PLUGINS_CREATE_MCP_SERVER_COMMAND: "plugins_create_mcp_server";
 export const PLUGINS_UPDATE_MCP_SERVER_COMMAND: "plugins_update_mcp_server";

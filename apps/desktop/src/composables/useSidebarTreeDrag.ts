@@ -237,10 +237,14 @@ export function useSidebarTreeDrag(
     };
   });
 
-  function taskIdsForProject(projectId: string | null): string[] {
+  function taskIdsForProject(projectId: string | null, pinned: boolean): string[] {
     return projectId
-      ? listProjectConversations(projectId).map((task) => task.id)
-      : orphans.value.map((orphan) => orphan.id);
+      ? listProjectConversations(projectId)
+          .filter((task) => task.pinned === pinned)
+          .map((task) => task.id)
+      : orphans.value
+          .filter((orphan) => orphan.pinned === pinned)
+          .map((orphan) => orphan.id);
   }
 
   function taskParentId(projectId: string | null, taskId: string | null): string | null {
@@ -281,7 +285,7 @@ export function useSidebarTreeDrag(
     if (sourceProjectId === targetProjectId) {
       if (!shouldReorder || !target.taskId || !reorderPosition) return;
       const orderedIds = insertRelative(
-        taskIdsForProject(sourceProjectId),
+        taskIdsForProject(sourceProjectId, source.pinned === true),
         source.taskId,
         target.taskId,
         reorderPosition,
@@ -290,7 +294,7 @@ export function useSidebarTreeDrag(
       return;
     }
 
-    const targetIds = taskIdsForProject(targetProjectId);
+    const targetIds = taskIdsForProject(targetProjectId, source.pinned === true);
     const orderedIds = shouldReorder && target.taskId && reorderPosition
       ? insertRelative(targetIds, source.taskId, target.taskId, reorderPosition)
       : targetIds;

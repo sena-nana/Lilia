@@ -256,6 +256,7 @@ const emit = defineEmits<{
   ];
   "open-image": [image: ChatImageViewerSource];
   "draft-empty-change": [empty: boolean];
+  "draft-change": [content: string];
   "clear-branch-anchor": [];
   interrupt: [];
 }>();
@@ -1037,6 +1038,7 @@ function onRichInput() {
     contextSearch.noteInputChanged();
     slashCommands.noteInputChanged();
     scheduleSpecialInputControllerRefresh();
+    emit("draft-change", richInput.plainText.value);
   }, { detail: composerPerfDetail(props.state) });
 }
 

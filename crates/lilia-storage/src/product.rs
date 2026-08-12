@@ -7,17 +7,21 @@ use std::sync::Mutex;
 
 use lilia_contracts::{
     AgentSessionBinding, AgentSessionRef, AssignmentId, BindingId, ConflictKind, ConversationId,
-    ExpectedRevision, MilestoneId, Page, PageRequest, ProductCommandMeta, ProductCommandResult,
-    ProductEntity, ProductEntityKind, ProductError, ProductEvent, ProductEventSequence,
-    ProductResult, ProductRevision, ProductTask, ProductTaskPriority, ProductTaskStatus, Project,
-    ProjectArchiveState, ProjectId, TaskDependencyGraph, TaskId, WorkflowId,
+    ExpectedRevision, LiliaCodeTaskHandoff, MilestoneId, Page, PageRequest, ProductCommandMeta,
+    ProductCommandResult, ProductEntity, ProductEntityKind, ProductError, ProductEvent,
+    ProductEventSequence, ProductProjectRemovalOutcome, ProductProjectReorderEntry,
+    ProductProjectReorderOutcome, ProductResult, ProductRevision, ProductTask,
+    ProductTaskHandoffImport, ProductTaskHandoffRecord, ProductTaskMoveInput,
+    ProductTaskMoveOutcome, ProductTaskPriority, ProductTaskReorderEntry,
+    ProductTaskReorderOutcome, ProductTaskStatus, Project, ProjectArchiveState, ProjectId,
+    TaskDependencyGraph, TaskId, WorkflowId,
 };
 use lilia_core::{ensure_expected_revision, ProductRepository};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 
-const SCHEMA_VERSION: i64 = 5;
+pub const PRODUCT_SCHEMA_VERSION: i64 = 6;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -141,6 +145,16 @@ ALTER TABLE tasks ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0;
 "#;
 
+const MIGRATION_V6: &str = r#"
+CREATE TABLE IF NOT EXISTS product_task_handoffs (
+  handoff_id TEXT PRIMARY KEY NOT NULL,
+  task_id TEXT NOT NULL UNIQUE,
+  payload_json TEXT NOT NULL,
+  accepted_at INTEGER NOT NULL,
+  FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+);
+"#;
+
 /// Durable product domain repository (SQLite).
 pub struct SqliteProductStore {
     path: Option<PathBuf>,
@@ -235,7 +249,15 @@ impl SqliteProductStore {
             conn.execute_batch(MIGRATION_V5).map_err(db_err)?;
             conn.execute(
                 "INSERT INTO schema_migrations(version) VALUES (?1)",
-                params![SCHEMA_VERSION],
+                params![5],
+            )
+            .map_err(db_err)?;
+        }
+        if current < 6 {
+            conn.execute_batch(MIGRATION_V6).map_err(db_err)?;
+            conn.execute(
+                "INSERT INTO schema_migrations(version) VALUES (?1)",
+                params![PRODUCT_SCHEMA_VERSION],
             )
             .map_err(db_err)?;
         }
@@ -769,6 +791,565 @@ impl ProductRepository for SqliteProductStore {
         })
     }
 
+    fn remove_project_command(
+        &self,
+        meta: &ProductCommandMeta,
+        project_id: &ProjectId,
+        removed_at: i64,
+    ) -> ProductResult<ProductCommandResult<ProductProjectRemovalOutcome>> {
+        let expected = meta
+            .expected_revision
+            .ok_or_else(|| ProductError::InvalidInput {
+                field: "expected_revision".into(),
+                message: "remove project command requires expected_revision".into(),
+            })?;
+        let _mutation = self.lock_mutation()?;
+        self.with_conn(|conn| {
+            let transaction = conn.unchecked_transaction().map_err(db_err)?;
+            if let Some(result) = load_command_result_on::<ProductProjectRemovalOutcome>(
+                &transaction,
+                meta.idempotency_key.as_str(),
+            )? {
+                return duplicate_sqlite_command_result(meta, result);
+            }
+            let mut project = load_project_on(&transaction, project_id)?.ok_or_else(|| {
+                ProductError::NotFound {
+                    entity: "project".into(),
+                    id: project_id.as_str().into(),
+                }
+            })?;
+            ensure_expected_revision(expected, project.revision)?;
+            if project.archive == ProjectArchiveState::Archived {
+                return Err(ProductError::InvalidState {
+                    message: format!("project `{project_id}` is already archived"),
+                });
+            }
+
+            let conversation_payloads = {
+                let mut statement = transaction
+                    .prepare(
+                        "SELECT payload_json FROM product_entities WHERE kind = 'conversation' ORDER BY id ASC",
+                    )
+                    .map_err(db_err)?;
+                let rows = statement
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(db_err)?;
+                let mut payloads = Vec::new();
+                for row in rows {
+                    payloads.push(row.map_err(db_err)?);
+                }
+                payloads
+            };
+            let mut moved_conversation_ids = Vec::new();
+            for payload in conversation_payloads {
+                let ProductEntity::Conversation(mut conversation) =
+                    decode_json::<ProductEntity>(&payload).map_err(db_err)?
+                else {
+                    continue;
+                };
+                if conversation.project_id.as_ref() != Some(project_id) || conversation.archived {
+                    continue;
+                }
+                let current_revision = conversation.revision;
+                conversation.project_id = None;
+                conversation.updated_at = conversation.updated_at.max(removed_at);
+                conversation.revision = current_revision.next();
+                let entity = ProductEntity::Conversation(conversation.clone());
+                update_entity_on(
+                    &transaction,
+                    &entity,
+                    ExpectedRevision::new(current_revision.get())?,
+                )?;
+                record_product_event_on(
+                    &transaction,
+                    meta,
+                    &entity,
+                    "detached_from_project",
+                )?;
+                moved_conversation_ids.push(conversation.id);
+            }
+
+            let task_rows = {
+                let mut statement = transaction
+                    .prepare(
+                        "SELECT id, revision FROM tasks WHERE project_id = ?1 AND archived = 0 ORDER BY id ASC",
+                    )
+                    .map_err(db_err)?;
+                let rows = statement
+                    .query_map(params![project_id.as_str()], |row| {
+                        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                    })
+                    .map_err(db_err)?;
+                let mut tasks = Vec::new();
+                for row in rows {
+                    tasks.push(row.map_err(db_err)?);
+                }
+                tasks
+            };
+            transaction
+                .execute(
+                    r#"UPDATE tasks
+                       SET project_id = NULL,
+                           updated_at = MAX(updated_at, ?1),
+                           revision = revision + 1
+                       WHERE project_id = ?2 AND archived = 0"#,
+                    params![removed_at, project_id.as_str()],
+                )
+                .map_err(db_err)?;
+            let mut moved_task_ids = Vec::with_capacity(task_rows.len());
+            for (task_id, revision) in task_rows {
+                let task_id = TaskId::new(task_id)?;
+                record_product_event_fields_on(
+                    &transaction,
+                    meta,
+                    ProductEntityKind::Task,
+                    task_id.as_str(),
+                    "detached_from_project",
+                    ProductRevision::new((revision as u64).saturating_add(1))?,
+                )?;
+                moved_task_ids.push(task_id);
+            }
+
+            let project_revision = project.revision;
+            project.archive = ProjectArchiveState::Archived;
+            project.revision = project_revision.next();
+            update_entity_on(
+                &transaction,
+                &ProductEntity::Project(project.clone()),
+                ExpectedRevision::new(project_revision.get())?,
+            )?;
+            let outcome = ProductProjectRemovalOutcome {
+                project,
+                moved_task_ids,
+                moved_conversation_ids,
+                already_removed: false,
+            };
+            let result = record_project_removal_result_on(
+                &transaction,
+                meta,
+                outcome,
+                "project_removed",
+            )?;
+            transaction.commit().map_err(db_err)?;
+            Ok(result)
+        })
+    }
+
+    fn reorder_projects_command(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductProjectReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductProjectReorderOutcome>> {
+        validate_project_reorder_entries(entries)?;
+        let _mutation = self.lock_mutation()?;
+        self.with_conn(|conn| {
+            let transaction = conn.unchecked_transaction().map_err(db_err)?;
+            if let Some(result) = load_command_result_on::<ProductProjectReorderOutcome>(
+                &transaction,
+                meta.idempotency_key.as_str(),
+            )? {
+                return duplicate_sqlite_command_result(meta, result);
+            }
+            let active_projects = {
+                let mut statement = transaction
+                    .prepare(
+                        r#"SELECT id, name, workspace_path, pinned, sort_order, archive,
+                                  git_workspace_json, settings_json, asset_ids_json, revision
+                           FROM projects WHERE archive = 'active'
+                           ORDER BY pinned DESC, sort_order ASC, name ASC, id ASC"#,
+                    )
+                    .map_err(db_err)?;
+                let rows = statement.query_map([], map_project_row).map_err(db_err)?;
+                let mut projects = Vec::new();
+                for row in rows {
+                    projects.push(row.map_err(db_err)?);
+                }
+                projects
+            };
+            let mut projects = entries
+                .iter()
+                .map(|entry| {
+                    active_projects
+                        .iter()
+                        .find(|project| project.id == entry.project_id)
+                        .cloned()
+                        .ok_or_else(|| ProductError::NotFound {
+                            entity: "project".into(),
+                            id: entry.project_id.as_str().into(),
+                        })
+                })
+                .collect::<ProductResult<Vec<_>>>()?;
+            let pinned = projects[0].pinned;
+            if projects.iter().any(|project| project.pinned != pinned) {
+                return Err(ProductError::InvalidInput {
+                    field: "ordered_project_ids".into(),
+                    message: "project order must contain active projects from one pinned group"
+                        .into(),
+                });
+            }
+            let complete_group = active_projects
+                .iter()
+                .filter(|project| project.pinned == pinned)
+                .collect::<Vec<_>>();
+            if complete_group.len() != entries.len()
+                || complete_group
+                    .iter()
+                    .any(|project| !entries.iter().any(|entry| entry.project_id == project.id))
+            {
+                return Err(ProductError::InvalidInput {
+                    field: "ordered_project_ids".into(),
+                    message: "project order must contain one complete pinned group".into(),
+                });
+            }
+            for (project, entry) in projects.iter().zip(entries) {
+                ensure_expected_revision(entry.expected_revision, project.revision)?;
+            }
+            let mut event_sequence = None;
+            for (sort_order, project) in projects.iter_mut().enumerate() {
+                let current_revision = project.revision;
+                project.sort_order = sort_order as i64;
+                project.revision = current_revision.next();
+                let entity = ProductEntity::Project(project.clone());
+                update_entity_on(
+                    &transaction,
+                    &entity,
+                    ExpectedRevision::new(current_revision.get())?,
+                )?;
+                event_sequence = Some(record_product_event_on(
+                    &transaction,
+                    meta,
+                    &entity,
+                    "projects_reordered",
+                )?);
+            }
+            let sequence = event_sequence.ok_or_else(|| ProductError::InvalidState {
+                message: "project reorder command did not publish an event".into(),
+            })?;
+            let result = record_project_reorder_result_on(
+                &transaction,
+                meta,
+                ProductProjectReorderOutcome { projects },
+                sequence,
+            )?;
+            transaction.commit().map_err(db_err)?;
+            Ok(result)
+        })
+    }
+
+    fn reorder_tasks_command(
+        &self,
+        meta: &ProductCommandMeta,
+        entries: &[ProductTaskReorderEntry],
+    ) -> ProductResult<ProductCommandResult<ProductTaskReorderOutcome>> {
+        validate_task_reorder_entries(entries)?;
+        let _mutation = self.lock_mutation()?;
+        self.with_conn(|conn| {
+            let transaction = conn.unchecked_transaction().map_err(db_err)?;
+            if let Some(result) = load_command_result_on::<ProductTaskReorderOutcome>(
+                &transaction,
+                meta.idempotency_key.as_str(),
+            )? {
+                return duplicate_sqlite_command_result(meta, result);
+            }
+            let active_tasks = {
+                let mut statement = transaction
+                    .prepare(
+                        r#"SELECT id, project_id, title, description, status, priority, assignment_id,
+                                  completion_criteria_json, milestone_id, workflow_id, agent_profile_id,
+                                  blocked_reason, parent_id, pinned, sort_order, archived, tags_json,
+                                  created_at, updated_at, revision, legacy_source
+                           FROM tasks WHERE archived = 0
+                           ORDER BY pinned DESC, sort_order ASC, id ASC"#,
+                    )
+                    .map_err(db_err)?;
+                let rows = statement.query_map([], map_task_row).map_err(db_err)?;
+                let mut tasks = Vec::new();
+                for row in rows {
+                    let mut task = row.map_err(db_err)?;
+                    task.depends_on = load_deps(&transaction, task.id.as_str())?;
+                    tasks.push(task);
+                }
+                tasks
+            };
+            let mut tasks = entries
+                .iter()
+                .map(|entry| {
+                    active_tasks
+                        .iter()
+                        .find(|task| task.id == entry.task_id)
+                        .cloned()
+                        .ok_or_else(|| ProductError::NotFound {
+                            entity: "task".into(),
+                            id: entry.task_id.as_str().into(),
+                        })
+                })
+                .collect::<ProductResult<Vec<_>>>()?;
+            let project_id = tasks[0].project_id.clone();
+            let pinned = tasks[0].pinned;
+            if tasks
+                .iter()
+                .any(|task| task.project_id != project_id || task.pinned != pinned)
+            {
+                return Err(ProductError::InvalidInput {
+                    field: "ordered_task_ids".into(),
+                    message: "task order must contain active tasks from one pinned group".into(),
+                });
+            }
+            let complete_group = active_tasks
+                .iter()
+                .filter(|task| task.project_id == project_id && task.pinned == pinned)
+                .collect::<Vec<_>>();
+            if complete_group.len() != entries.len()
+                || complete_group
+                    .iter()
+                    .any(|task| !entries.iter().any(|entry| entry.task_id == task.id))
+            {
+                return Err(ProductError::InvalidInput {
+                    field: "ordered_task_ids".into(),
+                    message: "task order must contain one complete pinned group".into(),
+                });
+            }
+            for (task, entry) in tasks.iter().zip(entries) {
+                ensure_expected_revision(entry.expected_revision, task.revision)?;
+            }
+            let mut event_sequence = None;
+            for (sort_order, task) in tasks.iter_mut().enumerate() {
+                let current_revision = task.revision;
+                task.sort_order = sort_order as i64;
+                task.revision = current_revision.next();
+                let entity = ProductEntity::Task(task.clone());
+                update_entity_on(
+                    &transaction,
+                    &entity,
+                    ExpectedRevision::new(current_revision.get())?,
+                )?;
+                event_sequence = Some(record_product_event_on(
+                    &transaction,
+                    meta,
+                    &entity,
+                    "tasks_reordered",
+                )?);
+            }
+            let sequence = event_sequence.ok_or_else(|| ProductError::InvalidState {
+                message: "task reorder command did not publish an event".into(),
+            })?;
+            let result = record_task_reorder_result_on(
+                &transaction,
+                meta,
+                ProductTaskReorderOutcome { tasks },
+                sequence,
+            )?;
+            transaction.commit().map_err(db_err)?;
+            Ok(result)
+        })
+    }
+
+    fn move_task_command(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskMoveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskMoveOutcome>> {
+        let _mutation = self.lock_mutation()?;
+        self.with_conn(|conn| {
+            let transaction = conn.unchecked_transaction().map_err(db_err)?;
+            if let Some(result) = load_command_result_on::<ProductTaskMoveOutcome>(
+                &transaction,
+                meta.idempotency_key.as_str(),
+            )? {
+                return duplicate_sqlite_command_result(meta, result);
+            }
+            let mut task = transaction
+                .query_row(
+                    r#"SELECT id, project_id, title, description, status, priority, assignment_id,
+                              completion_criteria_json, milestone_id, workflow_id, agent_profile_id,
+                              blocked_reason, parent_id, pinned, sort_order, archived, tags_json,
+                              created_at, updated_at, revision, legacy_source
+                       FROM tasks WHERE id = ?1"#,
+                    params![input.task_id.as_str()],
+                    map_task_row,
+                )
+                .optional()
+                .map_err(db_err)?
+                .ok_or_else(|| ProductError::NotFound {
+                    entity: "task".into(),
+                    id: input.task_id.as_str().into(),
+                })?;
+            task.depends_on = load_deps(&transaction, task.id.as_str())?;
+            ensure_expected_revision(input.expected_revision, task.revision)?;
+            if task.archived {
+                return Err(ProductError::InvalidInput {
+                    field: "task_id".into(),
+                    message: "archived tasks cannot be moved".into(),
+                });
+            }
+            if let Some(project_id) = &input.target_project_id {
+                let project = load_project_on(&transaction, project_id)?.ok_or_else(|| {
+                    ProductError::NotFound {
+                        entity: "project".into(),
+                        id: project_id.as_str().into(),
+                    }
+                })?;
+                if project.archive == ProjectArchiveState::Archived {
+                    return Err(ProductError::InvalidInput {
+                        field: "target_project_id".into(),
+                        message: "target project must be active".into(),
+                    });
+                }
+            }
+            let tasks = {
+                let mut statement = transaction
+                    .prepare(
+                        r#"SELECT id, project_id, title, description, status, priority, assignment_id,
+                                  completion_criteria_json, milestone_id, workflow_id, agent_profile_id,
+                                  blocked_reason, parent_id, pinned, sort_order, archived, tags_json,
+                                  created_at, updated_at, revision, legacy_source
+                           FROM tasks
+                           ORDER BY id ASC"#,
+                    )
+                    .map_err(db_err)?;
+                let rows = statement.query_map([], map_task_row).map_err(db_err)?;
+                let mut tasks = Vec::new();
+                for row in rows {
+                    let mut task = row.map_err(db_err)?;
+                    task.depends_on = load_deps(&transaction, task.id.as_str())?;
+                    tasks.push(task);
+                }
+                tasks
+            };
+            validate_task_move_parent(
+                &tasks,
+                &input.task_id,
+                input.target_project_id.as_ref(),
+                input.target_parent_id.as_ref(),
+            )?;
+            if task.project_id == input.target_project_id
+                && task.parent_id == input.target_parent_id
+            {
+                return Err(ProductError::InvalidInput {
+                    field: "target_parent_id".into(),
+                    message: "task is already at the target location".into(),
+                });
+            }
+            let subtree_ids = task_subtree_ids(&tasks, &input.task_id);
+            let location_changed = task.project_id != input.target_project_id;
+            let moved_task_ids = if location_changed {
+                subtree_ids.clone()
+            } else {
+                vec![input.task_id.clone()]
+            };
+
+            let conversation_payloads = {
+                let mut statement = transaction
+                    .prepare(
+                        "SELECT payload_json FROM product_entities WHERE kind = 'conversation' ORDER BY id ASC",
+                    )
+                    .map_err(db_err)?;
+                let rows = statement
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(db_err)?;
+                let mut payloads = Vec::new();
+                for row in rows {
+                    payloads.push(row.map_err(db_err)?);
+                }
+                payloads
+            };
+            let mut moved_conversation_ids = Vec::new();
+            for payload in conversation_payloads {
+                let ProductEntity::Conversation(mut conversation) =
+                    decode_json::<ProductEntity>(&payload).map_err(db_err)?
+                else {
+                    continue;
+                };
+                if !conversation
+                    .task_id
+                    .as_ref()
+                    .is_some_and(|task_id| moved_task_ids.contains(task_id))
+                    || conversation.project_id == input.target_project_id
+                {
+                    continue;
+                }
+                let current_revision = conversation.revision;
+                conversation.project_id = input.target_project_id.clone();
+                conversation.updated_at = conversation.updated_at.max(input.moved_at);
+                conversation.revision = current_revision.next();
+                moved_conversation_ids.push(conversation.id.clone());
+                let entity = ProductEntity::Conversation(conversation);
+                update_entity_on(
+                    &transaction,
+                    &entity,
+                    ExpectedRevision::new(current_revision.get())?,
+                )?;
+                record_product_event_on(
+                    &transaction,
+                    meta,
+                    &entity,
+                    "conversation_moved_with_task",
+                )?;
+            }
+
+            if location_changed {
+                task.sort_order = tasks
+                    .iter()
+                    .filter(|candidate| {
+                        !candidate.archived
+                            && !subtree_ids.contains(&candidate.id)
+                            && candidate.project_id == input.target_project_id
+                    })
+                    .map(|candidate| candidate.sort_order)
+                    .max()
+                    .unwrap_or(-1)
+                    .saturating_add(1);
+                for descendant_id in subtree_ids.iter().skip(1) {
+                    let mut descendant = tasks
+                        .iter()
+                        .find(|candidate| &candidate.id == descendant_id)
+                        .cloned()
+                        .expect("task subtree ids come from the task snapshot");
+                    let descendant_revision = descendant.revision;
+                    descendant.project_id = input.target_project_id.clone();
+                    descendant.updated_at = descendant.updated_at.max(input.moved_at);
+                    descendant.revision = descendant_revision.next();
+                    let entity = ProductEntity::Task(descendant);
+                    update_entity_on(
+                        &transaction,
+                        &entity,
+                        ExpectedRevision::new(descendant_revision.get())?,
+                    )?;
+                    record_product_event_on(
+                        &transaction,
+                        meta,
+                        &entity,
+                        "task_moved_with_parent",
+                    )?;
+                }
+            }
+            let current_revision = task.revision;
+            task.project_id = input.target_project_id.clone();
+            task.parent_id = input.target_parent_id.clone();
+            task.updated_at = task.updated_at.max(input.moved_at);
+            task.revision = current_revision.next();
+            let entity = ProductEntity::Task(task.clone());
+            update_entity_on(
+                &transaction,
+                &entity,
+                ExpectedRevision::new(current_revision.get())?,
+            )?;
+            let sequence = record_product_event_on(&transaction, meta, &entity, "task_moved")?;
+            let result = record_task_move_result_on(
+                &transaction,
+                meta,
+                ProductTaskMoveOutcome {
+                    task,
+                    moved_task_ids,
+                    moved_conversation_ids,
+                },
+                sequence,
+            )?;
+            transaction.commit().map_err(db_err)?;
+            Ok(result)
+        })
+    }
+
     fn product_events(&self, request: &PageRequest) -> ProductResult<Page<ProductEvent>> {
         self.with_conn(|conn| {
             let after = request.after.unwrap_or(ProductEventSequence::ORIGIN).get() as i64;
@@ -836,6 +1417,82 @@ impl ProductRepository for SqliteProductStore {
         Ok(task)
     }
 
+    fn accept_task_handoff(
+        &self,
+        import: ProductTaskHandoffImport,
+    ) -> ProductResult<ProductTaskHandoffRecord> {
+        let _mutation = self.lock_mutation()?;
+        self.with_conn(|conn| {
+            let transaction = conn.unchecked_transaction().map_err(db_err)?;
+            if let Some(mut existing) =
+                load_task_handoff_by_id_on(&transaction, &import.handoff.id)?
+            {
+                existing.duplicate = true;
+                transaction.commit().map_err(db_err)?;
+                return Ok(existing);
+            }
+            if import.task.project_id.as_ref() != Some(&import.project.id) {
+                return Err(ProductError::InvalidInput {
+                    field: "task.project_id".into(),
+                    message: "handoff task must belong to the imported project".into(),
+                });
+            }
+            let decoded: LiliaCodeTaskHandoff =
+                decode_json(&import.payload_json).map_err(db_err)?;
+            if decoded != import.handoff {
+                return Err(ProductError::InvalidInput {
+                    field: "payload_json".into(),
+                    message: "handoff payload does not match the parsed contract".into(),
+                });
+            }
+            let project = match load_project_on(&transaction, &import.project.id)? {
+                Some(project) => project,
+                None => {
+                    insert_entity_on(
+                        &transaction,
+                        &ProductEntity::Project(import.project.clone()),
+                    )?;
+                    import.project.clone()
+                }
+            };
+            if load_task_on(&transaction, &import.task.id)?.is_some() {
+                return Err(ProductError::Conflict {
+                    conflict: ConflictKind::DuplicateIdempotency,
+                    message: format!("task `{}` already exists", import.task.id),
+                });
+            }
+            insert_entity_on(&transaction, &ProductEntity::Task(import.task.clone()))?;
+            transaction
+                .execute(
+                    "INSERT INTO product_task_handoffs(handoff_id, task_id, payload_json, accepted_at) VALUES (?1, ?2, ?3, ?4)",
+                    params![
+                        &import.handoff.id,
+                        import.task.id.as_str(),
+                        &import.payload_json,
+                        import.accepted_at,
+                    ],
+                )
+                .map_err(db_err)?;
+            let record = ProductTaskHandoffRecord {
+                handoff: import.handoff,
+                payload_json: import.payload_json,
+                project,
+                task: import.task,
+                accepted_at: import.accepted_at,
+                duplicate: false,
+            };
+            transaction.commit().map_err(db_err)?;
+            Ok(record)
+        })
+    }
+
+    fn task_handoff_for_task(
+        &self,
+        task_id: &TaskId,
+    ) -> ProductResult<Option<ProductTaskHandoffRecord>> {
+        self.with_conn(|conn| load_task_handoff_by_task_on(conn, task_id))
+    }
+
     fn update_task_dependencies(
         &self,
         task_id: &TaskId,
@@ -898,6 +1555,43 @@ impl ProductRepository for SqliteProductStore {
         SqliteProductStore::list_bindings_for_task(self, task_id)
     }
 
+    fn replace_binding_for_task(
+        &self,
+        binding: AgentSessionBinding,
+    ) -> ProductResult<AgentSessionBinding> {
+        let _mutation = self.lock_mutation()?;
+        self.get_task(&binding.task_id)?;
+        self.with_conn(|connection| {
+            let transaction = connection.unchecked_transaction().map_err(db_err)?;
+            transaction
+                .execute(
+                    "DELETE FROM agent_session_bindings WHERE task_id = ?1",
+                    params![binding.task_id.as_str()],
+                )
+                .map_err(db_err)?;
+            transaction
+                .execute(
+                    r#"INSERT INTO agent_session_bindings
+                       (binding_id, task_id, conversation_id, agent_session, profile_id, revision)
+                       VALUES (?1, ?2, ?3, ?4, ?5, ?6)"#,
+                    params![
+                        binding.binding_id.as_str(),
+                        binding.task_id.as_str(),
+                        binding
+                            .conversation_id
+                            .as_ref()
+                            .map(|id| id.as_str().to_owned()),
+                        binding.agent_session.as_str(),
+                        binding.profile_id.as_deref(),
+                        binding.revision.get() as i64,
+                    ],
+                )
+                .map_err(db_err)?;
+            transaction.commit().map_err(db_err)?;
+            Ok(binding)
+        })
+    }
+
     fn clear_bindings_for_task(&self, task_id: &TaskId) -> ProductResult<usize> {
         let _mutation = self.lock_mutation()?;
         SqliteProductStore::clear_bindings_for_task(self, task_id)
@@ -915,10 +1609,10 @@ pub struct LegacySessionProvenance {
     pub notes: Option<String>,
 }
 
-fn load_command_result_on(
+fn load_command_result_on<T: DeserializeOwned>(
     conn: &Connection,
     idempotency_key: &str,
-) -> ProductResult<Option<ProductCommandResult<ProductEntity>>> {
+) -> ProductResult<Option<ProductCommandResult<T>>> {
     conn.query_row(
         r#"SELECT command_id, event_sequence, result_json
            FROM product_command_results
@@ -937,6 +1631,255 @@ fn load_command_result_on(
     )
     .optional()
     .map_err(db_err)
+}
+
+fn record_product_event_fields_on(
+    conn: &Connection,
+    meta: &ProductCommandMeta,
+    kind: ProductEntityKind,
+    entity_id: &str,
+    action: &str,
+    revision: ProductRevision,
+) -> ProductResult<ProductEventSequence> {
+    conn.execute(
+        r#"INSERT INTO product_events(
+             command_id, entity, entity_id, action, revision
+           ) VALUES (?1, ?2, ?3, ?4, ?5)"#,
+        params![
+            meta.command_id,
+            kind.as_str(),
+            entity_id,
+            action,
+            revision.get() as i64,
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(ProductEventSequence::new(conn.last_insert_rowid() as u64))
+}
+
+fn record_product_event_on(
+    conn: &Connection,
+    meta: &ProductCommandMeta,
+    entity: &ProductEntity,
+    action: &str,
+) -> ProductResult<ProductEventSequence> {
+    record_product_event_fields_on(
+        conn,
+        meta,
+        entity.kind(),
+        entity.id(),
+        action,
+        entity.revision(),
+    )
+}
+
+fn record_project_removal_result_on(
+    conn: &Connection,
+    meta: &ProductCommandMeta,
+    value: ProductProjectRemovalOutcome,
+    action: &str,
+) -> ProductResult<ProductCommandResult<ProductProjectRemovalOutcome>> {
+    let sequence = record_product_event_fields_on(
+        conn,
+        meta,
+        ProductEntityKind::Project,
+        value.project.id.as_str(),
+        action,
+        value.project.revision,
+    )?;
+    conn.execute(
+        r#"INSERT INTO product_command_results(
+             idempotency_key, command_id, event_sequence, result_json
+           ) VALUES (?1, ?2, ?3, ?4)"#,
+        params![
+            meta.idempotency_key.as_str(),
+            meta.command_id,
+            sequence.get() as i64,
+            encode_json(&value)?,
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value,
+        duplicate: false,
+    })
+}
+
+fn record_project_reorder_result_on(
+    conn: &Connection,
+    meta: &ProductCommandMeta,
+    value: ProductProjectReorderOutcome,
+    sequence: ProductEventSequence,
+) -> ProductResult<ProductCommandResult<ProductProjectReorderOutcome>> {
+    conn.execute(
+        r#"INSERT INTO product_command_results(
+             idempotency_key, command_id, event_sequence, result_json
+           ) VALUES (?1, ?2, ?3, ?4)"#,
+        params![
+            meta.idempotency_key.as_str(),
+            meta.command_id,
+            sequence.get() as i64,
+            encode_json(&value)?,
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value,
+        duplicate: false,
+    })
+}
+
+fn validate_project_reorder_entries(entries: &[ProductProjectReorderEntry]) -> ProductResult<()> {
+    if entries.is_empty() {
+        return Err(ProductError::InvalidInput {
+            field: "ordered_project_ids".into(),
+            message: "project order must not be empty".into(),
+        });
+    }
+    if entries.iter().enumerate().any(|(index, entry)| {
+        entries[..index]
+            .iter()
+            .any(|candidate| candidate.project_id == entry.project_id)
+    }) {
+        return Err(ProductError::InvalidInput {
+            field: "ordered_project_ids".into(),
+            message: "project order must not contain duplicate ids".into(),
+        });
+    }
+    Ok(())
+}
+
+fn record_task_reorder_result_on(
+    conn: &Connection,
+    meta: &ProductCommandMeta,
+    value: ProductTaskReorderOutcome,
+    sequence: ProductEventSequence,
+) -> ProductResult<ProductCommandResult<ProductTaskReorderOutcome>> {
+    conn.execute(
+        r#"INSERT INTO product_command_results(
+             idempotency_key, command_id, event_sequence, result_json
+           ) VALUES (?1, ?2, ?3, ?4)"#,
+        params![
+            meta.idempotency_key.as_str(),
+            meta.command_id,
+            sequence.get() as i64,
+            encode_json(&value)?,
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value,
+        duplicate: false,
+    })
+}
+
+fn validate_task_reorder_entries(entries: &[ProductTaskReorderEntry]) -> ProductResult<()> {
+    if entries.is_empty() {
+        return Err(ProductError::InvalidInput {
+            field: "ordered_task_ids".into(),
+            message: "task order must not be empty".into(),
+        });
+    }
+    if entries.iter().enumerate().any(|(index, entry)| {
+        entries[..index]
+            .iter()
+            .any(|candidate| candidate.task_id == entry.task_id)
+    }) {
+        return Err(ProductError::InvalidInput {
+            field: "ordered_task_ids".into(),
+            message: "task order must not contain duplicate ids".into(),
+        });
+    }
+    Ok(())
+}
+
+fn record_task_move_result_on(
+    conn: &Connection,
+    meta: &ProductCommandMeta,
+    value: ProductTaskMoveOutcome,
+    sequence: ProductEventSequence,
+) -> ProductResult<ProductCommandResult<ProductTaskMoveOutcome>> {
+    conn.execute(
+        r#"INSERT INTO product_command_results(
+             idempotency_key, command_id, event_sequence, result_json
+           ) VALUES (?1, ?2, ?3, ?4)"#,
+        params![
+            meta.idempotency_key.as_str(),
+            meta.command_id,
+            sequence.get() as i64,
+            encode_json(&value)?,
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value,
+        duplicate: false,
+    })
+}
+
+fn validate_task_move_parent(
+    tasks: &[ProductTask],
+    task_id: &TaskId,
+    target_project_id: Option<&ProjectId>,
+    target_parent_id: Option<&TaskId>,
+) -> ProductResult<()> {
+    let mut cursor = target_parent_id.cloned();
+    let mut visited = Vec::new();
+    while let Some(parent_id) = cursor {
+        if &parent_id == task_id || visited.contains(&parent_id) {
+            return Err(ProductError::InvalidInput {
+                field: "target_parent_id".into(),
+                message: "task parent would create a cycle".into(),
+            });
+        }
+        let parent = tasks
+            .iter()
+            .find(|task| task.id == parent_id)
+            .ok_or_else(|| ProductError::NotFound {
+                entity: "task".into(),
+                id: parent_id.as_str().into(),
+            })?;
+        if parent.archived || parent.project_id.as_ref() != target_project_id {
+            return Err(ProductError::InvalidInput {
+                field: "target_parent_id".into(),
+                message: "task parent must be active in the target project".into(),
+            });
+        }
+        visited.push(parent_id);
+        cursor = parent.parent_id.clone();
+    }
+    Ok(())
+}
+
+fn task_subtree_ids(tasks: &[ProductTask], root_id: &TaskId) -> Vec<TaskId> {
+    let mut ids = vec![root_id.clone()];
+    loop {
+        let mut added = tasks
+            .iter()
+            .filter(|task| {
+                !ids.contains(&task.id)
+                    && task
+                        .parent_id
+                        .as_ref()
+                        .is_some_and(|parent_id| ids.contains(parent_id))
+            })
+            .map(|task| task.id.clone())
+            .collect::<Vec<_>>();
+        if added.is_empty() {
+            break;
+        }
+        added.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        ids.extend(added);
+    }
+    ids
 }
 
 fn record_command_result_on(
@@ -1313,10 +2256,10 @@ fn is_constraint_violation(err: &rusqlite::Error) -> bool {
     )
 }
 
-fn duplicate_sqlite_command_result(
+fn duplicate_sqlite_command_result<T>(
     meta: &ProductCommandMeta,
-    mut result: ProductCommandResult<ProductEntity>,
-) -> ProductResult<ProductCommandResult<ProductEntity>> {
+    mut result: ProductCommandResult<T>,
+) -> ProductResult<ProductCommandResult<T>> {
     if result.command_id != meta.command_id {
         return Err(ProductError::Conflict {
             conflict: ConflictKind::DuplicateIdempotency,
@@ -1390,6 +2333,102 @@ fn priority_from_str(value: &str) -> ProductTaskPriority {
         "urgent" => ProductTaskPriority::Urgent,
         _ => ProductTaskPriority::Normal,
     }
+}
+
+fn load_project_on(conn: &Connection, id: &ProjectId) -> ProductResult<Option<Project>> {
+    conn.query_row(
+        r#"SELECT id, name, workspace_path, pinned, sort_order, archive,
+                  git_workspace_json, settings_json, asset_ids_json, revision
+           FROM projects WHERE id = ?1"#,
+        params![id.as_str()],
+        map_project_row,
+    )
+    .optional()
+    .map_err(db_err)
+}
+
+fn load_task_on(conn: &Connection, id: &TaskId) -> ProductResult<Option<ProductTask>> {
+    let task = conn
+        .query_row(
+            r#"SELECT id, project_id, title, description, status, priority, assignment_id,
+                      completion_criteria_json, milestone_id, workflow_id, agent_profile_id,
+                      blocked_reason, parent_id, pinned, sort_order, archived, tags_json,
+                      created_at, updated_at, revision, legacy_source
+               FROM tasks WHERE id = ?1"#,
+            params![id.as_str()],
+            map_task_row,
+        )
+        .optional()
+        .map_err(db_err)?;
+    task.map(|mut task| {
+        task.depends_on = load_deps(conn, id.as_str())?;
+        Ok(task)
+    })
+    .transpose()
+}
+
+fn load_task_handoff_by_id_on(
+    conn: &Connection,
+    handoff_id: &str,
+) -> ProductResult<Option<ProductTaskHandoffRecord>> {
+    load_task_handoff_on(
+        conn,
+        "SELECT task_id, payload_json, accepted_at FROM product_task_handoffs WHERE handoff_id = ?1",
+        handoff_id,
+    )
+}
+
+fn load_task_handoff_by_task_on(
+    conn: &Connection,
+    task_id: &TaskId,
+) -> ProductResult<Option<ProductTaskHandoffRecord>> {
+    load_task_handoff_on(
+        conn,
+        "SELECT task_id, payload_json, accepted_at FROM product_task_handoffs WHERE task_id = ?1",
+        task_id.as_str(),
+    )
+}
+
+fn load_task_handoff_on(
+    conn: &Connection,
+    query: &str,
+    value: &str,
+) -> ProductResult<Option<ProductTaskHandoffRecord>> {
+    let row = conn
+        .query_row(query, params![value], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .optional()
+        .map_err(db_err)?;
+    let Some((task_id, payload_json, accepted_at)) = row else {
+        return Ok(None);
+    };
+    let task_id = TaskId::new(task_id)?;
+    let task = load_task_on(conn, &task_id)?.ok_or_else(|| ProductError::InvalidState {
+        message: format!("handoff references missing task `{task_id}`"),
+    })?;
+    let project_id = task
+        .project_id
+        .as_ref()
+        .ok_or_else(|| ProductError::InvalidState {
+            message: format!("handoff task `{task_id}` has no project"),
+        })?;
+    let project = load_project_on(conn, project_id)?.ok_or_else(|| ProductError::InvalidState {
+        message: format!("handoff task `{task_id}` references missing project `{project_id}`"),
+    })?;
+    let handoff: LiliaCodeTaskHandoff = decode_json(&payload_json).map_err(db_err)?;
+    Ok(Some(ProductTaskHandoffRecord {
+        handoff,
+        payload_json,
+        project,
+        task,
+        accepted_at,
+        duplicate: false,
+    }))
 }
 
 fn map_project_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Project> {
@@ -1514,9 +2553,797 @@ mod tests {
 
     use super::*;
     use lilia_contracts::{
-        GitWorkspaceRef, IdempotencyKey, ProductConversation, ProductEntity, ProjectAssetId,
-        ProjectSettings,
+        GitWorkspaceRef, IdempotencyKey, LiliaCodeTaskHandoff, ProductConversation, ProductEntity,
+        ProjectAssetId, ProjectSettings,
     };
+
+    fn handoff_import(
+        handoff_id: &str,
+        project_id: &str,
+        task_id: &str,
+    ) -> ProductTaskHandoffImport {
+        let handoff: LiliaCodeTaskHandoff = serde_json::from_value(serde_json::json!({
+            "protocol": "lilia-code-task-handoff",
+            "version": 1,
+            "id": handoff_id,
+            "createdAt": "2026-08-10T00:00:00Z",
+            "title": "Fix CI",
+            "kind": "workflowFailure",
+            "repository": {
+                "fullName": "acme/widget",
+                "worktreePath": "C:/work/widget",
+                "branch": "fix/ci"
+            },
+            "source": {
+                "application": "LiliaGithub",
+                "route": "/workflow/77"
+            },
+            "problem": "CI failed",
+            "relatedFiles": [],
+            "logSummary": "typecheck failed",
+            "acceptanceCriteria": ["CI passes"],
+            "workflow": {
+                "runId": 77,
+                "runUrl": "https://github.com/acme/widget/actions/runs/77",
+                "workflowName": "verify"
+            }
+        }))
+        .unwrap();
+        let payload_json = serde_json::to_string(&handoff).unwrap();
+        let project = Project::new(ProjectId::new(project_id).unwrap(), "Widget").unwrap();
+        let task = ProductTask::new(
+            TaskId::new(task_id).unwrap(),
+            Some(project.id.clone()),
+            "Fix CI",
+        )
+        .unwrap();
+        ProductTaskHandoffImport {
+            handoff,
+            payload_json,
+            project,
+            task,
+            accepted_at: 42,
+        }
+    }
+
+    #[test]
+    fn task_handoff_acceptance_is_atomic_and_idempotent() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let first = store
+            .accept_task_handoff(handoff_import("handoff-1", "project-1", "task-1"))
+            .unwrap();
+        let duplicate = store
+            .accept_task_handoff(handoff_import("handoff-1", "project-2", "task-2"))
+            .unwrap();
+
+        assert!(!first.duplicate);
+        assert!(duplicate.duplicate);
+        assert_eq!(duplicate.project.id, first.project.id);
+        assert_eq!(duplicate.task.id, first.task.id);
+        assert_eq!(
+            store
+                .task_handoff_for_task(&first.task.id)
+                .unwrap()
+                .unwrap()
+                .handoff
+                .id,
+            "handoff-1"
+        );
+        assert_eq!(store.list_projects().unwrap().len(), 1);
+        assert_eq!(store.list_tasks().unwrap().len(), 1);
+
+        let conflicting = handoff_import("handoff-2", "project-rollback", "task-1");
+        assert!(store.accept_task_handoff(conflicting).is_err());
+        assert!(store
+            .get_project(&ProjectId::new("project-rollback").unwrap())
+            .is_err());
+        assert_eq!(store.list_projects().unwrap().len(), 1);
+        assert_eq!(store.list_tasks().unwrap().len(), 1);
+    }
+
+    fn remove_project_fixture(store: &SqliteProductStore, project_id: &str) -> Project {
+        let mut project = Project::new(ProjectId::new(project_id).unwrap(), "Removal").unwrap();
+        project.workspace_path = Some("C:/workspace/removal".to_owned());
+        store
+            .create_entity(ProductEntity::Project(project.clone()))
+            .unwrap();
+        let active = ProductTask::new(
+            TaskId::new(format!("{project_id}-active")).unwrap(),
+            Some(project.id.clone()),
+            "Active",
+        )
+        .unwrap();
+        store
+            .create_entity(ProductEntity::Task(active.clone()))
+            .unwrap();
+        let mut archived = ProductTask::new(
+            TaskId::new(format!("{project_id}-archived")).unwrap(),
+            Some(project.id.clone()),
+            "Archived",
+        )
+        .unwrap();
+        archived.archived = true;
+        store
+            .create_entity(ProductEntity::Task(archived.clone()))
+            .unwrap();
+        let active_conversation = ProductConversation::new(
+            ConversationId::new(format!("conversation:{project_id}:active")).unwrap(),
+            Some(project.id.clone()),
+            Some(active.id),
+            "Active",
+        )
+        .unwrap();
+        store
+            .create_entity(ProductEntity::Conversation(active_conversation))
+            .unwrap();
+        let mut archived_conversation = ProductConversation::new(
+            ConversationId::new(format!("conversation:{project_id}:archived")).unwrap(),
+            Some(project.id.clone()),
+            Some(archived.id),
+            "Archived",
+        )
+        .unwrap();
+        archived_conversation.archived = true;
+        store
+            .create_entity(ProductEntity::Conversation(archived_conversation))
+            .unwrap();
+        project
+    }
+
+    fn remove_meta(project: &Project, command: &str, key: &str) -> ProductCommandMeta {
+        ProductCommandMeta::update(
+            command,
+            IdempotencyKey::new(key).unwrap(),
+            ExpectedRevision::new(project.revision.get()).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn project_removal_is_one_sqlite_transaction_and_exactly_idempotent() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let project = remove_project_fixture(&store, "project-remove");
+        let meta = remove_meta(&project, "remove-project", "remove-project-key");
+
+        let first = store
+            .remove_project_command(&meta, &project.id, 99)
+            .unwrap();
+        assert!(!first.duplicate);
+        assert_eq!(first.value.moved_task_ids.len(), 1);
+        assert_eq!(first.value.moved_conversation_ids.len(), 1);
+        assert_eq!(first.value.project.workspace_path, project.workspace_path);
+        assert_eq!(first.value.project.archive, ProjectArchiveState::Archived);
+        let active = store
+            .get_task(&TaskId::new("project-remove-active").unwrap())
+            .unwrap();
+        let archived = store
+            .get_task(&TaskId::new("project-remove-archived").unwrap())
+            .unwrap();
+        assert_eq!(active.project_id, None);
+        assert_eq!(active.updated_at, 99);
+        assert_eq!(active.revision.get(), 2);
+        assert_eq!(archived.project_id, Some(project.id.clone()));
+        let conversations = store
+            .list_entities(ProductEntityKind::Conversation)
+            .unwrap();
+        assert!(conversations.iter().all(|entity| match entity {
+            ProductEntity::Conversation(conversation) if conversation.archived => {
+                conversation.project_id.as_ref() == Some(&project.id)
+            }
+            ProductEntity::Conversation(conversation) => conversation.project_id.is_none(),
+            _ => false,
+        }));
+        let event_count = store
+            .product_events(&PageRequest {
+                after: None,
+                limit: 100,
+            })
+            .unwrap()
+            .items
+            .len();
+        assert_eq!(event_count, 3);
+
+        let duplicate = store
+            .remove_project_command(&meta, &project.id, 100)
+            .unwrap();
+        assert!(duplicate.duplicate);
+        assert_eq!(duplicate.value, first.value);
+        assert_eq!(
+            store
+                .product_events(&PageRequest {
+                    after: None,
+                    limit: 100,
+                })
+                .unwrap()
+                .items
+                .len(),
+            event_count
+        );
+        let conflict = remove_meta(&project, "other-command", "remove-project-key");
+        assert!(matches!(
+            store.remove_project_command(&conflict, &project.id, 100),
+            Err(ProductError::Conflict {
+                conflict: ConflictKind::DuplicateIdempotency,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn project_removal_rolls_back_conversations_when_a_task_write_fails() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let project = remove_project_fixture(&store, "project-rollback");
+        store
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    r#"CREATE TRIGGER fail_project_removal_task
+                       BEFORE UPDATE ON tasks
+                       WHEN OLD.project_id = 'project-rollback'
+                       BEGIN
+                         SELECT RAISE(ABORT, 'injected task failure');
+                       END;"#,
+                )
+                .map_err(db_err)
+            })
+            .unwrap();
+        let meta = remove_meta(&project, "remove-rollback", "remove-rollback-key");
+
+        assert!(store
+            .remove_project_command(&meta, &project.id, 99)
+            .is_err());
+        assert_eq!(
+            store.get_project(&project.id).unwrap().archive,
+            ProjectArchiveState::Active
+        );
+        assert_eq!(
+            store
+                .get_task(&TaskId::new("project-rollback-active").unwrap())
+                .unwrap()
+                .project_id,
+            Some(project.id.clone())
+        );
+        assert!(store
+            .list_entities(ProductEntityKind::Conversation)
+            .unwrap()
+            .iter()
+            .all(|entity| matches!(
+                entity,
+                ProductEntity::Conversation(conversation)
+                    if conversation.project_id.as_ref() == Some(&project.id)
+            )));
+        assert!(store
+            .product_events(&PageRequest {
+                after: None,
+                limit: 100,
+            })
+            .unwrap()
+            .items
+            .is_empty());
+        let result_count = store
+            .with_conn(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM product_command_results", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(db_err)
+            })
+            .unwrap();
+        assert_eq!(result_count, 0);
+    }
+
+    fn project_reorder_fixture(store: &SqliteProductStore) -> Vec<Project> {
+        ["a", "b", "c"]
+            .into_iter()
+            .enumerate()
+            .map(|(sort_order, suffix)| {
+                let mut project = Project::new(
+                    ProjectId::new(format!("project-order-{suffix}")).unwrap(),
+                    suffix.to_uppercase(),
+                )
+                .unwrap();
+                project.sort_order = sort_order as i64;
+                store
+                    .create_entity(ProductEntity::Project(project.clone()))
+                    .unwrap();
+                project
+            })
+            .collect()
+    }
+
+    fn project_reorder_entries(projects: &[Project]) -> Vec<ProductProjectReorderEntry> {
+        projects
+            .iter()
+            .rev()
+            .map(|project| ProductProjectReorderEntry {
+                project_id: project.id.clone(),
+                expected_revision: ExpectedRevision::new(project.revision.get()).unwrap(),
+            })
+            .collect()
+    }
+
+    fn project_reorder_meta(command: &str, key: &str) -> ProductCommandMeta {
+        ProductCommandMeta::create(command, IdempotencyKey::new(key).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn project_reorder_is_one_sqlite_transaction_and_exactly_idempotent() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let projects = project_reorder_fixture(&store);
+        let entries = project_reorder_entries(&projects);
+        let meta = project_reorder_meta("reorder-projects", "reorder-projects-key");
+
+        let first = store.reorder_projects_command(&meta, &entries).unwrap();
+        assert!(!first.duplicate);
+        assert_eq!(
+            first
+                .value
+                .projects
+                .iter()
+                .map(|project| project.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["project-order-c", "project-order-b", "project-order-a"]
+        );
+        assert!(first
+            .value
+            .projects
+            .iter()
+            .enumerate()
+            .all(|(index, project)| project.sort_order == index as i64
+                && project.revision.get() == 2));
+        assert_eq!(
+            store
+                .list_projects()
+                .unwrap()
+                .into_iter()
+                .map(|project| project.id.as_str().to_owned())
+                .collect::<Vec<_>>(),
+            vec![
+                "project-order-c".to_owned(),
+                "project-order-b".to_owned(),
+                "project-order-a".to_owned(),
+            ]
+        );
+        let event_count = store
+            .product_events(&PageRequest {
+                after: None,
+                limit: 100,
+            })
+            .unwrap()
+            .items
+            .len();
+        assert_eq!(event_count, 3);
+
+        let duplicate = store.reorder_projects_command(&meta, &entries).unwrap();
+        assert!(duplicate.duplicate);
+        assert_eq!(duplicate.value, first.value);
+        assert_eq!(
+            store
+                .product_events(&PageRequest {
+                    after: None,
+                    limit: 100,
+                })
+                .unwrap()
+                .items
+                .len(),
+            event_count
+        );
+        let conflict = project_reorder_meta("other-command", "reorder-projects-key");
+        assert!(matches!(
+            store.reorder_projects_command(&conflict, &entries),
+            Err(ProductError::Conflict {
+                conflict: ConflictKind::DuplicateIdempotency,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn project_reorder_rolls_back_earlier_projects_when_a_later_write_fails() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let projects = project_reorder_fixture(&store);
+        store
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    r#"CREATE TRIGGER fail_project_reorder
+                       BEFORE UPDATE ON projects
+                       WHEN OLD.id = 'project-order-b'
+                       BEGIN
+                         SELECT RAISE(ABORT, 'injected project reorder failure');
+                       END;"#,
+                )
+                .map_err(db_err)
+            })
+            .unwrap();
+        let entries = project_reorder_entries(&projects);
+        let meta = project_reorder_meta("reorder-rollback", "reorder-rollback-key");
+
+        assert!(store.reorder_projects_command(&meta, &entries).is_err());
+        assert!(store
+            .list_projects()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .all(|(index, project)| project.sort_order == index as i64
+                && project.revision == ProductRevision::INITIAL));
+        assert!(store
+            .product_events(&PageRequest {
+                after: None,
+                limit: 100,
+            })
+            .unwrap()
+            .items
+            .is_empty());
+        let result_count = store
+            .with_conn(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM product_command_results", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(db_err)
+            })
+            .unwrap();
+        assert_eq!(result_count, 0);
+    }
+
+    fn task_reorder_fixture(store: &SqliteProductStore) -> Vec<ProductTask> {
+        let project = Project::new(ProjectId::new("task-order-project").unwrap(), "Tasks").unwrap();
+        store
+            .create_entity(ProductEntity::Project(project.clone()))
+            .unwrap();
+        ["a", "b", "c"]
+            .into_iter()
+            .enumerate()
+            .map(|(sort_order, suffix)| {
+                let mut task = ProductTask::new(
+                    TaskId::new(format!("task-order-{suffix}")).unwrap(),
+                    Some(project.id.clone()),
+                    suffix.to_uppercase(),
+                )
+                .unwrap();
+                task.sort_order = sort_order as i64;
+                store
+                    .create_entity(ProductEntity::Task(task.clone()))
+                    .unwrap();
+                task
+            })
+            .collect()
+    }
+
+    fn task_reorder_entries(tasks: &[ProductTask]) -> Vec<ProductTaskReorderEntry> {
+        tasks
+            .iter()
+            .rev()
+            .map(|task| ProductTaskReorderEntry {
+                task_id: task.id.clone(),
+                expected_revision: ExpectedRevision::new(task.revision.get()).unwrap(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn task_reorder_is_one_sqlite_transaction_and_exactly_idempotent() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let tasks = task_reorder_fixture(&store);
+        let entries = task_reorder_entries(&tasks);
+        let meta = project_reorder_meta("reorder-tasks", "reorder-tasks-key");
+
+        let first = store.reorder_tasks_command(&meta, &entries).unwrap();
+        assert!(!first.duplicate);
+        assert_eq!(
+            first
+                .value
+                .tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["task-order-c", "task-order-b", "task-order-a"]
+        );
+        assert!(first
+            .value
+            .tasks
+            .iter()
+            .enumerate()
+            .all(|(index, task)| task.sort_order == index as i64 && task.revision.get() == 2));
+        assert_eq!(
+            store
+                .list_tasks()
+                .unwrap()
+                .into_iter()
+                .map(|task| task.id.as_str().to_owned())
+                .collect::<Vec<_>>(),
+            vec![
+                "task-order-c".to_owned(),
+                "task-order-b".to_owned(),
+                "task-order-a".to_owned(),
+            ]
+        );
+        let event_count = store
+            .product_events(&PageRequest {
+                after: None,
+                limit: 100,
+            })
+            .unwrap()
+            .items
+            .len();
+        assert_eq!(event_count, 3);
+
+        let duplicate = store.reorder_tasks_command(&meta, &entries).unwrap();
+        assert!(duplicate.duplicate);
+        assert_eq!(duplicate.value, first.value);
+        assert_eq!(
+            store
+                .product_events(&PageRequest {
+                    after: None,
+                    limit: 100,
+                })
+                .unwrap()
+                .items
+                .len(),
+            event_count
+        );
+        let conflict = project_reorder_meta("other-task-command", "reorder-tasks-key");
+        assert!(matches!(
+            store.reorder_tasks_command(&conflict, &entries),
+            Err(ProductError::Conflict {
+                conflict: ConflictKind::DuplicateIdempotency,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn task_reorder_rolls_back_earlier_tasks_when_a_later_write_fails() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let tasks = task_reorder_fixture(&store);
+        store
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    r#"CREATE TRIGGER fail_task_reorder
+                       BEFORE UPDATE ON tasks
+                       WHEN OLD.id = 'task-order-b'
+                       BEGIN
+                         SELECT RAISE(ABORT, 'injected task reorder failure');
+                       END;"#,
+                )
+                .map_err(db_err)
+            })
+            .unwrap();
+        let entries = task_reorder_entries(&tasks);
+        let meta = project_reorder_meta("task-reorder-rollback", "task-reorder-rollback-key");
+
+        assert!(store.reorder_tasks_command(&meta, &entries).is_err());
+        assert!(store
+            .list_tasks()
+            .unwrap()
+            .iter()
+            .enumerate()
+            .all(|(index, task)| task.sort_order == index as i64
+                && task.revision == ProductRevision::INITIAL));
+        assert!(store
+            .product_events(&PageRequest {
+                after: None,
+                limit: 100,
+            })
+            .unwrap()
+            .items
+            .is_empty());
+        let result_count = store
+            .with_conn(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM product_command_results", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(db_err)
+            })
+            .unwrap();
+        assert_eq!(result_count, 0);
+    }
+
+    fn task_move_fixture(
+        store: &SqliteProductStore,
+    ) -> (Project, Project, ProductTask, Vec<ConversationId>) {
+        let source = Project::new(ProjectId::new("task-move-source").unwrap(), "Source").unwrap();
+        let target = Project::new(ProjectId::new("task-move-target").unwrap(), "Target").unwrap();
+        store
+            .create_entity(ProductEntity::Project(source.clone()))
+            .unwrap();
+        store
+            .create_entity(ProductEntity::Project(target.clone()))
+            .unwrap();
+        let task = ProductTask::new(
+            TaskId::new("task-move-item").unwrap(),
+            Some(source.id.clone()),
+            "Move",
+        )
+        .unwrap();
+        store
+            .create_entity(ProductEntity::Task(task.clone()))
+            .unwrap();
+        let mut child = ProductTask::new(
+            TaskId::new("task-move-child").unwrap(),
+            Some(source.id.clone()),
+            "Child",
+        )
+        .unwrap();
+        child.parent_id = Some(task.id.clone());
+        store
+            .create_entity(ProductEntity::Task(child.clone()))
+            .unwrap();
+        let mut target_task = ProductTask::new(
+            TaskId::new("task-move-target-existing").unwrap(),
+            Some(target.id.clone()),
+            "Existing",
+        )
+        .unwrap();
+        target_task.sort_order = 4;
+        store
+            .create_entity(ProductEntity::Task(target_task))
+            .unwrap();
+        let conversation_ids = [
+            ("task-move-conversation-a", task.id.clone()),
+            ("task-move-conversation-b", task.id.clone()),
+            ("task-move-conversation-child", child.id.clone()),
+        ]
+        .into_iter()
+        .map(|(id, conversation_task_id)| {
+            let id = ConversationId::new(id).unwrap();
+            let conversation = ProductConversation::new(
+                id.clone(),
+                Some(source.id.clone()),
+                Some(conversation_task_id),
+                id.as_str(),
+            )
+            .unwrap();
+            store
+                .create_entity(ProductEntity::Conversation(conversation))
+                .unwrap();
+            id
+        })
+        .collect();
+        (source, target, task, conversation_ids)
+    }
+
+    fn task_move_meta(task: &ProductTask, command: &str, key: &str) -> ProductCommandMeta {
+        ProductCommandMeta::update(
+            command,
+            IdempotencyKey::new(key).unwrap(),
+            ExpectedRevision::new(task.revision.get()).unwrap(),
+        )
+        .unwrap()
+    }
+
+    fn task_move_input(task: &ProductTask, target: &Project) -> ProductTaskMoveInput {
+        ProductTaskMoveInput {
+            task_id: task.id.clone(),
+            target_project_id: Some(target.id.clone()),
+            target_parent_id: None,
+            expected_revision: ExpectedRevision::new(task.revision.get()).unwrap(),
+            moved_at: 99,
+        }
+    }
+
+    #[test]
+    fn task_move_is_one_sqlite_transaction_and_exactly_idempotent() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let (_source, target, task, conversation_ids) = task_move_fixture(&store);
+        let input = task_move_input(&task, &target);
+        let meta = task_move_meta(&task, "move-task", "move-task-key");
+
+        let first = store.move_task_command(&meta, &input).unwrap();
+        assert!(!first.duplicate);
+        assert_eq!(first.value.task.project_id, Some(target.id.clone()));
+        assert_eq!(first.value.task.sort_order, 5);
+        assert_eq!(first.value.task.revision.get(), 2);
+        assert_eq!(
+            first.value.moved_task_ids,
+            vec![task.id.clone(), TaskId::new("task-move-child").unwrap()]
+        );
+        assert_eq!(first.value.moved_conversation_ids, conversation_ids);
+        let child = store
+            .get_task(&TaskId::new("task-move-child").unwrap())
+            .unwrap();
+        assert_eq!(child.project_id, Some(target.id.clone()));
+        assert_eq!(child.parent_id, Some(task.id.clone()));
+        let conversations = store
+            .list_entities(ProductEntityKind::Conversation)
+            .unwrap();
+        assert!(conversations.iter().all(|entity| matches!(
+            entity,
+            ProductEntity::Conversation(conversation)
+                if conversation.project_id.as_ref() == Some(&target.id)
+                    && conversation.revision.get() == 2
+        )));
+        let event_count = store
+            .product_events(&PageRequest {
+                after: None,
+                limit: 100,
+            })
+            .unwrap()
+            .items
+            .len();
+        assert_eq!(event_count, 5);
+
+        let duplicate = store.move_task_command(&meta, &input).unwrap();
+        assert!(duplicate.duplicate);
+        assert_eq!(duplicate.value, first.value);
+        assert_eq!(
+            store
+                .product_events(&PageRequest {
+                    after: None,
+                    limit: 100,
+                })
+                .unwrap()
+                .items
+                .len(),
+            event_count
+        );
+        let conflict = task_move_meta(&task, "other-move-task", "move-task-key");
+        assert!(matches!(
+            store.move_task_command(&conflict, &input),
+            Err(ProductError::Conflict {
+                conflict: ConflictKind::DuplicateIdempotency,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn task_move_rolls_back_conversations_when_the_task_write_fails() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let (source, target, task, _) = task_move_fixture(&store);
+        store
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    r#"CREATE TRIGGER fail_task_move
+                       BEFORE UPDATE ON tasks
+                       WHEN OLD.id = 'task-move-item'
+                       BEGIN
+                         SELECT RAISE(ABORT, 'injected task move failure');
+                       END;"#,
+                )
+                .map_err(db_err)
+            })
+            .unwrap();
+        let input = task_move_input(&task, &target);
+        let meta = task_move_meta(&task, "move-task-rollback", "move-task-rollback-key");
+
+        assert!(store.move_task_command(&meta, &input).is_err());
+        assert_eq!(
+            store.get_task(&task.id).unwrap().project_id,
+            Some(source.id.clone())
+        );
+        assert_eq!(
+            store
+                .get_task(&TaskId::new("task-move-child").unwrap())
+                .unwrap()
+                .project_id,
+            Some(source.id.clone())
+        );
+        assert!(store
+            .list_entities(ProductEntityKind::Conversation)
+            .unwrap()
+            .iter()
+            .all(|entity| matches!(
+                entity,
+                ProductEntity::Conversation(conversation)
+                    if conversation.project_id.as_ref() == Some(&source.id)
+                        && conversation.revision == ProductRevision::INITIAL
+            )));
+        assert!(store
+            .product_events(&PageRequest {
+                after: None,
+                limit: 100,
+            })
+            .unwrap()
+            .items
+            .is_empty());
+        let result_count = store
+            .with_conn(|conn| {
+                conn.query_row("SELECT COUNT(*) FROM product_command_results", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .map_err(db_err)
+            })
+            .unwrap();
+        assert_eq!(result_count, 0);
+    }
 
     #[test]
     fn clear_bindings_for_task_removes_only_that_task() {
@@ -1559,6 +3386,58 @@ mod tests {
             .unwrap();
         assert_eq!(store.clear_bindings_for_task(&task_a.id).unwrap(), 1);
         assert!(store.list_bindings_for_task(&task_a.id).unwrap().is_empty());
+        assert_eq!(store.list_bindings_for_task(&task_b.id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn replace_binding_for_task_is_atomic_and_keeps_other_tasks() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let project = Project::new(ProjectId::new("p-replace-bind").unwrap(), "Demo").unwrap();
+        store.upsert_project(&project).unwrap();
+        let task_a = ProductTask::new(
+            TaskId::new("replace-a").unwrap(),
+            Some(project.id.clone()),
+            "A",
+        )
+        .unwrap();
+        let task_b = ProductTask::new(
+            TaskId::new("replace-b").unwrap(),
+            Some(project.id.clone()),
+            "B",
+        )
+        .unwrap();
+        store.upsert_task(&task_a).unwrap();
+        store.upsert_task(&task_b).unwrap();
+        for (task, binding, session) in [
+            (&task_a, "binding-parent", "session-parent"),
+            (&task_b, "binding-other", "session-other"),
+        ] {
+            store
+                .upsert_binding(&AgentSessionBinding {
+                    binding_id: BindingId::new(binding).unwrap(),
+                    task_id: task.id.clone(),
+                    conversation_id: None,
+                    agent_session: AgentSessionRef::new(session).unwrap(),
+                    profile_id: Some("native-coding".into()),
+                    revision: ProductRevision::INITIAL,
+                })
+                .unwrap();
+        }
+        let forked = AgentSessionBinding {
+            binding_id: BindingId::new("binding-forked").unwrap(),
+            task_id: task_a.id.clone(),
+            conversation_id: None,
+            agent_session: AgentSessionRef::new("session-forked").unwrap(),
+            profile_id: Some("native-coding".into()),
+            revision: ProductRevision::INITIAL,
+        };
+        <SqliteProductStore as ProductRepository>::replace_binding_for_task(&store, forked.clone())
+            .unwrap();
+
+        assert_eq!(
+            store.list_bindings_for_task(&task_a.id).unwrap(),
+            vec![forked]
+        );
         assert_eq!(store.list_bindings_for_task(&task_b.id).unwrap().len(), 1);
     }
 

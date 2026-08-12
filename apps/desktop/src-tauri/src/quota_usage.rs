@@ -1,21 +1,30 @@
+#[cfg(test)]
 use std::collections::BTreeMap;
 
-use rusqlite::{params, Connection, OptionalExtension, Row, ToSql};
-use serde::{Deserialize, Serialize};
+use rusqlite::{params, Connection};
+#[cfg(test)]
+use rusqlite::{OptionalExtension, Row, ToSql};
+use serde::Deserialize;
+#[cfg(test)]
+use serde::Serialize;
 use serde_json::Value as JsonValue;
 use tauri::State;
 
+#[cfg(test)]
 use crate::agent_interaction_contract;
 use crate::agent_timeline::AgentTimelineEvent;
+#[cfg(test)]
 use crate::agent_timeline_contract;
 use crate::chat::state::try_normalize_backend;
+#[cfg(test)]
 use crate::quota_usage_contract::{
     default_usage_stats_days, usage_stats_backend_filters, usage_stats_days,
 };
-use crate::store::LiliaStore;
-use crate::util::now_millis;
+use lilia_desktop_application::DesktopApplication;
 
+#[cfg(test)]
 const DAY_MS: i64 = 86_400_000;
+#[cfg(test)]
 const RECENT_LIMIT: i64 = 20;
 
 #[derive(Debug, Clone)]
@@ -43,6 +52,7 @@ pub struct QuotaUsageStatsInput {
     pub backend: Option<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageTokenTotals {
@@ -53,6 +63,7 @@ pub struct QuotaUsageTokenTotals {
     pub total_tokens: i64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageCostCoverage {
@@ -61,6 +72,7 @@ pub struct QuotaUsageCostCoverage {
     pub total_record_count: i64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageDailyBucket {
@@ -75,6 +87,7 @@ pub struct QuotaUsageDailyBucket {
     pub record_count: i64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageBackendSummary {
@@ -89,6 +102,7 @@ pub struct QuotaUsageBackendSummary {
     pub record_count: i64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageRecentRecord {
@@ -106,6 +120,7 @@ pub struct QuotaUsageRecentRecord {
     pub created_at: i64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageProjectSummary {
@@ -122,6 +137,7 @@ pub struct QuotaUsageProjectSummary {
     pub record_count: i64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageConversationSummary {
@@ -140,6 +156,7 @@ pub struct QuotaUsageConversationSummary {
     pub record_count: i64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageToolSummary {
@@ -152,6 +169,7 @@ pub struct QuotaUsageToolSummary {
     pub share_percent: f64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct QuotaUsageStats {
@@ -169,6 +187,7 @@ pub struct QuotaUsageStats {
     pub tools: Vec<QuotaUsageToolSummary>,
 }
 
+#[cfg(test)]
 #[derive(Default)]
 struct AggregatedUsage {
     totals: QuotaUsageTokenTotals,
@@ -177,6 +196,7 @@ struct AggregatedUsage {
     record_count: i64,
 }
 
+#[cfg(test)]
 impl AggregatedUsage {
     fn add_record(&mut self, record: &UsageRecord) {
         self.totals.input_tokens += record.input_tokens;
@@ -200,6 +220,7 @@ impl AggregatedUsage {
     }
 }
 
+#[cfg(test)]
 fn usage_daily_bucket(day_start: i64, bucket: AggregatedUsage) -> QuotaUsageDailyBucket {
     let totals = bucket.token_totals();
     QuotaUsageDailyBucket {
@@ -215,6 +236,7 @@ fn usage_daily_bucket(day_start: i64, bucket: AggregatedUsage) -> QuotaUsageDail
     }
 }
 
+#[cfg(test)]
 fn usage_backend_summary(backend: String, summary: AggregatedUsage) -> QuotaUsageBackendSummary {
     let totals = summary.token_totals();
     QuotaUsageBackendSummary {
@@ -230,6 +252,7 @@ fn usage_backend_summary(backend: String, summary: AggregatedUsage) -> QuotaUsag
     }
 }
 
+#[cfg(test)]
 fn usage_project_summary(
     project_id: Option<String>,
     project_name: String,
@@ -252,6 +275,7 @@ fn usage_project_summary(
     }
 }
 
+#[cfg(test)]
 fn usage_conversation_summary(
     task_id: String,
     task_title: String,
@@ -458,6 +482,7 @@ fn normalize_backend(value: &str) -> Option<String> {
     try_normalize_backend(value).map(str::to_string)
 }
 
+#[cfg(test)]
 fn normalize_days(value: Option<i64>) -> i64 {
     if let Some(days) = value {
         if usage_stats_days().contains(&days) {
@@ -467,6 +492,7 @@ fn normalize_days(value: Option<i64>) -> i64 {
     default_usage_stats_days()
 }
 
+#[cfg(test)]
 fn normalize_backend_filter(value: Option<String>) -> String {
     let value = value.as_deref().map(str::trim).unwrap_or_default();
     let backend_filters = usage_stats_backend_filters();
@@ -482,10 +508,12 @@ fn normalize_backend_filter(value: Option<String>) -> String {
     }
 }
 
+#[cfg(test)]
 fn day_start(timestamp: i64) -> i64 {
     timestamp.div_euclid(DAY_MS) * DAY_MS
 }
 
+#[cfg(test)]
 fn load_usage_records(
     conn: &Connection,
     range_start: i64,
@@ -524,6 +552,7 @@ fn load_usage_records(
     Ok(out)
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 struct TaskUsageContext {
     task_title: String,
@@ -533,6 +562,7 @@ struct TaskUsageContext {
     project_cwd: Option<String>,
 }
 
+#[cfg(test)]
 fn load_task_contexts(
     conn: &Connection,
     records: &[UsageRecord],
@@ -598,6 +628,7 @@ fn load_task_contexts(
     Ok(contexts)
 }
 
+#[cfg(test)]
 fn load_project_summaries(
     records: &[UsageRecord],
     contexts: &BTreeMap<String, TaskUsageContext>,
@@ -655,6 +686,7 @@ fn load_project_summaries(
     out
 }
 
+#[cfg(test)]
 fn load_conversation_summaries(
     records: &[UsageRecord],
     contexts: &BTreeMap<String, TaskUsageContext>,
@@ -711,6 +743,7 @@ fn load_conversation_summaries(
     out
 }
 
+#[cfg(test)]
 fn load_tool_summaries(
     conn: &Connection,
     range_start: i64,
@@ -805,6 +838,7 @@ fn load_tool_summaries(
     Ok(out)
 }
 
+#[cfg(test)]
 fn quota_tool_label(kind: &str, subkind: Option<&str>, tool_name: Option<&str>) -> String {
     if let Some(tool) = tool_name.filter(|value| !value.trim().is_empty()) {
         return tool.to_string();
@@ -837,6 +871,7 @@ fn quota_tool_label(kind: &str, subkind: Option<&str>, tool_name: Option<&str>) 
     }
 }
 
+#[cfg(test)]
 fn row_to_usage_record(row: &Row<'_>) -> Result<UsageRecord, String> {
     Ok(UsageRecord {
         event_id: row
@@ -884,6 +919,7 @@ fn row_to_usage_record(row: &Row<'_>) -> Result<UsageRecord, String> {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn stats(
     conn: &Connection,
     input: QuotaUsageStatsInput,
@@ -971,17 +1007,18 @@ pub(crate) fn stats(
 #[tauri::command]
 pub fn quota_usage_get_stats(
     input: Option<QuotaUsageStatsInput>,
-    store: State<'_, LiliaStore>,
-) -> Result<QuotaUsageStats, String> {
-    let conn = store.conn()?;
-    stats(
-        &conn,
-        input.unwrap_or(QuotaUsageStatsInput {
-            days: None,
-            backend: None,
-        }),
-        now_millis(),
-    )
+    application: State<'_, DesktopApplication>,
+) -> Result<lilia_desktop_application::QuotaUsageStats, String> {
+    let input = input.unwrap_or(QuotaUsageStatsInput {
+        days: None,
+        backend: None,
+    });
+    application
+        .quota_usage_stats(lilia_desktop_application::QuotaUsageStatsInput {
+            days: input.days,
+            backend: input.backend,
+        })
+        .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

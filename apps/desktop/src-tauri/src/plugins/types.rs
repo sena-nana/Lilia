@@ -10,19 +10,28 @@ pub struct PluginSkill {
     pub name: String,
     pub description: String,
     pub enabled: bool,
+    pub editable: bool,
     pub path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PluginPackage {
+    pub id: String,
     pub backend: String,
     pub scope: String,
     pub name: String,
     pub description: String,
     pub version: String,
     pub enabled: bool,
+    pub editable: bool,
+    pub runtime_available: bool,
     pub path: String,
+    pub package_sha256: String,
+    pub skill_count: usize,
+    pub hook_count: usize,
+    pub mcp_server_count: usize,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +70,8 @@ pub struct PluginsOverview {
     pub packages: Vec<PluginPackage>,
     pub mcp_servers: Vec<PluginMcpServer>,
     pub config_paths: BTreeMap<String, Option<String>>,
+    pub plugins_registry_revision: u64,
+    pub plugins_registry_path: Option<String>,
     pub warnings: Vec<String>,
 }
 
@@ -82,10 +93,13 @@ pub struct HookSourceSummary {
     pub format: String,
     pub name: String,
     pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_cwd: Option<String>,
     pub exists: bool,
     pub editable: bool,
     pub managed: bool,
     pub enabled: bool,
+    pub revision: u64,
     pub handler_count: usize,
     pub warnings: Vec<String>,
     pub limitations: Vec<String>,
@@ -164,7 +178,7 @@ pub struct HookHandlerUpdateInput {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct HookDocumentUpdateInput {
+    pub expected_revision: u64,
     #[serde(default)]
     pub handlers: Vec<HookHandlerUpdateInput>,
 }
-

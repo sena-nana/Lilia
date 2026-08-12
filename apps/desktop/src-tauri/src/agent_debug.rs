@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value as JsonValue};
 use tauri::{AppHandle, Manager, State};
 
+use lilia_desktop_application::DesktopApplication;
+
 const MAX_LOGS: usize = 500;
 
 static AGENT_DEBUG_STATE: OnceLock<Mutex<AgentDebugBuffer>> = OnceLock::new();
@@ -137,6 +139,35 @@ pub(crate) fn agent_debug_runtime_snapshot(
         "runningTaskCount": running_task_count,
         "queuedTaskCount": queued_task_count,
     }))
+}
+
+#[tauri::command]
+pub(crate) fn agent_debug_equivalence_snapshot(
+    fixture_id: String,
+    application: State<'_, DesktopApplication>,
+) -> Result<JsonValue, String> {
+    if !agent_debug_enabled() {
+        return Err(disabled_reason().unwrap_or_else(|| "agent debug disabled".to_string()));
+    }
+    let configured = std::env::var("LILIA_EQUIVALENCE_FIXTURE_ID")
+        .map_err(|_| "LILIA_EQUIVALENCE_FIXTURE_ID is required".to_owned())?;
+    if configured != fixture_id {
+        return Err(
+            "requested equivalence fixture does not match the configured fixture".to_owned(),
+        );
+    }
+    #[cfg(debug_assertions)]
+    {
+        let snapshot = application
+            .debug_equivalence_snapshot(&fixture_id)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(snapshot).map_err(|error| error.to_string())
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = application;
+        Err("agent debug is disabled in release builds".to_owned())
+    }
 }
 
 #[cfg(test)]
