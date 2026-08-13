@@ -105,7 +105,7 @@ impl NativeDataImportState {
     pub fn has_credentials(&self) -> bool {
         self.plan
             .as_ref()
-            .is_some_and(|plan| !plan.credential_keys.is_empty())
+            .is_some_and(|plan| !plan.credential_entries.is_empty())
     }
 
     fn begin_operation(&mut self) -> u64 {
@@ -183,7 +183,8 @@ pub fn report_item_status_label(status: &DesktopImportReportItemStatus) -> Strin
 mod tests {
     use super::*;
     use lilia_desktop_application::{
-        DesktopImportPlanItem, DesktopImportReportItem, DesktopImportReportStatus,
+        DesktopCredentialImportEntry, DesktopImportPlanItem, DesktopImportReportItem,
+        DesktopImportReportStatus, DesktopLegacyConfigurationImport,
     };
 
     fn plan(status: DesktopImportPlanStatus, credentials: &[&str]) -> DesktopImportPlan {
@@ -193,10 +194,15 @@ mod tests {
             source_instance_identity: LEGACY_INSTANCE_IDENTITY.to_owned(),
             target_home: PathBuf::from("target"),
             target_instance_identity: "native-preview".to_owned(),
-            credential_keys: credentials
+            credential_entries: credentials
                 .iter()
-                .map(|value| (*value).to_owned())
+                .map(|value| DesktopCredentialImportEntry {
+                    source_service: LEGACY_INSTANCE_IDENTITY.to_owned(),
+                    source_account: (*value).to_owned(),
+                    target_key: (*value).to_owned(),
+                })
                 .collect(),
+            legacy_configuration: DesktopLegacyConfigurationImport::default(),
             status,
             items: vec![DesktopImportPlanItem {
                 kind: DesktopImportItemKind::Credentials,

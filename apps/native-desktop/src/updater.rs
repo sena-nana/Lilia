@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -62,6 +63,14 @@ pub fn execute(
     context: &DesktopHostContext,
     action: DesktopUpdateAction,
 ) -> Result<DesktopHostResult, DesktopHostError> {
+    execute_with_progress(context, action, &mut |_| {})
+}
+
+pub fn execute_with_progress(
+    context: &DesktopHostContext,
+    action: DesktopUpdateAction,
+    on_download_progress: &mut dyn FnMut(Option<f32>),
+) -> Result<DesktopHostResult, DesktopHostError> {
     match action {
         DesktopUpdateAction::Check { channel } => {
             let config = NativeUpdaterConfig::embedded(&channel)?;
@@ -99,7 +108,7 @@ pub fn execute(
                     true,
                 ));
             }
-            let package = download_package(&release.download_url)?;
+            let package = download_package(&release.download_url, on_download_progress)?;
             verify_package(&package, &release.signature, &config.public_key)?;
             let installer = stage_installer(context, &release.version, &package)?;
             launch_installer(&installer)?;
@@ -229,7 +238,10 @@ fn select_release(
     })
 }
 
-fn download_package(url: &Url) -> Result<Vec<u8>, DesktopHostError> {
+fn download_package(
+    url: &Url,
+    on_download_progress: &mut dyn FnMut(Option<f32>),
+) -> Result<Vec<u8>, DesktopHostError> {
     let response = client()?
         .get(url.clone())
         .header(ACCEPT, "application/octet-stream")
@@ -242,7 +254,7 @@ fn download_package(url: &Url) -> Result<Vec<u8>, DesktopHostError> {
             )
         })?;
     let response = successful_response(response, "下载更新")?;
-    read_bounded(response, MAX_PACKAGE_BYTES, "更新包")
+    read_bounded_with_progress(response, MAX_PACKAGE_BYTES, "更新包", on_download_progress)
 }
 
 fn client() -> Result<Client, DesktopHostError> {
@@ -285,41 +297,58 @@ fn successful_response(response: Response, operation: &str) -> Result<Response, 
 }
 
 fn read_bounded(
-    mut response: Response,
+    response: Response,
     maximum: u64,
     label: &str,
 ) -> Result<Vec<u8>, DesktopHostError> {
-    if response
+    read_bounded_with_progress(response, maximum, label, &mut |_| {})
+}
+
+fn read_bounded_with_progress(
+    mut response: Response,
+    maximum: u64,
+    label: &str,
+    on_progress: &mut dyn FnMut(Option<f32>),
+) -> Result<Vec<u8>, DesktopHostError> {
+    let content_length = response
         .headers()
         .get(CONTENT_LENGTH)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok())
-        .is_some_and(|length| length > maximum)
-    {
+        .and_then(|value| value.parse::<u64>().ok());
+    if content_length.is_some_and(|length| length > maximum) {
         return Err(update_error(
             "native_updater_payload_too_large",
             format!("{label}超过允许大小。"),
             false,
         ));
     }
+    on_progress(content_length.filter(|length| *length > 0).map(|_| 0.0));
     let mut bytes = Vec::new();
-    (&mut response)
-        .take(maximum + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| {
+    let mut chunk = [0_u8; 64 * 1024];
+    loop {
+        let read = response.read(&mut chunk).map_err(|error| {
             update_error(
                 "native_updater_payload_read_failed",
                 format!("读取{label}失败：{error}"),
                 true,
             )
         })?;
-    if bytes.len() as u64 > maximum {
-        return Err(update_error(
-            "native_updater_payload_too_large",
-            format!("{label}超过允许大小。"),
-            false,
-        ));
+        if read == 0 {
+            break;
+        }
+        if bytes.len().saturating_add(read) as u64 > maximum {
+            return Err(update_error(
+                "native_updater_payload_too_large",
+                format!("{label}超过允许大小。"),
+                false,
+            ));
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+        if let Some(length) = content_length.filter(|length| *length > 0) {
+            on_progress(Some((bytes.len() as f32 / length as f32).clamp(0.0, 1.0)));
+        }
     }
+    on_progress(Some(1.0));
     Ok(bytes)
 }
 

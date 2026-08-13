@@ -315,42 +315,55 @@ fn forward_to_primary(
     lock_error: std::io::Error,
 ) -> Result<DesktopCliResult, String> {
     let deadline = Instant::now() + DESCRIPTOR_WAIT;
-    let descriptor = loop {
+    let mut endpoint_error = None;
+    loop {
         if let Ok(bytes) = fs::read(descriptor_path) {
             if let Ok(descriptor) = serde_json::from_slice::<InstanceDescriptor>(&bytes) {
                 if descriptor.protocol == PROTOCOL
                     && descriptor.version == PROTOCOL_VERSION
                     && descriptor.instance_identity == instance_identity
                 {
-                    break descriptor;
+                    match TcpStream::connect(&descriptor.address) {
+                        Ok(mut stream) => {
+                            stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(|error| {
+                                format!("failed to configure Native IPC read timeout: {error}")
+                            })?;
+                            stream
+                                .set_write_timeout(Some(IO_TIMEOUT))
+                                .map_err(|error| {
+                                    format!("failed to configure Native IPC write timeout: {error}")
+                                })?;
+                            write_json_line(
+                                &mut stream,
+                                &IpcRequest {
+                                    protocol: PROTOCOL.to_owned(),
+                                    version: PROTOCOL_VERSION,
+                                    token: descriptor.token,
+                                    request,
+                                },
+                            )?;
+                            return read_json_line(&mut stream);
+                        }
+                        Err(error) => {
+                            endpoint_error = Some(format!(
+                                "failed to connect to {}: {error}",
+                                descriptor.address
+                            ));
+                        }
+                    }
                 }
             }
         }
         if Instant::now() >= deadline {
+            let detail = endpoint_error
+                .map(|error| format!("; last endpoint error: {error}"))
+                .unwrap_or_default();
             return Err(format!(
-                "another Native Preview instance holds the lock, but its IPC endpoint is unavailable: {lock_error}"
+                "another Native Preview instance holds the lock, but its IPC endpoint is unavailable: {lock_error}{detail}"
             ));
         }
         std::thread::sleep(Duration::from_millis(50));
-    };
-    let mut stream = TcpStream::connect(&descriptor.address)
-        .map_err(|error| format!("failed to connect to running Native Preview: {error}"))?;
-    stream
-        .set_read_timeout(Some(IO_TIMEOUT))
-        .map_err(|error| format!("failed to configure Native IPC read timeout: {error}"))?;
-    stream
-        .set_write_timeout(Some(IO_TIMEOUT))
-        .map_err(|error| format!("failed to configure Native IPC write timeout: {error}"))?;
-    write_json_line(
-        &mut stream,
-        &IpcRequest {
-            protocol: PROTOCOL.to_owned(),
-            version: PROTOCOL_VERSION,
-            token: descriptor.token,
-            request,
-        },
-    )?;
-    read_json_line(&mut stream)
+    }
 }
 
 fn write_descriptor(path: &Path, descriptor: &InstanceDescriptor) -> Result<(), String> {
@@ -415,6 +428,84 @@ mod tests {
     use super::*;
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn forwarding_reloads_a_replacement_primary_descriptor() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        let home = std::env::temp_dir().join(format!(
+            "lilia-native-single-instance-descriptor-replacement-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&home).unwrap();
+        let descriptor_path = home.join("instance.json");
+        let stale_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let stale_address = stale_listener.local_addr().unwrap().to_string();
+        drop(stale_listener);
+        write_descriptor(
+            &descriptor_path,
+            &InstanceDescriptor {
+                protocol: PROTOCOL.to_owned(),
+                version: PROTOCOL_VERSION,
+                instance_identity: "liliacode.native.replacement-test".to_owned(),
+                address: stale_address,
+                token: "stale-token".to_owned(),
+                process_id: 1,
+            },
+        )
+        .unwrap();
+
+        let request = DesktopCliRequest {
+            request_id: "replacement".to_owned(),
+            arguments: vec!["C:/work/replacement".to_owned()],
+            working_directory: None,
+        };
+        let forward_descriptor = descriptor_path.clone();
+        let forward = std::thread::spawn(move || {
+            forward_to_primary(
+                &forward_descriptor,
+                "liliacode.native.replacement-test",
+                request,
+                std::io::Error::new(std::io::ErrorKind::WouldBlock, "primary lock held"),
+            )
+        });
+
+        std::thread::sleep(Duration::from_millis(100));
+        let replacement = TcpListener::bind("127.0.0.1:0").unwrap();
+        write_descriptor(
+            &descriptor_path,
+            &InstanceDescriptor {
+                protocol: PROTOCOL.to_owned(),
+                version: PROTOCOL_VERSION,
+                instance_identity: "liliacode.native.replacement-test".to_owned(),
+                address: replacement.local_addr().unwrap().to_string(),
+                token: "replacement-token".to_owned(),
+                process_id: 2,
+            },
+        )
+        .unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = replacement.accept().unwrap();
+            let request = read_json_line::<IpcRequest>(&mut stream).unwrap();
+            assert_eq!(request.token, "replacement-token");
+            assert_eq!(request.request.request_id, "replacement");
+            write_json_line(
+                &mut stream,
+                &DesktopCliResult {
+                    accepted: true,
+                    exit_code: Some(0),
+                    message: Some("replacement primary".to_owned()),
+                },
+            )
+            .unwrap();
+        });
+
+        let result = forward.join().unwrap().unwrap();
+        server.join().unwrap();
+        assert!(result.accepted);
+        assert_eq!(result.message.as_deref(), Some("replacement primary"));
+        fs::remove_dir_all(home).unwrap();
+    }
 
     #[test]
     fn request_takes_over_when_the_primary_dies_before_ipc_is_available() {

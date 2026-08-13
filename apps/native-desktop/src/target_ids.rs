@@ -1,7 +1,24 @@
 pub const APP_ROOT: &str = "native-preview.app";
+pub const COMMAND_PALETTE_OPEN: &str = "native-preview.command-palette.open";
+pub const COMMAND_PALETTE_INPUT: &str = "native-preview.command-palette.input";
+const COMMAND_PALETTE_ACTION_PREFIX: &str = "native-preview.command-palette.action.";
+
+pub fn command_palette_action(action_id: &str) -> String {
+    format!("{COMMAND_PALETTE_ACTION_PREFIX}{action_id}")
+}
+
+pub fn parse_command_palette_action(target_id: &str) -> Option<&str> {
+    target_id.strip_prefix(COMMAND_PALETTE_ACTION_PREFIX)
+}
+
 pub const CONVERSATION_STATUS_OPEN: &str = "native-preview.conversation-status.open";
 pub const CONVERSATION_STATUS_WINDOW: &str = "native-preview.conversation-status.window";
 pub const CONVERSATION_STATUS_CLOSE: &str = "native-preview.conversation-status.close";
+pub const CONVERSATION_STATUS_PIN: &str = "native-preview.conversation-status.pin";
+pub const CONVERSATION_STATUS_OPACITY: &str = "native-preview.conversation-status.opacity";
+pub const CONVERSATION_STATUS_NEW_CHAT: &str = "native-preview.conversation-status.new-chat";
+pub const NEW_CONVERSATION: &str = "native-preview.new-conversation";
+pub const NEW_CONVERSATION_CLOSE: &str = "native-preview.new-conversation.close";
 pub const PROJECTS_LIST: &str = "native-preview.projects";
 pub const INBOX: &str = "native-preview.inbox";
 pub const PROJECTS_REFRESH: &str = "native-preview.projects.refresh";
@@ -66,14 +83,137 @@ pub const MEMORY_SETTINGS_COOLDOWN_SAVE: &str = "native-preview.memory.settings.
 pub const CODING_TOOLS_OPEN: &str = "native-preview.project.coding-tools";
 pub const CODING_TOOLS_REFRESH: &str = "native-preview.coding-tools.refresh";
 pub const CODING_TOOLS_QUERY: &str = "native-preview.coding-tools.query";
+pub const CODING_TOOLS_SEARCH_MODE: &str = "native-preview.coding-tools.search-mode";
+pub const CODING_TOOLS_SEARCH_SCOPE: &str = "native-preview.coding-tools.search-scope";
 pub const CODING_TOOLS_SEARCH: &str = "native-preview.coding-tools.search";
 pub const CODING_TOOLS_CLOSE: &str = "native-preview.coding-tools.close";
 pub const CODING_TOOLS_OPEN_WORKSPACE: &str = "native-preview.coding-tools.open-workspace";
+pub const CODING_TOOLS_OPEN_CODE_EDITOR: &str = "native-preview.coding-tools.open-code-editor";
 pub const CODING_TOOLS_OPEN_TERMINAL: &str = "native-preview.coding-tools.open-terminal";
+pub const CODING_TOOLS_NEW_TERMINAL: &str = "native-preview.coding-tools.new-terminal";
 pub const CODING_TOOLS_SAVE_MEMORY: &str = "native-preview.coding-tools.save-memory";
+pub const CODING_TOOLS_DIFF_SCOPE: &str = "native-preview.coding-tools.diff-scope";
+pub const CODING_TOOLS_SEARCH_HIT_PREFIX: &str = "native-preview.coding-tools.search-hit.";
+pub const CODING_TOOLS_TASK_PREFIX: &str = "native-preview.coding-tools.task.";
+pub const IAB_OPEN: &str = "native-preview.task-session.iab.open";
+pub const IAB_PANEL: &str = "native-preview.task-session.iab";
+pub const IAB_URL: &str = "native-preview.task-session.iab.url";
+pub const IAB_NAVIGATE: &str = "native-preview.task-session.iab.navigate";
+pub const IAB_OPEN_WINDOW: &str = "native-preview.task-session.iab.open-window";
+pub const IAB_CLOSE: &str = "native-preview.task-session.iab.close";
+
+pub fn iab_window(window_id: u64) -> String {
+    format!("native-preview.iab-window.{window_id}")
+}
+
+pub fn iab_window_url(window_id: u64) -> String {
+    format!("{}.url", iab_window(window_id))
+}
+
+pub fn iab_window_navigate(window_id: u64) -> String {
+    format!("{}.navigate", iab_window(window_id))
+}
+
+pub fn iab_window_note(window_id: u64) -> String {
+    format!("{}.note", iab_window(window_id))
+}
+
+pub fn iab_window_submit(window_id: u64) -> String {
+    format!("{}.submit", iab_window(window_id))
+}
+
+pub fn iab_window_close(window_id: u64) -> String {
+    format!("{}.close", iab_window(window_id))
+}
+
+pub fn coding_project_task(task_id: &str) -> String {
+    let encoded_id = task_id
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("{CODING_TOOLS_TASK_PREFIX}{encoded_id}")
+}
+
+pub fn coding_search_hit(path: &str, line: Option<u32>, character: Option<u32>) -> String {
+    let encoded_path = path
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!(
+        "{CODING_TOOLS_SEARCH_HIT_PREFIX}{encoded_path}.{}.{}",
+        line.map_or_else(|| "none".to_owned(), |value| value.to_string()),
+        character.map_or_else(|| "none".to_owned(), |value| value.to_string())
+    )
+}
+
+pub fn coding_project_search_hit(
+    project_id: &str,
+    path: &str,
+    line: Option<u32>,
+    character: Option<u32>,
+) -> String {
+    coding_search_hit(&format!("{project_id}/{path}"), line, character)
+}
+
+pub fn document_editor_input(item_id: &str) -> String {
+    let encoded_item = item_id
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    format!("native-preview.document-editor.{encoded_item}")
+}
+
+pub fn document_editor_definition(item_id: &str) -> String {
+    format!("{}.definition", document_editor_input(item_id))
+}
+
+pub fn document_editor_definition_target(item_id: &str, index: usize) -> String {
+    format!("{}.definition.{index}", document_editor_input(item_id))
+}
+
+pub fn terminal_input(session_id: &str) -> String {
+    format!("native-preview.terminal.{session_id}.input")
+}
+
+pub fn terminal_submit(session_id: &str) -> String {
+    format!("native-preview.terminal.{session_id}.submit")
+}
+
+pub fn terminal_interrupt(session_id: &str) -> String {
+    format!("native-preview.terminal.{session_id}.interrupt")
+}
+
+pub fn terminal_eof(session_id: &str) -> String {
+    format!("native-preview.terminal.{session_id}.eof")
+}
+
+pub fn terminal_copy(session_id: &str) -> String {
+    format!("native-preview.terminal.{session_id}.copy")
+}
+
+pub fn terminal_resize(session_id: &str) -> String {
+    format!("native-preview.terminal.{session_id}.resize")
+}
+
+pub fn terminal_terminate(session_id: &str) -> String {
+    format!("native-preview.terminal.{session_id}.terminate")
+}
+
+pub fn terminal_new(session_id: &str) -> String {
+    format!("native-preview.terminal.{session_id}.new")
+}
+
+pub fn coding_terminal_session(session_id: &str) -> String {
+    format!("native-preview.coding-tools.terminal.{session_id}")
+}
 pub const ARCHITECTURE_OPEN: &str = "native-preview.project.architecture";
 pub const ARCHITECTURE_REFRESH: &str = "native-preview.architecture.refresh";
 pub const ARCHITECTURE_ROLLBACK: &str = "native-preview.architecture.rollback";
+pub const PROJECT_FILES_OPEN: &str = "native-preview.project.files";
+pub const PROJECT_FILES_REFRESH: &str = "native-preview.project-files.refresh";
 pub const AUTOMATIONS_OPEN: &str = "native-preview.automations.open";
 pub const AUTOMATIONS_BACK: &str = "native-preview.automations.back";
 pub const AUTOMATIONS_REFRESH: &str = "native-preview.automations.refresh";
@@ -103,6 +243,7 @@ pub const TASK_CREATE_TITLE: &str = "native-preview.tasks.create.title";
 pub const TASK_CREATE: &str = "native-preview.tasks.create";
 pub const TASK_SESSION: &str = "native-preview.task-session";
 pub const TASK_POPUP_OPEN: &str = "native-preview.task-session.popup.open";
+pub const TASK_POPUP_ASK_CHILD: &str = "native-preview.task-session.popup.ask-child";
 pub const TASK_POPUP_MOVE_SELECTED: &str = "native-preview.task-session.popup.move-selected";
 pub const TASK_SESSION_BACK: &str = "native-preview.task-session.back";
 pub const TASK_SESSION_SUMMARY: &str = "native-preview.task-session.summary";
@@ -113,6 +254,8 @@ pub const TASK_SESSION_INSPECTOR: &str = "native-preview.task-session.inspector"
 pub const TASK_SESSION_INSPECTOR_TOGGLE: &str = "native-preview.task-session.inspector.toggle";
 pub const TASK_TITLE: &str = "native-preview.task-session.task.title";
 pub const TASK_SAVE: &str = "native-preview.task-session.task.save";
+pub const TASK_DEPENDENCY_TARGET: &str = "native-preview.task-session.task.dependency-target";
+pub const TASK_DEPENDENCY_TOGGLE: &str = "native-preview.task-session.task.dependency-toggle";
 pub const TASK_STATUS: &str = "native-preview.task-session.task.status";
 pub const TASK_PRIORITY: &str = "native-preview.task-session.task.priority";
 pub const TASK_PIN: &str = "native-preview.task-session.task.pin";
@@ -133,8 +276,23 @@ pub const COMPOSER_ATTACH_DIRECTORY: &str = "native-preview.task-session.compose
 pub const COMPOSER_PLAN_MODE: &str = "native-preview.task-session.composer.plan-mode";
 pub const COMPOSER_GOAL_MODE: &str = "native-preview.task-session.composer.goal-mode";
 pub const COMPOSER_PERMISSION: &str = "native-preview.task-session.composer.permission";
+pub const COMPOSER_MODEL: &str = "native-preview.task-session.composer.model";
+pub const COMPOSER_REASONING: &str = "native-preview.task-session.composer.reasoning";
+pub const COMPOSER_OPTIMIZE_PROMPT: &str = "native-preview.task-session.composer.optimize-prompt";
+pub const COMPOSER_WORKTREE: &str = "native-preview.task-session.composer.worktree";
+pub const COMPOSER_WORKTREE_PICK: &str = "native-preview.task-session.composer.worktree.pick";
+pub const COMPOSER_WORKTREE_RETRY: &str = "native-preview.task-session.composer.worktree.retry";
+pub const COMPOSER_ROUTE_APPLY: &str = "native-preview.task-session.composer.route.apply";
+pub const COMPOSER_ROUTE_DISMISS: &str = "native-preview.task-session.composer.route.dismiss";
 pub const COMPOSER_SEND: &str = "native-preview.task-session.composer.send";
+pub const COMPOSER_COMPACT_CONTEXT: &str = "native-preview.task-session.composer.compact-context";
 pub const COMPOSER_INTERRUPT: &str = "native-preview.task-session.composer.interrupt";
+pub const COMPOSER_SUGGESTIONS_REFRESH: &str =
+    "native-preview.task-session.composer.suggestions.refresh";
+
+pub fn composer_suggestion(item_id: &str) -> String {
+    format!("native-preview.task-session.composer.suggestion.{item_id}")
+}
 
 pub fn composer_slash_command(command_name: &str) -> String {
     format!("native-preview.task-session.composer.slash.{command_name}")
@@ -144,6 +302,14 @@ pub fn composer_conversation_reference(task_id: &str) -> String {
 }
 pub fn composer_context_attachment(relative_path: &str) -> String {
     format!("native-preview.task-session.composer.context.{relative_path}")
+}
+
+pub fn task_popup_suggestions_refresh(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.suggestions.refresh")
+}
+
+pub fn task_popup_suggestion(window_id: u64, item_id: &str) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.suggestion.{item_id}")
 }
 pub fn composer_conversation_reference_remove(task_id: &str) -> String {
     format!("native-preview.task-session.composer.conversation.{task_id}.remove")
@@ -169,6 +335,7 @@ pub const SETTINGS_OPEN: &str = "native-preview.settings.open";
 pub const SETTINGS_SIDEBAR: &str = "native-preview.settings.sidebar";
 pub const SETTINGS_BACK: &str = "native-preview.settings.back";
 pub const SETTINGS_APPEARANCE: &str = "native-preview.settings.appearance";
+pub const SETTINGS_PROJECT: &str = "native-preview.settings.project";
 pub const SETTINGS_PROVIDER: &str = "native-preview.settings.provider";
 pub const SETTINGS_AGENT: &str = "native-preview.settings.agent";
 pub const SETTINGS_QUOTA: &str = "native-preview.settings.quota";
@@ -176,8 +343,27 @@ pub const SETTINGS_EXTENSIONS: &str = "native-preview.settings.extensions";
 pub const SETTINGS_REMOTE: &str = "native-preview.settings.remote";
 pub const SETTINGS_DESKTOP: &str = "native-preview.settings.desktop";
 pub const SETTINGS_DATA: &str = "native-preview.settings.data";
+pub const SETTINGS_ABOUT: &str = "native-preview.settings.about";
 pub const THEME_LIGHT: &str = "native-preview.settings.appearance.theme.light";
 pub const THEME_DARK: &str = "native-preview.settings.appearance.theme.dark";
+pub const SIDEBAR_MODE_GROUPED: &str = "native-preview.settings.appearance.sidebar.grouped";
+pub const SIDEBAR_MODE_UNIFIED: &str = "native-preview.settings.appearance.sidebar.unified";
+pub const UNIFIED_SIDEBAR_TASK_PREFIX: &str = "native-preview.sidebar.conversation.";
+
+pub fn unified_sidebar_task(task_id: &str) -> String {
+    format!("{UNIFIED_SIDEBAR_TASK_PREFIX}{task_id}")
+}
+pub const PROJECT_SETTINGS_CLONE_PARENT: &str = "native-preview.settings.project.clone-parent";
+pub const PROJECT_SETTINGS_PICK_CLONE_PARENT: &str =
+    "native-preview.settings.project.clone-parent.pick";
+pub const PROJECT_WORKTREE_MODE: &str = "native-preview.settings.project.worktree.mode";
+pub const PROJECT_WORKTREE_PARENT: &str = "native-preview.settings.project.worktree.parent";
+pub const PROJECT_WORKTREE_PICK_PARENT: &str =
+    "native-preview.settings.project.worktree.parent.pick";
+pub const PROJECT_WORKTREE_INSTRUCTIONS: &str =
+    "native-preview.settings.project.worktree.instructions";
+pub const PROJECT_WORKTREE_CLEANUP: &str = "native-preview.settings.project.worktree.cleanup";
+pub const PROJECT_SETTINGS_SAVE: &str = "native-preview.settings.project.save";
 pub const PROVIDER_SECRET_INPUT: &str = "native-preview.settings.provider.secret";
 pub const PROVIDER_SAVE: &str = "native-preview.settings.provider.save";
 pub const PROVIDER_REFRESH: &str = "native-preview.settings.provider.refresh";
@@ -188,7 +374,106 @@ pub const PROVIDER_ANTHROPIC_ENDPOINT_INPUT: &str =
     "native-preview.settings.provider.runtime.anthropic-endpoint";
 pub const PROVIDER_RUNTIME_SAVE: &str = "native-preview.settings.provider.runtime.save";
 pub const PROVIDER_RUNTIME_RESET: &str = "native-preview.settings.provider.runtime.reset";
+pub const ASSISTANT_AI_BASE_URL_INPUT: &str =
+    "native-preview.settings.provider.assistant-ai.base-url";
+pub const ASSISTANT_AI_MODEL_INPUT: &str = "native-preview.settings.provider.assistant-ai.model";
+pub const ASSISTANT_AI_SECRET_INPUT: &str = "native-preview.settings.provider.assistant-ai.secret";
+pub const ASSISTANT_AI_NEW_MODEL_ID: &str =
+    "native-preview.settings.provider.assistant-ai.model-pool.new-id";
+pub const ASSISTANT_AI_NEW_MODEL_LABEL: &str =
+    "native-preview.settings.provider.assistant-ai.model-pool.new-label";
+pub const ASSISTANT_AI_ADD_MODEL: &str =
+    "native-preview.settings.provider.assistant-ai.model-pool.add";
+pub const ASSISTANT_AI_FETCH_MODELS: &str =
+    "native-preview.settings.provider.assistant-ai.model-pool.fetch";
+pub const ASSISTANT_AI_TEST_CONNECTION: &str = "native-preview.settings.provider.assistant-ai.test";
+pub const ASSISTANT_AI_SAVE: &str = "native-preview.settings.provider.assistant-ai.save";
+pub const ASSISTANT_AI_CLEAR_SECRET: &str =
+    "native-preview.settings.provider.assistant-ai.clear-secret";
+const ASSISTANT_AI_MODEL_POOL_PREFIX: &str =
+    "native-preview.settings.provider.assistant-ai.model-pool.";
+
+pub fn assistant_ai_model_label(model_id: &str) -> String {
+    format!("{ASSISTANT_AI_MODEL_POOL_PREFIX}{model_id}.label")
+}
+
+pub fn parse_assistant_ai_model_label(target_id: &str) -> Option<&str> {
+    target_id
+        .strip_prefix(ASSISTANT_AI_MODEL_POOL_PREFIX)?
+        .strip_suffix(".label")
+        .filter(|model_id| !model_id.is_empty())
+}
+pub const FEATURE_MODEL_TITLE_INPUT: &str = "native-preview.settings.provider.feature-model.title";
+pub const FEATURE_MODEL_SUGGESTION_INPUT: &str =
+    "native-preview.settings.provider.feature-model.suggestion";
+pub const FEATURE_MODEL_PROMPT_ROUTER_INPUT: &str =
+    "native-preview.settings.provider.feature-model.prompt-router";
+pub const FEATURE_MODEL_PROMPT_OPTIMIZE_INPUT: &str =
+    "native-preview.settings.provider.feature-model.prompt-optimize";
+pub const FEATURE_MODEL_AUTO_TURN_INPUT: &str =
+    "native-preview.settings.provider.feature-model.auto-turn-decision";
+pub const FEATURE_MODEL_SAVE: &str = "native-preview.settings.provider.feature-model.save";
+pub const FEATURE_CUSTOM_PRESET_NAME: &str =
+    "native-preview.settings.provider.feature-preset.custom.name";
+pub const FEATURE_CUSTOM_PRESET_ADD: &str =
+    "native-preview.settings.provider.feature-preset.custom.add";
+const FEATURE_PRESET_PREFIX: &str = "native-preview.settings.provider.feature-preset.";
+
+pub fn feature_preset_model(preset_id: &str) -> String {
+    format!("{FEATURE_PRESET_PREFIX}{preset_id}.model")
+}
+
+pub fn feature_preset_effort(preset_id: &str) -> String {
+    format!("{FEATURE_PRESET_PREFIX}{preset_id}.effort")
+}
+
+pub fn feature_preset_label(preset_id: &str) -> String {
+    format!("{FEATURE_PRESET_PREFIX}{preset_id}.label")
+}
+
+pub fn feature_preset_remove(preset_id: &str) -> String {
+    format!("{FEATURE_PRESET_PREFIX}{preset_id}.remove")
+}
+
+pub fn parse_feature_preset_model(target_id: &str) -> Option<&str> {
+    target_id
+        .strip_prefix(FEATURE_PRESET_PREFIX)?
+        .strip_suffix(".model")
+        .filter(|preset_id| !preset_id.is_empty())
+}
+
+pub fn parse_feature_preset_effort(target_id: &str) -> Option<&str> {
+    target_id
+        .strip_prefix(FEATURE_PRESET_PREFIX)?
+        .strip_suffix(".effort")
+        .filter(|preset_id| !preset_id.is_empty())
+}
+
+pub fn parse_feature_preset_label(target_id: &str) -> Option<&str> {
+    target_id
+        .strip_prefix(FEATURE_PRESET_PREFIX)?
+        .strip_suffix(".label")
+        .filter(|preset_id| !preset_id.is_empty())
+}
+
+pub fn parse_feature_preset_remove(target_id: &str) -> Option<&str> {
+    target_id
+        .strip_prefix(FEATURE_PRESET_PREFIX)?
+        .strip_suffix(".remove")
+        .filter(|preset_id| !preset_id.is_empty())
+}
+pub const CONVERSATION_SUGGESTIONS_ENABLE: &str =
+    "native-preview.settings.provider.conversation-suggestions.enable";
+pub const CONVERSATION_SUGGESTIONS_DISABLE: &str =
+    "native-preview.settings.provider.conversation-suggestions.disable";
 pub const AGENT_SUBAGENT_MODE: &str = "native-preview.settings.agent.subagents";
+pub const AGENT_NON_INTERRUPT_MODE: &str = "native-preview.settings.agent.non-interrupt";
+pub const AGENT_DEBUG_MODE: &str = "native-preview.settings.agent.debug";
+pub const DEBUG_TIMELINE_PREFIX: &str = "native-preview.debug.timeline.";
+
+pub fn debug_timeline_action(action_id: &str) -> String {
+    format!("{DEBUG_TIMELINE_PREFIX}{action_id}")
+}
 pub const AGENT_AUTO_TURN: &str = "native-preview.settings.agent.auto-turn";
 pub const AGENT_AUTO_MODEL_TIER: &str = "native-preview.settings.agent.auto-turn.model-tier";
 pub const AGENT_AUTO_REASONING_EFFORT: &str =
@@ -239,6 +524,8 @@ pub const DESKTOP_SHORTCUT_CLEAR: &str = "native-preview.settings.desktop.shortc
 pub const DESKTOP_UPDATE_CHECK: &str = "native-preview.settings.desktop.update.check";
 pub const DESKTOP_UPDATE_INSTALL: &str = "native-preview.settings.desktop.update.install";
 pub const DESKTOP_UPDATE_RELEASES: &str = "native-preview.settings.desktop.update.releases";
+pub const DESKTOP_UPDATE_PROMPT_CONFIRM: &str = "native-preview.update.prompt.confirm";
+pub const DESKTOP_UPDATE_PROMPT_DISMISS: &str = "native-preview.update.prompt.dismiss";
 pub const DATA_IMPORT_PICK_SOURCE: &str = "native-preview.settings.data.pick-source";
 pub const DATA_IMPORT_CREDENTIALS: &str = "native-preview.settings.data.credentials";
 pub const DATA_IMPORT_EXECUTE: &str = "native-preview.settings.data.execute";
@@ -374,6 +661,18 @@ pub fn extensions_plugin_delete_cancel(plugin_id: &str) -> String {
 
 pub fn extensions_hook_draft(source_id: &str) -> String {
     format!("native-preview.settings.extensions.hook.{source_id}.draft")
+}
+
+pub fn extensions_hook_add_handler(source_id: &str) -> String {
+    format!("native-preview.settings.extensions.hook.{source_id}.handler.add")
+}
+
+pub fn extensions_hook_handler_field(source_id: &str, index: usize, field: &str) -> String {
+    format!("native-preview.settings.extensions.hook.{source_id}.handler.{index}.{field}")
+}
+
+pub fn extensions_hook_remove_handler(source_id: &str, index: usize) -> String {
+    format!("native-preview.settings.extensions.hook.{source_id}.handler.{index}.remove")
 }
 
 pub fn extensions_hook_create(source_id: &str) -> String {
@@ -531,12 +830,24 @@ pub fn conversation_status_task(task_id: &str) -> String {
     format!("native-preview.conversation-status.task.{task_id}")
 }
 
+pub fn conversation_status_stop(task_id: &str) -> String {
+    format!("native-preview.conversation-status.task.{task_id}.stop")
+}
+
 pub fn task_popup(window_id: u64) -> String {
     format!("native-preview.task-popup.{window_id}")
 }
 
 pub fn task_popup_close(window_id: u64) -> String {
     format!("native-preview.task-popup.{window_id}.close")
+}
+
+pub fn task_popup_focus_main(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.focus-main")
+}
+
+pub fn task_popup_new_chat(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.new-chat")
 }
 
 pub fn task_popup_move_to_main(window_id: u64) -> String {
@@ -665,12 +976,64 @@ pub fn task_popup_send(window_id: u64) -> String {
     format!("native-preview.task-popup.{window_id}.composer.send")
 }
 
+pub fn task_popup_ask_child(window_id: u64) -> String {
+    format!("native-preview.task-window.{window_id}.ask-child")
+}
+
+pub fn task_popup_optimize_prompt(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.optimize-prompt")
+}
+
+pub fn task_popup_worktree(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.worktree")
+}
+
+pub fn task_popup_worktree_pick(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.worktree.pick")
+}
+
+pub fn task_popup_worktree_retry(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.worktree.retry")
+}
+
+pub fn task_popup_model(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.model")
+}
+
+pub fn task_popup_reasoning(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.reasoning")
+}
+
+pub fn task_popup_route_apply(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.route.apply")
+}
+
+pub fn task_popup_route_dismiss(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.route.dismiss")
+}
+
+pub fn task_popup_compact_context(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.compact-context")
+}
+
 pub fn task_popup_interrupt(window_id: u64) -> String {
     format!("native-preview.task-popup.{window_id}.composer.interrupt")
 }
 
 pub fn task_popup_slash_command(window_id: u64, command_name: &str) -> String {
     format!("native-preview.task-popup.{window_id}.composer.slash.{command_name}")
+}
+pub fn review_workflow_target(window_id: u64, target: &str) -> String {
+    format!("native-preview.task-window.{window_id}.review-workflow.target.{target}")
+}
+pub fn review_workflow_target_input(window_id: u64) -> String {
+    format!("native-preview.task-window.{window_id}.review-workflow.target-input")
+}
+pub fn review_workflow_submit(window_id: u64) -> String {
+    format!("native-preview.task-window.{window_id}.review-workflow.submit")
+}
+pub fn review_workflow_cancel(window_id: u64) -> String {
+    format!("native-preview.task-window.{window_id}.review-workflow.cancel")
 }
 pub fn task_popup_conversation_reference(window_id: u64, task_id: &str) -> String {
     format!("native-preview.task-window.{window_id}.composer.conversation.{task_id}")
@@ -694,12 +1057,70 @@ pub fn timeline_copy(event_id: &str) -> String {
     format!("native-preview.task-session.timeline.{event_id}.copy")
 }
 
+pub fn timeline_selection_copy(window_id: u64, event_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.timeline.{event_id}.selection.copy")
+}
+
+pub fn timeline_selection_quote(window_id: u64, event_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.timeline.{event_id}.selection.quote")
+}
+
+pub fn timeline_selection_ask(window_id: u64, event_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.timeline.{event_id}.selection.ask")
+}
+
+pub fn markdown_image(window_id: u64, source: &str) -> String {
+    format!(
+        "native-preview.task-window.{window_id}.markdown-image.{:016x}",
+        stable_target_hash(source)
+    )
+}
+
+pub fn markdown_image_retry(window_id: u64, source: &str) -> String {
+    format!(
+        "native-preview.task-window.{window_id}.markdown-image.{:016x}.retry",
+        stable_target_hash(source)
+    )
+}
+
+pub fn markdown_image_close(window_id: u64) -> String {
+    format!("native-preview.task-window.{window_id}.markdown-image.close")
+}
+
+pub fn timeline_retry(window_id: u64, event_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.timeline.{event_id}.retry")
+}
+
+pub fn timeline_apply_suggestion(window_id: u64, event_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.timeline.{event_id}.apply-suggestion")
+}
+
+pub fn timeline_continue(window_id: u64, event_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.timeline.{event_id}.continue")
+}
+
+pub fn timeline_fork(window_id: u64, event_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.timeline.{event_id}.fork")
+}
+
+pub fn session_branch_clear(window_id: u64) -> String {
+    format!("native-preview.task-window.{window_id}.session-branch.clear")
+}
+
 pub fn approval_approve(request_id: &str) -> String {
     format!("native-preview.task-session.approval.{request_id}.approve")
 }
 
 pub fn approval_deny(request_id: &str) -> String {
     format!("native-preview.task-session.approval.{request_id}.deny")
+}
+
+pub fn title_update_accept(request_id: &str) -> String {
+    format!("native-preview.task-session.title-update.{request_id}.accept")
+}
+
+pub fn title_update_decline(request_id: &str) -> String {
+    format!("native-preview.task-session.title-update.{request_id}.decline")
 }
 
 pub fn architecture_allow(request_id: &str) -> String {
@@ -722,8 +1143,36 @@ pub fn interaction_cancel(request_id: &str) -> String {
     format!("native-preview.task-session.interaction.{request_id}.cancel")
 }
 
+pub fn interaction_reject(request_id: &str) -> String {
+    format!("native-preview.task-session.interaction.{request_id}.reject")
+}
+
+pub fn interaction_back(request_id: &str) -> String {
+    format!("native-preview.task-session.interaction.{request_id}.back")
+}
+
+pub fn interaction_skip(request_id: &str) -> String {
+    format!("native-preview.task-session.interaction.{request_id}.skip")
+}
+
 pub fn interaction_option(request_id: &str, option_index: usize) -> String {
     format!("native-preview.task-session.interaction.{request_id}.option.{option_index}")
+}
+
+pub fn tool_consent_command(window_id: u64, request_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.tool-consent.{request_id}.command")
+}
+
+pub fn tool_consent_message(window_id: u64, request_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.tool-consent.{request_id}.message")
+}
+
+pub fn tool_consent_allow(window_id: u64, request_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.tool-consent.{request_id}.allow")
+}
+
+pub fn tool_consent_deny(window_id: u64, request_id: &str) -> String {
+    format!("native-preview.task-window.{window_id}.tool-consent.{request_id}.deny")
 }
 
 pub fn mcp_field(request_id: &str, field_index: usize) -> String {
@@ -774,4 +1223,13 @@ pub fn plan_decline(request_id: &str) -> String {
 
 pub fn plan_cancel(request_id: &str) -> String {
     format!("native-preview.task-session.plan.{request_id}.cancel-turn")
+}
+
+fn stable_target_hash(value: &str) -> u64 {
+    value
+        .as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        })
 }

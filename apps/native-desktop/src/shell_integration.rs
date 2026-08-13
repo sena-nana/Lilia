@@ -1,41 +1,52 @@
-use std::fs;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use lilia_contracts::{ProductTask, TaskId};
-use lilia_desktop_application::{DesktopApplication, TaskQuery};
-use serde::{Deserialize, Serialize};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(windows)]
+use lilia_contracts::ProductTask;
+use lilia_contracts::TaskId;
+use lilia_desktop_application::DesktopApplication;
+#[cfg(windows)]
+use lilia_desktop_application::{DesktopPopupWindowSettings, TaskQuery};
 
 use crate::preview::Message;
 
-const SETTINGS_FILE: &str = "native-shell.json";
+#[cfg(windows)]
 const TRAY_ID: &str = "liliacode-native-preview";
+#[cfg(windows)]
 const MENU_OPEN_MAIN: &str = "native-tray:open-main";
+#[cfg(windows)]
+const MENU_TOGGLE_CONVERSATION_STATUS: &str = "native-tray:toggle-conversation-status";
+#[cfg(windows)]
 const MENU_RECENT: &str = "native-tray:recent";
+#[cfg(windows)]
 const MENU_RECENT_EMPTY: &str = "native-tray:recent-empty";
+#[cfg(windows)]
 const MENU_TASK_PREFIX: &str = "native-tray:task:";
+#[cfg(windows)]
 const MENU_QUIT: &str = "native-tray:quit";
+#[cfg(windows)]
 const RECENT_TASK_LIMIT: usize = 8;
+#[cfg(windows)]
+const SINGLE_CLICK_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+#[cfg(any(windows, test))]
 const RECENT_TITLE_MAX_CHARS: usize = 32;
 
 type MessageSender = Arc<dyn Fn(Message) -> Result<(), String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), expect(dead_code))]
 pub enum ShellCommand {
     FocusMainWindow,
+    OpenNewConversation,
     OpenTask(TaskId),
+    ToggleConversationStatus,
     Quit,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-struct NativeShellSettings {
-    shortcut: Option<String>,
-}
-
 pub struct NativeShellIntegration {
-    home: PathBuf,
-    settings: NativeShellSettings,
+    shortcut: Option<String>,
     startup_errors: Vec<String>,
     #[cfg(windows)]
     tray: Option<tray_icon::TrayIcon>,
@@ -43,23 +54,19 @@ pub struct NativeShellIntegration {
     hotkey_manager: Option<global_hotkey::GlobalHotKeyManager>,
     #[cfg(windows)]
     registered_hotkey: Option<global_hotkey::hotkey::HotKey>,
+    #[cfg(windows)]
+    registered_hotkey_id: Arc<AtomicU64>,
 }
 
 impl NativeShellIntegration {
-    pub fn initialize(
-        home: impl Into<PathBuf>,
-        application: &DesktopApplication,
-        message_sender: MessageSender,
-    ) -> Self {
-        let home = home.into();
-        let (settings, mut startup_errors) = match load_settings(&home) {
-            Ok(settings) => (settings, Vec::new()),
-            Err(error) => (NativeShellSettings::default(), vec![error]),
+    pub fn initialize(application: &DesktopApplication, message_sender: MessageSender) -> Self {
+        let (shortcut, mut startup_errors) = match application.popup_window_settings() {
+            Ok(settings) => (settings.shortcut, Vec::new()),
+            Err(error) => (None, vec![format!("读取弹出窗口设置失败：{error}")]),
         };
 
         #[cfg(windows)]
         {
-            install_event_handlers(Arc::clone(&message_sender));
             let tasks = application
                 .query_tasks(TaskQuery::default())
                 .unwrap_or_else(|error| {
@@ -76,7 +83,7 @@ impl NativeShellIntegration {
                     startup_errors.push(format!("全局快捷键服务不可用：{error}"));
                     None
                 });
-            let registered_hotkey = settings.shortcut.as_deref().and_then(|shortcut| {
+            let registered_hotkey = shortcut.as_deref().and_then(|shortcut| {
                 let parsed = match shortcut.parse::<global_hotkey::hotkey::HotKey>() {
                     Ok(parsed) => parsed,
                     Err(error) => {
@@ -93,13 +100,22 @@ impl NativeShellIntegration {
                     }
                 }
             });
+            let registered_hotkey_id = Arc::new(AtomicU64::new(
+                registered_hotkey
+                    .map(registered_hotkey_identity)
+                    .unwrap_or_default(),
+            ));
+            install_event_handlers(
+                Arc::clone(&message_sender),
+                Arc::clone(&registered_hotkey_id),
+            );
             Self {
-                home,
-                settings,
+                shortcut,
                 startup_errors,
                 tray,
                 hotkey_manager,
                 registered_hotkey,
+                registered_hotkey_id,
             }
         }
 
@@ -108,15 +124,14 @@ impl NativeShellIntegration {
             let _ = (application, message_sender);
             startup_errors.push("桌面托盘与全局快捷键当前仅支持 Windows 11".to_owned());
             Self {
-                home,
-                settings,
+                shortcut,
                 startup_errors,
             }
         }
     }
 
     pub fn shortcut(&self) -> Option<&str> {
-        self.settings.shortcut.as_deref()
+        self.shortcut.as_deref()
     }
 
     pub fn shortcut_active(&self) -> bool {
@@ -165,7 +180,11 @@ impl NativeShellIntegration {
         }
     }
 
-    pub fn set_shortcut(&mut self, shortcut: Option<String>) -> Result<Option<String>, String> {
+    pub fn set_shortcut(
+        &mut self,
+        application: &DesktopApplication,
+        shortcut: Option<String>,
+    ) -> Result<Option<String>, String> {
         let shortcut = normalize_shortcut(shortcut);
         #[cfg(windows)]
         {
@@ -174,10 +193,14 @@ impl NativeShellIntegration {
                 .map(str::parse::<global_hotkey::hotkey::HotKey>)
                 .transpose()
                 .map_err(|error| format!("快捷键格式无效：{error}"))?;
-            let previous_settings = self.settings.clone();
+            let previous_shortcut = self.shortcut.clone();
             let previous_hotkey = self.registered_hotkey;
-            if parsed == previous_hotkey && shortcut == previous_settings.shortcut {
-                save_settings(&self.home, &previous_settings)?;
+            if parsed == previous_hotkey && shortcut == previous_shortcut {
+                application
+                    .save_popup_window_settings(DesktopPopupWindowSettings {
+                        shortcut: shortcut.clone(),
+                    })
+                    .map_err(|error| format!("保存弹出窗口设置失败：{error}"))?;
                 return Ok(shortcut);
             }
             let manager = match (self.hotkey_manager.as_ref(), parsed) {
@@ -200,26 +223,29 @@ impl NativeShellIntegration {
                 }
             }
 
-            let next_settings = NativeShellSettings {
+            if let Err(error) = application.save_popup_window_settings(DesktopPopupWindowSettings {
                 shortcut: shortcut.clone(),
-            };
-            if let Err(error) = save_settings(&self.home, &next_settings) {
+            }) {
                 if let (Some(manager), Some(next)) = (manager, parsed) {
                     let _ = manager.unregister(next);
                 }
                 if let (Some(manager), Some(previous)) = (manager, previous_hotkey) {
                     let _ = manager.register(previous);
                 }
-                return Err(error);
+                return Err(format!("保存弹出窗口设置失败：{error}"));
             }
-            self.settings = next_settings;
+            self.shortcut = shortcut.clone();
             self.registered_hotkey = parsed;
+            self.registered_hotkey_id.store(
+                parsed.map(registered_hotkey_identity).unwrap_or_default(),
+                Ordering::Release,
+            );
             self.startup_errors.clear();
             Ok(shortcut)
         }
         #[cfg(not(windows))]
         {
-            let _ = shortcut;
+            let _ = (application, shortcut);
             Err("全局快捷键当前仅支持 Windows 11".to_owned())
         }
     }
@@ -231,6 +257,7 @@ impl Drop for NativeShellIntegration {
         if let (Some(manager), Some(hotkey)) =
             (self.hotkey_manager.as_ref(), self.registered_hotkey)
         {
+            self.registered_hotkey_id.store(0, Ordering::Release);
             let _ = manager.unregister(hotkey);
         }
     }
@@ -242,57 +269,19 @@ fn normalize_shortcut(shortcut: Option<String>) -> Option<String> {
         .filter(|shortcut| !shortcut.is_empty())
 }
 
-fn settings_path(home: &Path) -> PathBuf {
-    home.join(SETTINGS_FILE)
-}
-
-fn load_settings(home: &Path) -> Result<NativeShellSettings, String> {
-    let path = settings_path(home);
-    match fs::read(&path) {
-        Ok(content) => {
-            serde_json::from_slice(&content).map_err(|error| format!("读取桌面设置失败：{error}"))
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(NativeShellSettings::default())
-        }
-        Err(error) => Err(format!("读取桌面设置失败：{error}")),
-    }
-}
-
-fn save_settings(home: &Path, settings: &NativeShellSettings) -> Result<(), String> {
-    fs::create_dir_all(home).map_err(|error| format!("创建设置目录失败：{error}"))?;
-    let path = settings_path(home);
-    let staging = home.join(format!("{SETTINGS_FILE}.tmp"));
-    let backup = home.join(format!("{SETTINGS_FILE}.bak"));
-    let content = serde_json::to_vec_pretty(settings)
-        .map_err(|error| format!("序列化桌面设置失败：{error}"))?;
-    fs::write(&staging, content).map_err(|error| format!("暂存桌面设置失败：{error}"))?;
-    if backup.exists() {
-        fs::remove_file(&backup).map_err(|error| format!("清理设置备份失败：{error}"))?;
-    }
-    if path.exists() {
-        fs::rename(&path, &backup).map_err(|error| format!("备份桌面设置失败：{error}"))?;
-    }
-    if let Err(error) = fs::rename(&staging, &path) {
-        if backup.exists() && !path.exists() {
-            let _ = fs::rename(&backup, &path);
-        }
-        return Err(format!("保存桌面设置失败：{error}"));
-    }
-    if backup.exists() {
-        fs::remove_file(&backup).map_err(|error| format!("清理设置备份失败：{error}"))?;
-    }
-    Ok(())
-}
-
 #[cfg(windows)]
-fn install_event_handlers(message_sender: MessageSender) {
+fn install_event_handlers(message_sender: MessageSender, registered_hotkey_id: Arc<AtomicU64>) {
+    let click_sequence = Arc::new(AtomicU64::new(0));
     let menu_sender = Arc::clone(&message_sender);
+    let menu_click_sequence = Arc::clone(&click_sequence);
     tray_icon::menu::MenuEvent::set_event_handler(Some(
         move |event: tray_icon::menu::MenuEvent| {
+            menu_click_sequence.fetch_add(1, Ordering::SeqCst);
             let id = event.id.as_ref();
             let command = if id == MENU_OPEN_MAIN {
                 Some(ShellCommand::FocusMainWindow)
+            } else if id == MENU_TOGGLE_CONVERSATION_STATUS {
+                Some(ShellCommand::ToggleConversationStatus)
             } else if id == MENU_QUIT {
                 Some(ShellCommand::Quit)
             } else if let Some(task_id) = id.strip_prefix(MENU_TASK_PREFIX) {
@@ -309,27 +298,62 @@ fn install_event_handlers(message_sender: MessageSender) {
     ));
 
     let tray_sender = Arc::clone(&message_sender);
+    let tray_click_sequence = Arc::clone(&click_sequence);
     tray_icon::TrayIconEvent::set_event_handler(Some(move |event: tray_icon::TrayIconEvent| {
-        if let tray_icon::TrayIconEvent::Click {
-            id,
-            button: tray_icon::MouseButton::Left,
-            button_state: tray_icon::MouseButtonState::Up,
-            ..
-        } = event
-        {
-            if id.as_ref() == TRAY_ID {
+        match event {
+            tray_icon::TrayIconEvent::Click {
+                id,
+                button: tray_icon::MouseButton::Left,
+                button_state: tray_icon::MouseButtonState::Up,
+                ..
+            } if id.as_ref() == TRAY_ID => {
+                let sequence = tray_click_sequence.fetch_add(1, Ordering::SeqCst) + 1;
+                let sender = Arc::clone(&tray_sender);
+                let click_sequence = Arc::clone(&tray_click_sequence);
+                let _ = std::thread::Builder::new()
+                    .name("lilia-native-tray-click".to_owned())
+                    .spawn(move || {
+                        std::thread::sleep(SINGLE_CLICK_DELAY);
+                        if click_sequence.load(Ordering::SeqCst) == sequence {
+                            let _ = sender(Message::Shell(ShellCommand::OpenNewConversation));
+                        }
+                    });
+            }
+            tray_icon::TrayIconEvent::DoubleClick {
+                id,
+                button: tray_icon::MouseButton::Left,
+                ..
+            } if id.as_ref() == TRAY_ID => {
+                tray_click_sequence.fetch_add(1, Ordering::SeqCst);
                 let _ = tray_sender(Message::Shell(ShellCommand::FocusMainWindow));
             }
+            _ => {}
         }
     }));
 
     global_hotkey::GlobalHotKeyEvent::set_event_handler(Some(
         move |event: global_hotkey::GlobalHotKeyEvent| {
-            if event.state == global_hotkey::HotKeyState::Pressed {
-                let _ = message_sender(Message::Shell(ShellCommand::FocusMainWindow));
+            if hotkey_event_matches(
+                registered_hotkey_id.load(Ordering::Acquire),
+                event.id,
+                event.state == global_hotkey::HotKeyState::Pressed,
+            ) {
+                let _ = message_sender(Message::Shell(ShellCommand::OpenNewConversation));
             }
         },
     ));
+}
+
+#[cfg(windows)]
+fn registered_hotkey_identity(hotkey: global_hotkey::hotkey::HotKey) -> u64 {
+    u64::from(hotkey.id()).saturating_add(1)
+}
+
+#[cfg(any(windows, test))]
+fn hotkey_event_matches(registered_identity: u64, event_id: u32, pressed: bool) -> bool {
+    pressed
+        && registered_identity != 0
+        && registered_identity == u64::from(event_id).saturating_add(1)
 }
 
 #[cfg(windows)]
@@ -363,6 +387,10 @@ fn build_tray_menu(mut tasks: Vec<ProductTask>) -> Result<tray_icon::menu::Menu,
     let root = Menu::new();
     let open = MenuItem::with_id(MENU_OPEN_MAIN, "打开主窗口", true, None);
     root.append(&open)
+        .map_err(|error| format!("创建托盘菜单失败：{error}"))?;
+    let conversation_status =
+        MenuItem::with_id(MENU_TOGGLE_CONVERSATION_STATUS, "对话悬浮窗", true, None);
+    root.append(&conversation_status)
         .map_err(|error| format!("创建托盘菜单失败：{error}"))?;
 
     let recent = Submenu::with_id(MENU_RECENT, "最近任务", true);
@@ -406,6 +434,7 @@ fn load_tray_icon() -> Result<tray_icon::Icon, String> {
         .map_err(|error| format!("创建托盘图标失败：{error}"))
 }
 
+#[cfg(any(windows, test))]
 fn recent_task_label(title: &str) -> String {
     let mut label = title
         .trim()
@@ -427,34 +456,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn shell_settings_round_trip_and_clear() {
-        let directory = std::env::temp_dir().join(format!(
-            "lilia-native-shell-settings-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let settings = NativeShellSettings {
-            shortcut: Some("Ctrl+Shift+KeyL".to_owned()),
-        };
-        save_settings(&directory, &settings).unwrap();
-        assert_eq!(load_settings(&directory).unwrap(), settings);
-        save_settings(&directory, &NativeShellSettings::default()).unwrap();
-        assert_eq!(
-            load_settings(&directory).unwrap(),
-            NativeShellSettings::default()
-        );
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
     fn recent_task_label_is_unicode_safe_and_bounded() {
         let title = "原生任务".repeat(10);
         let label = recent_task_label(&title);
         assert_eq!(label.chars().count(), RECENT_TITLE_MAX_CHARS + 1);
         assert!(label.ends_with('…'));
         assert_eq!(recent_task_label("   "), "未命名任务");
+    }
+
+    #[test]
+    fn global_hotkey_dispatch_requires_the_registered_pressed_identity() {
+        let registered = u64::from(42_u32) + 1;
+        assert!(hotkey_event_matches(registered, 42, true));
+        assert!(!hotkey_event_matches(registered, 41, true));
+        assert!(!hotkey_event_matches(registered, 42, false));
+        assert!(!hotkey_event_matches(0, 42, true));
     }
 }

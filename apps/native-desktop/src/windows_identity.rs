@@ -1,3 +1,4 @@
+#[cfg(windows)]
 pub const APP_USER_MODEL_ID: &str = "sena-nana.LiliaCode.NativePreview";
 
 #[cfg(windows)]

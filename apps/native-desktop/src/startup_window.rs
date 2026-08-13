@@ -8,19 +8,20 @@ pub fn register(window: isize) {
 
 pub fn close() {
     let window = STARTUP_WINDOW.swap(0, Ordering::AcqRel);
-    if window == 0 {
-        return;
-    }
+    #[cfg(not(windows))]
+    let _ = window;
     #[cfg(windows)]
-    unsafe {
-        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-        use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
+    if window != 0 {
+        unsafe {
+            use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+            use windows::Win32::UI::WindowsAndMessaging::{PostMessageW, WM_CLOSE};
 
-        let _ = PostMessageW(
-            Some(HWND(window as *mut core::ffi::c_void)),
-            WM_CLOSE,
-            WPARAM(0),
-            LPARAM(0),
-        );
+            let _ = PostMessageW(
+                Some(HWND(window as *mut core::ffi::c_void)),
+                WM_CLOSE,
+                WPARAM(0),
+                LPARAM(0),
+            );
+        }
     }
 }

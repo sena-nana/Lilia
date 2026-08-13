@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -7,75 +9,97 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{sync::mpsc, time::Instant};
 
 use iced::widget::{
-    button, column, container, image, row, scrollable, space, stack, svg, text, text_editor,
+    button, column, container, image, row, scrollable, slider, space, stack, svg, text, text_editor,
 };
 use iced::{font, Alignment, ContentFit, Element, Length, Padding};
 use lilia_contracts::{
-    PendingProjectionStatus, ProductTask, ProductTaskPriority, ProductTaskStatus, Project,
-    ProjectArchiveState, ProjectId, TaskId,
+    LiliaAgentWorkflow, LiliaReviewTarget, PendingProjectionStatus, ProductTask,
+    ProductTaskPriority, ProductTaskStatus, Project, ProjectArchiveState, ProjectId, TaskId,
 };
 #[cfg(debug_assertions)]
 use lilia_desktop_application::DesktopTodoGuideStatus;
 use lilia_desktop_application::{
-    default_panel_states, describe_attachment_paths, ApplicationWorkspaceSurface,
-    ArchitectureBackend, ArchitectureChangeStatus, ArchitecturePermission, AutomationBeginRunInput,
-    AutomationNode, AutomationNodePosition, AutomationResumeRunInput, AutomationRunDetail,
-    AutomationRunStatus, AutomationRunSummary, AutomationSaveDraftInput, AutomationScopeFilter,
-    AutomationSignalEnvelope, AutomationWorkflow, ChatAttachment, ChatAttachmentKind,
-    ChatContextSearchResult, ChatContextUsage, ChatConversationReference, CredentialImportDecision,
-    DesktopAgentInteractionError, DesktopAgentInteractionSettings,
-    DesktopAgentInteractionSettingsUpdate, DesktopAgentRuntimeSettings,
-    DesktopAgentRuntimeSettingsUpdate, DesktopApplication, DesktopApplicationConfig,
-    DesktopApplicationError, DesktopArchitectureInteractionDecision, DesktopCodeSearchResult,
-    DesktopCodingServicesSnapshot, DesktopCommand, DesktopComposerCommand, DesktopComposerState,
-    DesktopComposerSubmission, DesktopCredentialKind, DesktopCredentialStatus,
-    DesktopCredentialView, DesktopCustomSubagentCatalog, DesktopCustomSubagentUpsert,
-    DesktopDataImportService, DesktopEvent, DesktopEventKind, DesktopExecutionPermission,
-    DesktopExtensionsSnapshot, DesktopFileDialogRequest, DesktopGitFileStatus,
+    default_panel_states, describe_attachment_paths, preview_automatic_turn_selection,
+    ApplicationWorkspaceSurface, ArchitectureBackend, ArchitectureChangeStatus,
+    ArchitecturePermission, AutomationBeginRunInput, AutomationNode, AutomationNodePosition,
+    AutomationResumeRunInput, AutomationRunDetail, AutomationRunStatus, AutomationRunSummary,
+    AutomationSaveDraftInput, AutomationScopeFilter, AutomationSignalEnvelope, AutomationWorkflow,
+    ChatAttachment, ChatAttachmentKind, ChatContextSearchResult, ChatContextUsage,
+    ChatConversationReference, CredentialImportDecision, DesktopAgentInteractionError,
+    DesktopAgentInteractionSettings, DesktopAgentInteractionSettingsUpdate,
+    DesktopAgentRuntimeSettings, DesktopAgentRuntimeSettingsUpdate, DesktopApplication,
+    DesktopApplicationConfig, DesktopApplicationError, DesktopApplicationSuggestionModelPort,
+    DesktopArchitectureInteractionDecision, DesktopAssistantAiModelsResult,
+    DesktopAssistantAiProbeInput, DesktopAssistantAiTestResult, DesktopAutomaticTurnSelection,
+    DesktopCodeSearchMode, DesktopCodeSearchScope, DesktopCodingServicesSnapshot, DesktopCommand,
+    DesktopComposerCommand, DesktopComposerState, DesktopComposerSubmission, DesktopCredentialKind,
+    DesktopCredentialStatus, DesktopCredentialView, DesktopCustomSubagentCatalog,
+    DesktopCustomSubagentUpsert, DesktopDataImportService, DesktopDocumentDefinitionResult,
+    DesktopDocumentDefinitionTarget, DesktopDocumentDiagnosticsSnapshot, DesktopEvent,
+    DesktopEventKind, DesktopExecutionPermission, DesktopExtensionsSnapshot,
+    DesktopFileDialogRequest, DesktopGitDiff, DesktopGitDiffScope, DesktopGitFileStatus,
     DesktopGitHubBindingStatus, DesktopGitHubClientIdSource, DesktopGitHubDeviceFlowPollResult,
     DesktopGitHubDeviceFlowStart, DesktopGitHubError, DesktopGitHubRepoPage,
     DesktopGitHubRepoSummary, DesktopGitStatus, DesktopGoalStatus, DesktopHookDocumentUpdate,
     DesktopHookDocumentView, DesktopHookHandlerUpdate, DesktopHookScope, DesktopHookSourceView,
     DesktopHooksOverview, DesktopHostAction, DesktopHostResult, DesktopImportExecutionOptions,
     DesktopImportPlan, DesktopImportPlanItemStatus, DesktopImportPlanStatus, DesktopImportReport,
-    DesktopImportReportItemStatus, DesktopImportReportStatus, DesktopMcpActivationReport,
-    DesktopMcpCredentialKind, DesktopMcpElicitation, DesktopMcpElicitationAction,
-    DesktopMcpElicitationMode, DesktopMcpFormFieldKind, DesktopMcpPromptGetView,
-    DesktopMcpResourceReadView, DesktopMcpServerUpsert, DesktopMcpTransport, DesktopMemory,
-    DesktopNavigationTarget, DesktopOptionalTextUpdate, DesktopPluginInstall,
-    DesktopProjectCloneError, DesktopProjectCloneOperation, DesktopProjectClonePhase,
-    DesktopProjectCloneRequest, DesktopProjectCloneResult, DesktopProjectCloneSnapshot,
-    DesktopProjectCreate, DesktopProjectPatch, DesktopProjectRemovalPreview,
-    DesktopProviderCredentialInput, DesktopProviderError, DesktopProviderSnapshot,
-    DesktopRemoteQuotaState, DesktopSecret, DesktopSkillCreate, DesktopSkillScope,
-    DesktopSlashCommandSearchResult, DesktopSlashCommandSource, DesktopTaskCreate, DesktopTaskMove,
-    DesktopTaskPatch, DesktopTaskRuntimeSnapshot, DesktopTodoCreate, DesktopTodoPriority,
-    DesktopTodoSource, DesktopTodoUpdate, DesktopTurnDispatchKind, DesktopTurnState,
-    DesktopUpdateState, DesktopWorkspaceListing, DesktopWorkspaceProject, DesktopWorkspaceSession,
-    DesktopWorkspaceSessionId, DesktopWorkspaceSnapshot, DesktopWorkspaceTask, DockSlot,
-    MemoryInjectionState, MemoryScope, MemorySettings, MemoryUpsertInput, MilestoneDueDateUpdate,
-    MilestoneStatus, MilestoneUpdatePatch, PaneId, PaneNode, PanelId, PanelLayoutSnapshot,
-    PanelState, ProjectArchitectureChange, ProjectArchitectureChangeRecord,
-    ProjectArchitectureGraph, ProjectQuery, ProjectRoadmap, ProjectWorkspaceSurface,
-    QuotaUsageStats, QuotaUsageStatsInput, RemoteControlStatus, SplitAxis, TaskQuery,
-    WorkspaceItem, WorkspaceItemId, CODING_TOOLS_PANEL_ID, TASK_INSPECTOR_PANEL_ID,
+    DesktopImportReportItemStatus, DesktopImportReportStatus, DesktopInitialWorktreeSelection,
+    DesktopMcpActivationReport, DesktopMcpCredentialKind, DesktopMcpElicitation,
+    DesktopMcpElicitationAction, DesktopMcpElicitationMode, DesktopMcpFormFieldKind,
+    DesktopMcpPromptGetView, DesktopMcpResourceReadView, DesktopMcpServerUpsert,
+    DesktopMcpTransport, DesktopMemory, DesktopNavigationTarget, DesktopOptionalTextUpdate,
+    DesktopPluginInstall, DesktopProjectCloneError, DesktopProjectCloneOperation,
+    DesktopProjectClonePhase, DesktopProjectCloneRequest, DesktopProjectCloneResult,
+    DesktopProjectCloneSnapshot, DesktopProjectCreate, DesktopProjectDashboardSummary,
+    DesktopProjectPatch, DesktopProjectRemovalPreview, DesktopProjectSettings,
+    DesktopProjectTaskCatalog, DesktopProjectTaskError, DesktopPromptOptimizeInput,
+    DesktopPromptOptimizeResult, DesktopPromptRoute, DesktopProviderCredentialInput,
+    DesktopProviderError, DesktopProviderSnapshot, DesktopRemoteQuotaState, DesktopSecret,
+    DesktopSessionBranchAnchor, DesktopSessionBranchMode, DesktopSkillCreate, DesktopSkillScope,
+    DesktopSlashCommand, DesktopSlashCommandAction, DesktopSlashCommandSearchResult,
+    DesktopSlashCommandSource, DesktopSuggestionItem, DesktopTaskCreate, DesktopTaskMove,
+    DesktopTaskPatch, DesktopTaskRuntimeSnapshot, DesktopTerminalRestoration, DesktopTerminalScope,
+    DesktopTerminalSessionId, DesktopTerminalSnapshot, DesktopTodoCreate, DesktopTodoPriority,
+    DesktopTodoSource, DesktopTodoUpdate, DesktopToolConsent, DesktopToolConsentDecision,
+    DesktopTurnDispatchKind, DesktopTurnRequest, DesktopTurnState, DesktopUpdateState,
+    DesktopWorkspaceCodeSearchHit, DesktopWorkspaceCodeSearchResult, DesktopWorkspaceListing,
+    DesktopWorkspaceProject, DesktopWorkspaceSession, DesktopWorkspaceSessionId,
+    DesktopWorkspaceSnapshot, DesktopWorkspaceTask, DesktopWorktreeSelectionMode, DockSlot,
+    DocumentSnapshot, MemoryInjectionState, MemoryScope, MemorySettings, MemoryUpsertInput,
+    MilestoneDueDateUpdate, MilestoneStatus, MilestoneUpdatePatch, PaneId, PaneNode, PanelId,
+    PanelLayoutSnapshot, PanelState, ProjectArchitectureChange, ProjectArchitectureChangeRecord,
+    ProjectArchitectureGraph, ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery,
+    ProjectRoadmap, ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput,
+    RemoteControlStatus, SplitAxis, TaskQuery, WorkspaceItem, WorkspaceItemId,
+    CODING_TOOLS_PANEL_ID, IAB_PANEL_ID, TASK_INSPECTOR_PANEL_ID, TITLE_UPDATE_ACTION_KIND,
 };
 use nana_ui::widgets::{button_style, canvas_style, vertical_scrollbar};
 use nana_ui::{
-    app_shell, icon, ui_font, workspace_view, AppTitleBar, AppearanceSettings, ButtonKind, Card,
-    Colors, ConfirmDialog, ControlSize, EmptyState, GraphCanvas, GraphCanvasEvent,
-    GraphEdge as CanvasGraphEdge, GraphEndpoint, GraphModel, GraphNode as CanvasGraphNode,
-    GraphPoint, GraphPort, GraphPortKind, GraphPortSide, GraphSelection, GraphSize, GraphViewport,
-    HostedProgram, HostedProgramContext, HostedProgramUpdate, HostedRedraw, HostedRuntimeEvent,
-    HostedTextarea, HostedTextareaState, HostedUiCommand, HostedWindowAction, HostedWindowCommand,
-    HostedWindowEvent, HostedWindowId, HostedWindowSettings, Icon, Input, ListItem, NarrowBehavior,
-    QrCodeCanvas, RegionId, RegionRole, RegionState, ReorderItem, ReorderList, SelectionOption,
-    SettingsCard, SettingsModel, SettingsState, SettingsTab, SettingsTabId, SidebarFooter,
-    SidebarFooterButton, SidebarFrame, SidebarRow, SidebarRowState, SidebarSection, TabDragGroup,
-    TabDragSurface, Tabs, ThemeMode, ThemeTokens, TimeSeriesChart, WindowChromeEvent,
-    WindowChromeState, WorkspaceAction, WorkspaceController, WorkspaceLayout, WorkspaceRegions,
+    app_shell, icon, ui_font, workspace_view, ActionDescriptor, ActionId, ActionPickerState,
+    ActionRegistry, AppTitleBar, AppearanceEvent, AppearanceSection, AppearanceSettings,
+    BackdropTarget, ButtonKind, Card, Colors, CommandPalette, CommandPaletteEvent,
+    CommandPaletteItem, ConfirmDialog, ContextPredicate, ControlSize, Dropdown, DropdownEvent,
+    DropdownOption, EmptyState, GraphCanvas, GraphCanvasEvent, GraphEdge as CanvasGraphEdge,
+    GraphEndpoint, GraphModel, GraphNode as CanvasGraphNode, GraphPoint, GraphPort, GraphPortKind,
+    GraphPortSide, GraphSelection, GraphSize, GraphViewport, HostedBrowserCommand,
+    HostedBrowserEvent, HostedBrowserId, HostedProgram, HostedProgramContext, HostedProgramUpdate,
+    HostedRedraw, HostedRuntimeEvent, HostedTextarea, HostedTextareaState, HostedUiCommand,
+    HostedWindowAction, HostedWindowCaptureId, HostedWindowCommand, HostedWindowEvent,
+    HostedWindowGeometry, HostedWindowId, HostedWindowSettings, Icon, ImageViewer,
+    ImageViewerSource, Input, KeyBinding, KeyCaptureEvent, KeyCaptureLayer, KeyContext,
+    KeyModifiers, KeyStroke, Keymap, KeymapLayer, KeymapMatch, KeymapState, ListItem,
+    MarkdownImage, NarrowBehavior, NativeMarkdown, PaneChrome, PaneChromeAction,
+    PaneChromeActionKind, PaneTree, PaneTreeNode, QrCodeCanvas, RegionId, RegionRole, RegionState,
+    ReorderItem, ReorderList, SelectionOption, SettingsCard, SettingsModel, SettingsState,
+    SettingsTab, SettingsTabId, SidebarFooter, SidebarFooterButton, SidebarFrame, SidebarRow,
+    SidebarRowState, SidebarSection, TabDragGroup, TabDragSurface, Tabs, ThemeMode, ThemeModeExt,
+    ThemeTokens, TimeSeriesChart, WindowChromeEvent, WindowChromeState, WindowMaterialMode,
+    WorkspaceAction, WorkspaceController, WorkspaceLayout, WorkspaceRegions,
 };
-use nana_ui::{split_pane, SplitAxis as NanaSplitAxis, SplitPaneAction, SplitPaneController};
+use nana_ui::{
+    ratio_pane_split, split_pane, SplitAxis as NanaSplitAxis, SplitPaneAction, SplitPaneController,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -85,21 +109,45 @@ use crate::agent_debug::{
     DebugObservation, DebugRequest, DebugState, DebugWindowGeometry, DebugWorkspaceItem,
     DebugWorkspacePane, DebugWorkspaceSplit, DebugWorkspaceWindow,
 };
+use crate::ask_user::{AskUserAction, AskUserDraft, AskUserMode, AskUserOutcome, AskUserSpec};
+use crate::conversation_suggestions::{
+    conversation_suggestions_view, ConversationSuggestionState, ConversationSuggestionViewMessage,
+};
 use crate::data_import::{
     item_label as import_item_label, plan_item_status_label, plan_status_label,
     report_item_status_label, report_status_label, NativeDataImportState, LEGACY_INSTANCE_IDENTITY,
 };
+use crate::debug_timeline::{DebugTimelineAction, NativeDebugTimeline};
+use crate::document_editor::{
+    document_editor_content, document_editor_cursor_offset, document_editor_inactive_preview,
+    is_document_editor_item, select_document_editor_offsets, select_document_editor_range,
+    DocumentEditorActions, DocumentEditorViewState,
+};
 use crate::host::PreviewHost;
+use crate::iab_panel::{IabPanelMessage, IabPanelState};
+use crate::iab_window::{IabWindowMessage, IabWindowState};
+use crate::markdown_images::{load_markdown_image, LoadedMarkdownImage};
+use crate::project_files_panel::{
+    self, project_files_center, project_files_tree, ProjectFilesPanelMessage,
+};
+use crate::provider_ai_settings::ProviderAiSettingsState;
 use crate::shell_integration::{NativeShellIntegration, ShellCommand};
 use crate::storage::{
-    load_theme, load_window_state, load_workspace_state, load_workspace_topology_state,
-    merge_auxiliary_window_state, preview_home, preview_instance_identity, save_theme,
-    NativeMemorySettingsStore, NativeWindowSnapshot, NativeWindowState, NativeWindowStateWriter,
-    NativeWorkspaceTopologyState, NativeWorkspaceTopologyStateWriter, NativeWorkspaceWindowState,
+    load_appearance, load_conversation_status_state, load_sidebar_display_mode, load_theme,
+    load_window_state, load_workspace_state, load_workspace_topology_state,
+    merge_auxiliary_window_state, merge_conversation_status_window_state,
+    normalize_conversation_status_opacity, preview_home, preview_instance_identity,
+    save_appearance, save_sidebar_display_mode, save_theme, NativeConversationStatusStateWriter,
+    NativeConversationStatusWindowState, NativeMemorySettingsStore, NativeSidebarDisplayMode,
+    NativeWindowSnapshot, NativeWindowState, NativeWindowStateWriter, NativeWorkspaceTopologyState,
+    NativeWorkspaceTopologyStateWriter, NativeWorkspaceWindowState,
     NATIVE_WORKSPACE_TOPOLOGY_SCHEMA_VERSION,
 };
 use crate::target_ids;
-use crate::task_session::{interaction_choices, PendingActionView, TaskSessionView};
+use crate::task_session::{PendingActionView, TaskSessionView};
+use crate::terminal_view::{
+    terminal_content, terminal_inactive_preview, terminal_plain_text, TerminalViewMessage,
+};
 #[cfg(debug_assertions)]
 use nana_ui::GraphTarget;
 
@@ -111,9 +159,73 @@ const TIMELINE_PAGE_SIZE: usize = 100;
 const TIMELINE_DEFAULT_VIEWPORT_EXTENT: f32 = 720.0;
 const TIMELINE_OVERSCAN_EXTENT: f32 = 480.0;
 const TIMELINE_LOAD_EARLIER_EXTENT: f32 = 34.0;
+const MAX_MARKDOWN_IMAGE_CACHE_ENTRIES: usize = 64;
+const MAX_MARKDOWN_IMAGE_CACHE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_MARKDOWN_IMAGE_WORKERS: usize = 2;
 const WORKSPACE_SPLIT_HANDLE_SIZE: f32 = 8.0;
 const MIN_WORKSPACE_SPLIT_RATIO: f32 = 0.1;
 const MCP_RAW_JSON_DRAFT_KEY: &str = "$rawJson";
+const COMMAND_PALETTE_ACTION: &str = "workspace.command_palette";
+const PROJECT_FILES_ACTION: &str = "workspace.project_files";
+const CODING_TOOLS_ACTION: &str = "workspace.coding_tools";
+const SETTINGS_ACTION: &str = "workspace.settings";
+const TOGGLE_RESOURCES_ACTION: &str = "workspace.toggle_resources";
+const SAVE_DOCUMENT_ACTION: &str = "document.save";
+const TOGGLE_THEME_ACTION: &str = "appearance.toggle_theme";
+
+fn native_action_registry() -> Result<ActionRegistry, String> {
+    let mut registry = ActionRegistry::new();
+    for action in [
+        ActionDescriptor::new(COMMAND_PALETTE_ACTION, "显示命令面板")
+            .category("工作区")
+            .keywords(["command", "palette"]),
+        ActionDescriptor::new(PROJECT_FILES_ACTION, "打开项目文件")
+            .category("导航")
+            .keywords(["files", "explorer"])
+            .when(ContextPredicate::always().all_of(["project"])),
+        ActionDescriptor::new(CODING_TOOLS_ACTION, "打开 Coding Tools")
+            .category("导航")
+            .keywords(["code", "search", "git"])
+            .when(ContextPredicate::always().all_of(["project"])),
+        ActionDescriptor::new(SETTINGS_ACTION, "打开设置")
+            .category("工作区")
+            .keywords(["settings", "preferences"]),
+        ActionDescriptor::new(TOGGLE_RESOURCES_ACTION, "切换项目侧栏")
+            .category("工作区")
+            .keywords(["sidebar", "resources"])
+            .when(ContextPredicate::always().all_of(["primary_window"])),
+        ActionDescriptor::new(SAVE_DOCUMENT_ACTION, "保存当前文档")
+            .category("文档")
+            .keywords(["save", "file"])
+            .when(ContextPredicate::always().all_of(["document"])),
+        ActionDescriptor::new(TOGGLE_THEME_ACTION, "切换深浅主题")
+            .category("外观")
+            .keywords(["theme", "dark", "light"]),
+    ] {
+        registry
+            .register(action)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(registry)
+}
+
+fn native_command_keymap() -> Keymap {
+    Keymap::new([
+        KeyBinding::new(
+            COMMAND_PALETTE_ACTION,
+            KeyStroke::new("p", KeyModifiers::primary().with_shift()),
+        ),
+        KeyBinding::new(
+            SAVE_DOCUMENT_ACTION,
+            KeyStroke::new("s", KeyModifiers::primary()),
+        )
+        .when(ContextPredicate::always().all_of(["document"])),
+        KeyBinding::new(
+            TOGGLE_RESOURCES_ACTION,
+            KeyStroke::new("b", KeyModifiers::primary()),
+        ),
+    ])
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WorktreeDangerAction {
@@ -123,6 +235,8 @@ enum WorktreeDangerAction {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentInteractionToggle {
+    NonInterrupt,
+    Debug,
     Subagents,
     AutoTurn,
     AutoModelTier,
@@ -173,6 +287,28 @@ struct WorkspaceSplitSpec {
     extent: f32,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenSourceLicenseManifest {
+    app: Option<OpenSourceLicenseApp>,
+    #[serde(default)]
+    npm_dependencies: Vec<OpenSourceLicenseDependency>,
+    #[serde(default)]
+    rust_dependencies: Vec<OpenSourceLicenseDependency>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct OpenSourceLicenseApp {
+    license: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct OpenSourceLicenseDependency {
+    name: String,
+    version: String,
+    license: String,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 enum ProjectSurface {
     #[default]
@@ -181,6 +317,7 @@ enum ProjectSurface {
     Roadmap,
     Memory,
     Architecture,
+    Files,
 }
 
 impl From<ProjectWorkspaceSurface> for ProjectSurface {
@@ -189,6 +326,7 @@ impl From<ProjectWorkspaceSurface> for ProjectSurface {
             ProjectWorkspaceSurface::Roadmap => Self::Roadmap,
             ProjectWorkspaceSurface::Memory => Self::Memory,
             ProjectWorkspaceSurface::Architecture => Self::Architecture,
+            ProjectWorkspaceSurface::Files => Self::Files,
         }
     }
 }
@@ -198,6 +336,7 @@ enum ProjectWorkspacePreview {
     Roadmap(ProjectRoadmap),
     Memory(Vec<DesktopMemory>),
     Architecture(ProjectArchitectureGraph),
+    Files { entry_count: usize, revision: u64 },
     Error(String),
 }
 
@@ -247,6 +386,7 @@ enum InspectorSurface {
     #[default]
     Task,
     CodingTools,
+    Iab,
 }
 
 #[derive(Debug, Clone)]
@@ -367,6 +507,41 @@ enum HookSourceOperation {
     },
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HookHandlerDraftField {
+    Event,
+    Matcher,
+    Type,
+    TimeoutSeconds,
+    Command,
+    CommandWindows,
+    StatusMessage,
+}
+
+impl HookHandlerDraftField {
+    const ALL: [Self; 7] = [
+        Self::Event,
+        Self::Matcher,
+        Self::Type,
+        Self::TimeoutSeconds,
+        Self::Command,
+        Self::CommandWindows,
+        Self::StatusMessage,
+    ];
+
+    const fn target_key(self) -> &'static str {
+        match self {
+            Self::Event => "event",
+            Self::Matcher => "matcher",
+            Self::Type => "type",
+            Self::TimeoutSeconds => "timeout",
+            Self::Command => "command",
+            Self::CommandWindows => "command-windows",
+            Self::StatusMessage => "status-message",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct NativeHooksSnapshot {
     overview: DesktopHooksOverview,
@@ -435,7 +610,9 @@ pub struct CodingToolsRefreshResult {
     project_id: Option<String>,
     snapshot: Result<DesktopCodingServicesSnapshot, String>,
     git: Option<Result<DesktopGitStatus, String>>,
+    git_diff: Option<Result<DesktopGitDiff, String>>,
     workspace: Option<Result<DesktopWorkspaceListing, String>>,
+    project_tasks: Option<Result<DesktopProjectTaskCatalog, String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -448,11 +625,73 @@ struct ConversationStatusEntry {
     queued_turns: usize,
 }
 
+#[derive(Debug, Clone)]
+struct PromptOptimizationState {
+    operation_id: u64,
+    task_id: TaskId,
+    expected_revision: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PromptRouteSuggestionState {
+    task_id: TaskId,
+    route: DesktopPromptRoute,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingSessionBranch {
+    task_id: TaskId,
+    anchor: DesktopSessionBranchAnchor,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TimelineTextSelection {
+    event_id: String,
+    text: String,
+}
+
+#[derive(Clone, Debug)]
+enum MarkdownImageLoadState {
+    Pending { requested: bool },
+    Loading,
+    Ready(LoadedMarkdownImage),
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct MarkdownImagePreview {
+    source: String,
+    alt: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingReviewWorkflowKind {
+    Review,
+    FixSuggestion,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PendingReviewTargetKind {
+    UncommittedChanges,
+    BaseBranch,
+    Commit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PendingReviewSlashWorkflow {
+    task_id: TaskId,
+    workflow_kind: PendingReviewWorkflowKind,
+    target_kind: PendingReviewTargetKind,
+    target_value: String,
+}
+
 struct TaskPopupWindow {
     id: HostedWindowId,
     workspace: DesktopWorkspaceSession,
     active_workspace_item_id: Option<WorkspaceItemId>,
     active_task_id: Option<TaskId>,
+    draft: Option<DesktopTaskCreate>,
+    draft_worktree: DraftWorktreeSelection,
     title: String,
     project_name: String,
     task_sessions: BTreeMap<TaskId, TaskSessionView>,
@@ -461,9 +700,14 @@ struct TaskPopupWindow {
     slash_commands: Vec<DesktopSlashCommandSearchResult>,
     conversation_reference_results: Vec<ChatConversationReference>,
     context_attachment_results: Vec<ChatContextSearchResult>,
+    conversation_suggestions: ConversationSuggestionState,
+    pending_session_branch: Option<PendingSessionBranch>,
+    pending_review_slash_workflow: Option<PendingReviewSlashWorkflow>,
     turn_state: Option<(String, DesktopTurnState)>,
     interaction_drafts: BTreeMap<String, String>,
+    ask_user_drafts: BTreeMap<String, AskUserDraft>,
     mcp_elicitation_drafts: BTreeMap<String, Map<String, Value>>,
+    tool_consent_drafts: BTreeMap<String, ToolConsentDraft>,
     error: Option<String>,
     ready: bool,
     geometry: Option<NativeWindowState>,
@@ -471,6 +715,30 @@ struct TaskPopupWindow {
     scale_factor: f32,
     workspace_splits: BTreeMap<WorkspaceSplitKey, WorkspaceSplitState>,
     project_states: BTreeMap<WorkspaceItemId, ProjectWorkspaceEditorState>,
+}
+
+struct MainConversationDraft {
+    task: DesktopTaskCreate,
+    composer: DesktopComposerState,
+    worktree: DraftWorktreeSelection,
+    suggestions: ConversationSuggestionState,
+    error: Option<String>,
+}
+
+struct ConversationDraftSurface<'a> {
+    task: &'a DesktopTaskCreate,
+    worktree: &'a DraftWorktreeSelection,
+    composer: Option<&'a DesktopComposerState>,
+    suggestions: &'a ConversationSuggestionState,
+    error: Option<&'a str>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+enum DraftWorktreeSelection {
+    #[default]
+    Current,
+    Create,
+    Existing(Option<PathBuf>),
 }
 
 enum WorkspaceTabStripLocation {
@@ -532,7 +800,20 @@ enum ProjectCloneOutcome {
     Failed,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExternalWorkspaceTarget {
+    FileManager,
+    Terminal,
+    CodeEditor,
+}
+
 type MessageSender = Arc<dyn Fn(Message) -> Result<(), String> + Send + Sync>;
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ToolConsentDraft {
+    command: String,
+    message: String,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -597,8 +878,12 @@ pub enum Message {
     TaskSearchChanged(String),
     NewTaskTitleChanged(String),
     CreateTask,
+    OpenMainConversationDraft,
+    CloseMainConversationDraft,
     TaskTitleChanged(String),
     SaveTask,
+    CycleTaskDependency,
+    ToggleTaskDependency,
     CycleTaskStatus,
     CycleTaskPriority,
     ToggleTaskPinned,
@@ -674,6 +959,36 @@ pub enum Message {
     MemoryTitleChanged(String),
     MemoryBodyEdited(text_editor::Action),
     MemoryBodyReplaced(String),
+    DocumentEditorEdited {
+        item_id: WorkspaceItemId,
+        action: text_editor::Action,
+    },
+    DocumentDiagnosticsFinished {
+        document_id: lilia_desktop_application::DocumentId,
+        result: Result<DesktopDocumentDiagnosticsSnapshot, String>,
+    },
+    GoToDocumentDefinition {
+        item_id: WorkspaceItemId,
+        window_id: HostedWindowId,
+    },
+    DocumentDefinitionsFinished {
+        item_id: WorkspaceItemId,
+        window_id: HostedWindowId,
+        operation_id: u64,
+        project_id: Option<ProjectId>,
+        result: Result<DesktopDocumentDefinitionResult, String>,
+    },
+    OpenDocumentDefinitionTarget {
+        item_id: WorkspaceItemId,
+        window_id: HostedWindowId,
+        index: usize,
+    },
+    SaveDocumentEditor(WorkspaceItemId),
+    DiscardDocumentEditor(WorkspaceItemId),
+    SelectDocumentDiagnostic {
+        item_id: WorkspaceItemId,
+        index: usize,
+    },
     MemoryTagsChanged(String),
     ToggleMemoryScope,
     SaveMemory,
@@ -687,39 +1002,70 @@ pub enum Message {
     ToggleTaskMemory,
     ResetTaskMemoryCooldown,
     OpenCodingTools,
+    OpenIab,
+    Iab(IabPanelMessage),
+    IabWindow {
+        window_id: HostedWindowId,
+        message: IabWindowMessage,
+    },
     CloseInspectorDock,
     ToggleTaskInspector,
     OpenArchitecture,
+    OpenProjectFiles,
+    RefreshProjectFiles,
+    ToggleProjectFileExpand(String),
+    OpenProjectFile(String),
     RefreshArchitecture,
     RollbackArchitecture,
     ArchitectureGraph(GraphCanvasEvent),
     RefreshCodingTools,
     CodingToolsRefreshed {
         operation_id: u64,
-        result: CodingToolsRefreshResult,
+        result: Box<CodingToolsRefreshResult>,
     },
     CodingQueryChanged(String),
+    CycleCodingSearchMode,
+    ToggleCodingSearchScope,
+    CycleCodingGitDiffScope,
     SearchCodingTools,
     OpenProjectWorkspace,
+    OpenProjectCodeEditor,
     OpenProjectTerminal,
+    OpenNativeProjectTerminal,
+    RunProjectTask(String),
+    Terminal(TerminalViewMessage),
+    OpenCodingSearchHit(DesktopWorkspaceCodeSearchHit),
     SaveCodingSearchToMemory,
     CodingSearchFinished {
         operation_id: u64,
-        result: Result<DesktopCodeSearchResult, String>,
+        result: Result<DesktopWorkspaceCodeSearchResult, String>,
     },
     SelectProject(ProjectId),
+    OpenProjectsOverview,
+    RefreshProjectsOverview,
     SelectInbox,
     SelectTask(TaskId),
     BackToTaskList,
     OpenConversationStatus,
     CloseConversationStatus,
-    FocusConversationStatusTask(TaskId),
+    ToggleConversationStatusAlwaysOnTop,
+    ToggleConversationStatusOpacityPanel,
+    ConversationStatusOpacityChanged(f32),
+    OpenConversationStatusNewChat,
+    DismissConversationStatusError,
+    OpenConversationStatusTask(TaskId),
+    StopConversationStatusTask(TaskId),
     OpenSelectedTaskPopup,
+    OpenChildQuestionPopup {
+        source_window: HostedWindowId,
+        parent_task_id: TaskId,
+    },
     MoveSelectedTaskToPopup,
     MoveWorkspaceItemToNewWindow(WorkspaceItemId),
     RestoreTaskPopupWindows,
     CloseTaskPopup(HostedWindowId),
-    MoveTaskPopupToMain(HostedWindowId),
+    FocusTaskPopupMain(HostedWindowId),
+    OpenTaskPopupNewChat(HostedWindowId),
     SelectWorkspaceWindowTab {
         window_id: HostedWindowId,
         pane_id: PaneId,
@@ -766,6 +1112,38 @@ pub enum Message {
         item_id: WorkspaceItemId,
         message: Box<Message>,
     },
+    RefreshConversationSuggestions {
+        window_id: HostedWindowId,
+        force: bool,
+    },
+    ConversationSuggestionsFinished {
+        window_id: HostedWindowId,
+        operation_id: u64,
+        task_id: TaskId,
+        result: Result<Vec<DesktopSuggestionItem>, String>,
+    },
+    ApplyConversationSuggestion {
+        window_id: HostedWindowId,
+        prompt: String,
+    },
+    OptimizePrompt(HostedWindowId),
+    PromptOptimizationFinished {
+        window_id: HostedWindowId,
+        operation_id: u64,
+        task_id: TaskId,
+        expected_revision: u64,
+        result: Result<DesktopPromptOptimizeResult, String>,
+    },
+    ApplyPromptRouteWorkflow(HostedWindowId),
+    DismissPromptRouteWorkflow(HostedWindowId),
+    ComposerModelSelection {
+        window_id: HostedWindowId,
+        event: DropdownEvent<String>,
+    },
+    ComposerReasoningSelection {
+        window_id: HostedWindowId,
+        event: DropdownEvent<String>,
+    },
     LoadEarlierTimeline,
     TaskPopupLoadEarlierTimeline(HostedWindowId),
     TimelineScrolled {
@@ -777,9 +1155,16 @@ pub enum Message {
         window_id: HostedWindowId,
         value: String,
     },
+    TaskPopupDraftProjectSelection {
+        window_id: HostedWindowId,
+        event: DropdownEvent<Option<ProjectId>>,
+    },
+    CycleDraftWorktree(HostedWindowId),
+    PickDraftWorktree(HostedWindowId),
+    RetryInitialWorktree(HostedWindowId),
     TaskPopupSelectSlashCommand {
         window_id: HostedWindowId,
-        name: String,
+        command: DesktopSlashCommand,
     },
     TaskPopupSelectConversationReference {
         window_id: HostedWindowId,
@@ -802,6 +1187,7 @@ pub enum Message {
         task_id: String,
     },
     TaskPopupSubmitTurn(HostedWindowId),
+    TaskPopupCompactContext(HostedWindowId),
     TaskPopupInterruptTurn(HostedWindowId),
     TaskPopupTogglePlanMode(HostedWindowId),
     TaskPopupToggleGoalMode(HostedWindowId),
@@ -811,16 +1197,37 @@ pub enum Message {
         request_id: String,
         approved: bool,
     },
+    TaskPopupRespondTitleUpdate {
+        window_id: HostedWindowId,
+        request_id: String,
+        accepted: bool,
+    },
     TaskPopupInteractionDraftChanged {
         window_id: HostedWindowId,
         request_id: String,
         value: String,
+    },
+    AskUserDraftAction {
+        window_id: HostedWindowId,
+        request_id: String,
+        action: AskUserAction,
     },
     TaskPopupRespondInteraction {
         window_id: HostedWindowId,
         request_id: String,
         accepted: bool,
         response: Value,
+    },
+    ToolConsentDraftChanged {
+        window_id: HostedWindowId,
+        request_id: String,
+        command: String,
+        message: String,
+    },
+    RespondToolConsent {
+        window_id: HostedWindowId,
+        request_id: String,
+        decision: DesktopToolConsentDecision,
     },
     TaskPopupRespondArchitecture {
         window_id: HostedWindowId,
@@ -851,7 +1258,17 @@ pub enum Message {
         value: String,
     },
     ComposerChanged(String),
-    SelectSlashCommand(String),
+    SelectSlashCommand(DesktopSlashCommand),
+    SelectReviewWorkflowTarget {
+        window_id: HostedWindowId,
+        kind: PendingReviewTargetKind,
+    },
+    ReviewWorkflowTargetChanged {
+        window_id: HostedWindowId,
+        value: String,
+    },
+    SubmitReviewWorkflow(HostedWindowId),
+    CancelReviewWorkflow(HostedWindowId),
     SelectConversationReference(String),
     SelectContextAttachment(String),
     PasteClipboardText,
@@ -889,10 +1306,15 @@ pub enum Message {
     ToggleGoalMode,
     CyclePermission,
     SubmitTurn,
+    CompactContext,
     InterruptTurn,
     RespondApproval {
         request_id: String,
         approved: bool,
+    },
+    RespondTitleUpdate {
+        request_id: String,
+        accepted: bool,
     },
     InteractionDraftChanged {
         request_id: String,
@@ -912,10 +1334,72 @@ pub enum Message {
         event_id: String,
         text: String,
     },
+    TimelineTextSelectionChanged {
+        window_id: HostedWindowId,
+        event_id: String,
+        text: Option<String>,
+    },
+    CopyTimelineSelection {
+        window_id: HostedWindowId,
+    },
+    QuoteTimelineSelection {
+        window_id: HostedWindowId,
+    },
+    AskTimelineSelectionInPopup {
+        window_id: HostedWindowId,
+    },
+    MarkdownImageLoaded {
+        source: String,
+        result: Result<LoadedMarkdownImage, String>,
+    },
+    RetryMarkdownImage(String),
+    OpenMarkdownImage {
+        window_id: HostedWindowId,
+        image: MarkdownImage,
+    },
+    CloseMarkdownImage(HostedWindowId),
+    MarkdownImageViewerInteraction,
+    RetryTimelineEvent {
+        window_id: HostedWindowId,
+        event_id: String,
+    },
+    ApplyTimelineSuggestion {
+        window_id: HostedWindowId,
+        event_id: String,
+    },
+    SetTimelineSessionBranch {
+        window_id: HostedWindowId,
+        event_id: String,
+        mode: DesktopSessionBranchMode,
+    },
+    ClearSessionBranch(HostedWindowId),
+    ToggleCommandPalette,
+    CommandPalette(CommandPaletteEvent),
+    CommandKeyStroke {
+        window_id: HostedWindowId,
+        item_id: Option<WorkspaceItemId>,
+        stroke: KeyStroke,
+    },
+    DispatchCommandAction {
+        window_id: HostedWindowId,
+        item_id: Option<WorkspaceItemId>,
+        action: ActionId,
+    },
     OpenSettings,
     CloseSettings,
     SelectSettingsTab(SettingsTabId),
-    SetTheme(ThemeMode),
+    Appearance(AppearanceEvent),
+    SetSidebarDisplayMode(NativeSidebarDisplayMode),
+    InjectDebugTimeline {
+        window_id: HostedWindowId,
+        action: DebugTimelineAction,
+    },
+    CycleProjectWorktreeMode,
+    ProjectWorktreeParentChanged(String),
+    PickProjectWorktreeParent,
+    ProjectWorktreeInstructionsEdited(text_editor::Action),
+    ToggleProjectWorktreeCleanup,
+    SaveProjectSettings,
     PickDataImportSource,
     DataImportPlanFinished {
         operation_id: u64,
@@ -946,6 +1430,47 @@ pub enum Message {
     ProviderAnthropicEndpointChanged(String),
     SaveProviderRuntimeSettings,
     ResetProviderRuntimeSettings,
+    AssistantAiBaseUrlChanged(String),
+    AssistantAiModelChanged(String),
+    AssistantAiSecretChanged(String),
+    AssistantAiNewModelIdChanged(String),
+    AssistantAiNewModelLabelChanged(String),
+    AddAssistantAiModel,
+    RenameAssistantAiModel {
+        model_id: String,
+        value: String,
+    },
+    FetchAssistantAiModels,
+    AssistantAiModelsFetched {
+        operation_id: u64,
+        result: DesktopAssistantAiModelsResult,
+    },
+    TestAssistantAiConnection,
+    AssistantAiConnectionTested {
+        operation_id: u64,
+        result: DesktopAssistantAiTestResult,
+    },
+    SaveAssistantAiConfiguration,
+    ClearAssistantAiSecret,
+    TitleModelChanged(String),
+    SuggestionModelChanged(String),
+    PromptRouterModelChanged(String),
+    PromptOptimizeModelChanged(String),
+    AutoTurnDecisionModelChanged(String),
+    FeaturePresetModelChanged {
+        preset_id: String,
+        value: String,
+    },
+    CycleFeaturePresetEffort(String),
+    CustomPresetDraftChanged(String),
+    AddCustomPreset,
+    RenameCustomPreset {
+        preset_id: String,
+        value: String,
+    },
+    RemoveCustomPreset(String),
+    SaveModelFeatureSettings,
+    SetConversationSuggestionsEnabled(bool),
     ToggleAgentInteraction(AgentInteractionToggle),
     AgentNameChanged(String),
     AgentDescriptionChanged(String),
@@ -989,6 +1514,17 @@ pub enum Message {
     HookDraftChanged {
         source_id: String,
         value: String,
+    },
+    HookHandlerDraftChanged {
+        source_id: String,
+        index: usize,
+        field: HookHandlerDraftField,
+        value: String,
+    },
+    AddHookHandler(String),
+    RemoveHookHandler {
+        source_id: String,
+        index: usize,
     },
     CreateHookSource(String),
     SaveHookSource(String),
@@ -1066,10 +1602,14 @@ pub enum Message {
         result: Result<RemoteControlStatus, String>,
     },
     ShellShortcutChanged(String),
+    BeginShellShortcutCapture,
+    ShellShortcutCaptured(KeyCaptureEvent),
     SaveShellShortcut,
     ClearShellShortcut,
     CheckForUpdate,
     InstallUpdate,
+    DismissUpdatePrompt,
+    UpdatePromptDialogInteraction,
     OpenPreviewReleases,
     UpdateOperationFinished {
         operation_id: u64,
@@ -1110,6 +1650,14 @@ pub enum Message {
     AgentDebug(DebugRequest),
 }
 
+struct WorkspaceWindowPaneChrome<'a> {
+    pane_id: &'a PaneId,
+    item_ids: &'a [WorkspaceItemId],
+    active_item: Option<&'a WorkspaceItemId>,
+    body: Element<'static, Message>,
+    active: bool,
+}
+
 #[cfg(debug_assertions)]
 struct PendingDebugFrameResponse {
     command: &'static str,
@@ -1132,7 +1680,16 @@ pub struct PreviewProgram {
     workspace: WorkspaceController,
     workspace_items: Vec<WorkspaceItem>,
     panel_layout: PanelLayoutSnapshot,
+    action_registry: ActionRegistry,
+    command_keymap: Keymap,
+    command_keymap_state: KeymapState,
+    command_picker: ActionPickerState,
+    command_source_window: HostedWindowId,
+    command_source_item: Option<WorkspaceItemId>,
     inspector_surface: InspectorSurface,
+    iab: IabPanelState,
+    iab_windows: BTreeMap<HostedWindowId, IabWindowState>,
+    abandoned_iab_captures: BTreeMap<(u64, u64), PathBuf>,
     workspace_tab_drag_group: TabDragGroup<Option<WorkspaceItemId>>,
     main_window_geometry: Option<NativeWindowState>,
     main_window_scale_factor: f32,
@@ -1144,6 +1701,9 @@ pub struct PreviewProgram {
     archived_projects: Vec<Project>,
     archived_tasks: Vec<ProductTask>,
     selected_project: Option<ProjectId>,
+    projects_overview_open: bool,
+    project_dashboard: Vec<DesktopProjectDashboardSummary>,
+    project_dashboard_error: Option<String>,
     inbox_selected: bool,
     selected_task: Option<TaskId>,
     project_name_edit: String,
@@ -1177,31 +1737,60 @@ pub struct PreviewProgram {
     task_search: String,
     new_task_title: String,
     task_title_edit: String,
+    task_dependency_target: Option<TaskId>,
     task_drop_search: String,
     task_move_target: Option<TaskMoveTarget>,
     task_parent_target: Option<TaskParentTarget>,
     project_surface: ProjectSurface,
+    project_files: Option<ProjectFilesSnapshot>,
+    opened_project_document: Option<DocumentSnapshot>,
+    project_files_error: Option<String>,
+    document_editors: BTreeMap<WorkspaceItemId, DocumentEditorViewState>,
+    document_definition_operation_sequence: u64,
+    terminal_snapshots: BTreeMap<DesktopTerminalSessionId, DesktopTerminalSnapshot>,
+    terminal_inputs: BTreeMap<DesktopTerminalSessionId, String>,
+    terminal_scrollback: BTreeMap<DesktopTerminalSessionId, usize>,
+    terminal_notices: BTreeMap<DesktopTerminalSessionId, String>,
     task_session: Option<TaskSessionView>,
     pane_task_sessions: BTreeMap<TaskId, TaskSessionView>,
     project_workspace_previews: BTreeMap<WorkspaceItemId, ProjectWorkspacePreview>,
+    main_conversation_draft: Option<MainConversationDraft>,
     composer: Option<DesktopComposerState>,
     slash_commands: Vec<DesktopSlashCommandSearchResult>,
     conversation_reference_results: Vec<ChatConversationReference>,
     context_attachment_results: Vec<ChatContextSearchResult>,
+    conversation_suggestions: ConversationSuggestionState,
+    conversation_suggestion_operation_sequence: u64,
+    prompt_optimization_operation_sequence: u64,
+    active_prompt_optimizations: BTreeMap<HostedWindowId, PromptOptimizationState>,
+    prompt_route_suggestions: BTreeMap<HostedWindowId, PromptRouteSuggestionState>,
+    pending_session_branch: Option<PendingSessionBranch>,
+    pending_review_slash_workflow: Option<PendingReviewSlashWorkflow>,
     todo_draft: String,
     editing_todo: Option<String>,
     goal_draft: String,
     worktree_busy: bool,
     worktree_confirmation: Option<WorktreeDangerAction>,
+    pending_initial_worktrees: BTreeMap<TaskId, DesktopInitialWorktreeSelection>,
     interaction_drafts: BTreeMap<String, String>,
+    ask_user_drafts: BTreeMap<String, AskUserDraft>,
     mcp_elicitation_drafts: BTreeMap<String, Map<String, Value>>,
+    tool_consent_drafts: BTreeMap<String, ToolConsentDraft>,
     turn_state: Option<(String, DesktopTurnState)>,
     task_action_error: Option<String>,
     last_copied_markdown: Option<(String, usize)>,
+    timeline_text_selections: BTreeMap<HostedWindowId, TimelineTextSelection>,
+    markdown_images: BTreeMap<String, MarkdownImageLoadState>,
+    markdown_image_recency: BTreeMap<String, u64>,
+    markdown_image_access_clock: u64,
+    markdown_image_previews: BTreeMap<HostedWindowId, MarkdownImagePreview>,
     conversation_status_open: bool,
     conversation_status_ready: bool,
     conversation_status_entries: Vec<ConversationStatusEntry>,
     conversation_status_error: Option<String>,
+    conversation_status_window: NativeConversationStatusWindowState,
+    conversation_status_opacity_panel_open: bool,
+    conversation_status_state_writer: NativeConversationStatusStateWriter,
     task_popups: BTreeMap<HostedWindowId, TaskPopupWindow>,
     file_drop_hovered_windows: BTreeSet<HostedWindowId>,
     attachment_previews: BTreeMap<HostedWindowId, ChatAttachment>,
@@ -1248,9 +1837,14 @@ pub struct PreviewProgram {
     memory_injection: Option<MemoryInjectionState>,
     coding_tools: Option<DesktopCodingServicesSnapshot>,
     coding_git: Option<DesktopGitStatus>,
+    coding_git_diff: Option<DesktopGitDiff>,
+    coding_git_diff_scope: DesktopGitDiffScope,
     coding_workspace: Option<DesktopWorkspaceListing>,
+    coding_project_tasks: Option<DesktopProjectTaskCatalog>,
     coding_query: String,
-    coding_search: Option<DesktopCodeSearchResult>,
+    coding_search_mode: DesktopCodeSearchMode,
+    coding_search: Option<DesktopWorkspaceCodeSearchResult>,
+    coding_search_all_projects: bool,
     coding_notice: Option<String>,
     coding_busy: bool,
     coding_operation_sequence: u64,
@@ -1258,11 +1852,22 @@ pub struct PreviewProgram {
     coding_error: Option<String>,
     settings_model: SettingsModel,
     settings_state: SettingsState,
+    project_settings: DesktopProjectSettings,
+    project_worktree_instructions: HostedTextareaState,
+    project_settings_error: Option<String>,
     provider: DesktopProviderSnapshot,
     provider_runtime_settings: DesktopAgentRuntimeSettings,
     provider_model: String,
     provider_openai_endpoint: String,
     provider_anthropic_endpoint: String,
+    provider_ai_settings: ProviderAiSettingsState,
+    assistant_ai_new_model_id: String,
+    assistant_ai_new_model_label: String,
+    assistant_ai_probe_busy: bool,
+    assistant_ai_probe_sequence: u64,
+    active_assistant_ai_probe: Option<u64>,
+    assistant_ai_probe_notice: Option<(bool, String)>,
+    custom_preset_draft: String,
     agent_interaction_settings: DesktopAgentInteractionSettings,
     custom_agents: DesktopCustomSubagentCatalog,
     custom_agent_editor_open: bool,
@@ -1313,8 +1918,11 @@ pub struct PreviewProgram {
     remote_error: Option<String>,
     shell: NativeShellIntegration,
     shell_shortcut_edit: String,
+    shell_shortcut_capturing: bool,
     shell_error: Option<String>,
     update_state: DesktopUpdateState,
+    dismissed_update_versions: BTreeSet<String>,
+    update_failure_dismissed: bool,
     update_configured: bool,
     update_busy: bool,
     update_operation_sequence: u64,
@@ -1326,6 +1934,8 @@ pub struct PreviewProgram {
     workspace_topology_revision: u64,
     message_sender: MessageSender,
     appearance: AppearanceSettings,
+    sidebar_display_mode: NativeSidebarDisplayMode,
+    debug_timeline: NativeDebugTimeline,
     theme: ThemeMode,
     error_message: Option<String>,
     #[cfg(debug_assertions)]
@@ -1333,6 +1943,7 @@ pub struct PreviewProgram {
     #[cfg(debug_assertions)]
     pending_debug_frame_response: Option<PendingDebugFrameResponse>,
     window_chrome: WindowChromeState,
+    license_manifest: OpenSourceLicenseManifest,
 }
 
 impl PreviewProgram {
@@ -1341,8 +1952,206 @@ impl PreviewProgram {
             .with_workspace_corners(self.appearance.workspace_corners_enabled())
     }
 
+    fn command_context(
+        &self,
+        window_id: HostedWindowId,
+        item_id: Option<&WorkspaceItemId>,
+    ) -> KeyContext {
+        let mut context = KeyContext::new(["workspace"]);
+        if window_id == HostedWindowId::PRIMARY {
+            context.insert("primary_window");
+        }
+        if self.selected_project.is_some() {
+            context.insert("project");
+        }
+        if item_id.is_some_and(|item_id| self.document_editors.contains_key(item_id)) {
+            context.insert("document");
+        }
+        context
+    }
+
+    fn command_palette_items(&self) -> Vec<CommandPaletteItem<'static>> {
+        let context = self.command_context(
+            self.command_source_window,
+            self.command_source_item.as_ref(),
+        );
+        self.action_registry
+            .search(self.command_picker.query(), &context)
+            .into_iter()
+            .map(|matched| {
+                let mut item = CommandPaletteItem::new(
+                    matched.action.id.clone(),
+                    matched.action.label.clone(),
+                );
+                if let Some(category) = &matched.action.category {
+                    item = item.category(category.clone());
+                }
+                if let Some(shortcut) = self.command_keymap.binding_label(
+                    &matched.action.id,
+                    &context,
+                    &self.action_registry,
+                ) {
+                    item = item.shortcut(shortcut);
+                }
+                item
+            })
+            .collect()
+    }
+
+    fn active_item_for_window(&self, window_id: HostedWindowId) -> Option<WorkspaceItemId> {
+        if window_id == HostedWindowId::PRIMARY {
+            return self
+                .panel_layout
+                .active_workspace_item()
+                .ok()
+                .flatten()
+                .cloned();
+        }
+        self.task_popups
+            .get(&window_id)
+            .and_then(|popup| popup.active_workspace_item_id.clone())
+    }
+
+    fn open_command_palette(
+        &mut self,
+        window_id: HostedWindowId,
+        item_id: Option<WorkspaceItemId>,
+    ) {
+        if self.project_removal.is_some() || self.update_prompt_is_visible() {
+            return;
+        }
+        let restore_focus = item_id
+            .as_ref()
+            .filter(|item_id| self.document_editors.contains_key(*item_id))
+            .map(|item_id| target_ids::document_editor_input(item_id.as_str()));
+        self.command_source_window = window_id;
+        self.command_source_item = item_id;
+        self.command_picker.open(restore_focus);
+        self.pending_ui_commands.push(HostedUiCommand::Focus {
+            window_id,
+            target: nana_ui::COMMAND_PALETTE_INPUT_ID.to_owned(),
+        });
+    }
+
+    fn dismiss_command_palette(&mut self) {
+        if let Some(target) = self.command_picker.dismiss() {
+            self.pending_ui_commands.push(HostedUiCommand::Focus {
+                window_id: self.command_source_window,
+                target,
+            });
+        }
+    }
+
+    fn update_command_palette(&mut self, event: CommandPaletteEvent) {
+        if !self.command_picker.is_open() {
+            return;
+        }
+        match event {
+            CommandPaletteEvent::Search(query) => {
+                self.command_picker.set_query(query);
+                let count = self.command_palette_items().len();
+                self.command_picker.sync_results(count);
+            }
+            CommandPaletteEvent::Select(action) => self.execute_native_action(action),
+            CommandPaletteEvent::Navigate(navigation) => {
+                let count = self.command_palette_items().len();
+                self.command_picker.navigate(navigation, count);
+            }
+            CommandPaletteEvent::Dismiss => self.dismiss_command_palette(),
+            CommandPaletteEvent::Interaction => {}
+        }
+    }
+
+    fn dispatch_command_stroke(
+        &mut self,
+        window_id: HostedWindowId,
+        item_id: Option<WorkspaceItemId>,
+        stroke: KeyStroke,
+    ) {
+        let context = self.command_context(window_id, item_id.as_ref());
+        if let KeymapMatch::Dispatch(action) = self.command_keymap.resolve(
+            &mut self.command_keymap_state,
+            stroke,
+            &context,
+            &self.action_registry,
+        ) {
+            self.command_source_window = window_id;
+            self.command_source_item = item_id;
+            self.execute_native_action(action);
+        }
+    }
+
+    fn execute_native_action(&mut self, action: ActionId) {
+        if action.as_str() == COMMAND_PALETTE_ACTION {
+            if self.command_picker.is_open() {
+                self.dismiss_command_palette();
+            } else {
+                let window_id = self.command_source_window;
+                let item_id = self
+                    .command_source_item
+                    .clone()
+                    .or_else(|| self.active_item_for_window(window_id));
+                self.open_command_palette(window_id, item_id);
+            }
+            return;
+        }
+        let context = self.command_context(
+            self.command_source_window,
+            self.command_source_item.as_ref(),
+        );
+        if !self.action_registry.is_available(&action, &context) {
+            return;
+        }
+        let source_item = self.command_source_item.clone();
+        self.dismiss_command_palette();
+        match action.as_str() {
+            PROJECT_FILES_ACTION => {
+                self.update_message(Message::OpenProjectFiles);
+            }
+            CODING_TOOLS_ACTION => {
+                self.update_message(Message::OpenCodingTools);
+            }
+            SETTINGS_ACTION => {
+                self.update_message(Message::OpenSettings);
+            }
+            TOGGLE_RESOURCES_ACTION if self.command_source_window == HostedWindowId::PRIMARY => {
+                self.update_message(Message::Workspace(WorkspaceAction::ToggleRegion(
+                    RegionId::Resources,
+                )));
+            }
+            SAVE_DOCUMENT_ACTION => {
+                if let Some(item_id) = source_item {
+                    self.save_document_editor(item_id);
+                }
+            }
+            TOGGLE_THEME_ACTION => self.set_theme(self.theme.toggle()),
+            _ => {}
+        }
+    }
+
     fn refresh_projects(&mut self) {
         self.execute_workspace_command(DesktopCommand::RefreshWorkspace);
+        if self.projects_overview_open {
+            self.refresh_project_dashboard();
+        }
+    }
+
+    fn open_projects_overview(&mut self) {
+        self.open_application_surface(ApplicationWorkspaceSurface::Projects);
+        self.refresh_project_dashboard();
+    }
+
+    fn refresh_project_dashboard(&mut self) {
+        match self.application.project_dashboard_summaries() {
+            Ok(summaries) => {
+                self.project_dashboard = summaries;
+                self.project_dashboard_error = None;
+            }
+            Err(error) => {
+                eprintln!("failed to refresh Native project dashboard: {error}");
+                self.project_dashboard_error = Some("无法读取项目总览，请稍后重试。".to_owned());
+            }
+        }
     }
 
     fn refresh_tasks(&mut self) {
@@ -1711,10 +2520,117 @@ impl PreviewProgram {
         }
     }
 
+    fn persist_project_clone_parent(&mut self) {
+        let Ok(current) = self.application.project_settings() else {
+            return;
+        };
+        let next = DesktopProjectSettings {
+            clone_parent_dir: (!self.project_clone_parent.trim().is_empty())
+                .then(|| self.project_clone_parent.trim().to_owned()),
+            worktree: current.worktree,
+        };
+        match self.application.save_project_settings(next) {
+            Ok(saved) => {
+                self.project_settings.clone_parent_dir = saved.clone_parent_dir;
+                self.project_settings_error = None;
+            }
+            Err(error) => {
+                eprintln!("failed to persist Native project clone parent: {error}");
+                self.project_settings_error = Some("无法保存克隆位置，请重试。".to_owned());
+            }
+        }
+    }
+
+    fn refresh_project_settings(&mut self) {
+        match self.application.project_settings() {
+            Ok(settings) => {
+                self.project_clone_parent = settings.clone_parent_dir.clone().unwrap_or_default();
+                self.project_worktree_instructions
+                    .set_text(&settings.worktree.auto_instructions);
+                self.project_settings = settings;
+                self.project_settings_error = None;
+            }
+            Err(error) => {
+                eprintln!("failed to refresh Native project settings: {error}");
+                self.project_settings_error = Some("无法读取项目设置，请重试。".to_owned());
+            }
+        }
+    }
+
+    fn save_project_preferences(&mut self) {
+        let mut settings = self.project_settings.clone();
+        settings.clone_parent_dir = (!self.project_clone_parent.trim().is_empty())
+            .then(|| self.project_clone_parent.trim().to_owned());
+        settings.worktree.auto_instructions = self.project_worktree_instructions.text();
+        match self.application.save_project_settings(settings) {
+            Ok(saved) => {
+                self.project_clone_parent = saved.clone_parent_dir.clone().unwrap_or_default();
+                self.project_worktree_instructions
+                    .set_text(&saved.worktree.auto_instructions);
+                self.project_settings = saved;
+                self.project_settings_error = None;
+            }
+            Err(error) => {
+                eprintln!("failed to save Native project settings: {error}");
+                self.project_settings_error = Some("无法保存项目设置，请重试。".to_owned());
+            }
+        }
+    }
+
+    fn cycle_project_worktree_mode(&mut self) {
+        self.project_settings.worktree.default_mode =
+            match self.project_settings.worktree.default_mode {
+                DesktopWorktreeSelectionMode::Current => DesktopWorktreeSelectionMode::Create,
+                DesktopWorktreeSelectionMode::Create => DesktopWorktreeSelectionMode::Existing,
+                DesktopWorktreeSelectionMode::Existing => DesktopWorktreeSelectionMode::Current,
+            };
+        self.project_settings_error = None;
+    }
+
+    fn pick_project_worktree_parent(&mut self) {
+        let initial_directory = self
+            .project_settings
+            .worktree
+            .parent_dir
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
+        let request = DesktopFileDialogRequest {
+            dialog_id: "project-worktree-parent".to_owned(),
+            title: Some("选择工作树存放位置".to_owned()),
+            initial_directory,
+            filters: Vec::new(),
+            select_directories: true,
+            multiple: false,
+        };
+        match self
+            .application
+            .execute_host(DesktopHostAction::FileDialog(request))
+        {
+            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
+                if let Some(path) = paths.into_iter().next() {
+                    self.project_settings.worktree.parent_dir =
+                        Some(path.to_string_lossy().into_owned());
+                    self.project_settings_error = None;
+                }
+            }
+            Ok(_) => {
+                self.project_settings_error = Some("目录选择器返回了无法识别的结果。".to_owned());
+            }
+            Err(error) => {
+                eprintln!("failed to pick Native worktree parent: {error}");
+                self.project_settings_error = Some("无法打开目录选择器，请稍后重试。".to_owned());
+            }
+        }
+    }
+
     fn pick_project_clone_parent(&mut self) {
         if self.project_clone_busy {
             return;
         }
+        let project_settings_visible =
+            self.settings_open && self.settings_state.active_tab().as_str() == "project";
         let initial_directory = (!self.project_clone_parent.trim().is_empty())
             .then(|| PathBuf::from(self.project_clone_parent.trim()));
         let request = DesktopFileDialogRequest {
@@ -1732,15 +2648,30 @@ impl PreviewProgram {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
                 if let Some(path) = paths.into_iter().next() {
                     self.project_clone_parent = path.to_string_lossy().into_owned();
-                    self.project_action_error = None;
+                    if project_settings_visible {
+                        self.project_settings_error = None;
+                    } else {
+                        self.project_action_error = None;
+                    }
+                    self.persist_project_clone_parent();
                 }
             }
             Ok(_) => {
-                self.project_action_error = Some("目录选择器返回了无法识别的结果。".to_owned());
+                let message = "目录选择器返回了无法识别的结果。".to_owned();
+                if project_settings_visible {
+                    self.project_settings_error = Some(message);
+                } else {
+                    self.project_action_error = Some(message);
+                }
             }
             Err(error) => {
                 eprintln!("failed to pick Native project clone parent: {error}");
-                self.project_action_error = Some("无法打开目录选择器，请稍后重试。".to_owned());
+                let message = "无法打开目录选择器，请稍后重试。".to_owned();
+                if project_settings_visible {
+                    self.project_settings_error = Some(message);
+                } else {
+                    self.project_action_error = Some(message);
+                }
             }
         }
     }
@@ -2157,10 +3088,312 @@ impl PreviewProgram {
         }
     }
 
+    fn initial_draft_worktree(&self, project_id: Option<&ProjectId>) -> DraftWorktreeSelection {
+        if project_id.is_none() {
+            return DraftWorktreeSelection::Current;
+        }
+        match self.project_settings.worktree.default_mode {
+            DesktopWorktreeSelectionMode::Current => DraftWorktreeSelection::Current,
+            DesktopWorktreeSelectionMode::Create => DraftWorktreeSelection::Create,
+            DesktopWorktreeSelectionMode::Existing => DraftWorktreeSelection::Existing(None),
+        }
+    }
+
+    fn draft_worktree_context(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<(ProjectId, DraftWorktreeSelection)> {
+        if window_id == HostedWindowId::PRIMARY {
+            let draft = self.main_conversation_draft.as_ref()?;
+            Some((draft.task.project_id.clone()?, draft.worktree.clone()))
+        } else {
+            let popup = self.task_popups.get(&window_id)?;
+            Some((
+                popup.draft.as_ref()?.project_id.clone()?,
+                popup.draft_worktree.clone(),
+            ))
+        }
+    }
+
+    fn set_draft_worktree(&mut self, window_id: HostedWindowId, selection: DraftWorktreeSelection) {
+        if window_id == HostedWindowId::PRIMARY {
+            if let Some(draft) = self.main_conversation_draft.as_mut() {
+                draft.worktree = selection;
+                draft.error = None;
+            }
+        } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+            popup.draft_worktree = selection;
+            popup.error = None;
+        }
+    }
+
+    fn cycle_draft_worktree(&mut self, window_id: HostedWindowId) {
+        let Some((_, current)) = self.draft_worktree_context(window_id) else {
+            return;
+        };
+        let next = match current {
+            DraftWorktreeSelection::Current => DraftWorktreeSelection::Create,
+            DraftWorktreeSelection::Create => DraftWorktreeSelection::Existing(None),
+            DraftWorktreeSelection::Existing(_) => DraftWorktreeSelection::Current,
+        };
+        self.set_draft_worktree(window_id, next);
+    }
+
+    fn pick_draft_worktree(&mut self, window_id: HostedWindowId) {
+        let Some((project_id, _)) = self.draft_worktree_context(window_id) else {
+            return;
+        };
+        let initial_directory = self
+            .application
+            .project_context(&project_id)
+            .ok()
+            .map(|context| context.active_root().to_path_buf());
+        let request = DesktopFileDialogRequest {
+            dialog_id: format!("draft-worktree-{}", window_id.0),
+            title: Some("选择已有 Git 工作树".to_owned()),
+            initial_directory,
+            filters: Vec::new(),
+            select_directories: true,
+            multiple: false,
+        };
+        match self
+            .application
+            .execute_host(DesktopHostAction::FileDialog(request))
+        {
+            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
+                if let Some(path) = paths.into_iter().next() {
+                    self.set_draft_worktree(
+                        window_id,
+                        DraftWorktreeSelection::Existing(Some(path)),
+                    );
+                }
+            }
+            Ok(_) => {
+                self.set_task_window_error(window_id, "目录选择器返回了无法识别的结果。".to_owned())
+            }
+            Err(error) => {
+                eprintln!("failed to pick Native draft worktree: {error}");
+                self.set_task_window_error(
+                    window_id,
+                    "无法打开目录选择器，请稍后重试。".to_owned(),
+                );
+            }
+        }
+    }
+
+    fn draft_worktree_intent(
+        &self,
+        selection: &DraftWorktreeSelection,
+    ) -> Result<Option<DesktopInitialWorktreeSelection>, DesktopApplicationError> {
+        match selection {
+            DraftWorktreeSelection::Current => Ok(None),
+            DraftWorktreeSelection::Create => Ok(Some(DesktopInitialWorktreeSelection::Create)),
+            DraftWorktreeSelection::Existing(Some(path)) => Ok(Some(
+                DesktopInitialWorktreeSelection::Existing(path.clone()),
+            )),
+            DraftWorktreeSelection::Existing(None) => Err(DesktopApplicationError::InvalidInput {
+                field: "worktree",
+                message: "an existing worktree must be selected before sending".to_owned(),
+            }),
+        }
+    }
+
+    fn retry_initial_worktree(&mut self, window_id: HostedWindowId) {
+        let task_id = if window_id == HostedWindowId::PRIMARY {
+            self.selected_task.clone()
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.active_task_id.clone())
+        };
+        let Some(task_id) = task_id else {
+            return;
+        };
+        if !self.pending_initial_worktrees.contains_key(&task_id) {
+            return;
+        }
+        match self.application.retry_initial_worktree(&task_id) {
+            Ok(true) => {
+                self.pending_initial_worktrees.remove(&task_id);
+                self.clear_task_window_error(window_id);
+                if window_id == HostedWindowId::PRIMARY {
+                    self.submit_turn();
+                } else {
+                    self.submit_task_popup_turn(window_id);
+                }
+            }
+            Ok(false) => {
+                self.pending_initial_worktrees.remove(&task_id);
+                self.set_task_window_error(
+                    window_id,
+                    "所选工作树已准备完成，可以重新发送。".to_owned(),
+                );
+            }
+            Err(error) => {
+                eprintln!("failed to retry Native initial worktree: {error}");
+                self.set_task_window_error(
+                    window_id,
+                    "仍无法准备所选工作树，请检查仓库状态后重试。".to_owned(),
+                );
+            }
+        }
+    }
+
+    fn open_main_conversation_draft(&mut self) {
+        let project_id = if self.inbox_selected {
+            None
+        } else {
+            self.selected_project.clone()
+        };
+        if let Some(project_id) = &project_id {
+            let valid = self
+                .application
+                .get_project(project_id)
+                .is_ok_and(|project| project.archive == ProjectArchiveState::Active);
+            if !valid {
+                self.error_message = Some("项目已不可用，请刷新后重试。".to_owned());
+                return;
+            }
+        }
+        let task = DesktopTaskCreate::new(project_id, "新对话");
+        let worktree = self.initial_draft_worktree(task.project_id.as_ref());
+        self.main_conversation_draft = Some(MainConversationDraft {
+            composer: DesktopComposerState::transient(task.id.clone()),
+            task,
+            worktree,
+            suggestions: ConversationSuggestionState::default(),
+            error: None,
+        });
+        self.attachment_previews.remove(&HostedWindowId::PRIMARY);
+        self.prompt_route_suggestions
+            .remove(&HostedWindowId::PRIMARY);
+        self.error_message = None;
+        self.task_action_error = None;
+        self.refresh_conversation_suggestions(HostedWindowId::PRIMARY, false);
+    }
+
+    fn close_main_conversation_draft(&mut self) {
+        if self.main_conversation_draft.take().is_none() {
+            return;
+        }
+        self.attachment_previews.remove(&HostedWindowId::PRIMARY);
+        self.active_prompt_optimizations
+            .remove(&HostedWindowId::PRIMARY);
+        self.prompt_route_suggestions
+            .remove(&HostedWindowId::PRIMARY);
+        self.task_action_error = None;
+    }
+
+    fn select_main_conversation_draft_project(&mut self, project_id: Option<ProjectId>) {
+        if let Some(project_id) = &project_id {
+            let valid = self
+                .application
+                .get_project(project_id)
+                .is_ok_and(|project| project.archive == ProjectArchiveState::Active);
+            if !valid {
+                if let Some(draft) = self.main_conversation_draft.as_mut() {
+                    draft.error = Some("项目已不可用，请选择其他项目。".to_owned());
+                }
+                return;
+            }
+        }
+        let worktree = self.initial_draft_worktree(project_id.as_ref());
+        let Some(draft) = self.main_conversation_draft.as_mut() else {
+            return;
+        };
+        draft.task.project_id = project_id;
+        draft.worktree = worktree;
+        draft.error = None;
+        draft.suggestions.clear();
+        self.refresh_composer_suggestions();
+        self.refresh_conversation_suggestions(HostedWindowId::PRIMARY, false);
+    }
+
+    fn materialize_main_conversation_draft(&mut self) -> bool {
+        let Some(draft) = self.main_conversation_draft.as_ref() else {
+            return false;
+        };
+        if !composer_has_turn_payload(&draft.composer) {
+            return false;
+        }
+        let mut input = draft.task.clone();
+        let composer = draft.composer.clone();
+        let worktree = draft.worktree.clone();
+        if matches!(worktree, DraftWorktreeSelection::Existing(None)) {
+            if let Some(draft) = self.main_conversation_draft.as_mut() {
+                draft.error = Some("请先选择已有工作树。".to_owned());
+            }
+            return false;
+        }
+        input.title = composer_draft_title(&composer);
+        let worktree_intent = self
+            .draft_worktree_intent(&worktree)
+            .expect("incomplete existing worktree selections are rejected above");
+        if let Err(error) = self
+            .application
+            .set_initial_worktree_intent(&input.id, worktree_intent.as_ref())
+        {
+            eprintln!("failed to persist Native main draft worktree intent: {error}");
+            if let Some(draft) = self.main_conversation_draft.as_mut() {
+                draft.error = Some("无法保存工作树选择，请重试。".to_owned());
+            }
+            return false;
+        }
+        let reserved_task_id = input.id.clone();
+        let task = match self.application.materialize_task_draft(input, composer) {
+            Ok(task) => task,
+            Err(error) => {
+                if let Err(clear_error) = self
+                    .application
+                    .set_initial_worktree_intent(&reserved_task_id, None)
+                {
+                    eprintln!(
+                        "failed to clear Native main draft worktree intent after materialize failure: {clear_error}"
+                    );
+                }
+                eprintln!("failed to materialize Native main conversation draft: {error}");
+                if let Some(draft) = self.main_conversation_draft.as_mut() {
+                    draft.error = Some("无法保存新对话，请重试。".to_owned());
+                }
+                return false;
+            }
+        };
+        let worktree_result = worktree_intent.as_ref().map_or(Ok(false), |_| {
+            self.application.retry_initial_worktree(&task.id)
+        });
+        self.main_conversation_draft = None;
+        self.refresh_tasks();
+        self.select_task(task.id.clone());
+        if let Err(error) = worktree_result {
+            eprintln!("failed to prepare Native main draft worktree: {error}");
+            self.task_action_error =
+                Some("对话已保存，但无法准备所选工作树；消息尚未发送。".to_owned());
+            return false;
+        }
+        if self.selected_task.as_ref() == Some(&task.id) {
+            true
+        } else {
+            self.task_action_error =
+                Some("对话已保存，但暂时无法打开，请从任务列表重试。".to_owned());
+            false
+        }
+    }
+
+    fn main_surface_composer(&self) -> Option<&DesktopComposerState> {
+        self.main_conversation_draft
+            .as_ref()
+            .map(|draft| &draft.composer)
+            .or(self.composer.as_ref())
+    }
+
     fn update_selected_task(&mut self, patch: DesktopTaskPatch) {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
+        if self.pending_initial_worktrees.contains_key(&task_id) {
+            self.task_action_error = Some("请先重试准备所选工作树，再发送第一条消息。".to_owned());
+            return;
+        }
         match self.application.update_task(&task_id, patch) {
             Ok(_) => {
                 self.error_message = None;
@@ -2175,6 +3408,68 @@ impl PreviewProgram {
             title: Some(self.task_title_edit.clone()),
             ..DesktopTaskPatch::default()
         });
+    }
+
+    fn task_dependency_candidates(&self) -> Vec<lilia_contracts::ProductTask> {
+        let Some(selected) = self.selected_task.as_ref() else {
+            return Vec::new();
+        };
+        self.tasks
+            .iter()
+            .filter(|task| &task.id != selected)
+            .filter_map(|task| self.application.get_task(&task.id).ok())
+            .collect()
+    }
+
+    fn effective_task_dependency_target(&self) -> Option<lilia_contracts::ProductTask> {
+        let candidates = self.task_dependency_candidates();
+        self.task_dependency_target
+            .as_ref()
+            .and_then(|target| candidates.iter().find(|task| &task.id == target).cloned())
+            .or_else(|| candidates.into_iter().next())
+    }
+
+    fn cycle_task_dependency(&mut self) {
+        let candidates = self.task_dependency_candidates();
+        let next = self
+            .task_dependency_target
+            .as_ref()
+            .and_then(|target| candidates.iter().position(|task| &task.id == target))
+            .map_or(0, |index| (index + 1) % candidates.len().max(1));
+        self.task_dependency_target = candidates.get(next).map(|task| task.id.clone());
+        self.task_action_error = None;
+    }
+
+    fn toggle_task_dependency(&mut self) {
+        let Some(task_id) = self.selected_task.clone() else {
+            return;
+        };
+        let Some(target) = self.effective_task_dependency_target() else {
+            return;
+        };
+        let target_id = target.id;
+        let mut dependencies = self
+            .application
+            .get_task(&task_id)
+            .map(|task| task.depends_on)
+            .unwrap_or_default();
+        if let Some(index) = dependencies.iter().position(|id| id == &target_id) {
+            dependencies.remove(index);
+        } else {
+            dependencies.push(target_id);
+        }
+        match self
+            .application
+            .update_task_dependencies(&task_id, dependencies)
+        {
+            Ok(_) => {
+                self.task_action_error = None;
+                self.refresh_tasks();
+            }
+            Err(error) => {
+                self.task_action_error = Some(format!("无法更新任务依赖：{error}"));
+            }
+        }
     }
 
     fn cycle_task_status(&mut self) {
@@ -2600,6 +3895,26 @@ impl PreviewProgram {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
+        let cleanup_on_archive = match self.application.project_settings() {
+            Ok(settings) => settings.worktree.cleanup_on_archive,
+            Err(error) => {
+                self.task_action_error = Some(format!("无法读取归档设置：{error}"));
+                return;
+            }
+        };
+        if cleanup_on_archive {
+            match self.application.task_worktree(&task_id) {
+                Ok(Some(_)) => {
+                    self.start_worktree_operation(WorktreeOperation::CleanupAndArchive);
+                    return;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.task_action_error = Some(format!("无法读取任务工作树：{error}"));
+                    return;
+                }
+            }
+        }
         match self.application.update_task(
             &task_id,
             DesktopTaskPatch {
@@ -2651,6 +3966,250 @@ impl PreviewProgram {
             }
         };
         self.reveal_workspace_item(item);
+        if surface == ProjectWorkspaceSurface::Files {
+            self.refresh_project_files();
+        }
+    }
+
+    fn project_files_item_id(&self, project_id: &ProjectId) -> Option<WorkspaceItemId> {
+        self.workspace_items.iter().find_map(|item| {
+            item.project_surface()
+                .ok()
+                .flatten()
+                .filter(|(id, surface)| {
+                    id == project_id && *surface == ProjectWorkspaceSurface::Files
+                })
+                .map(|_| item.id.clone())
+        })
+    }
+
+    fn project_files_view_state(&self, project_id: &ProjectId) -> ProjectFilesViewState {
+        self.project_files_item_id(project_id)
+            .and_then(|item_id| {
+                self.workspace_items
+                    .iter()
+                    .find(|item| item.id == item_id)
+                    .and_then(|item| item.serialized_state.as_ref())
+            })
+            .map(|value| DesktopApplication::project_files_view_state_from_value(Some(value)))
+            .or_else(|| {
+                self.project_files
+                    .as_ref()
+                    .filter(|snapshot| &snapshot.project_id == project_id)
+                    .map(|snapshot| snapshot.view.clone())
+            })
+            .unwrap_or_default()
+    }
+
+    fn persist_project_files_view(&mut self, project_id: &ProjectId, view: &ProjectFilesViewState) {
+        let Some(item_id) = self.project_files_item_id(project_id) else {
+            return;
+        };
+        self.execute_workspace_command(DesktopCommand::UpdateWorkspaceItemState {
+            item_id,
+            serialized_state: Some(DesktopApplication::project_files_view_state_value(view)),
+        });
+    }
+
+    fn refresh_project_files(&mut self) {
+        let Some(project_id) = self.selected_project.clone() else {
+            self.project_files = None;
+            self.opened_project_document = None;
+            self.project_files_error = None;
+            return;
+        };
+        let project = self
+            .projects
+            .iter()
+            .find(|project| project.id == project_id);
+        if project.is_none_or(|project| {
+            project
+                .workspace_path
+                .as_deref()
+                .is_none_or(|path| path.trim().is_empty())
+        }) {
+            self.project_files = None;
+            self.opened_project_document = None;
+            self.project_files_error = Some("当前项目没有工作区路径。".to_owned());
+            return;
+        }
+        let view = self.project_files_view_state(&project_id);
+        match self.application.project_files_snapshot(&project_id, view) {
+            Ok(snapshot) => {
+                let _ = self.application.ensure_project_files_watcher(&project_id);
+                self.project_files_error = None;
+                self.project_files = Some(snapshot);
+            }
+            Err(error) => {
+                self.project_files = None;
+                self.project_files_error = Some(format!("无法读取项目文件：{error}"));
+            }
+        }
+    }
+
+    fn toggle_project_file_expand(&mut self, relative_path: String) {
+        let Some(project_id) = self.selected_project.clone() else {
+            return;
+        };
+        let mut view = self.project_files_view_state(&project_id);
+        if view
+            .expanded_paths
+            .iter()
+            .any(|path| path == &relative_path)
+        {
+            view.expanded_paths.retain(|path| path != &relative_path);
+        } else {
+            view.expanded_paths.push(relative_path);
+        }
+        self.persist_project_files_view(&project_id, &view);
+        if let Some(snapshot) = self.project_files.as_mut() {
+            snapshot.view = view.clone();
+        }
+        match self.application.project_files_snapshot(&project_id, view) {
+            Ok(snapshot) => {
+                self.project_files_error = None;
+                self.project_files = Some(snapshot);
+            }
+            Err(error) => {
+                self.project_files_error = Some(format!("无法展开目录：{error}"));
+            }
+        }
+    }
+
+    fn open_project_file_path(&mut self, relative_path: String) -> Option<WorkspaceItemId> {
+        let project_id = self.selected_project.clone()?;
+        let mut view = self.project_files_view_state(&project_id);
+        view.selected_path = Some(relative_path.clone());
+        self.persist_project_files_view(&project_id, &view);
+        match self
+            .application
+            .open_project_document_workspace_item(&project_id, &relative_path)
+        {
+            Ok((document, item)) => {
+                let document_id = document.id;
+                self.opened_project_document = Some(document.clone());
+                self.project_files_error = None;
+                if let Ok(snapshot) = self.application.project_files_snapshot(&project_id, view) {
+                    self.project_files = Some(snapshot);
+                }
+                self.ensure_document_editor_state(&item, &document);
+                let item_id = item.id.clone();
+                let window_id = if let Some((window_id, pane_id)) =
+                    self.workspace_item_location(&item_id)
+                {
+                    if window_id == HostedWindowId::PRIMARY {
+                        self.execute_workspace_command(DesktopCommand::ActivateWorkspaceItem {
+                            pane_id,
+                            item_id: item_id.clone(),
+                        });
+                    } else {
+                        self.select_workspace_window_tab(window_id, pane_id, Some(item_id.clone()));
+                        self.pending_window_commands
+                            .push(HostedWindowCommand::Focus(window_id));
+                    }
+                    window_id
+                } else {
+                    self.reveal_workspace_item(item);
+                    HostedWindowId::PRIMARY
+                };
+                self.pending_ui_commands.push(HostedUiCommand::Focus {
+                    window_id,
+                    target: target_ids::document_editor_input(item_id.as_str()),
+                });
+                self.start_document_diagnostics(document_id, Some(project_id));
+                return Some(item_id);
+            }
+            Err(error) => {
+                self.project_files_error = Some(format!("无法打开文件：{error}"));
+            }
+        }
+        None
+    }
+
+    fn open_coding_search_hit(&mut self, result: DesktopWorkspaceCodeSearchHit) {
+        if self.selected_project.as_ref() != Some(&result.project_id) {
+            self.automations_open = false;
+            self.project_surface = ProjectSurface::Tasks;
+            self.execute_workspace_command(DesktopCommand::SelectProject(
+                result.project_id.clone(),
+            ));
+            if self.selected_project.as_ref() != Some(&result.project_id) {
+                self.coding_error = Some("搜索结果所属项目已不可用，请重新搜索。".to_owned());
+                return;
+            }
+            self.refresh_project_files();
+        }
+        let hit = result.hit;
+        let Some(item_id) = self.open_project_file_path(hit.path) else {
+            return;
+        };
+        if let (Some(start_line), Some(start_character), Some(end_line), Some(end_character)) = (
+            hit.start_line,
+            hit.start_character,
+            hit.end_line,
+            hit.end_character,
+        ) {
+            let Some(state) = self.document_editors.get(&item_id) else {
+                return;
+            };
+            if !select_document_editor_range(
+                state,
+                start_line,
+                start_character,
+                end_line,
+                end_character,
+            ) {
+                self.coding_error = Some("搜索结果位置已失效，请重新搜索。".to_owned());
+            }
+        }
+    }
+
+    fn project_files_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        if let Some(error) = &self.project_files_error {
+            return container(
+                EmptyState::new("无法读取项目文件")
+                    .message(error.clone())
+                    .icon(Icon::Folder)
+                    .action(
+                        button(text("重试").size(12))
+                            .on_press(Message::RefreshProjectFiles)
+                            .style(button_style(tokens, ButtonKind::Subtle)),
+                    )
+                    .view(tokens),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center(Length::Fill)
+            .style(canvas_style(tokens))
+            .into();
+        }
+        let Some(snapshot) = &self.project_files else {
+            return container(
+                EmptyState::new("选择项目以浏览文件")
+                    .message("需要有工作区路径的项目。")
+                    .icon(Icon::Folder)
+                    .view(tokens),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center(Length::Fill)
+            .style(canvas_style(tokens))
+            .into();
+        };
+        let opened_path = snapshot.view.selected_path.as_deref();
+        let opened_preview = self
+            .opened_project_document
+            .as_ref()
+            .map(|document| document.buffer.text.as_str());
+        project_files_center(snapshot, opened_path, opened_preview, tokens).map(|message| {
+            match message {
+                ProjectFilesPanelMessage::ToggleExpand(path) => {
+                    Message::ToggleProjectFileExpand(path)
+                }
+                ProjectFilesPanelMessage::OpenPath(path) => Message::OpenProjectFile(path),
+                ProjectFilesPanelMessage::Refresh => Message::RefreshProjectFiles,
+            }
+        })
     }
 
     fn open_application_surface(&mut self, surface: ApplicationWorkspaceSurface) {
@@ -2815,6 +4374,7 @@ impl PreviewProgram {
 
     fn refresh_active_settings_tab(&mut self) {
         match self.settings_state.active_tab().as_str() {
+            "project" => self.refresh_project_settings(),
             "provider" => self.refresh_provider(),
             "agent" => self.refresh_agent_interaction(),
             "quota" => self.refresh_quota(),
@@ -3259,14 +4819,17 @@ impl PreviewProgram {
                 CODING_TOOLS_PANEL_ID => {
                     self.selected_project.is_some() && self.project_surface == ProjectSurface::Tasks
                 }
+                IAB_PANEL_ID => {
+                    self.selected_task.is_some() && self.project_surface == ProjectSurface::Tasks
+                }
                 _ => false,
             }
         });
         if let Some((panel_id, _, extent)) = active {
-            self.inspector_surface = if panel_id == CODING_TOOLS_PANEL_ID {
-                InspectorSurface::CodingTools
-            } else {
-                InspectorSurface::Task
+            self.inspector_surface = match panel_id.as_str() {
+                CODING_TOOLS_PANEL_ID => InspectorSurface::CodingTools,
+                IAB_PANEL_ID => InspectorSurface::Iab,
+                _ => InspectorSurface::Task,
             };
             self.workspace
                 .update(WorkspaceAction::SetRegionSize(RegionId::Inspector, extent));
@@ -3275,6 +4838,7 @@ impl PreviewProgram {
             RegionId::Inspector,
             visible,
         ));
+        self.sync_iab_browser_visibility();
     }
 
     fn activate_inspector_panel(&mut self, panel_id: &'static str) {
@@ -3335,6 +4899,187 @@ impl PreviewProgram {
         self.project_surface = ProjectSurface::Tasks;
         self.activate_inspector_panel(CODING_TOOLS_PANEL_ID);
         self.refresh_coding_tools();
+    }
+
+    fn open_iab(&mut self) {
+        if self.selected_task.is_none() {
+            return;
+        }
+        self.project_surface = ProjectSurface::Tasks;
+        self.activate_inspector_panel(IAB_PANEL_ID);
+    }
+
+    fn update_iab(&mut self, message: IabPanelMessage) {
+        match message {
+            IabPanelMessage::Close => {
+                self.close_inspector_dock();
+                return;
+            }
+            IabPanelMessage::OpenWindow => {
+                self.open_iab_window();
+                return;
+            }
+            _ => {}
+        }
+        let commands = self.iab.update(message, HostedWindowId::PRIMARY);
+        self.pending_window_commands
+            .extend(commands.into_iter().map(HostedWindowCommand::Browser));
+    }
+
+    fn open_iab_window(&mut self) {
+        let Some(task_id) = self.selected_task.clone() else {
+            return;
+        };
+        if let Some(window_id) = self
+            .iab_windows
+            .values()
+            .find_map(|window| (window.task_id == task_id).then_some(window.id))
+        {
+            let url = self.iab.active_url().to_owned();
+            if let Some(window) = self.iab_windows.get_mut(&window_id) {
+                let mut commands = window.update_browser(IabPanelMessage::DraftUrlChanged(url));
+                commands.extend(window.update_browser(IabPanelMessage::Navigate));
+                self.pending_window_commands
+                    .extend(commands.into_iter().map(HostedWindowCommand::Browser));
+            }
+            self.pending_window_commands
+                .push(HostedWindowCommand::Focus(window_id));
+            return;
+        }
+        let task = match self.application.get_task(&task_id) {
+            Ok(task) => task,
+            Err(error) => {
+                eprintln!("failed to open Native IAB window: {error}");
+                self.task_action_error = Some("无法打开浏览器窗口，请重试。".to_owned());
+                return;
+            }
+        };
+        let window_id = HostedWindowId(self.next_task_popup_window_id);
+        self.next_task_popup_window_id = self.next_task_popup_window_id.saturating_add(1);
+        self.iab_windows.insert(
+            window_id,
+            IabWindowState::new(
+                window_id,
+                iab_browser_id(window_id),
+                task_id,
+                self.iab.active_url(),
+            ),
+        );
+        self.pending_window_commands
+            .push(HostedWindowCommand::Open {
+                id: window_id,
+                settings: iab_window_settings(&task.title),
+            });
+        self.task_action_error = None;
+    }
+
+    fn update_iab_window(&mut self, window_id: HostedWindowId, message: IabWindowMessage) {
+        match message {
+            IabWindowMessage::Browser(IabPanelMessage::Close) => {
+                self.close_iab_window(window_id);
+            }
+            IabWindowMessage::Browser(IabPanelMessage::OpenWindow) => {
+                self.pending_window_commands
+                    .push(HostedWindowCommand::Focus(window_id));
+            }
+            IabWindowMessage::Browser(message) => {
+                let commands = self
+                    .iab_windows
+                    .get_mut(&window_id)
+                    .map(|window| window.update_browser(message))
+                    .unwrap_or_default();
+                self.pending_window_commands
+                    .extend(commands.into_iter().map(HostedWindowCommand::Browser));
+            }
+            IabWindowMessage::NoteChanged(note) => {
+                if let Some(window) = self.iab_windows.get_mut(&window_id) {
+                    window.set_note(note);
+                }
+            }
+            IabWindowMessage::Submit => {
+                let capture = self
+                    .iab_windows
+                    .get_mut(&window_id)
+                    .and_then(|window| window.begin_capture(&self.home));
+                if let Some((capture_id, path)) = capture {
+                    self.pending_window_commands
+                        .push(HostedWindowCommand::CapturePng {
+                            id: window_id,
+                            capture_id,
+                            path,
+                        });
+                }
+            }
+        }
+    }
+
+    fn close_iab_window(&mut self, window_id: HostedWindowId) {
+        let Some(mut window) = self.iab_windows.remove(&window_id) else {
+            return;
+        };
+        self.abandon_iab_capture(window_id, &mut window);
+        self.pending_window_commands.extend([
+            HostedWindowCommand::Browser(HostedBrowserCommand::Detach(window.browser_id())),
+            HostedWindowCommand::Close(window_id),
+        ]);
+    }
+
+    fn abandon_iab_capture(&mut self, window_id: HostedWindowId, window: &mut IabWindowState) {
+        let Some((capture_id, path)) = window.cancel_pending_capture() else {
+            return;
+        };
+        remove_abandoned_iab_snapshot(&path);
+        self.abandoned_iab_captures
+            .insert((window_id.0, capture_id.0), path);
+    }
+
+    fn finish_iab_capture(
+        &mut self,
+        window_id: HostedWindowId,
+        capture_id: HostedWindowCaptureId,
+        screenshot_path: Option<PathBuf>,
+        warning: Option<String>,
+    ) {
+        let captured_path = screenshot_path.clone();
+        let input = self
+            .iab_windows
+            .get_mut(&window_id)
+            .and_then(|window| window.finish_capture(capture_id, screenshot_path, warning));
+        let Some(input) = input else {
+            if let Some(path) = captured_path {
+                remove_abandoned_iab_snapshot(&path);
+            }
+            return;
+        };
+        let attachment_path = input.screenshot_path.clone();
+        match self.application.submit_iab_snapshot(input) {
+            Ok(submission) => {
+                if let Some(window) = self.iab_windows.get_mut(&window_id) {
+                    window.complete_submission(&submission);
+                }
+                self.refresh_task_session();
+                for popup_id in self.task_popups.keys().copied().collect::<Vec<_>>() {
+                    self.refresh_task_popup(popup_id);
+                }
+            }
+            Err(error) => {
+                if let Some(path) = attachment_path {
+                    remove_abandoned_iab_snapshot(&path);
+                }
+                eprintln!("failed to submit Native IAB result: {error}");
+                if let Some(window) = self.iab_windows.get_mut(&window_id) {
+                    window.fail_submission("无法提交浏览结果，请重试。");
+                }
+            }
+        }
+    }
+
+    fn sync_iab_browser_visibility(&mut self) {
+        let visible =
+            self.inspector_surface == InspectorSurface::Iab && self.inspector_region_is_visible();
+        let commands = self.iab.set_panel_visible(visible, HostedWindowId::PRIMARY);
+        self.pending_window_commands
+            .extend(commands.into_iter().map(HostedWindowCommand::Browser));
     }
 
     fn open_architecture(&mut self) {
@@ -3506,6 +5251,15 @@ impl PreviewProgram {
         (!root.is_empty()).then(|| (project.id.as_str().to_owned(), root.to_owned()))
     }
 
+    fn has_searchable_project_workspace(&self) -> bool {
+        self.projects.iter().any(|project| {
+            project
+                .workspace_path
+                .as_deref()
+                .is_some_and(|root| !root.trim().is_empty())
+        })
+    }
+
     fn refresh_coding_tools(&mut self) {
         if self.coding_busy {
             return;
@@ -3517,6 +5271,8 @@ impl PreviewProgram {
         let operation_id = self.coding_operation_sequence;
         self.active_coding_operation = Some(operation_id);
         let workspace = self.selected_project_workspace();
+        let project_id = self.selected_project.clone();
+        let git_diff_scope = self.coding_git_diff_scope;
         let operation_project_id = workspace.as_ref().map(|(project_id, _)| project_id.clone());
         let application = self.application.clone();
         let message_sender = Arc::clone(&self.message_sender);
@@ -3526,28 +5282,41 @@ impl PreviewProgram {
                 let snapshot = application
                     .coding_services_snapshot()
                     .map_err(|error| error.to_string());
-                let (git, workspace) = workspace.map_or((None, None), |(workspace_id, root)| {
-                    (
-                        Some(
-                            application
-                                .shared_git_status(&root)
-                                .map_err(|error| error.to_string()),
-                        ),
-                        Some(
-                            application
-                                .shared_workspace_list(&workspace_id, &root, "")
-                                .map_err(|error| error.to_string()),
-                        ),
-                    )
+                let project_tasks = project_id.as_ref().map(|project_id| {
+                    application
+                        .project_task_catalog(project_id)
+                        .map_err(|error| project_task_error_message(&error))
                 });
+                let (git, git_diff, workspace) =
+                    workspace.map_or((None, None, None), |(workspace_id, root)| {
+                        (
+                            Some(
+                                application
+                                    .shared_git_status(&root)
+                                    .map_err(|error| error.to_string()),
+                            ),
+                            Some(
+                                application
+                                    .shared_git_diff(&root, git_diff_scope)
+                                    .map_err(|error| error.to_string()),
+                            ),
+                            Some(
+                                application
+                                    .shared_workspace_list(&workspace_id, &root, "")
+                                    .map_err(|error| error.to_string()),
+                            ),
+                        )
+                    });
                 let _ = message_sender(Message::CodingToolsRefreshed {
                     operation_id,
-                    result: CodingToolsRefreshResult {
+                    result: Box::new(CodingToolsRefreshResult {
                         project_id: operation_project_id,
                         snapshot,
                         git,
+                        git_diff,
                         workspace,
-                    },
+                        project_tasks,
+                    }),
                 });
             });
         if let Err(error) = spawn {
@@ -3562,9 +5331,18 @@ impl PreviewProgram {
         if self.coding_busy || self.coding_query.trim().is_empty() {
             return;
         }
-        let Some((workspace_id, root)) = self.selected_project_workspace() else {
-            self.coding_error = Some("当前项目未设置工作区路径。".to_owned());
-            return;
+        let scope = if self.coding_search_all_projects {
+            DesktopCodeSearchScope::AllProjects
+        } else {
+            let Some((workspace_id, _)) = self.selected_project_workspace() else {
+                self.coding_error = Some("当前项目未设置工作区路径。".to_owned());
+                return;
+            };
+            let Ok(project_id) = ProjectId::new(workspace_id) else {
+                self.coding_error = Some("当前项目标识无效。".to_owned());
+                return;
+            };
+            DesktopCodeSearchScope::Project { project_id }
         };
         self.coding_busy = true;
         self.coding_error = None;
@@ -3573,13 +5351,14 @@ impl PreviewProgram {
         let operation_id = self.coding_operation_sequence;
         self.active_coding_operation = Some(operation_id);
         let query = self.coding_query.trim().to_owned();
+        let mode = self.coding_search_mode;
         let application = self.application.clone();
         let message_sender = Arc::clone(&self.message_sender);
         let spawn = std::thread::Builder::new()
             .name("lilia-code-index-search".to_owned())
             .spawn(move || {
                 let result = application
-                    .shared_code_index_search(&workspace_id, &root, &query)
+                    .search_code_indexes(scope, &query, mode)
                     .map_err(|error| error.to_string());
                 let _ = message_sender(Message::CodingSearchFinished {
                     operation_id,
@@ -3594,25 +5373,34 @@ impl PreviewProgram {
         }
     }
 
-    fn open_project_workspace(&mut self, terminal: bool) {
+    fn open_project_workspace(&mut self, target: ExternalWorkspaceTarget) {
         let Some((_, root)) = self.selected_project_workspace() else {
             self.coding_error = Some("当前项目未设置工作区路径。".to_owned());
             self.coding_notice = None;
             return;
         };
-        let action = if terminal {
-            DesktopHostAction::OpenTerminal(PathBuf::from(&root))
-        } else {
-            DesktopHostAction::OpenPath(PathBuf::from(&root))
+        let action = match target {
+            ExternalWorkspaceTarget::FileManager => {
+                DesktopHostAction::OpenPath(PathBuf::from(&root))
+            }
+            ExternalWorkspaceTarget::Terminal => {
+                DesktopHostAction::OpenTerminal(PathBuf::from(&root))
+            }
+            ExternalWorkspaceTarget::CodeEditor => {
+                DesktopHostAction::OpenCodeEditor(PathBuf::from(&root))
+            }
         };
         match self.application.execute_host(action) {
             Ok(DesktopHostResult::Completed) => {
                 self.coding_error = None;
-                self.coding_notice = Some(if terminal {
-                    "已在外部终端打开工作区。".to_owned()
-                } else {
-                    "已在文件管理器打开工作区。".to_owned()
-                });
+                self.coding_notice = Some(
+                    match target {
+                        ExternalWorkspaceTarget::FileManager => "已在文件管理器打开工作区。",
+                        ExternalWorkspaceTarget::Terminal => "已在外部终端打开工作区。",
+                        ExternalWorkspaceTarget::CodeEditor => "已在 VS Code 打开工作区。",
+                    }
+                    .to_owned(),
+                );
             }
             Ok(_) => {
                 self.coding_notice = None;
@@ -3625,7 +5413,254 @@ impl PreviewProgram {
         }
     }
 
+    fn open_native_terminal(&mut self, scope: DesktopTerminalScope) {
+        match self.application.launch_terminal(
+            lilia_desktop_application::DesktopTerminalLaunch::shell(scope),
+        ) {
+            Ok(snapshot) => match self.application.terminal_workspace_item(&snapshot) {
+                Ok(item) => {
+                    self.terminal_inputs.entry(snapshot.id.clone()).or_default();
+                    self.terminal_scrollback.insert(snapshot.id.clone(), 0);
+                    self.terminal_snapshots
+                        .insert(snapshot.id.clone(), snapshot);
+                    self.reveal_workspace_item(item);
+                    self.coding_error = None;
+                    self.coding_notice = Some("已在工作区打开终端。".to_owned());
+                }
+                Err(error) => {
+                    self.coding_notice = None;
+                    self.coding_error = Some(format!("无法打开终端标签：{error}"));
+                }
+            },
+            Err(error) => {
+                self.coding_notice = None;
+                self.coding_error = Some(format!("无法启动终端：{error}"));
+            }
+        }
+    }
+
+    fn open_native_project_terminal(&mut self) {
+        let Some(project_id) = self.selected_project.clone() else {
+            self.coding_error = Some("请先选择项目。".to_owned());
+            return;
+        };
+        self.open_native_terminal(DesktopTerminalScope::Project(project_id));
+    }
+
+    fn run_project_task(&mut self, task_id: String) {
+        if self.coding_busy {
+            return;
+        }
+        let Some(project_id) = self.selected_project.clone() else {
+            self.coding_error = Some("请先选择项目。".to_owned());
+            return;
+        };
+        match self.application.launch_project_task(&project_id, &task_id) {
+            Ok(launch) => match self.application.terminal_workspace_item(&launch.terminal) {
+                Ok(item) => {
+                    let session_id = launch.terminal.id.clone();
+                    self.terminal_inputs.entry(session_id.clone()).or_default();
+                    self.terminal_scrollback.insert(session_id.clone(), 0);
+                    self.terminal_snapshots
+                        .insert(session_id.clone(), launch.terminal);
+                    if let Some(catalog) = self.coding_project_tasks.as_mut() {
+                        if catalog.project_id == project_id {
+                            if let Some(task) =
+                                catalog.tasks.iter_mut().find(|task| task.id == task_id)
+                            {
+                                task.running_session_id = Some(session_id);
+                            }
+                        }
+                    }
+                    self.reveal_workspace_item(item);
+                    self.coding_error = None;
+                    self.coding_notice = Some("项目任务已在工作区终端启动。".to_owned());
+                }
+                Err(error) => {
+                    self.coding_notice = None;
+                    self.coding_error = Some(format!("无法打开任务终端：{error}"));
+                }
+            },
+            Err(error) => {
+                self.coding_notice = None;
+                self.coding_error = Some(project_task_error_message(&error));
+            }
+        }
+    }
+
+    fn terminal_snapshot_for_item(&self, item: &WorkspaceItem) -> Option<DesktopTerminalSnapshot> {
+        let session_id = item.terminal_session_id().ok().flatten()?;
+        self.terminal_snapshots
+            .get(&session_id)
+            .cloned()
+            .or_else(|| {
+                item.serialized_state
+                    .clone()
+                    .and_then(|value| {
+                        serde_json::from_value::<DesktopTerminalRestoration>(value).ok()
+                    })
+                    .map(|restoration| restoration.snapshot())
+            })
+    }
+
+    fn refresh_terminal(&mut self, session_id: &DesktopTerminalSessionId) {
+        let scrollback = self
+            .terminal_scrollback
+            .get(session_id)
+            .copied()
+            .unwrap_or_default();
+        match self.application.terminal_snapshot(session_id, scrollback) {
+            Ok(snapshot) => {
+                self.terminal_scrollback
+                    .insert(session_id.clone(), snapshot.scrollback_position);
+                self.terminal_snapshots.insert(session_id.clone(), snapshot);
+            }
+            Err(DesktopApplicationError::Terminal(
+                lilia_desktop_application::DesktopTerminalError::SessionNotFound(_),
+            )) => {}
+            Err(error) => self.error_message = Some(format!("无法刷新终端：{error}")),
+        }
+    }
+
+    fn update_terminal(&mut self, message: TerminalViewMessage) {
+        match message {
+            TerminalViewMessage::InputChanged(session_id, value) => {
+                self.terminal_notices.remove(&session_id);
+                self.terminal_inputs.insert(session_id, value);
+            }
+            TerminalViewMessage::Submit(session_id) => {
+                let input = self
+                    .terminal_inputs
+                    .get(&session_id)
+                    .cloned()
+                    .unwrap_or_default();
+                let mut bytes = input.into_bytes();
+                bytes.push(b'\r');
+                match self.application.write_terminal(&session_id, &bytes) {
+                    Ok(()) => {
+                        self.terminal_inputs
+                            .insert(session_id.clone(), String::new());
+                        self.terminal_scrollback.insert(session_id.clone(), 0);
+                        self.refresh_terminal(&session_id);
+                    }
+                    Err(error) => self.error_message = Some(format!("无法写入终端：{error}")),
+                }
+            }
+            TerminalViewMessage::Interrupt(session_id) => {
+                self.terminal_notices.remove(&session_id);
+                match self.application.write_terminal(&session_id, &[0x03]) {
+                    Ok(()) => self.refresh_terminal(&session_id),
+                    Err(error) => self.error_message = Some(format!("无法中断终端任务：{error}")),
+                }
+            }
+            TerminalViewMessage::Eof(session_id) => {
+                self.terminal_notices.remove(&session_id);
+                match self.application.write_terminal(&session_id, &[0x04]) {
+                    Ok(()) => self.refresh_terminal(&session_id),
+                    Err(error) => self.error_message = Some(format!("无法结束终端输入：{error}")),
+                }
+            }
+            TerminalViewMessage::CopyVisible(session_id) => {
+                let Some(snapshot) = self.terminal_snapshots.get(&session_id) else {
+                    self.error_message = Some("终端会话已不可用。".to_owned());
+                    return;
+                };
+                let output = terminal_plain_text(snapshot);
+                if output.is_empty() {
+                    self.terminal_notices
+                        .insert(session_id, "当前没有可复制的输出。".to_owned());
+                    return;
+                }
+                match self
+                    .application
+                    .execute_host(DesktopHostAction::WriteClipboardText(output))
+                {
+                    Ok(DesktopHostResult::Completed) => {
+                        self.terminal_notices
+                            .insert(session_id, "已复制当前输出。".to_owned());
+                    }
+                    Ok(_) => {
+                        self.error_message =
+                            Some("复制终端输出时宿主返回了无法识别的结果。".to_owned());
+                    }
+                    Err(error) => {
+                        self.error_message = Some(format!("无法复制终端输出：{error}"));
+                    }
+                }
+            }
+            TerminalViewMessage::Resize(session_id, rows, columns) => {
+                match self.application.resize_terminal(&session_id, rows, columns) {
+                    Ok(snapshot) => {
+                        self.terminal_snapshots.insert(session_id, snapshot);
+                    }
+                    Err(error) => {
+                        self.error_message = Some(format!("无法调整终端尺寸：{error}"));
+                    }
+                }
+            }
+            TerminalViewMessage::Scroll(session_id, position) => {
+                self.terminal_scrollback
+                    .insert(session_id.clone(), position);
+                self.refresh_terminal(&session_id);
+            }
+            TerminalViewMessage::Terminate(session_id) => {
+                match self.application.terminate_terminal(&session_id) {
+                    Ok(()) => self.refresh_terminal(&session_id),
+                    Err(error) => self.error_message = Some(format!("无法终止终端：{error}")),
+                }
+            }
+            TerminalViewMessage::Reveal(session_id) => {
+                self.reveal_terminal_session(&session_id);
+            }
+            TerminalViewMessage::NewSession(scope) => self.open_native_terminal(scope),
+        }
+    }
+
+    fn reveal_terminal_session(&mut self, session_id: &DesktopTerminalSessionId) {
+        self.refresh_terminal(session_id);
+        let Some(snapshot) = self.terminal_snapshots.get(session_id).cloned() else {
+            self.error_message = Some("终端会话已不可用。".to_owned());
+            return;
+        };
+        match self.application.terminal_workspace_item(&snapshot) {
+            Ok(item) => self.reveal_workspace_item(item),
+            Err(error) => self.error_message = Some(format!("无法恢复终端标签：{error}")),
+        }
+    }
+
+    fn terminal_pane_content(
+        &self,
+        item: &WorkspaceItem,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let Some(snapshot) = self.terminal_snapshot_for_item(item) else {
+            return container(
+                EmptyState::new("终端会话不可用")
+                    .message("关闭此标签后可从工作区工具新建终端。")
+                    .icon(Icon::Workspace)
+                    .view(tokens),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center(Length::Fill)
+            .style(canvas_style(tokens))
+            .into();
+        };
+        let input = self
+            .terminal_inputs
+            .get(&snapshot.id)
+            .map(String::as_str)
+            .unwrap_or_default();
+        let notice = self.terminal_notices.get(&snapshot.id).map(String::as_str);
+        terminal_content(&snapshot, input, notice, tokens).map(Message::Terminal)
+    }
+
     fn save_coding_search_to_memory(&mut self) {
+        if self.coding_search_all_projects {
+            self.coding_error = Some("切换到当前项目后再写入项目 Memory。".to_owned());
+            self.coding_notice = None;
+            return;
+        }
         let Some(project_id) = self.selected_project.clone() else {
             self.coding_error = Some("当前没有可写入 Memory 的项目。".to_owned());
             self.coding_notice = None;
@@ -4477,6 +6512,9 @@ impl PreviewProgram {
         };
         let mut windows = Vec::with_capacity(self.task_popups.len());
         for popup in self.task_popups.values() {
+            if popup.draft.is_some() {
+                continue;
+            }
             let workspace = match popup.workspace.persisted_state() {
                 Ok(state) => state,
                 Err(error) => {
@@ -4510,12 +6548,11 @@ impl PreviewProgram {
     fn record_task_popup_geometry(
         &mut self,
         window_id: HostedWindowId,
-        x: i32,
-        y: i32,
-        width: u32,
-        height: u32,
-        maximized: bool,
+        geometry: HostedWindowGeometry,
     ) {
+        let Some((x, y)) = geometry.physical_position else {
+            return;
+        };
         let Some(popup) = self.task_popups.get_mut(&window_id) else {
             return;
         };
@@ -4524,12 +6561,36 @@ impl PreviewProgram {
             NativeWindowSnapshot {
                 x,
                 y,
-                width,
-                height,
-                maximized,
+                width: geometry.physical_size.width,
+                height: geometry.physical_size.height,
+                scale_factor: geometry.scale_factor,
+                maximized: geometry.maximized,
             },
         ));
         self.persist_workspace_topology();
+    }
+
+    fn record_conversation_status_geometry(&mut self, geometry: HostedWindowGeometry) {
+        let Some((x, y)) = geometry.physical_position else {
+            return;
+        };
+        self.conversation_status_window.geometry = Some(merge_conversation_status_window_state(
+            self.conversation_status_window.geometry,
+            NativeWindowSnapshot {
+                x,
+                y,
+                width: geometry.physical_size.width,
+                height: geometry.physical_size.height,
+                scale_factor: geometry.scale_factor,
+                maximized: geometry.maximized,
+            },
+        ));
+        if let Err(error) = self
+            .conversation_status_state_writer
+            .record(self.conversation_status_window)
+        {
+            eprintln!("failed to persist Native conversation-status geometry: {error}");
+        }
     }
 
     fn apply_workspace_snapshot(&mut self, snapshot: DesktopWorkspaceSnapshot) {
@@ -4552,6 +6613,10 @@ impl PreviewProgram {
             item.application_surface()
                 .is_ok_and(|surface| surface == Some(ApplicationWorkspaceSurface::Automations))
         });
+        let next_projects_overview_open = active_item.is_some_and(|item| {
+            item.application_surface()
+                .is_ok_and(|surface| surface == Some(ApplicationWorkspaceSurface::Projects))
+        });
         let next_settings_open = active_item.is_some_and(|item| {
             item.application_surface()
                 .is_ok_and(|surface| surface == Some(ApplicationWorkspaceSurface::Settings))
@@ -4568,12 +6633,15 @@ impl PreviewProgram {
                 matches!(
                     *tab,
                     "appearance"
+                        | "agent"
                         | "provider"
                         | "quota"
                         | "extensions"
                         | "remote"
+                        | "project"
                         | "desktop"
                         | "data"
+                        | "about"
                 )
             })
             .map(str::to_owned);
@@ -4609,6 +6677,8 @@ impl PreviewProgram {
         let task_selection_changed = self.selected_task != snapshot.selected_task;
         let project_surface_changed = self.project_surface != next_project_surface;
         let automations_open_changed = self.automations_open != next_automations_open;
+        let projects_overview_open_changed =
+            self.projects_overview_open != next_projects_overview_open;
         let settings_open_changed = self.settings_open != next_settings_open;
         let selection_changed =
             project_selection_changed || inbox_selection_changed || task_selection_changed;
@@ -4616,10 +6686,21 @@ impl PreviewProgram {
         self.tasks = snapshot.tasks;
         match self.application.query_tasks(TaskQuery::default()) {
             Ok(tasks) => {
+                self.pending_initial_worktrees = tasks
+                    .iter()
+                    .filter_map(|task| {
+                        self.application
+                            .initial_worktree_intent(&task.id)
+                            .ok()
+                            .flatten()
+                            .map(|selection| (task.id.clone(), selection))
+                    })
+                    .collect();
                 self.task_move_candidates = tasks;
                 self.task_move_candidates_error = None;
             }
             Err(error) => {
+                self.pending_initial_worktrees.clear();
                 self.task_move_candidates.clear();
                 self.task_move_candidates_error = Some(format!("无法读取移动目标：{error}"));
             }
@@ -4630,6 +6711,7 @@ impl PreviewProgram {
         self.workspace_items = snapshot.workspace_items;
         self.panel_layout = snapshot.panel_layout;
         self.project_surface = next_project_surface;
+        self.projects_overview_open = next_projects_overview_open;
         self.automations_open = next_automations_open;
         self.settings_open = next_settings_open;
         if let Some(tab) = next_settings_tab {
@@ -4655,6 +6737,8 @@ impl PreviewProgram {
             self.new_task_title.clear();
         }
         if task_selection_changed {
+            self.pending_session_branch = None;
+            self.pending_review_slash_workflow = None;
             self.timeline_viewports.remove(&TimelineSurfaceKey::Main);
             self.task_title_edit = self
                 .tasks
@@ -4662,6 +6746,7 @@ impl PreviewProgram {
                 .find(|task| Some(&task.id) == self.selected_task.as_ref())
                 .map(|task| task.title.clone())
                 .unwrap_or_default();
+            self.task_dependency_target = None;
         }
         if project_selection_changed || inbox_selection_changed || task_selection_changed {
             self.task_move_target = None;
@@ -4678,15 +6763,24 @@ impl PreviewProgram {
             self.worktree_busy = false;
             self.worktree_confirmation = None;
             self.interaction_drafts.clear();
+            self.ask_user_drafts.clear();
             self.mcp_elicitation_drafts.clear();
+            self.tool_consent_drafts.clear();
             self.turn_state = None;
             self.task_action_error = None;
         }
         if self.selected_task.is_some() {
             self.refresh_composer();
             self.refresh_task_session();
+            if task_selection_changed {
+                self.refresh_conversation_suggestions(HostedWindowId::PRIMARY, false);
+            }
         } else {
             self.task_session = None;
+            self.conversation_suggestions.clear();
+        }
+        if projects_overview_open_changed && self.projects_overview_open {
+            self.refresh_project_dashboard();
         }
         if project_selection_changed || project_surface_changed {
             match self.project_surface {
@@ -4704,6 +6798,7 @@ impl PreviewProgram {
                             Some(format!("架构图布局已重置，保存的布局无法恢复：{error}"));
                     }
                 }
+                ProjectSurface::Files => self.refresh_project_files(),
                 ProjectSurface::Tasks | ProjectSurface::Clone => {}
             }
         }
@@ -4717,6 +6812,581 @@ impl PreviewProgram {
         }
         self.refresh_workspace_pane_sessions();
         self.refresh_workspace_project_previews();
+        self.sync_document_editors_from_workspaces();
+    }
+
+    fn ensure_document_editor_state(&mut self, item: &WorkspaceItem, snapshot: &DocumentSnapshot) {
+        if let Some(existing) = self.document_editors.get_mut(&item.id) {
+            existing.sync_from_snapshot(snapshot);
+            return;
+        }
+        self.document_editors.insert(
+            item.id.clone(),
+            DocumentEditorViewState::from_snapshot(snapshot),
+        );
+    }
+
+    fn sync_document_editors_from_workspaces(&mut self) {
+        let mut document_items = self
+            .workspace_items
+            .iter()
+            .filter(|item| is_document_editor_item(item))
+            .cloned()
+            .collect::<Vec<_>>();
+        for popup in self.task_popups.values() {
+            if let Ok(snapshot) = popup.workspace.snapshot() {
+                document_items.extend(
+                    snapshot
+                        .workspace_items
+                        .into_iter()
+                        .filter(is_document_editor_item),
+                );
+            }
+        }
+        document_items.sort_by(|left, right| left.id.cmp(&right.id));
+        document_items.dedup_by(|left, right| left.id == right.id);
+        let mut next = BTreeMap::new();
+        for item in document_items {
+            let Some(path) = item.document_path().ok().flatten() else {
+                continue;
+            };
+            let snapshot = match self
+                .document_editors
+                .get(&item.id)
+                .and_then(|state| self.application.document_snapshot(state.document_id).ok())
+            {
+                Some(snapshot) => snapshot,
+                None => match self.application.open_document_at_path(&path) {
+                    Ok((snapshot, _)) => snapshot,
+                    Err(error) => {
+                        eprintln!("failed to sync Native document editor: {error}");
+                        continue;
+                    }
+                },
+            };
+            let state = if let Some(mut existing) = self.document_editors.remove(&item.id) {
+                existing.sync_from_snapshot(&snapshot);
+                existing
+            } else {
+                DocumentEditorViewState::from_snapshot(&snapshot)
+            };
+            next.insert(item.id.clone(), state);
+        }
+        self.document_editors = next;
+    }
+
+    fn sync_document_editor_views(&mut self, document_id: lilia_desktop_application::DocumentId) {
+        let Ok(snapshot) = self.application.document_snapshot(document_id) else {
+            return;
+        };
+        for state in self
+            .document_editors
+            .values_mut()
+            .filter(|state| state.document_id == document_id)
+        {
+            state.sync_from_snapshot(&snapshot);
+        }
+    }
+
+    fn start_document_diagnostics(
+        &mut self,
+        document_id: lilia_desktop_application::DocumentId,
+        project_id: Option<ProjectId>,
+    ) {
+        for state in self
+            .document_editors
+            .values_mut()
+            .filter(|state| state.document_id == document_id)
+        {
+            state.mark_diagnostics_checking();
+        }
+        let application = self.application.clone();
+        let message_sender = Arc::clone(&self.message_sender);
+        let spawn = std::thread::Builder::new()
+            .name("lilia-document-diagnostics".to_owned())
+            .spawn(move || {
+                let result = match project_id {
+                    Some(project_id) => {
+                        application.refresh_project_document_diagnostics(&project_id, document_id)
+                    }
+                    None => application.refresh_document_diagnostics(document_id),
+                }
+                .map_err(|error| error.to_string());
+                let _ = message_sender(Message::DocumentDiagnosticsFinished {
+                    document_id,
+                    result,
+                });
+            });
+        if let Err(error) = spawn {
+            eprintln!("failed to start Native document diagnostics: {error}");
+            for state in self
+                .document_editors
+                .values_mut()
+                .filter(|state| state.document_id == document_id)
+            {
+                state.mark_diagnostics_unavailable();
+            }
+        }
+    }
+
+    fn finish_document_diagnostics(
+        &mut self,
+        document_id: lilia_desktop_application::DocumentId,
+        result: Result<DesktopDocumentDiagnosticsSnapshot, String>,
+    ) {
+        let snapshot = match result {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                eprintln!("failed to refresh Native document diagnostics: {error}");
+                match self.application.document_diagnostics(document_id) {
+                    Ok(snapshot) => snapshot,
+                    Err(snapshot_error) => {
+                        eprintln!(
+                            "failed to read Native document diagnostics state: {snapshot_error}"
+                        );
+                        for state in self
+                            .document_editors
+                            .values_mut()
+                            .filter(|state| state.document_id == document_id)
+                        {
+                            state.mark_diagnostics_unavailable();
+                        }
+                        return;
+                    }
+                }
+            }
+        };
+        for state in self
+            .document_editors
+            .values_mut()
+            .filter(|state| state.document_id == document_id)
+        {
+            state.sync_diagnostics(&snapshot);
+        }
+    }
+
+    fn start_document_definition(&mut self, item_id: WorkspaceItemId, window_id: HostedWindowId) {
+        let Some(state) = self.document_editors.get(&item_id) else {
+            return;
+        };
+        if state.definition_operation.is_some() {
+            return;
+        }
+        let document_id = state.document_id;
+        let revision = state.revision;
+        let Some(source_offset) = document_editor_cursor_offset(state) else {
+            if let Some(state) = self.document_editors.get_mut(&item_id) {
+                state.definition_error = Some("当前光标位置不可用。".to_owned());
+            }
+            return;
+        };
+        self.document_definition_operation_sequence = self
+            .document_definition_operation_sequence
+            .saturating_add(1);
+        let operation_id = self.document_definition_operation_sequence;
+        if let Some(state) = self.document_editors.get_mut(&item_id) {
+            state.definition_operation = Some(operation_id);
+            state.definition_project_id = None;
+            state.definition_targets.clear();
+            state.definition_message = Some("正在查找定义…".to_owned());
+            state.definition_error = None;
+        }
+        let application = self.application.clone();
+        let message_sender = Arc::clone(&self.message_sender);
+        let message_item_id = item_id.clone();
+        let spawn = std::thread::Builder::new()
+            .name("lilia-document-definition".to_owned())
+            .spawn(move || {
+                let project_id = application
+                    .document_project_id(document_id)
+                    .map_err(|error| error.to_string());
+                let (project_id, result) = match project_id {
+                    Ok(Some(project_id)) => {
+                        let result = application
+                            .project_document_definitions(
+                                &project_id,
+                                document_id,
+                                revision,
+                                source_offset,
+                            )
+                            .map_err(|error| error.to_string());
+                        (Some(project_id), result)
+                    }
+                    Ok(None) => (
+                        None,
+                        Err("document is not inside an active project workspace".to_owned()),
+                    ),
+                    Err(error) => (None, Err(error)),
+                };
+                let _ = message_sender(Message::DocumentDefinitionsFinished {
+                    item_id: message_item_id,
+                    window_id,
+                    operation_id,
+                    project_id,
+                    result,
+                });
+            });
+        if let Err(error) = spawn {
+            eprintln!("failed to start Native document definition lookup: {error}");
+            if let Some(state) = self.document_editors.get_mut(&item_id) {
+                state.definition_operation = None;
+                state.definition_message = None;
+                state.definition_error = Some("无法启动定义查找，请重试。".to_owned());
+            }
+        }
+    }
+
+    fn finish_document_definitions(
+        &mut self,
+        item_id: WorkspaceItemId,
+        window_id: HostedWindowId,
+        operation_id: u64,
+        project_id: Option<ProjectId>,
+        result: Result<DesktopDocumentDefinitionResult, String>,
+    ) {
+        let mut immediate_target = None;
+        let Some(state) = self.document_editors.get_mut(&item_id) else {
+            return;
+        };
+        if state.definition_operation != Some(operation_id) {
+            return;
+        }
+        state.definition_operation = None;
+        state.definition_message = None;
+        match result {
+            Ok(result)
+                if result.source_document_id == state.document_id
+                    && result.source_revision == state.revision =>
+            {
+                state.definition_project_id = project_id.clone();
+                match result.targets.as_slice() {
+                    [] => {
+                        state.definition_targets.clear();
+                        state.definition_message = Some("未找到定义。".to_owned());
+                    }
+                    [target] => {
+                        state.definition_targets.clear();
+                        immediate_target =
+                            project_id.map(|project_id| (project_id, target.clone()));
+                    }
+                    targets => {
+                        state.definition_targets = targets.to_vec();
+                        state.definition_message =
+                            Some(format!("找到 {} 个定义，请选择。", targets.len()));
+                    }
+                }
+                state.definition_error = None;
+            }
+            Ok(_) => {
+                state.definition_targets.clear();
+                state.definition_error = Some("文档已变化，请重新查找定义。".to_owned());
+            }
+            Err(error) => {
+                eprintln!("failed to resolve Native document definition: {error}");
+                state.definition_targets.clear();
+                state.definition_error = Some("暂时无法查找定义，请稍后重试。".to_owned());
+            }
+        }
+        if let Some((project_id, target)) = immediate_target {
+            self.navigate_document_definition_target(window_id, project_id, target);
+        }
+    }
+
+    fn open_document_definition_target(
+        &mut self,
+        item_id: WorkspaceItemId,
+        window_id: HostedWindowId,
+        index: usize,
+    ) {
+        let target = self.document_editors.get(&item_id).and_then(|state| {
+            state
+                .definition_project_id
+                .clone()
+                .zip(state.definition_targets.get(index).cloned())
+        });
+        if let Some((project_id, target)) = target {
+            self.navigate_document_definition_target(window_id, project_id, target);
+        }
+    }
+
+    fn navigate_document_definition_target(
+        &mut self,
+        source_window_id: HostedWindowId,
+        project_id: ProjectId,
+        target: DesktopDocumentDefinitionTarget,
+    ) {
+        let snapshot = match self.application.document_snapshot(target.document_id) {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                eprintln!("failed to open Native definition document: {error}");
+                self.error_message = Some("定义目标已不可用，请重新查找。".to_owned());
+                return;
+            }
+        };
+        let item = match self.application.document_workspace_item(target.document_id) {
+            Ok(item) => item,
+            Err(error) => {
+                eprintln!("failed to create Native definition item: {error}");
+                self.error_message = Some("无法打开定义目标，请重试。".to_owned());
+                return;
+            }
+        };
+        let item_id = item.id.clone();
+        self.ensure_document_editor_state(&item, &snapshot);
+        let target_window_id =
+            if let Some((window_id, pane_id)) = self.workspace_item_location(&item_id) {
+                if window_id == HostedWindowId::PRIMARY {
+                    self.execute_workspace_command(DesktopCommand::ActivateWorkspaceItem {
+                        pane_id,
+                        item_id: item_id.clone(),
+                    });
+                } else {
+                    self.select_workspace_window_tab(window_id, pane_id, Some(item_id.clone()));
+                    self.pending_window_commands
+                        .push(HostedWindowCommand::Focus(window_id));
+                }
+                window_id
+            } else if source_window_id != HostedWindowId::PRIMARY {
+                let pane_id = self
+                    .task_popups
+                    .get(&source_window_id)
+                    .and_then(|popup| popup.workspace.snapshot().ok())
+                    .map(|snapshot| snapshot.panel_layout.active_pane().clone());
+                if let Some(pane_id) = pane_id {
+                    if self.execute_workspace_window_command(
+                        source_window_id,
+                        DesktopCommand::OpenWorkspaceItem { pane_id, item },
+                    ) {
+                        source_window_id
+                    } else {
+                        return;
+                    }
+                } else {
+                    self.reveal_workspace_item(item);
+                    HostedWindowId::PRIMARY
+                }
+            } else {
+                self.reveal_workspace_item(item);
+                HostedWindowId::PRIMARY
+            };
+        self.start_document_diagnostics(target.document_id, Some(project_id));
+        let selected = self.document_editors.get(&item_id).is_some_and(|state| {
+            select_document_editor_offsets(state, target.start_offset, target.end_offset)
+        });
+        if !selected {
+            if let Some(state) = self.document_editors.get_mut(&item_id) {
+                state.definition_error = Some("定义位置已失效，请重新查找。".to_owned());
+            }
+            return;
+        }
+        self.pending_ui_commands.push(HostedUiCommand::Focus {
+            window_id: target_window_id,
+            target: target_ids::document_editor_input(item_id.as_str()),
+        });
+    }
+
+    fn workspace_item_location(
+        &self,
+        item_id: &WorkspaceItemId,
+    ) -> Option<(HostedWindowId, PaneId)> {
+        if let Some(pane_id) = self.panel_layout.pane_for_item(item_id).cloned() {
+            return Some((HostedWindowId::PRIMARY, pane_id));
+        }
+        self.task_popups.values().find_map(|popup| {
+            popup
+                .workspace
+                .snapshot()
+                .ok()?
+                .panel_layout
+                .pane_for_item(item_id)
+                .cloned()
+                .map(|pane_id| (popup.id, pane_id))
+        })
+    }
+
+    fn handle_document_editor_action(
+        &mut self,
+        item_id: WorkspaceItemId,
+        action: text_editor::Action,
+    ) {
+        let Some(state) = self.document_editors.get(&item_id) else {
+            return;
+        };
+        if state.read_only {
+            return;
+        }
+        let is_edit = action.is_edit();
+        let document_id = state.document_id;
+        let expected = state.revision;
+        state.editor.perform(action);
+        if !is_edit {
+            return;
+        }
+        let text = state.editor.text();
+        match self
+            .application
+            .replace_document_text(document_id, expected, text)
+        {
+            Ok(revision) => {
+                if revision == expected {
+                    return;
+                }
+                self.sync_document_editor_views(document_id);
+                for state in self
+                    .document_editors
+                    .values_mut()
+                    .filter(|state| state.document_id == document_id)
+                {
+                    state.note_text_changed();
+                }
+                if let Some(state) = self.document_editors.get_mut(&item_id) {
+                    state.revision = revision;
+                    state.conflict_message = None;
+                    state.status_message = None;
+                }
+            }
+            Err(error) => {
+                if let Ok(snapshot) = self.application.document_snapshot(document_id) {
+                    if let Some(state) = self.document_editors.get_mut(&item_id) {
+                        state.sync_from_snapshot(&snapshot);
+                        state.conflict_message =
+                            Some(format!("编辑冲突，已恢复当前缓冲区：{error}"));
+                    }
+                } else if let Some(state) = self.document_editors.get_mut(&item_id) {
+                    state.conflict_message = Some(format!("无法写入文档：{error}"));
+                }
+            }
+        }
+    }
+
+    fn select_document_diagnostic(&mut self, item_id: WorkspaceItemId, index: usize) {
+        let Some(state) = self.document_editors.get(&item_id) else {
+            return;
+        };
+        let Some(diagnostic) = state.diagnostics.get(index) else {
+            return;
+        };
+        if !select_document_editor_offsets(state, diagnostic.start_offset, diagnostic.end_offset) {
+            if let Some(state) = self.document_editors.get_mut(&item_id) {
+                state.status_message = Some("问题位置已失效，请重新检查。".to_owned());
+            }
+        }
+    }
+
+    fn save_document_editor(&mut self, item_id: WorkspaceItemId) {
+        let Some(state) = self.document_editors.get(&item_id) else {
+            return;
+        };
+        let document_id = state.document_id;
+        let expected = state.revision;
+        match self.application.save_document(document_id, expected) {
+            Ok(snapshot) => {
+                self.sync_document_editor_views(document_id);
+                if let Some(state) = self.document_editors.get_mut(&item_id) {
+                    state.conflict_message = None;
+                    state.status_message = Some("已保存".to_owned());
+                }
+                self.opened_project_document = Some(snapshot);
+                self.start_document_diagnostics(document_id, None);
+            }
+            Err(error) => {
+                if let Some(state) = self.document_editors.get_mut(&item_id) {
+                    state.conflict_message = Some(format!("保存失败：{error}"));
+                    state.status_message = None;
+                }
+            }
+        }
+    }
+
+    fn discard_document_editor(&mut self, item_id: WorkspaceItemId) {
+        let Some(state) = self.document_editors.get(&item_id) else {
+            return;
+        };
+        let document_id = state.document_id;
+        match self.application.discard_document_changes(document_id) {
+            Ok(snapshot) => {
+                self.sync_document_editor_views(document_id);
+                if let Some(state) = self.document_editors.get_mut(&item_id) {
+                    state.conflict_message = None;
+                    state.status_message = Some("已丢弃未保存更改".to_owned());
+                }
+                self.opened_project_document = Some(snapshot);
+                self.start_document_diagnostics(document_id, None);
+            }
+            Err(error) => {
+                if let Some(state) = self.document_editors.get_mut(&item_id) {
+                    state.conflict_message = Some(format!("无法丢弃更改：{error}"));
+                }
+            }
+        }
+    }
+
+    fn document_editor_pane_content(
+        &self,
+        item: &WorkspaceItem,
+        window_id: HostedWindowId,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let Some(state) = self.document_editors.get(&item.id) else {
+            return container(
+                EmptyState::new(item.title.clone())
+                    .message("正在读取文档…")
+                    .icon(Icon::Workspace)
+                    .view(tokens),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center(Length::Fill)
+            .style(canvas_style(tokens))
+            .into();
+        };
+        let item_id = item.id.clone();
+        let diagnostic_item_id = item.id.clone();
+        let definition_item_id = item.id.clone();
+        let definition_target_item_id = item.id.clone();
+        let command_item_id = item.id.clone();
+        let save_id = item.id.clone();
+        let discard_id = item.id.clone();
+        let definition_enabled =
+            (state.language_label != "plaintext").then(|| Message::GoToDocumentDefinition {
+                item_id: definition_item_id,
+                window_id,
+            });
+        let syntax_theme = match self.theme {
+            ThemeMode::Dark => iced::highlighter::Theme::Base16Ocean,
+            ThemeMode::Light => iced::highlighter::Theme::InspiredGitHub,
+        };
+        document_editor_content(
+            state,
+            target_ids::document_editor_input(item.id.as_str()),
+            tokens,
+            DocumentEditorActions {
+                on_edit: Box::new(move |action| Message::DocumentEditorEdited {
+                    item_id: item_id.clone(),
+                    action,
+                }),
+                on_diagnostic: Box::new(move |index| Message::SelectDocumentDiagnostic {
+                    item_id: diagnostic_item_id.clone(),
+                    index,
+                }),
+                on_definition: definition_enabled,
+                on_definition_target: Box::new(move |index| {
+                    Message::OpenDocumentDefinitionTarget {
+                        item_id: definition_target_item_id.clone(),
+                        window_id,
+                        index,
+                    }
+                }),
+                on_command_key: Box::new(move |stroke| Message::CommandKeyStroke {
+                    window_id,
+                    item_id: Some(command_item_id.clone()),
+                    stroke,
+                }),
+                on_save: Message::SaveDocumentEditor(save_id),
+                on_discard: Message::DiscardDocumentEditor(discard_id),
+            },
+            syntax_theme,
+        )
     }
 
     fn refresh_archived_records(&mut self) {
@@ -4750,6 +7420,8 @@ impl PreviewProgram {
     fn update_message(&mut self, message: Message) -> Option<HostedWindowAction> {
         match message {
             Message::RefreshProjects => self.refresh_projects(),
+            Message::OpenProjectsOverview => self.open_projects_overview(),
+            Message::RefreshProjectsOverview => self.refresh_project_dashboard(),
             Message::CreateProject => self.create_project(),
             Message::OpenProjectClone => self.open_project_clone(),
             Message::CloseProjectClone => self.close_project_clone(),
@@ -4760,6 +7432,7 @@ impl PreviewProgram {
             }
             Message::ProjectCloneParentChanged(value) => {
                 self.project_clone_parent = value;
+                self.persist_project_clone_parent();
                 self.project_action_error = None;
             }
             Message::PickProjectCloneParent => self.pick_project_clone_parent(),
@@ -4834,11 +7507,15 @@ impl PreviewProgram {
                 self.error_message = None;
             }
             Message::CreateTask => self.create_task(),
+            Message::OpenMainConversationDraft => self.open_main_conversation_draft(),
+            Message::CloseMainConversationDraft => self.close_main_conversation_draft(),
             Message::TaskTitleChanged(value) => {
                 self.task_title_edit = value;
                 self.task_action_error = None;
             }
             Message::SaveTask => self.save_task(),
+            Message::CycleTaskDependency => self.cycle_task_dependency(),
+            Message::ToggleTaskDependency => self.toggle_task_dependency(),
             Message::CycleTaskStatus => self.cycle_task_status(),
             Message::CycleTaskPriority => self.cycle_task_priority(),
             Message::ToggleTaskPinned => self.toggle_task_pinned(),
@@ -4955,6 +7632,39 @@ impl PreviewProgram {
                 self.memory_body.perform(action);
                 self.memory_error = None;
             }
+            Message::DocumentEditorEdited { item_id, action } => {
+                self.handle_document_editor_action(item_id, action);
+            }
+            Message::DocumentDiagnosticsFinished {
+                document_id,
+                result,
+            } => self.finish_document_diagnostics(document_id, result),
+            Message::GoToDocumentDefinition { item_id, window_id } => {
+                self.start_document_definition(item_id, window_id);
+            }
+            Message::DocumentDefinitionsFinished {
+                item_id,
+                window_id,
+                operation_id,
+                project_id,
+                result,
+            } => self.finish_document_definitions(
+                item_id,
+                window_id,
+                operation_id,
+                project_id,
+                result,
+            ),
+            Message::OpenDocumentDefinitionTarget {
+                item_id,
+                window_id,
+                index,
+            } => self.open_document_definition_target(item_id, window_id, index),
+            Message::SaveDocumentEditor(item_id) => self.save_document_editor(item_id),
+            Message::DiscardDocumentEditor(item_id) => self.discard_document_editor(item_id),
+            Message::SelectDocumentDiagnostic { item_id, index } => {
+                self.select_document_diagnostic(item_id, index);
+            }
             Message::MemoryBodyReplaced(value) => {
                 self.memory_body.set_text(&value);
                 self.memory_error = None;
@@ -4995,9 +7705,18 @@ impl PreviewProgram {
             Message::ToggleTaskMemory => self.toggle_task_memory(),
             Message::ResetTaskMemoryCooldown => self.reset_task_memory_cooldown(),
             Message::OpenCodingTools => self.open_coding_tools(),
+            Message::OpenIab => self.open_iab(),
+            Message::Iab(message) => self.update_iab(message),
+            Message::IabWindow { window_id, message } => self.update_iab_window(window_id, message),
             Message::CloseInspectorDock => self.close_inspector_dock(),
             Message::ToggleTaskInspector => self.toggle_task_inspector(),
             Message::OpenArchitecture => self.open_architecture(),
+            Message::OpenProjectFiles => self.open_project_surface(ProjectWorkspaceSurface::Files),
+            Message::RefreshProjectFiles => self.refresh_project_files(),
+            Message::ToggleProjectFileExpand(path) => self.toggle_project_file_expand(path),
+            Message::OpenProjectFile(path) => {
+                self.open_project_file_path(path);
+            }
             Message::RefreshArchitecture => self.refresh_architecture(),
             Message::RollbackArchitecture => self.rollback_architecture(),
             Message::ArchitectureGraph(event) => {
@@ -5013,6 +7732,7 @@ impl PreviewProgram {
                 result,
             } => {
                 if self.active_coding_operation == Some(operation_id) {
+                    let result = *result;
                     self.active_coding_operation = None;
                     self.coding_busy = false;
                     let selected_project = self
@@ -5037,6 +7757,14 @@ impl PreviewProgram {
                             }
                             None => self.coding_git = None,
                         }
+                        match result.git_diff {
+                            Some(Ok(value)) => self.coding_git_diff = Some(value),
+                            Some(Err(error)) => {
+                                self.coding_git_diff = None;
+                                errors.push(error);
+                            }
+                            None => self.coding_git_diff = None,
+                        }
                         match result.workspace {
                             Some(Ok(value)) => self.coding_workspace = Some(value),
                             Some(Err(error)) => {
@@ -5044,6 +7772,14 @@ impl PreviewProgram {
                                 errors.push(error);
                             }
                             None => self.coding_workspace = None,
+                        }
+                        match result.project_tasks {
+                            Some(Ok(value)) => self.coding_project_tasks = Some(value),
+                            Some(Err(error)) => {
+                                self.coding_project_tasks = None;
+                                errors.push(error);
+                            }
+                            None => self.coding_project_tasks = None,
                         }
                     }
                     self.coding_error = (!errors.is_empty()).then(|| errors.join("\n"));
@@ -5054,9 +7790,45 @@ impl PreviewProgram {
                 self.coding_error = None;
                 self.coding_notice = None;
             }
+            Message::CycleCodingSearchMode => {
+                self.coding_search_mode = match self.coding_search_mode {
+                    DesktopCodeSearchMode::Text => DesktopCodeSearchMode::Symbol,
+                    _ => DesktopCodeSearchMode::Text,
+                };
+                self.coding_search = None;
+                self.coding_error = None;
+                self.coding_notice = None;
+            }
+            Message::ToggleCodingSearchScope => {
+                self.coding_search_all_projects = !self.coding_search_all_projects;
+                self.coding_search = None;
+                self.coding_error = None;
+                self.coding_notice = None;
+            }
+            Message::CycleCodingGitDiffScope => {
+                if !self.coding_busy {
+                    self.coding_git_diff_scope = match self.coding_git_diff_scope {
+                        DesktopGitDiffScope::WorkingTree => DesktopGitDiffScope::Staged,
+                        DesktopGitDiffScope::Staged => DesktopGitDiffScope::WorkingTree,
+                    };
+                    self.coding_git_diff = None;
+                    self.refresh_coding_tools();
+                }
+            }
             Message::SearchCodingTools => self.search_coding_tools(),
-            Message::OpenProjectWorkspace => self.open_project_workspace(false),
-            Message::OpenProjectTerminal => self.open_project_workspace(true),
+            Message::OpenProjectWorkspace => {
+                self.open_project_workspace(ExternalWorkspaceTarget::FileManager);
+            }
+            Message::OpenProjectCodeEditor => {
+                self.open_project_workspace(ExternalWorkspaceTarget::CodeEditor);
+            }
+            Message::OpenProjectTerminal => {
+                self.open_project_workspace(ExternalWorkspaceTarget::Terminal);
+            }
+            Message::OpenNativeProjectTerminal => self.open_native_project_terminal(),
+            Message::RunProjectTask(task_id) => self.run_project_task(task_id),
+            Message::Terminal(message) => self.update_terminal(message),
+            Message::OpenCodingSearchHit(hit) => self.open_coding_search_hit(hit),
             Message::SaveCodingSearchToMemory => self.save_coding_search_to_memory(),
             Message::CodingSearchFinished {
                 operation_id,
@@ -5067,9 +7839,32 @@ impl PreviewProgram {
                     self.coding_busy = false;
                     match result {
                         Ok(value) => {
-                            self.coding_search = Some(value);
-                            self.coding_error = None;
-                            self.coding_notice = None;
+                            let current_project_matches =
+                                value.scope.project_id().is_none_or(|project_id| {
+                                    self.selected_project.as_ref() == Some(project_id)
+                                });
+                            if current_project_matches {
+                                let failed = value.failures.len();
+                                let truncated = value.truncated_projects || value.truncated_hits;
+                                self.coding_notice = (failed > 0 || truncated).then(|| {
+                                    let mut parts = Vec::new();
+                                    if failed > 0 {
+                                        parts.push(format!("{failed} 个项目搜索失败"));
+                                    }
+                                    if value.truncated_projects {
+                                        parts.push("项目数量已达上限".to_owned());
+                                    }
+                                    if value.truncated_hits {
+                                        parts.push("结果只显示前 128 项".to_owned());
+                                    }
+                                    parts.join("；")
+                                });
+                                self.coding_search = Some(value);
+                                self.coding_error = None;
+                            } else {
+                                self.coding_search = None;
+                                self.coding_notice = None;
+                            }
                         }
                         Err(error) => {
                             self.coding_search = None;
@@ -5079,39 +7874,102 @@ impl PreviewProgram {
                 }
             }
             Message::SelectProject(project_id) => {
+                self.close_main_conversation_draft();
                 self.automations_open = false;
                 self.project_surface = ProjectSurface::Tasks;
+                if !self.coding_search_all_projects {
+                    self.coding_search = None;
+                    self.coding_notice = None;
+                }
                 self.execute_workspace_command(DesktopCommand::SelectProject(project_id));
+                self.refresh_project_files();
             }
             Message::SelectInbox => {
+                self.close_main_conversation_draft();
                 self.automations_open = false;
                 self.project_surface = ProjectSurface::Tasks;
                 self.execute_workspace_command(DesktopCommand::SelectInbox);
             }
             Message::SelectTask(task_id) => {
+                self.close_main_conversation_draft();
                 self.automations_open = false;
                 self.project_surface = ProjectSurface::Tasks;
                 self.select_task(task_id);
             }
             Message::BackToTaskList => {
+                self.close_main_conversation_draft();
                 self.execute_workspace_command(DesktopCommand::BackToTaskList);
             }
             Message::OpenConversationStatus => self.refresh_conversation_status(),
             Message::CloseConversationStatus => {
                 self.conversation_status_open = false;
                 self.conversation_status_ready = false;
+                self.conversation_status_opacity_panel_open = false;
             }
-            Message::FocusConversationStatusTask(task_id) => {
-                self.navigate(DesktopNavigationTarget::Task(task_id));
+            Message::ToggleConversationStatusAlwaysOnTop => {
+                self.conversation_status_window.always_on_top =
+                    !self.conversation_status_window.always_on_top;
+                if let Err(error) = self
+                    .conversation_status_state_writer
+                    .record(self.conversation_status_window)
+                {
+                    eprintln!("failed to persist Native conversation-status pin: {error}");
+                }
+                self.pending_window_commands
+                    .push(HostedWindowCommand::SetAlwaysOnTop {
+                        id: CONVERSATION_STATUS_WINDOW_ID,
+                        always_on_top: self.conversation_status_window.always_on_top,
+                    });
+            }
+            Message::ToggleConversationStatusOpacityPanel => {
+                self.conversation_status_opacity_panel_open =
+                    !self.conversation_status_opacity_panel_open;
+            }
+            Message::ConversationStatusOpacityChanged(opacity) => {
+                self.conversation_status_window.opacity =
+                    normalize_conversation_status_opacity(opacity);
+                if let Err(error) = self
+                    .conversation_status_state_writer
+                    .record(self.conversation_status_window)
+                {
+                    eprintln!("failed to persist Native conversation-status opacity: {error}");
+                }
+            }
+            Message::OpenConversationStatusNewChat => {
+                let project_id = self.preferred_popup_project();
+                match self.open_conversation_draft_popup(project_id, None, String::new()) {
+                    Ok(_) => self.conversation_status_error = None,
+                    Err(error) => {
+                        eprintln!("failed to open conversation-status draft: {error}");
+                        self.conversation_status_error =
+                            Some("无法打开新对话，请稍后重试。".to_owned());
+                    }
+                }
+            }
+            Message::DismissConversationStatusError => {
+                self.conversation_status_error = None;
+            }
+            Message::OpenConversationStatusTask(task_id) => {
+                self.open_task_popup_with_transfer(task_id, false);
+            }
+            Message::StopConversationStatusTask(task_id) => {
+                self.stop_conversation_status_task(task_id);
             }
             Message::OpenSelectedTaskPopup => self.open_selected_task_popup(),
+            Message::OpenChildQuestionPopup {
+                source_window,
+                parent_task_id,
+            } => self.open_child_question_popup(source_window, parent_task_id),
             Message::MoveSelectedTaskToPopup => self.move_selected_task_to_popup(),
             Message::MoveWorkspaceItemToNewWindow(item_id) => {
                 self.move_workspace_item_to_new_window(item_id)
             }
             Message::RestoreTaskPopupWindows => {}
-            Message::CloseTaskPopup(window_id) => self.close_task_popup(window_id),
-            Message::MoveTaskPopupToMain(window_id) => self.move_task_popup_to_main(window_id),
+            Message::CloseTaskPopup(window_id) => {
+                self.close_task_popup(window_id);
+            }
+            Message::FocusTaskPopupMain(window_id) => self.focus_task_popup_main(window_id),
+            Message::OpenTaskPopupNewChat(window_id) => self.open_task_popup_new_chat(window_id),
             Message::SelectWorkspaceWindowTab {
                 window_id,
                 pane_id,
@@ -5161,6 +8019,44 @@ impl PreviewProgram {
                 item_id,
                 message,
             } => return self.update_workspace_window_project_action(window_id, item_id, *message),
+            Message::RefreshConversationSuggestions { window_id, force } => {
+                self.refresh_conversation_suggestions(window_id, force);
+            }
+            Message::ConversationSuggestionsFinished {
+                window_id,
+                operation_id,
+                task_id,
+                result,
+            } => self.finish_conversation_suggestions(window_id, operation_id, task_id, result),
+            Message::ApplyConversationSuggestion { window_id, prompt } => {
+                self.apply_conversation_suggestion(window_id, prompt);
+            }
+            Message::OptimizePrompt(window_id) => self.start_prompt_optimization(window_id),
+            Message::PromptOptimizationFinished {
+                window_id,
+                operation_id,
+                task_id,
+                expected_revision,
+                result,
+            } => self.finish_prompt_optimization(
+                window_id,
+                operation_id,
+                task_id,
+                expected_revision,
+                result,
+            ),
+            Message::ApplyPromptRouteWorkflow(window_id) => {
+                self.apply_prompt_route_workflow(window_id)
+            }
+            Message::DismissPromptRouteWorkflow(window_id) => {
+                self.dismiss_prompt_route_workflow(window_id)
+            }
+            Message::ComposerModelSelection { window_id, event } => {
+                self.update_composer_model_selection(window_id, event);
+            }
+            Message::ComposerReasoningSelection { window_id, event } => {
+                self.update_composer_reasoning_selection(window_id, event);
+            }
             Message::LoadEarlierTimeline => self.load_earlier_timeline(),
             Message::TaskPopupLoadEarlierTimeline(window_id) => {
                 self.load_earlier_task_popup_timeline(window_id);
@@ -5171,6 +8067,9 @@ impl PreviewProgram {
                 viewport_extent,
             } => self.update_timeline_viewport(surface, offset, viewport_extent),
             Message::TaskPopupComposerChanged { window_id, value } => {
+                if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.pending_review_slash_workflow = None;
+                }
                 if self.task_popup_composer_command(
                     window_id,
                     DesktopComposerCommand::SetContent(value),
@@ -5178,13 +8077,21 @@ impl PreviewProgram {
                     self.refresh_task_popup_composer_suggestions(window_id);
                 }
             }
-            Message::TaskPopupSelectSlashCommand { window_id, name } => {
-                if self.task_popup_composer_command(
-                    window_id,
-                    DesktopComposerCommand::SetContent(format!("/{name}")),
-                ) {
-                    self.clear_task_popup_composer_suggestions(window_id);
+            Message::TaskPopupDraftProjectSelection { window_id, event } => {
+                if let DropdownEvent::Select(project_id) | DropdownEvent::Toggle(project_id) = event
+                {
+                    if window_id == HostedWindowId::PRIMARY {
+                        self.select_main_conversation_draft_project(project_id);
+                    } else {
+                        self.select_task_popup_draft_project(window_id, project_id);
+                    }
                 }
+            }
+            Message::CycleDraftWorktree(window_id) => self.cycle_draft_worktree(window_id),
+            Message::PickDraftWorktree(window_id) => self.pick_draft_worktree(window_id),
+            Message::RetryInitialWorktree(window_id) => self.retry_initial_worktree(window_id),
+            Message::TaskPopupSelectSlashCommand { window_id, command } => {
+                self.select_slash_command(window_id, command)
             }
             Message::TaskPopupSelectConversationReference { window_id, task_id } => {
                 self.select_task_popup_conversation_reference(window_id, &task_id);
@@ -5211,10 +8118,12 @@ impl PreviewProgram {
                 window_id,
                 attachment_id,
             } => {
-                self.task_popup_composer_command(
+                if self.task_popup_composer_command(
                     window_id,
                     DesktopComposerCommand::RemoveAttachment(attachment_id),
-                );
+                ) {
+                    self.refresh_conversation_suggestions(window_id, false);
+                }
             }
             Message::TaskPopupRemoveConversationReference { window_id, task_id } => {
                 self.task_popup_composer_command(
@@ -5224,6 +8133,9 @@ impl PreviewProgram {
             }
             Message::TaskPopupSubmitTurn(window_id) => {
                 self.submit_task_popup_turn(window_id);
+            }
+            Message::TaskPopupCompactContext(window_id) => {
+                self.compact_task_popup_context(window_id);
             }
             Message::TaskPopupInterruptTurn(window_id) => {
                 self.interrupt_task_popup_turn(window_id);
@@ -5267,6 +8179,11 @@ impl PreviewProgram {
                 request_id,
                 approved,
             } => self.respond_task_popup_approval(window_id, request_id, approved),
+            Message::TaskPopupRespondTitleUpdate {
+                window_id,
+                request_id,
+                accepted,
+            } => self.respond_title_update_review(window_id, request_id, accepted),
             Message::TaskPopupInteractionDraftChanged {
                 window_id,
                 request_id,
@@ -5277,12 +8194,37 @@ impl PreviewProgram {
                     popup.error = None;
                 }
             }
+            Message::AskUserDraftAction {
+                window_id,
+                request_id,
+                action,
+            } => self.update_ask_user_draft(window_id, request_id, action),
             Message::TaskPopupRespondInteraction {
                 window_id,
                 request_id,
                 accepted,
                 response,
             } => self.respond_task_popup_interaction(window_id, request_id, accepted, response),
+            Message::ToolConsentDraftChanged {
+                window_id,
+                request_id,
+                command,
+                message,
+            } => {
+                let draft = ToolConsentDraft { command, message };
+                if window_id == HostedWindowId::PRIMARY {
+                    self.tool_consent_drafts.insert(request_id, draft);
+                    self.task_action_error = None;
+                } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.tool_consent_drafts.insert(request_id, draft);
+                    popup.error = None;
+                }
+            }
+            Message::RespondToolConsent {
+                window_id,
+                request_id,
+                decision,
+            } => self.respond_tool_consent(window_id, request_id, decision),
             Message::TaskPopupRespondArchitecture {
                 window_id,
                 request_id,
@@ -5317,17 +8259,29 @@ impl PreviewProgram {
                 Value::String(value),
             ),
             Message::ComposerChanged(value) => {
+                self.pending_review_slash_workflow = None;
                 if self.execute_composer_command(DesktopComposerCommand::SetContent(value)) {
-                    self.refresh_composer_suggestions();
+                    if self.main_conversation_draft.is_some() {
+                        self.refresh_composer_suggestions();
+                        self.refresh_conversation_suggestions(HostedWindowId::PRIMARY, false);
+                    } else {
+                        self.refresh_composer_suggestions();
+                    }
                 }
             }
-            Message::SelectSlashCommand(name) => {
-                if self.execute_composer_command(DesktopComposerCommand::SetContent(format!(
-                    "/{name}"
-                ))) {
-                    self.clear_composer_suggestions();
-                }
+            Message::SelectSlashCommand(command) => {
+                self.select_slash_command(HostedWindowId::PRIMARY, command)
             }
+            Message::SelectReviewWorkflowTarget { window_id, kind } => {
+                self.select_review_workflow_target(window_id, kind)
+            }
+            Message::ReviewWorkflowTargetChanged { window_id, value } => {
+                self.update_review_workflow_target(window_id, value)
+            }
+            Message::SubmitReviewWorkflow(window_id) => {
+                self.submit_review_slash_workflow(window_id)
+            }
+            Message::CancelReviewWorkflow(window_id) => self.clear_review_slash_workflow(window_id),
             Message::SelectConversationReference(task_id) => {
                 self.select_conversation_reference(&task_id);
             }
@@ -5349,9 +8303,12 @@ impl PreviewProgram {
                 self.open_attachment_preview_path(window_id);
             }
             Message::RemoveAttachment(attachment_id) => {
-                self.execute_composer_command(DesktopComposerCommand::RemoveAttachment(
+                if self.execute_composer_command(DesktopComposerCommand::RemoveAttachment(
                     attachment_id,
-                ));
+                )) && self.main_conversation_draft.is_some()
+                {
+                    self.refresh_conversation_suggestions(HostedWindowId::PRIMARY, false);
+                }
             }
             Message::RemoveConversationReference(task_id) => {
                 self.execute_composer_command(DesktopComposerCommand::RemoveConversationReference(
@@ -5419,22 +8376,19 @@ impl PreviewProgram {
             }
             Message::TogglePlanMode => {
                 let enabled = !self
-                    .composer
-                    .as_ref()
+                    .main_surface_composer()
                     .is_some_and(|composer| composer.plan_mode);
                 self.execute_composer_command(DesktopComposerCommand::SetPlanMode(enabled));
             }
             Message::ToggleGoalMode => {
                 let enabled = !self
-                    .composer
-                    .as_ref()
+                    .main_surface_composer()
                     .is_some_and(|composer| composer.goal_mode);
                 self.execute_composer_command(DesktopComposerCommand::SetGoalMode(enabled));
             }
             Message::CyclePermission => {
                 let permission = self
-                    .composer
-                    .as_ref()
+                    .main_surface_composer()
                     .map(|composer| composer.permission)
                     .unwrap_or_default();
                 self.execute_composer_command(DesktopComposerCommand::SetPermission(
@@ -5442,11 +8396,16 @@ impl PreviewProgram {
                 ));
             }
             Message::SubmitTurn => self.submit_turn(),
+            Message::CompactContext => self.compact_context(),
             Message::InterruptTurn => self.interrupt_turn(),
             Message::RespondApproval {
                 request_id,
                 approved,
             } => self.respond_approval(request_id, approved),
+            Message::RespondTitleUpdate {
+                request_id,
+                accepted,
+            } => self.respond_title_update_review(HostedWindowId::PRIMARY, request_id, accepted),
             Message::InteractionDraftChanged { request_id, value } => {
                 self.interaction_drafts.insert(request_id, value);
                 self.task_action_error = None;
@@ -5490,6 +8449,92 @@ impl PreviewProgram {
                     Err(error) => self.task_action_error = Some(error.to_string()),
                 }
             }
+            Message::TimelineTextSelectionChanged {
+                window_id,
+                event_id,
+                text,
+            } => {
+                if let Some(text) = text.filter(|value| !value.trim().is_empty()) {
+                    self.timeline_text_selections
+                        .insert(window_id, TimelineTextSelection { event_id, text });
+                } else if self
+                    .timeline_text_selections
+                    .get(&window_id)
+                    .is_some_and(|selection| selection.event_id == event_id)
+                {
+                    self.timeline_text_selections.remove(&window_id);
+                }
+            }
+            Message::CopyTimelineSelection { window_id } => self.copy_timeline_selection(window_id),
+            Message::QuoteTimelineSelection { window_id } => {
+                self.quote_timeline_selection(window_id)
+            }
+            Message::AskTimelineSelectionInPopup { window_id } => {
+                self.ask_timeline_selection_in_popup(window_id)
+            }
+            Message::MarkdownImageLoaded { source, result } => {
+                self.complete_markdown_image_load(source, result);
+            }
+            Message::RetryMarkdownImage(source) => {
+                self.request_markdown_image_load(&source);
+            }
+            Message::OpenMarkdownImage { window_id, image } => {
+                let ready = matches!(
+                    self.markdown_images.get(&image.source),
+                    Some(MarkdownImageLoadState::Ready(_))
+                );
+                if ready {
+                    self.touch_markdown_image(&image.source);
+                    self.markdown_image_previews.insert(
+                        window_id,
+                        MarkdownImagePreview {
+                            source: image.source,
+                            alt: image.alt,
+                        },
+                    );
+                }
+            }
+            Message::CloseMarkdownImage(window_id) => {
+                self.markdown_image_previews.remove(&window_id);
+            }
+            Message::MarkdownImageViewerInteraction => {}
+            Message::RetryTimelineEvent {
+                window_id,
+                event_id,
+            } => self.retry_timeline_event(window_id, &event_id),
+            Message::ApplyTimelineSuggestion {
+                window_id,
+                event_id,
+            } => self.apply_timeline_suggestion(window_id, &event_id),
+            Message::SetTimelineSessionBranch {
+                window_id,
+                event_id,
+                mode,
+            } => self.set_timeline_session_branch(window_id, &event_id, mode),
+            Message::ClearSessionBranch(window_id) => self.clear_session_branch(window_id),
+            Message::ToggleCommandPalette => {
+                if self.command_picker.is_open() {
+                    self.dismiss_command_palette();
+                } else {
+                    let window_id = HostedWindowId::PRIMARY;
+                    self.open_command_palette(window_id, self.active_item_for_window(window_id));
+                }
+            }
+            Message::CommandPalette(event) => self.update_command_palette(event),
+            Message::CommandKeyStroke {
+                window_id,
+                item_id,
+                stroke,
+            } => self.dispatch_command_stroke(window_id, item_id, stroke),
+            Message::DispatchCommandAction {
+                window_id,
+                item_id,
+                action,
+            } => {
+                self.command_source_window = window_id;
+                self.command_source_item = item_id;
+                self.execute_native_action(action);
+            }
             Message::OpenSettings => {
                 let was_settings_open = self.settings_open;
                 let return_item_id = (!was_settings_open)
@@ -5511,9 +8556,13 @@ impl PreviewProgram {
                 }
             }
             Message::CloseSettings => {
+                self.shell_shortcut_capturing = false;
                 self.close_application_surface(ApplicationWorkspaceSurface::Settings)
             }
             Message::SelectSettingsTab(tab) => {
+                if tab.as_str() != "desktop" {
+                    self.shell_shortcut_capturing = false;
+                }
                 self.settings_state.select(&self.settings_model, &tab);
                 self.update_application_surface_state_entry(
                     ApplicationWorkspaceSurface::Settings,
@@ -5522,7 +8571,37 @@ impl PreviewProgram {
                 );
                 self.refresh_active_settings_tab();
             }
-            Message::SetTheme(theme) => self.set_theme(theme),
+            Message::Appearance(event) => self.update_appearance(event),
+            Message::SetSidebarDisplayMode(mode) => {
+                if self.sidebar_display_mode != mode {
+                    self.sidebar_display_mode = mode;
+                    if let Err(error) = save_sidebar_display_mode(&self.home, mode) {
+                        eprintln!("{error}");
+                        self.error_message = Some("侧边栏样式已应用，但未能保存。".to_owned());
+                    } else {
+                        self.error_message = None;
+                    }
+                }
+            }
+            Message::InjectDebugTimeline { window_id, action } => {
+                self.inject_debug_timeline(window_id, action)
+            }
+            Message::CycleProjectWorktreeMode => self.cycle_project_worktree_mode(),
+            Message::ProjectWorktreeParentChanged(value) => {
+                self.project_settings.worktree.parent_dir = Some(value);
+                self.project_settings_error = None;
+            }
+            Message::PickProjectWorktreeParent => self.pick_project_worktree_parent(),
+            Message::ProjectWorktreeInstructionsEdited(action) => {
+                self.project_worktree_instructions.perform(action);
+                self.project_settings_error = None;
+            }
+            Message::ToggleProjectWorktreeCleanup => {
+                self.project_settings.worktree.cleanup_on_archive =
+                    !self.project_settings.worktree.cleanup_on_archive;
+                self.project_settings_error = None;
+            }
+            Message::SaveProjectSettings => self.save_project_preferences(),
             Message::PickDataImportSource => self.pick_data_import_source(),
             Message::DataImportPlanFinished {
                 operation_id,
@@ -5594,6 +8673,160 @@ impl PreviewProgram {
             }
             Message::SaveProviderRuntimeSettings => self.save_provider_runtime_settings(),
             Message::ResetProviderRuntimeSettings => self.reset_provider_runtime_settings(),
+            Message::AssistantAiBaseUrlChanged(value) => {
+                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                    self.provider_ai_settings.assistant_base_url = value;
+                    self.provider_error = None;
+                    self.assistant_ai_probe_notice = None;
+                }
+            }
+            Message::AssistantAiModelChanged(value) => {
+                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                    self.provider_ai_settings.assistant_model = value;
+                    self.provider_error = None;
+                    self.assistant_ai_probe_notice = None;
+                }
+            }
+            Message::AssistantAiSecretChanged(value) => {
+                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                    self.provider_ai_settings.assistant_secret = value;
+                    self.provider_error = None;
+                    self.assistant_ai_probe_notice = None;
+                }
+            }
+            Message::AssistantAiNewModelIdChanged(value) => {
+                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                    self.assistant_ai_new_model_id = value;
+                    self.assistant_ai_probe_notice = None;
+                }
+            }
+            Message::AssistantAiNewModelLabelChanged(value) => {
+                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                    self.assistant_ai_new_model_label = value;
+                    self.assistant_ai_probe_notice = None;
+                }
+            }
+            Message::AddAssistantAiModel => {
+                if !self.provider_busy
+                    && !self.assistant_ai_probe_busy
+                    && self.provider_ai_settings.add_assistant_model(
+                        &self.assistant_ai_new_model_id,
+                        &self.assistant_ai_new_model_label,
+                    )
+                {
+                    self.assistant_ai_new_model_id.clear();
+                    self.assistant_ai_new_model_label.clear();
+                    self.assistant_ai_probe_notice = None;
+                }
+            }
+            Message::RenameAssistantAiModel { model_id, value } => {
+                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                    self.provider_ai_settings
+                        .rename_assistant_model(&model_id, value);
+                    self.assistant_ai_probe_notice = None;
+                }
+            }
+            Message::FetchAssistantAiModels => self.start_assistant_ai_models_fetch(),
+            Message::AssistantAiModelsFetched {
+                operation_id,
+                result,
+            } => {
+                if self.active_assistant_ai_probe == Some(operation_id) {
+                    self.active_assistant_ai_probe = None;
+                    self.assistant_ai_probe_busy = false;
+                    if result.ok {
+                        let fetched = result.models.len();
+                        let added = self
+                            .provider_ai_settings
+                            .merge_fetched_assistant_models(result.models);
+                        self.assistant_ai_probe_notice =
+                            Some((true, format!("已同步 {fetched} 个模型，新增 {added} 个。")));
+                    } else {
+                        self.assistant_ai_probe_notice = Some((
+                            false,
+                            result.error.unwrap_or_else(|| "无法获取模型。".to_owned()),
+                        ));
+                    }
+                }
+            }
+            Message::TestAssistantAiConnection => self.start_assistant_ai_connection_test(),
+            Message::AssistantAiConnectionTested {
+                operation_id,
+                result,
+            } => {
+                if self.active_assistant_ai_probe == Some(operation_id) {
+                    self.active_assistant_ai_probe = None;
+                    self.assistant_ai_probe_busy = false;
+                    self.assistant_ai_probe_notice = if result.ok {
+                        Some(match result.model_matched {
+                            Some(true) => (true, "连接成功，默认模型可用。".to_owned()),
+                            Some(false) => {
+                                (false, "连接成功，但默认模型不在模型列表中。".to_owned())
+                            }
+                            None => (true, "连接成功。".to_owned()),
+                        })
+                    } else {
+                        Some((
+                            false,
+                            result.error.unwrap_or_else(|| "连接测试失败。".to_owned()),
+                        ))
+                    };
+                }
+            }
+            Message::SaveAssistantAiConfiguration => self.save_assistant_ai_configuration(),
+            Message::ClearAssistantAiSecret => self.clear_assistant_ai_secret(),
+            Message::TitleModelChanged(value) => {
+                self.provider_ai_settings.title_model = value;
+                self.provider_error = None;
+            }
+            Message::SuggestionModelChanged(value) => {
+                self.provider_ai_settings.suggestion_model = value;
+                self.provider_error = None;
+            }
+            Message::PromptRouterModelChanged(value) => {
+                self.provider_ai_settings.prompt_router_model = value;
+                self.provider_error = None;
+            }
+            Message::PromptOptimizeModelChanged(value) => {
+                self.provider_ai_settings.prompt_optimize_model = value;
+                self.provider_error = None;
+            }
+            Message::AutoTurnDecisionModelChanged(value) => {
+                self.provider_ai_settings.auto_turn_decision_model = value;
+                self.provider_error = None;
+            }
+            Message::FeaturePresetModelChanged { preset_id, value } => {
+                self.provider_ai_settings
+                    .set_preset_model(&preset_id, value);
+                self.provider_error = None;
+            }
+            Message::CycleFeaturePresetEffort(preset_id) => {
+                self.provider_ai_settings.cycle_preset_effort(&preset_id);
+                self.provider_error = None;
+            }
+            Message::CustomPresetDraftChanged(value) => {
+                self.custom_preset_draft = value;
+                self.provider_error = None;
+            }
+            Message::AddCustomPreset => {
+                self.provider_ai_settings
+                    .add_custom_preset(&self.custom_preset_draft);
+                self.custom_preset_draft.clear();
+                self.provider_error = None;
+            }
+            Message::RenameCustomPreset { preset_id, value } => {
+                self.provider_ai_settings
+                    .rename_custom_preset(&preset_id, value);
+                self.provider_error = None;
+            }
+            Message::RemoveCustomPreset(preset_id) => {
+                self.provider_ai_settings.remove_custom_preset(&preset_id);
+                self.provider_error = None;
+            }
+            Message::SaveModelFeatureSettings => self.save_model_feature_settings(),
+            Message::SetConversationSuggestionsEnabled(enabled) => {
+                self.set_conversation_suggestions_enabled(enabled)
+            }
             Message::ToggleAgentInteraction(toggle) => {
                 self.toggle_agent_interaction_setting(toggle)
             }
@@ -5739,6 +8972,16 @@ impl PreviewProgram {
                     self.hook_drafts.insert(source_id, value);
                     self.extensions_error = None;
                 }
+            }
+            Message::HookHandlerDraftChanged {
+                source_id,
+                index,
+                field,
+                value,
+            } => self.update_hook_handler_draft(&source_id, index, field, value),
+            Message::AddHookHandler(source_id) => self.add_hook_handler_draft(&source_id),
+            Message::RemoveHookHandler { source_id, index } => {
+                self.remove_hook_handler_draft(&source_id, index)
             }
             Message::CreateHookSource(source_id) => self.create_hook_source(&source_id),
             Message::SaveHookSource(source_id) => self.save_hook_source(&source_id),
@@ -6061,12 +9304,29 @@ impl PreviewProgram {
             }
             Message::ShellShortcutChanged(value) => {
                 self.shell_shortcut_edit = value;
+                self.shell_shortcut_capturing = false;
+                self.shell_error = None;
+            }
+            Message::BeginShellShortcutCapture => {
+                self.shell_shortcut_capturing = true;
+                self.shell_error = None;
+            }
+            Message::ShellShortcutCaptured(event) => {
+                match event {
+                    KeyCaptureEvent::Captured(stroke) => {
+                        self.shell_shortcut_edit = stroke.display();
+                    }
+                    KeyCaptureEvent::Cleared => self.shell_shortcut_edit.clear(),
+                    KeyCaptureEvent::Cancelled => {}
+                }
+                self.shell_shortcut_capturing = false;
                 self.shell_error = None;
             }
             Message::SaveShellShortcut => {
+                self.shell_shortcut_capturing = false;
                 match self
                     .shell
-                    .set_shortcut(Some(self.shell_shortcut_edit.clone()))
+                    .set_shortcut(&self.application, Some(self.shell_shortcut_edit.clone()))
                 {
                     Ok(shortcut) => {
                         self.shell_shortcut_edit = shortcut.unwrap_or_default();
@@ -6075,19 +9335,37 @@ impl PreviewProgram {
                     Err(error) => self.shell_error = Some(error),
                 }
             }
-            Message::ClearShellShortcut => match self.shell.set_shortcut(None) {
-                Ok(_) => {
-                    self.shell_shortcut_edit.clear();
-                    self.shell_error = None;
+            Message::ClearShellShortcut => {
+                self.shell_shortcut_capturing = false;
+                match self.shell.set_shortcut(&self.application, None) {
+                    Ok(_) => {
+                        self.shell_shortcut_edit.clear();
+                        self.shell_error = None;
+                    }
+                    Err(error) => self.shell_error = Some(error),
                 }
-                Err(error) => self.shell_error = Some(error),
-            },
-            Message::CheckForUpdate => self.start_update_operation(UpdateOperation::Check),
+            }
+            Message::CheckForUpdate => {
+                self.update_failure_dismissed = false;
+                self.start_update_operation(UpdateOperation::Check);
+            }
             Message::InstallUpdate => {
                 if let DesktopUpdateState::Available { version, .. } = &self.update_state {
                     self.start_update_operation(UpdateOperation::Install(version.clone()));
                 }
             }
+            Message::DismissUpdatePrompt => {
+                if !self.update_prompt_is_busy() {
+                    match &self.update_state {
+                        DesktopUpdateState::Available { version, .. } => {
+                            self.dismissed_update_versions.insert(version.clone());
+                        }
+                        DesktopUpdateState::Failed { .. } => self.update_failure_dismissed = true,
+                        _ => {}
+                    }
+                }
+            }
+            Message::UpdatePromptDialogInteraction => {}
             Message::OpenPreviewReleases => {
                 match self
                     .application
@@ -6118,6 +9396,9 @@ impl PreviewProgram {
                                 matches!(&state, DesktopUpdateState::Restarting { .. });
                             self.update_state = state;
                             self.update_error = None;
+                            if self.update_prompt_is_visible() {
+                                self.dismiss_command_palette();
+                            }
                         }
                         Err(error) => {
                             self.update_state =
@@ -6132,8 +9413,25 @@ impl PreviewProgram {
                 }
             }
             Message::Shell(command) => match command {
+                ShellCommand::OpenNewConversation => {
+                    self.open_shortcut_conversation_popup();
+                }
                 ShellCommand::OpenTask(task_id) => {
-                    self.navigate(DesktopNavigationTarget::Task(task_id));
+                    self.open_task_popup_with_transfer(task_id, false);
+                }
+                ShellCommand::ToggleConversationStatus => {
+                    if self.conversation_status_open {
+                        self.update_message(Message::CloseConversationStatus);
+                        self.pending_window_commands
+                            .push(HostedWindowCommand::Close(CONVERSATION_STATUS_WINDOW_ID));
+                    } else {
+                        self.update_message(Message::OpenConversationStatus);
+                        self.pending_window_commands
+                            .push(conversation_status_window_command(
+                                false,
+                                self.conversation_status_window,
+                            ));
+                    }
                 }
                 ShellCommand::FocusMainWindow | ShellCommand::Quit => {}
             },
@@ -6203,6 +9501,7 @@ impl PreviewProgram {
     }
 
     fn select_task(&mut self, task_id: TaskId) {
+        self.clear_timeline_text_selection(HostedWindowId::PRIMARY);
         let pane_id = self.panel_layout.active_pane().clone();
         let canonical_item = self.application.task_workspace_item(&task_id);
         let item = match canonical_item.and_then(|item| {
@@ -6382,12 +9681,115 @@ impl PreviewProgram {
         });
     }
 
+    fn all_document_workspace_items(&self) -> Vec<WorkspaceItem> {
+        let mut items = self
+            .workspace_items
+            .iter()
+            .filter(|item| is_document_editor_item(item))
+            .cloned()
+            .collect::<Vec<_>>();
+        for popup in self.task_popups.values() {
+            if let Ok(snapshot) = popup.workspace.snapshot() {
+                items.extend(
+                    snapshot
+                        .workspace_items
+                        .into_iter()
+                        .filter(is_document_editor_item),
+                );
+            }
+        }
+        items
+    }
+
+    fn document_items_in_workspace_window(&self, window_id: HostedWindowId) -> Vec<WorkspaceItem> {
+        self.task_popups
+            .get(&window_id)
+            .and_then(|popup| popup.workspace.snapshot().ok())
+            .map(|snapshot| {
+                snapshot
+                    .workspace_items
+                    .into_iter()
+                    .filter(is_document_editor_item)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn first_dirty_document_title(&self, items: &[WorkspaceItem]) -> Option<String> {
+        items.iter().find_map(|item| {
+            self.document_editors
+                .get(&item.id)
+                .filter(|state| state.dirty)
+                .map(|_| item.title.clone())
+        })
+    }
+
+    fn document_ids_released_by_closing(
+        &self,
+        closing: &[WorkspaceItem],
+    ) -> Vec<lilia_desktop_application::DocumentId> {
+        let closing_ids = closing
+            .iter()
+            .map(|item| item.id.clone())
+            .collect::<BTreeSet<_>>();
+        let remaining_resources = self
+            .all_document_workspace_items()
+            .into_iter()
+            .filter(|item| !closing_ids.contains(&item.id))
+            .map(|item| item.resource_id.as_str().to_owned())
+            .collect::<BTreeSet<_>>();
+        let mut documents_to_close = BTreeSet::new();
+        for item in closing {
+            if !remaining_resources.contains(item.resource_id.as_str()) {
+                if let Some(state) = self.document_editors.get(&item.id) {
+                    documents_to_close.insert(state.document_id);
+                }
+            }
+        }
+        documents_to_close.into_iter().collect()
+    }
+
+    fn release_document_views(
+        &mut self,
+        closing: &[WorkspaceItem],
+        documents_to_close: Vec<lilia_desktop_application::DocumentId>,
+    ) {
+        for item in closing {
+            self.document_editors.remove(&item.id);
+        }
+        for document_id in documents_to_close {
+            if let Err(error) = self.application.close_document(document_id, false) {
+                eprintln!("failed to release Native document after closing its last view: {error}");
+            }
+        }
+    }
+
     fn close_workspace_item(&mut self, item_id: WorkspaceItemId) {
+        let document_item = self
+            .workspace_items
+            .iter()
+            .find(|item| item.id == item_id && is_document_editor_item(item))
+            .cloned();
+        if document_item.as_ref().is_some_and(|item| {
+            self.first_dirty_document_title(std::slice::from_ref(item))
+                .is_some()
+        }) {
+            self.error_message = Some("文档有未保存更改，请先保存或丢弃更改。".to_owned());
+            return;
+        }
         let Some(pane_id) = self.panel_layout.pane_for_item(&item_id).cloned() else {
             self.error_message = Some("工作区标签已失效，请刷新后重试。".to_owned());
             return;
         };
-        self.execute_workspace_command(DesktopCommand::CloseWorkspaceItem { pane_id, item_id });
+        let documents_to_close = document_item
+            .as_ref()
+            .map(|item| self.document_ids_released_by_closing(std::slice::from_ref(item)))
+            .unwrap_or_default();
+        if self.execute_workspace_command(DesktopCommand::CloseWorkspaceItem { pane_id, item_id }) {
+            if let Some(item) = document_item {
+                self.release_document_views(&[item], documents_to_close);
+            }
+        }
     }
 
     fn refresh_composer(&mut self) {
@@ -6415,6 +9817,685 @@ impl PreviewProgram {
         self.context_attachment_results.clear();
     }
 
+    fn conversation_suggestion_state_mut(
+        &mut self,
+        window_id: HostedWindowId,
+    ) -> Option<&mut ConversationSuggestionState> {
+        if window_id == HostedWindowId::PRIMARY {
+            if let Some(draft) = self.main_conversation_draft.as_mut() {
+                Some(&mut draft.suggestions)
+            } else {
+                Some(&mut self.conversation_suggestions)
+            }
+        } else {
+            self.task_popups
+                .get_mut(&window_id)
+                .map(|popup| &mut popup.conversation_suggestions)
+        }
+    }
+
+    fn conversation_suggestion_context(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<(TaskId, String)> {
+        if window_id == HostedWindowId::PRIMARY {
+            let draft = self.main_conversation_draft.as_ref()?;
+            return Some((
+                draft.task.id.clone(),
+                draft.task.project_id.as_ref()?.as_str().to_owned(),
+            ));
+        }
+        let draft = self.task_popups.get(&window_id)?.draft.as_ref()?;
+        Some((
+            draft.id.clone(),
+            draft.project_id.as_ref()?.as_str().to_owned(),
+        ))
+    }
+
+    fn refresh_conversation_suggestions(&mut self, window_id: HostedWindowId, force: bool) {
+        let task_id = if window_id == HostedWindowId::PRIMARY {
+            self.main_conversation_draft
+                .as_ref()
+                .map(|draft| draft.task.id.clone())
+                .or_else(|| self.selected_task.clone())
+        } else {
+            self.task_popups.get(&window_id).and_then(|popup| {
+                popup
+                    .draft
+                    .as_ref()
+                    .map(|draft| draft.id.clone())
+                    .or_else(|| popup.active_task_id.clone())
+            })
+        };
+        let enabled = self
+            .application
+            .conversation_suggestion_settings()
+            .map(|settings| settings.enabled)
+            .unwrap_or(false);
+        let draft_is_empty = if window_id == HostedWindowId::PRIMARY {
+            self.main_conversation_draft
+                .as_ref()
+                .is_some_and(|draft| !composer_has_turn_payload(&draft.composer))
+        } else {
+            self.task_popups.get(&window_id).is_some_and(|popup| {
+                popup.draft.is_some()
+                    && popup
+                        .composer
+                        .as_ref()
+                        .is_none_or(|composer| !composer_has_turn_payload(composer))
+            })
+        };
+        if !draft_is_empty {
+            if let Some(state) = self.conversation_suggestion_state_mut(window_id) {
+                state.disable(task_id);
+            }
+            return;
+        }
+        let Some((task_id, project_id)) = self.conversation_suggestion_context(window_id) else {
+            if let Some(state) = self.conversation_suggestion_state_mut(window_id) {
+                state.disable(task_id);
+            }
+            return;
+        };
+        if !enabled {
+            if let Some(state) = self.conversation_suggestion_state_mut(window_id) {
+                state.disable(Some(task_id));
+            }
+            return;
+        }
+        if !force
+            && self
+                .conversation_suggestion_state_mut(window_id)
+                .is_some_and(|state| state.is_current_for(&task_id))
+        {
+            return;
+        }
+        self.conversation_suggestion_operation_sequence = self
+            .conversation_suggestion_operation_sequence
+            .saturating_add(1);
+        let operation_id = self.conversation_suggestion_operation_sequence;
+        let Some(state) = self.conversation_suggestion_state_mut(window_id) else {
+            return;
+        };
+        state.begin(task_id.clone(), project_id.clone(), operation_id);
+        let application = self.application.clone();
+        let sender = Arc::clone(&self.message_sender);
+        let thread_task_id = task_id.clone();
+        let spawn = std::thread::Builder::new()
+            .name(format!("lilia-native-suggestions-{}", window_id.0))
+            .spawn(move || {
+                let models = DesktopApplicationSuggestionModelPort::new(application.clone());
+                let result = application
+                    .conversation_suggestions(Some(&project_id), force, &models)
+                    .map_err(|error| error.to_string());
+                if let Err(error) = sender(Message::ConversationSuggestionsFinished {
+                    window_id,
+                    operation_id,
+                    task_id: thread_task_id,
+                    result,
+                }) {
+                    eprintln!("failed to publish Native conversation suggestions: {error}");
+                }
+            });
+        if let Err(error) = spawn {
+            eprintln!("failed to start Native conversation suggestions: {error}");
+            if let Some(state) = self.conversation_suggestion_state_mut(window_id) {
+                state.finish(
+                    &task_id,
+                    operation_id,
+                    Err("suggestion worker unavailable".to_owned()),
+                );
+            }
+        }
+    }
+
+    fn finish_conversation_suggestions(
+        &mut self,
+        window_id: HostedWindowId,
+        operation_id: u64,
+        task_id: TaskId,
+        result: Result<Vec<DesktopSuggestionItem>, String>,
+    ) {
+        if let Err(error) = &result {
+            eprintln!("failed to load Native conversation suggestions: {error}");
+        }
+        if let Some(state) = self.conversation_suggestion_state_mut(window_id) {
+            state.finish(&task_id, operation_id, result);
+        }
+    }
+
+    fn reload_conversation_suggestions(&mut self) {
+        self.conversation_suggestions.clear();
+        if let Some(draft) = self.main_conversation_draft.as_mut() {
+            draft.suggestions.clear();
+        }
+        let window_ids = self.task_popups.keys().copied().collect::<Vec<_>>();
+        for popup in self.task_popups.values_mut() {
+            popup.conversation_suggestions.clear();
+        }
+        self.refresh_conversation_suggestions(HostedWindowId::PRIMARY, false);
+        for window_id in window_ids {
+            self.refresh_conversation_suggestions(window_id, false);
+        }
+    }
+
+    fn apply_conversation_suggestion(&mut self, window_id: HostedWindowId, prompt: String) {
+        if prompt.trim().is_empty() {
+            return;
+        }
+        if window_id == HostedWindowId::PRIMARY {
+            if self.execute_composer_command(DesktopComposerCommand::SetContent(prompt)) {
+                self.clear_composer_suggestions();
+            }
+        } else if self
+            .task_popup_composer_command(window_id, DesktopComposerCommand::SetContent(prompt))
+        {
+            self.clear_task_popup_composer_suggestions(window_id);
+        }
+    }
+
+    fn start_prompt_optimization(&mut self, window_id: HostedWindowId) {
+        let surface = if window_id == HostedWindowId::PRIMARY {
+            if self.composer_is_locked() {
+                return;
+            }
+            self.main_conversation_draft
+                .as_ref()
+                .map(|draft| {
+                    (
+                        draft.task.id.clone(),
+                        draft.task.project_id.clone(),
+                        true,
+                        draft.composer.clone(),
+                    )
+                })
+                .or_else(|| {
+                    self.selected_task
+                        .clone()
+                        .zip(self.composer.clone())
+                        .map(|(task_id, composer)| (task_id, None, false, composer))
+                })
+        } else {
+            self.task_popups.get(&window_id).and_then(|popup| {
+                let locked = popup
+                    .turn_state
+                    .as_ref()
+                    .is_some_and(|(_, state)| turn_state_is_active(state))
+                    || popup
+                        .session
+                        .as_ref()
+                        .is_some_and(|session| session.blocking_pending_count > 0);
+                if locked {
+                    return None;
+                }
+                popup
+                    .draft
+                    .as_ref()
+                    .zip(popup.composer.clone())
+                    .map(|(draft, composer)| {
+                        (draft.id.clone(), draft.project_id.clone(), true, composer)
+                    })
+                    .or_else(|| {
+                        popup
+                            .active_task_id
+                            .clone()
+                            .zip(popup.composer.clone())
+                            .map(|(task_id, composer)| (task_id, None, false, composer))
+                    })
+            })
+        };
+        let Some((task_id, project_id, transient, composer)) = surface else {
+            return;
+        };
+        if composer.content.trim().is_empty()
+            || self
+                .active_prompt_optimizations
+                .get(&window_id)
+                .is_some_and(|active| active.task_id == task_id)
+        {
+            return;
+        }
+
+        self.prompt_optimization_operation_sequence = self
+            .prompt_optimization_operation_sequence
+            .saturating_add(1);
+        let operation_id = self.prompt_optimization_operation_sequence;
+        let expected_revision = composer.revision;
+        self.active_prompt_optimizations.insert(
+            window_id,
+            PromptOptimizationState {
+                operation_id,
+                task_id: task_id.clone(),
+                expected_revision,
+            },
+        );
+        if window_id == HostedWindowId::PRIMARY {
+            self.task_action_error = None;
+        } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+            popup.error = None;
+        }
+
+        let project_cwd = if transient {
+            project_id.and_then(|project_id| {
+                self.application
+                    .project_context(&project_id)
+                    .ok()
+                    .map(|context| context.active_root().to_string_lossy().into_owned())
+            })
+        } else {
+            self.application
+                .task_workspace_path(&task_id)
+                .ok()
+                .flatten()
+        };
+        let input = DesktopPromptOptimizeInput {
+            prompt: composer.content,
+            attachments: composer.attachments,
+            conversation_references: composer.conversation_references,
+            project_cwd,
+            task_id: Some(task_id.as_str().to_owned()),
+        };
+        let application = self.application.clone();
+        let sender = Arc::clone(&self.message_sender);
+        let thread_task_id = task_id.clone();
+        let spawn = std::thread::Builder::new()
+            .name(format!("lilia-native-prompt-optimize-{}", window_id.0))
+            .spawn(move || {
+                let result = application
+                    .optimize_prompt(input)
+                    .map_err(|error| error.to_string());
+                if let Err(error) = sender(Message::PromptOptimizationFinished {
+                    window_id,
+                    operation_id,
+                    task_id: thread_task_id,
+                    expected_revision,
+                    result,
+                }) {
+                    eprintln!("failed to publish Native prompt optimization: {error}");
+                }
+            });
+        if let Err(error) = spawn {
+            eprintln!("failed to start Native prompt optimization: {error}");
+            self.active_prompt_optimizations.remove(&window_id);
+            self.set_prompt_optimization_error(
+                window_id,
+                "无法启动提示优化，请稍后重试。".to_owned(),
+            );
+        }
+    }
+
+    fn finish_prompt_optimization(
+        &mut self,
+        window_id: HostedWindowId,
+        operation_id: u64,
+        task_id: TaskId,
+        expected_revision: u64,
+        result: Result<DesktopPromptOptimizeResult, String>,
+    ) {
+        let is_current = self
+            .active_prompt_optimizations
+            .get(&window_id)
+            .is_some_and(|active| {
+                active.operation_id == operation_id
+                    && active.task_id == task_id
+                    && active.expected_revision == expected_revision
+            });
+        if !is_current {
+            return;
+        }
+        self.active_prompt_optimizations.remove(&window_id);
+        let surface_task_is_current = if window_id == HostedWindowId::PRIMARY {
+            self.main_conversation_draft
+                .as_ref()
+                .map(|draft| &draft.task.id)
+                .or(self.selected_task.as_ref())
+                == Some(&task_id)
+        } else {
+            self.task_popups.get(&window_id).and_then(|popup| {
+                popup
+                    .draft
+                    .as_ref()
+                    .map(|draft| &draft.id)
+                    .or(popup.active_task_id.as_ref())
+            }) == Some(&task_id)
+        };
+        if !surface_task_is_current {
+            return;
+        }
+
+        let (optimized_prompt, route) = match result {
+            Ok(result) => (result.optimized_prompt, result.route),
+            Err(error) => {
+                eprintln!("failed to optimize Native composer prompt: {error}");
+                self.set_prompt_optimization_error(
+                    window_id,
+                    "无法优化提示，请检查辅助模型配置后重试。".to_owned(),
+                );
+                return;
+            }
+        };
+        let command = DesktopComposerCommand::ApplyPromptOptimization {
+            expected_revision,
+            content: optimized_prompt,
+        };
+        let applied = if window_id == HostedWindowId::PRIMARY {
+            self.execute_composer_command(command)
+        } else {
+            self.task_popup_composer_command(window_id, command)
+        };
+        if applied {
+            if window_id == HostedWindowId::PRIMARY {
+                self.set_prompt_route_suggestion(window_id, task_id, route);
+                self.task_action_error = None;
+                self.refresh_composer_suggestions();
+            } else {
+                self.set_prompt_route_suggestion(window_id, task_id, route);
+                self.refresh_task_popup_composer_suggestions(window_id);
+            }
+        }
+    }
+
+    fn prompt_optimization_is_busy(
+        &self,
+        window_id: HostedWindowId,
+        task_id: Option<&TaskId>,
+    ) -> bool {
+        self.active_prompt_optimizations
+            .get(&window_id)
+            .is_some_and(|active| Some(&active.task_id) == task_id)
+    }
+
+    fn prompt_route_suggestion(
+        &self,
+        window_id: HostedWindowId,
+        task_id: Option<&TaskId>,
+    ) -> Option<&DesktopPromptRoute> {
+        self.prompt_route_suggestions
+            .get(&window_id)
+            .filter(|suggestion| Some(&suggestion.task_id) == task_id)
+            .map(|suggestion| &suggestion.route)
+    }
+
+    fn set_prompt_route_suggestion(
+        &mut self,
+        window_id: HostedWindowId,
+        task_id: TaskId,
+        route: DesktopPromptRoute,
+    ) {
+        if route.workflow.is_some() {
+            self.prompt_route_suggestions
+                .insert(window_id, PromptRouteSuggestionState { task_id, route });
+        } else {
+            self.prompt_route_suggestions.remove(&window_id);
+        }
+    }
+
+    fn apply_prompt_route_workflow(&mut self, window_id: HostedWindowId) {
+        let current_task = if window_id == HostedWindowId::PRIMARY {
+            self.main_conversation_draft
+                .as_ref()
+                .map(|draft| &draft.task.id)
+                .or(self.selected_task.as_ref())
+        } else {
+            self.task_popups.get(&window_id).and_then(|popup| {
+                popup
+                    .draft
+                    .as_ref()
+                    .map(|draft| &draft.id)
+                    .or(popup.active_task_id.as_ref())
+            })
+        };
+        let Some(workflow) = self
+            .prompt_route_suggestion(window_id, current_task)
+            .and_then(|route| route.workflow.clone())
+        else {
+            return;
+        };
+        if window_id == HostedWindowId::PRIMARY {
+            self.execute_composer_command(DesktopComposerCommand::SetWorkflow(Some(workflow)));
+        } else {
+            self.task_popup_composer_command(
+                window_id,
+                DesktopComposerCommand::SetWorkflow(Some(workflow)),
+            );
+        }
+    }
+
+    fn dismiss_prompt_route_workflow(&mut self, window_id: HostedWindowId) {
+        let current_task = if window_id == HostedWindowId::PRIMARY {
+            self.main_conversation_draft
+                .as_ref()
+                .map(|draft| draft.task.id.clone())
+                .or_else(|| self.selected_task.clone())
+        } else {
+            self.task_popups.get(&window_id).and_then(|popup| {
+                popup
+                    .draft
+                    .as_ref()
+                    .map(|draft| draft.id.clone())
+                    .or_else(|| popup.active_task_id.clone())
+            })
+        };
+        let suggested_workflow = self
+            .prompt_route_suggestion(window_id, current_task.as_ref())
+            .and_then(|route| route.workflow.clone());
+        self.prompt_route_suggestions.remove(&window_id);
+        let applied_workflow = if window_id == HostedWindowId::PRIMARY {
+            self.main_surface_composer()
+                .and_then(|composer| composer.workflow.clone())
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.composer.as_ref())
+                .and_then(|composer| composer.workflow.clone())
+        };
+        let should_clear = match (suggested_workflow, applied_workflow) {
+            (Some(suggested), Some(applied)) => suggested == applied,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if should_clear {
+            if window_id == HostedWindowId::PRIMARY {
+                self.execute_composer_command(DesktopComposerCommand::SetWorkflow(None));
+            } else {
+                self.task_popup_composer_command(
+                    window_id,
+                    DesktopComposerCommand::SetWorkflow(None),
+                );
+            }
+        }
+    }
+
+    fn composer_automatic_selection(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<DesktopAutomaticTurnSelection> {
+        let (composer, context_usage) = if window_id == HostedWindowId::PRIMARY {
+            (
+                self.main_surface_composer()?,
+                if self.main_conversation_draft.is_none() {
+                    self.task_session
+                        .as_ref()
+                        .and_then(|session| session.context_usage.as_ref())
+                } else {
+                    None
+                },
+            )
+        } else {
+            let popup = self.task_popups.get(&window_id)?;
+            (
+                popup.composer.as_ref()?,
+                popup
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.context_usage.as_ref()),
+            )
+        };
+        Some(preview_automatic_turn_selection(
+            &composer.turn_request(),
+            self.provider_ai_settings.model_features(),
+            context_usage,
+        ))
+    }
+
+    fn composer_model_options(
+        &self,
+        current_model: Option<&str>,
+    ) -> Vec<DropdownOption<'static, String>> {
+        let mut options = vec![DropdownOption::new(String::new(), "自动选择")];
+        let mut models = self
+            .provider_ai_settings
+            .composer_model_options(self.provider_runtime_settings.model.as_deref());
+        if let Some(current_model) = current_model
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        {
+            if !models.iter().any(|(model, _)| model == current_model) {
+                models.insert(0, (current_model.to_owned(), current_model.to_owned()));
+            }
+        }
+        options.extend(
+            models
+                .into_iter()
+                .map(|(model, label)| DropdownOption::new(model, label)),
+        );
+        options
+    }
+
+    fn update_composer_model_selection(
+        &mut self,
+        window_id: HostedWindowId,
+        event: DropdownEvent<String>,
+    ) -> bool {
+        let model = match event {
+            DropdownEvent::Select(model) | DropdownEvent::Toggle(model) => model,
+            DropdownEvent::Opened | DropdownEvent::Closed => return false,
+        };
+        let (model, reasoning_effort) = if model.trim().is_empty() {
+            (None, None)
+        } else {
+            let current_effort = if window_id == HostedWindowId::PRIMARY {
+                self.main_surface_composer()
+                    .and_then(|composer| composer.reasoning_effort.clone())
+            } else {
+                self.task_popups
+                    .get(&window_id)
+                    .and_then(|popup| popup.composer.as_ref())
+                    .and_then(|composer| composer.reasoning_effort.clone())
+            };
+            let effort = current_effort
+                .or_else(|| {
+                    self.composer_automatic_selection(window_id)
+                        .and_then(|selection| selection.reasoning_effort)
+                })
+                .or_else(|| Some("medium".to_owned()));
+            (Some(model), effort)
+        };
+        self.execute_surface_composer_command(
+            window_id,
+            DesktopComposerCommand::SetModelSelection {
+                model,
+                reasoning_effort,
+            },
+        )
+    }
+
+    fn update_composer_reasoning_selection(
+        &mut self,
+        window_id: HostedWindowId,
+        event: DropdownEvent<String>,
+    ) -> bool {
+        let effort = match event {
+            DropdownEvent::Select(effort) | DropdownEvent::Toggle(effort) => effort,
+            DropdownEvent::Opened | DropdownEvent::Closed => return false,
+        };
+        if !matches!(effort.as_str(), "low" | "medium" | "high" | "xhigh" | "max") {
+            return false;
+        }
+        let current_model = if window_id == HostedWindowId::PRIMARY {
+            self.main_surface_composer()
+                .and_then(|composer| composer.model.clone())
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.composer.as_ref())
+                .and_then(|composer| composer.model.clone())
+        };
+        let model = current_model.or_else(|| {
+            self.composer_automatic_selection(window_id)
+                .and_then(|selection| selection.model)
+        });
+        let Some(model) = model else {
+            self.set_prompt_optimization_error(
+                window_id,
+                "当前没有可用模型，请先完成 Provider 配置。".to_owned(),
+            );
+            return false;
+        };
+        self.execute_surface_composer_command(
+            window_id,
+            DesktopComposerCommand::SetModelSelection {
+                model: Some(model),
+                reasoning_effort: Some(effort),
+            },
+        )
+    }
+
+    fn execute_surface_composer_command(
+        &mut self,
+        window_id: HostedWindowId,
+        command: DesktopComposerCommand,
+    ) -> bool {
+        if window_id == HostedWindowId::PRIMARY {
+            self.execute_composer_command(command)
+        } else {
+            self.task_popup_composer_command(window_id, command)
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_select_composer_model(&mut self, window_id: HostedWindowId, value: &str) -> bool {
+        let value = value.trim();
+        let value = if value.eq_ignore_ascii_case("auto") {
+            String::new()
+        } else {
+            let current_model = if window_id == HostedWindowId::PRIMARY {
+                self.main_surface_composer()
+                    .and_then(|composer| composer.model.as_deref())
+            } else {
+                self.task_popups
+                    .get(&window_id)
+                    .and_then(|popup| popup.composer.as_ref())
+                    .and_then(|composer| composer.model.as_deref())
+            };
+            let available = self
+                .composer_model_options(current_model)
+                .into_iter()
+                .any(|option| option.value == value);
+            if !available {
+                return false;
+            }
+            value.to_owned()
+        };
+        self.update_composer_model_selection(window_id, DropdownEvent::Select(value))
+    }
+
+    #[cfg(debug_assertions)]
+    fn debug_select_composer_reasoning(&mut self, window_id: HostedWindowId, value: &str) -> bool {
+        self.update_composer_reasoning_selection(
+            window_id,
+            DropdownEvent::Select(value.trim().to_owned()),
+        )
+    }
+
+    fn set_prompt_optimization_error(&mut self, window_id: HostedWindowId, message: String) {
+        if window_id == HostedWindowId::PRIMARY {
+            self.task_action_error = Some(message);
+        } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+            popup.error = Some(message);
+        }
+    }
+
     fn refresh_composer_suggestions(&mut self) {
         self.refresh_slash_commands();
         self.refresh_conversation_reference_results();
@@ -6422,18 +10503,41 @@ impl PreviewProgram {
     }
 
     fn refresh_slash_commands(&mut self) {
-        let Some((task_id, query)) = self.selected_task.clone().zip(
-            self.composer
-                .as_ref()
-                .and_then(|composer| composer_slash_query(&composer.content)),
-        ) else {
+        let context = self
+            .main_conversation_draft
+            .as_ref()
+            .and_then(|draft| {
+                composer_slash_query(&draft.composer.content).map(|query| {
+                    (
+                        draft.task.id.clone(),
+                        draft.task.project_id.clone(),
+                        query,
+                        true,
+                    )
+                })
+            })
+            .or_else(|| {
+                self.selected_task
+                    .clone()
+                    .zip(
+                        self.composer
+                            .as_ref()
+                            .and_then(|composer| composer_slash_query(&composer.content)),
+                    )
+                    .map(|(task_id, query)| (task_id, None, query, false))
+            });
+        let Some((task_id, project_id, query, transient)) = context else {
             self.slash_commands.clear();
             return;
         };
-        match self
-            .application
-            .search_task_slash_commands(&task_id, &query, 8)
-        {
+        let commands = if transient {
+            self.application
+                .search_project_slash_commands(project_id.as_ref(), &query, 8)
+        } else {
+            self.application
+                .search_task_slash_commands(&task_id, &query, 8)
+        };
+        match commands {
             Ok(commands) => self.slash_commands = commands,
             Err(error) => {
                 eprintln!("failed to search Native slash commands: {error}");
@@ -6442,19 +10546,237 @@ impl PreviewProgram {
         }
     }
 
+    fn select_slash_command(&mut self, window_id: HostedWindowId, command: DesktopSlashCommand) {
+        match command.action {
+            DesktopSlashCommandAction::Execute => {
+                let applied = if window_id == HostedWindowId::PRIMARY {
+                    self.pending_review_slash_workflow = None;
+                    self.execute_composer_command(DesktopComposerCommand::SetContent(format!(
+                        "/{}",
+                        command.name
+                    )))
+                } else {
+                    if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                        popup.pending_review_slash_workflow = None;
+                    }
+                    self.task_popup_composer_command(
+                        window_id,
+                        DesktopComposerCommand::SetContent(format!("/{}", command.name)),
+                    )
+                };
+                if applied {
+                    if window_id == HostedWindowId::PRIMARY {
+                        self.clear_composer_suggestions();
+                    } else {
+                        self.clear_task_popup_composer_suggestions(window_id);
+                    }
+                }
+            }
+            DesktopSlashCommandAction::TaskWorkflow { kind } => {
+                self.apply_slash_workflow(
+                    window_id,
+                    LiliaAgentWorkflow::LiliaTaskWorkflow {
+                        kind,
+                        instructions: None,
+                    },
+                );
+            }
+            action @ (DesktopSlashCommandAction::Review
+            | DesktopSlashCommandAction::FixSuggestion) => {
+                let task_id = if window_id == HostedWindowId::PRIMARY {
+                    self.main_conversation_draft
+                        .as_ref()
+                        .map(|draft| draft.task.id.clone())
+                        .or_else(|| self.selected_task.clone())
+                } else {
+                    self.task_popups.get(&window_id).and_then(|popup| {
+                        popup
+                            .draft
+                            .as_ref()
+                            .map(|draft| draft.id.clone())
+                            .or_else(|| popup.active_task_id.clone())
+                    })
+                };
+                let Some(task_id) = task_id else {
+                    return;
+                };
+                let pending = PendingReviewSlashWorkflow {
+                    task_id,
+                    workflow_kind: if action == DesktopSlashCommandAction::Review {
+                        PendingReviewWorkflowKind::Review
+                    } else {
+                        PendingReviewWorkflowKind::FixSuggestion
+                    },
+                    target_kind: PendingReviewTargetKind::UncommittedChanges,
+                    target_value: String::new(),
+                };
+                if window_id == HostedWindowId::PRIMARY {
+                    self.pending_review_slash_workflow = Some(pending);
+                    self.clear_composer_suggestions();
+                    self.task_action_error = None;
+                } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.pending_review_slash_workflow = Some(pending);
+                    popup.slash_commands.clear();
+                    popup.error = None;
+                }
+            }
+        }
+    }
+
+    fn apply_slash_workflow(&mut self, window_id: HostedWindowId, workflow: LiliaAgentWorkflow) {
+        let expected_revision = if window_id == HostedWindowId::PRIMARY {
+            self.main_surface_composer()
+                .map(|composer| composer.revision)
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.composer.as_ref())
+                .map(|composer| composer.revision)
+        };
+        let Some(expected_revision) = expected_revision else {
+            return;
+        };
+        let command = DesktopComposerCommand::ApplySlashWorkflow {
+            expected_revision,
+            workflow,
+        };
+        let applied = if window_id == HostedWindowId::PRIMARY {
+            self.execute_composer_command(command)
+        } else {
+            self.task_popup_composer_command(window_id, command)
+        };
+        if !applied {
+            return;
+        }
+        self.clear_review_slash_workflow(window_id);
+        if window_id == HostedWindowId::PRIMARY {
+            self.clear_composer_suggestions();
+            self.submit_turn();
+        } else {
+            self.clear_task_popup_composer_suggestions(window_id);
+            self.submit_task_popup_turn(window_id);
+        }
+    }
+
+    fn select_review_workflow_target(
+        &mut self,
+        window_id: HostedWindowId,
+        kind: PendingReviewTargetKind,
+    ) {
+        let pending = if window_id == HostedWindowId::PRIMARY {
+            self.pending_review_slash_workflow.as_mut()
+        } else {
+            self.task_popups
+                .get_mut(&window_id)
+                .and_then(|popup| popup.pending_review_slash_workflow.as_mut())
+        };
+        if let Some(pending) = pending {
+            pending.target_kind = kind;
+            pending.target_value.clear();
+        }
+    }
+
+    fn update_review_workflow_target(&mut self, window_id: HostedWindowId, value: String) {
+        let pending = if window_id == HostedWindowId::PRIMARY {
+            self.pending_review_slash_workflow.as_mut()
+        } else {
+            self.task_popups
+                .get_mut(&window_id)
+                .and_then(|popup| popup.pending_review_slash_workflow.as_mut())
+        };
+        if let Some(pending) = pending {
+            pending.target_value = value;
+        }
+    }
+
+    fn submit_review_slash_workflow(&mut self, window_id: HostedWindowId) {
+        let pending = if window_id == HostedWindowId::PRIMARY {
+            self.pending_review_slash_workflow.clone()
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.pending_review_slash_workflow.clone())
+        };
+        let Some(pending) = pending else {
+            return;
+        };
+        let current_task = if window_id == HostedWindowId::PRIMARY {
+            self.selected_task.as_ref()
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.active_task_id.as_ref())
+        };
+        if current_task != Some(&pending.task_id) {
+            self.clear_review_slash_workflow(window_id);
+            return;
+        }
+        let value = pending.target_value.trim();
+        let target = match pending.target_kind {
+            PendingReviewTargetKind::UncommittedChanges => LiliaReviewTarget::UncommittedChanges,
+            PendingReviewTargetKind::BaseBranch if !value.is_empty() => {
+                LiliaReviewTarget::BaseBranch {
+                    branch: value.to_owned(),
+                }
+            }
+            PendingReviewTargetKind::Commit if !value.is_empty() => LiliaReviewTarget::Commit {
+                sha: value.to_owned(),
+            },
+            PendingReviewTargetKind::BaseBranch | PendingReviewTargetKind::Commit => return,
+        };
+        let workflow = match pending.workflow_kind {
+            PendingReviewWorkflowKind::Review => LiliaAgentWorkflow::LiliaReview {
+                target,
+                instructions: None,
+                delivery: Some("inline".to_owned()),
+            },
+            PendingReviewWorkflowKind::FixSuggestion => LiliaAgentWorkflow::LiliaFixSuggestion {
+                target,
+                instructions: None,
+                mode: Some("suggest".to_owned()),
+            },
+        };
+        self.apply_slash_workflow(window_id, workflow);
+    }
+
+    fn clear_review_slash_workflow(&mut self, window_id: HostedWindowId) {
+        if window_id == HostedWindowId::PRIMARY {
+            self.pending_review_slash_workflow = None;
+        } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+            popup.pending_review_slash_workflow = None;
+        }
+    }
+
     fn refresh_conversation_reference_results(&mut self) {
-        let Some((task_id, query)) = self.selected_task.clone().zip(
-            self.composer
-                .as_ref()
-                .and_then(|composer| composer_conversation_query(&composer.content)),
-        ) else {
+        let context = self
+            .main_conversation_draft
+            .as_ref()
+            .and_then(|draft| {
+                composer_conversation_query(&draft.composer.content)
+                    .map(|query| (draft.task.id.clone(), query, true))
+            })
+            .or_else(|| {
+                self.selected_task
+                    .clone()
+                    .zip(
+                        self.composer
+                            .as_ref()
+                            .and_then(|composer| composer_conversation_query(&composer.content)),
+                    )
+                    .map(|(task_id, query)| (task_id, query, false))
+            });
+        let Some((task_id, query, transient)) = context else {
             self.conversation_reference_results.clear();
             return;
         };
-        match self
-            .application
-            .search_conversation_references(&task_id, &query, 8)
-        {
+        let references = if transient {
+            self.application
+                .search_conversation_references_from(&task_id, &query, 8)
+        } else {
+            self.application
+                .search_conversation_references(&task_id, &query, 8)
+        };
+        match references {
             Ok(references) => self.conversation_reference_results = references,
             Err(error) => {
                 eprintln!("failed to search Native conversation references: {error}");
@@ -6464,18 +10786,48 @@ impl PreviewProgram {
     }
 
     fn refresh_context_attachment_results(&mut self) {
-        let Some((task_id, query)) = self.selected_task.clone().zip(
-            self.composer
-                .as_ref()
-                .and_then(|composer| composer_context_query(&composer.content)),
-        ) else {
+        let context = self
+            .main_conversation_draft
+            .as_ref()
+            .and_then(|draft| {
+                draft
+                    .task
+                    .project_id
+                    .clone()
+                    .zip(composer_context_query(&draft.composer.content))
+                    .map(|(project_id, query)| (None, project_id, query))
+            })
+            .or_else(|| {
+                self.selected_task
+                    .clone()
+                    .zip(
+                        self.composer
+                            .as_ref()
+                            .and_then(|composer| composer_context_query(&composer.content)),
+                    )
+                    .and_then(|(task_id, query)| {
+                        self.application
+                            .get_task(&task_id)
+                            .ok()
+                            .and_then(|task| task.project_id)
+                            .map(|project_id| (Some(task_id), project_id, query))
+                    })
+            });
+        let Some((task_id, project_id, query)) = context else {
             self.context_attachment_results.clear();
             return;
         };
-        match self
-            .application
-            .search_task_context_attachments(&task_id, &query, 8)
-        {
+        let attachments = task_id.map_or_else(
+            || {
+                self.application
+                    .search_project_context_attachments(&project_id, &query, 8)
+            },
+            |task_id| {
+                self.application
+                    .search_task_context_attachments(&task_id, &query, 8)
+            },
+        );
+        match attachments {
             Ok(attachments) => self.context_attachment_results = attachments,
             Err(error) => {
                 eprintln!("failed to search Native project context: {error}");
@@ -6493,7 +10845,7 @@ impl PreviewProgram {
         else {
             return;
         };
-        let Some(composer) = self.composer.clone() else {
+        let Some(composer) = self.main_surface_composer().cloned() else {
             return;
         };
         let Some(content) = composer_content_without_trigger(&composer.content, '#') else {
@@ -6517,7 +10869,7 @@ impl PreviewProgram {
         else {
             return;
         };
-        let Some(composer) = self.composer.clone() else {
+        let Some(composer) = self.main_surface_composer().cloned() else {
             return;
         };
         let Some(content) = composer_content_without_trigger(&composer.content, '@') else {
@@ -6558,6 +10910,7 @@ impl PreviewProgram {
                     priority: DesktopTodoPriority::Normal,
                     attachments: Vec::new(),
                     conversation_references: Vec::new(),
+                    workflow: None,
                 })
                 .map(|_| true)
         };
@@ -6770,6 +11123,19 @@ impl PreviewProgram {
     }
 
     fn execute_composer_command(&mut self, command: DesktopComposerCommand) -> bool {
+        if let Some(draft) = self.main_conversation_draft.as_mut() {
+            return match draft.composer.apply_transient_command(command) {
+                Ok(_) => {
+                    draft.error = None;
+                    true
+                }
+                Err(error) => {
+                    eprintln!("failed to update Native main transient composer: {error}");
+                    draft.error = Some("无法更新输入内容，请重试。".to_owned());
+                    false
+                }
+            };
+        }
         let Some(task_id) = self.selected_task.as_ref() else {
             return false;
         };
@@ -6787,17 +11153,45 @@ impl PreviewProgram {
     }
 
     fn submit_turn(&mut self) {
+        if self.main_conversation_draft.is_some() {
+            if self.materialize_main_conversation_draft() {
+                self.submit_turn();
+            }
+            return;
+        }
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
         let Some(composer) = self.composer.as_ref() else {
             return;
         };
-        if composer.content.trim().is_empty() && composer.attachments.is_empty() {
+        if self
+            .pending_review_slash_workflow
+            .as_ref()
+            .is_some_and(|pending| pending.task_id == task_id)
+        {
             return;
         }
-        match self.application.submit_composer(&task_id) {
+        if !composer_has_turn_payload(composer) {
+            return;
+        }
+        let session_branch = self
+            .pending_session_branch
+            .as_ref()
+            .filter(|pending| pending.task_id == task_id)
+            .map(|pending| pending.anchor.clone());
+        let submission = session_branch.map_or_else(
+            || self.application.submit_composer(&task_id),
+            |branch| {
+                self.application
+                    .submit_composer_with_session_branch(&task_id, branch)
+            },
+        );
+        match submission {
             Ok(DesktopComposerSubmission::Turn(dispatch)) => {
+                self.pending_session_branch = None;
+                self.prompt_route_suggestions
+                    .remove(&HostedWindowId::PRIMARY);
                 self.refresh_composer();
                 self.task_action_error = None;
                 let state = match dispatch.kind {
@@ -6809,11 +11203,17 @@ impl PreviewProgram {
                 self.turn_state = Some((dispatch.turn_id, state));
             }
             Ok(DesktopComposerSubmission::Guide { .. }) => {
+                self.pending_session_branch = None;
+                self.prompt_route_suggestions
+                    .remove(&HostedWindowId::PRIMARY);
                 self.refresh_composer();
                 self.refresh_task_session();
                 self.task_action_error = None;
             }
             Ok(DesktopComposerSubmission::Command(_)) => {
+                self.pending_session_branch = None;
+                self.prompt_route_suggestions
+                    .remove(&HostedWindowId::PRIMARY);
                 self.refresh_composer();
                 self.refresh_task_session();
                 self.task_action_error = None;
@@ -6821,6 +11221,221 @@ impl PreviewProgram {
             Err(error) => {
                 eprintln!("failed to submit Native Composer turn: {error}");
                 self.task_action_error = Some("无法发送消息，请重试。".to_owned());
+            }
+        }
+    }
+
+    fn apply_timeline_suggestion(&mut self, window_id: HostedWindowId, event_id: &str) {
+        let target = if window_id == HostedWindowId::PRIMARY {
+            if self.composer_is_locked()
+                || self
+                    .task_session
+                    .as_ref()
+                    .and_then(|session| session.run_block.as_ref())
+                    .is_some()
+            {
+                return;
+            }
+            self.selected_task.clone().zip(
+                self.task_session
+                    .as_ref()
+                    .and_then(|session| session.timeline.iter().find(|event| event.id == event_id))
+                    .and_then(|event| event.batch_apply.clone()),
+            )
+        } else {
+            self.task_popups.get(&window_id).and_then(|popup| {
+                let session = popup.session.as_ref()?;
+                let locked = popup
+                    .turn_state
+                    .as_ref()
+                    .is_some_and(|(_, state)| turn_state_is_active(state))
+                    || session.blocking_pending_count > 0
+                    || session.run_block.is_some();
+                (!locked).then(|| {
+                    popup.active_task_id.clone().zip(
+                        session
+                            .timeline
+                            .iter()
+                            .find(|event| event.id == event_id)
+                            .and_then(|event| event.batch_apply.clone()),
+                    )
+                })?
+            })
+        };
+        let Some((task_id, source)) = target else {
+            return;
+        };
+
+        let mut request = DesktopTurnRequest::new(task_id, "");
+        request.workflow = Some(LiliaAgentWorkflow::LiliaBatchApply {
+            source_turn_id: source.source_turn_id,
+            source_kind: source.source_kind,
+            source_summary: source.source_summary,
+            instructions: None,
+        });
+        match self.application.start_task_turn(request) {
+            Ok(dispatch) => {
+                let state = match dispatch.kind {
+                    DesktopTurnDispatchKind::Started => DesktopTurnState::Starting,
+                    DesktopTurnDispatchKind::Queued { position } => {
+                        DesktopTurnState::Queued { position }
+                    }
+                };
+                if window_id == HostedWindowId::PRIMARY {
+                    self.turn_state = Some((dispatch.turn_id, state));
+                    self.task_action_error = None;
+                } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.turn_state = Some((dispatch.turn_id, state));
+                    popup.error = None;
+                }
+            }
+            Err(error) => {
+                eprintln!("failed to apply Native timeline suggestion: {error}");
+                if window_id == HostedWindowId::PRIMARY {
+                    self.task_action_error = Some("无法应用建议，请重试。".to_owned());
+                } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.error = Some("无法应用建议，请重试。".to_owned());
+                }
+            }
+        }
+    }
+
+    fn retry_timeline_event(&mut self, window_id: HostedWindowId, event_id: &str) {
+        let task_id = if window_id == HostedWindowId::PRIMARY {
+            self.selected_task.clone().filter(|_| {
+                self.task_session.as_ref().is_some_and(|session| {
+                    session.run_block.is_none()
+                        && session
+                            .timeline
+                            .iter()
+                            .any(|event| event.id == event_id && event.can_retry)
+                })
+            })
+        } else {
+            self.task_popups.get(&window_id).and_then(|popup| {
+                popup.active_task_id.clone().filter(|_| {
+                    popup.session.as_ref().is_some_and(|session| {
+                        session.run_block.is_none()
+                            && session
+                                .timeline
+                                .iter()
+                                .any(|event| event.id == event_id && event.can_retry)
+                    })
+                })
+            })
+        };
+        let Some(task_id) = task_id else {
+            return;
+        };
+
+        match self
+            .application
+            .retry_task_timeline_event(&task_id, event_id)
+        {
+            Ok(dispatch) => {
+                let state = match dispatch.kind {
+                    DesktopTurnDispatchKind::Started => DesktopTurnState::Starting,
+                    DesktopTurnDispatchKind::Queued { position } => {
+                        DesktopTurnState::Queued { position }
+                    }
+                };
+                if window_id == HostedWindowId::PRIMARY {
+                    self.turn_state = Some((dispatch.turn_id, state));
+                    self.task_action_error = None;
+                } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.turn_state = Some((dispatch.turn_id, state));
+                    popup.error = None;
+                }
+            }
+            Err(error) => {
+                eprintln!("failed to retry Native timeline event: {error}");
+                if window_id == HostedWindowId::PRIMARY {
+                    self.task_action_error = Some("无法重试消息，请稍后再试。".to_owned());
+                } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.error = Some("无法重试消息，请稍后再试。".to_owned());
+                }
+            }
+        }
+    }
+
+    fn set_timeline_session_branch(
+        &mut self,
+        window_id: HostedWindowId,
+        event_id: &str,
+        mode: DesktopSessionBranchMode,
+    ) {
+        let pending = if window_id == HostedWindowId::PRIMARY {
+            self.selected_task.clone().zip(
+                self.task_session
+                    .as_ref()
+                    .and_then(|session| session.timeline.iter().find(|event| event.id == event_id))
+                    .and_then(|event| event.session_branch_turn_id.clone()),
+            )
+        } else {
+            self.task_popups.get(&window_id).and_then(|popup| {
+                popup.active_task_id.clone().zip(
+                    popup
+                        .session
+                        .as_ref()
+                        .and_then(|session| {
+                            session.timeline.iter().find(|event| event.id == event_id)
+                        })
+                        .and_then(|event| event.session_branch_turn_id.clone()),
+                )
+            })
+        };
+        let Some((task_id, source_turn_id)) = pending else {
+            return;
+        };
+        let pending = PendingSessionBranch {
+            task_id,
+            anchor: DesktopSessionBranchAnchor {
+                source_turn_id,
+                mode,
+            },
+        };
+        if window_id == HostedWindowId::PRIMARY {
+            self.pending_session_branch = Some(pending);
+            self.task_action_error = None;
+        } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+            popup.pending_session_branch = Some(pending);
+            popup.error = None;
+        }
+    }
+
+    fn clear_session_branch(&mut self, window_id: HostedWindowId) {
+        if window_id == HostedWindowId::PRIMARY {
+            self.pending_session_branch = None;
+        } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+            popup.pending_session_branch = None;
+        }
+    }
+
+    fn compact_context(&mut self) {
+        if self.composer_is_locked() {
+            return;
+        }
+        let Some(task_id) = self.selected_task.clone() else {
+            return;
+        };
+        let mut request = DesktopTurnRequest::new(task_id, "");
+        request.workflow = Some(LiliaAgentWorkflow::LiliaCompact);
+        match self.application.start_task_turn(request) {
+            Ok(dispatch) => {
+                self.turn_state = Some((
+                    dispatch.turn_id,
+                    match dispatch.kind {
+                        DesktopTurnDispatchKind::Started => DesktopTurnState::Starting,
+                        DesktopTurnDispatchKind::Queued { position } => {
+                            DesktopTurnState::Queued { position }
+                        }
+                    },
+                ));
+                self.task_action_error = None;
+            }
+            Err(error) => {
+                eprintln!("failed to compact Native Agent context: {error}");
+                self.task_action_error = Some("无法压缩上下文，请重试。".to_owned());
             }
         }
     }
@@ -6857,11 +11472,13 @@ impl PreviewProgram {
                 self.add_composer_attachments(describe_attachment_paths(paths));
             }
             Ok(_) => {
-                self.task_action_error =
-                    Some("文件选择器返回了无法识别的结果，请重试。".to_owned());
+                self.set_task_window_error(
+                    HostedWindowId::PRIMARY,
+                    "文件选择器返回了无法识别的结果，请重试。".to_owned(),
+                );
             }
             Err(error) => {
-                self.task_action_error = Some(error.to_string());
+                self.set_task_window_error(HostedWindowId::PRIMARY, error.to_string());
             }
         }
     }
@@ -6871,8 +11488,7 @@ impl PreviewProgram {
             return false;
         }
         let mut attachments = self
-            .composer
-            .as_ref()
+            .main_surface_composer()
             .map(|composer| composer.attachments.clone())
             .unwrap_or_default();
         merge_attachments(&mut attachments, incoming);
@@ -6894,11 +11510,22 @@ impl PreviewProgram {
 
     fn window_accepts_attachment_drop(&self, window_id: HostedWindowId) -> bool {
         if window_id == HostedWindowId::PRIMARY {
-            return !self.composer_input_is_locked();
+            return !self.composer_input_is_locked()
+                && (self.agent_interaction_settings.non_interrupt_mode
+                    || !self
+                        .task_session
+                        .as_ref()
+                        .is_some_and(TaskSessionView::has_open_composer_interaction));
         }
-        self.task_popups
-            .get(&window_id)
-            .is_some_and(|popup| popup.active_task_id.is_some() && popup.composer.is_some())
+        self.task_popups.get(&window_id).is_some_and(|popup| {
+            (popup.active_task_id.is_some() || popup.draft.is_some())
+                && popup.composer.is_some()
+                && (self.agent_interaction_settings.non_interrupt_mode
+                    || !popup
+                        .session
+                        .as_ref()
+                        .is_some_and(TaskSessionView::has_open_composer_interaction))
+        })
     }
 
     fn read_clipboard_text(&self) -> Result<Option<String>, String> {
@@ -6928,8 +11555,7 @@ impl PreviewProgram {
         match self.read_clipboard_text() {
             Ok(Some(value)) => {
                 let content = self
-                    .composer
-                    .as_ref()
+                    .main_surface_composer()
                     .map(|composer| composer.content.as_str())
                     .unwrap_or_default();
                 self.execute_composer_command(DesktopComposerCommand::SetContent(format!(
@@ -6937,9 +11563,12 @@ impl PreviewProgram {
                 )));
             }
             Ok(None) => {
-                self.task_action_error = Some("剪贴板中没有文本。".to_owned());
+                self.set_task_window_error(
+                    HostedWindowId::PRIMARY,
+                    "剪贴板中没有文本。".to_owned(),
+                );
             }
-            Err(message) => self.task_action_error = Some(message),
+            Err(message) => self.set_task_window_error(HostedWindowId::PRIMARY, message),
         }
     }
 
@@ -6952,11 +11581,17 @@ impl PreviewProgram {
                 self.add_composer_attachments(vec![attachment]);
             }
             Ok(None) => {
-                self.task_action_error = Some("剪贴板中没有图片。".to_owned());
+                self.set_task_window_error(
+                    HostedWindowId::PRIMARY,
+                    "剪贴板中没有图片。".to_owned(),
+                );
             }
             Err(error) => {
                 eprintln!("failed to capture Native clipboard image: {error}");
-                self.task_action_error = Some("无法读取剪贴板图片，请重试。".to_owned());
+                self.set_task_window_error(
+                    HostedWindowId::PRIMARY,
+                    "无法读取剪贴板图片，请重试。".to_owned(),
+                );
             }
         }
     }
@@ -6984,20 +11619,19 @@ impl PreviewProgram {
     }
 
     fn set_attachment_error(&mut self, window_id: HostedWindowId, message: String) {
-        if window_id == HostedWindowId::PRIMARY {
-            self.task_action_error = Some(message);
-        } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
-            popup.error = Some(message);
-        }
+        self.set_task_window_error(window_id, message);
     }
 
     fn composer_is_locked(&self) -> bool {
+        if self.main_conversation_draft.is_some() {
+            return false;
+        }
         self.settings_open
             || self.selected_task.is_none()
             || self
                 .task_session
                 .as_ref()
-                .is_some_and(|session| session.open_pending_count > 0)
+                .is_some_and(|session| session.blocking_pending_count > 0)
             || self
                 .turn_state
                 .as_ref()
@@ -7005,10 +11639,24 @@ impl PreviewProgram {
     }
 
     fn composer_input_is_locked(&self) -> bool {
-        self.settings_open || self.automations_open || self.selected_task.is_none()
+        self.settings_open
+            || self.automations_open
+            || (self.selected_task.is_none() && self.main_conversation_draft.is_none())
     }
 
     fn selected_task_workspace_path(&self) -> Option<PathBuf> {
+        if let Some(project_id) = self
+            .main_conversation_draft
+            .as_ref()
+            .and_then(|draft| draft.task.project_id.as_ref())
+        {
+            return self
+                .projects
+                .iter()
+                .find(|project| &project.id == project_id)
+                .and_then(|project| project.workspace_path.as_ref())
+                .map(PathBuf::from);
+        }
         let task_id = self.selected_task.as_ref()?;
         self.application
             .task_workspace_path(task_id)
@@ -7052,17 +11700,65 @@ impl PreviewProgram {
         }
     }
 
+    fn respond_title_update_review(
+        &mut self,
+        window_id: HostedWindowId,
+        request_id: String,
+        accepted: bool,
+    ) {
+        let task_id = if window_id == HostedWindowId::PRIMARY {
+            self.selected_task.clone()
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.active_task_id.clone())
+        };
+        let Some(task_id) = task_id else {
+            return;
+        };
+        match self
+            .application
+            .respond_title_update_review(&task_id, &request_id, accepted)
+        {
+            Ok(_) => {
+                self.clear_task_window_error(window_id);
+                if accepted {
+                    self.refresh_tasks();
+                }
+                if self.selected_task.as_ref() == Some(&task_id) {
+                    self.refresh_task_session();
+                }
+                self.refresh_task_popups_for_task(&task_id);
+            }
+            Err(error) => {
+                eprintln!("failed to respond to Native title update review: {error}");
+                self.set_task_window_error(window_id, "无法处理标题建议，请重试。".to_owned());
+            }
+        }
+    }
+
     fn respond_interaction(&mut self, request_id: String, accepted: bool, response: Value) {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
+        if self
+            .debug_timeline
+            .resolve(&task_id, &request_id, accepted, &response)
+        {
+            self.interaction_drafts.remove(&request_id);
+            self.ask_user_drafts.remove(&request_id);
+            self.task_action_error = None;
+            return;
+        }
         match self
             .application
             .respond_task_interaction(&task_id, &request_id, accepted, response)
         {
             Ok(result) => {
                 self.interaction_drafts.remove(&request_id);
+                self.ask_user_drafts.remove(&request_id);
                 self.mcp_elicitation_drafts.remove(&request_id);
+                self.tool_consent_drafts.remove(&request_id);
                 self.task_action_error = None;
                 if let Some(dispatch) = result.continuation {
                     let state = match dispatch.kind {
@@ -7078,6 +11774,206 @@ impl PreviewProgram {
             Err(error) => {
                 self.task_action_error = Some(error.to_string());
             }
+        }
+    }
+
+    fn update_ask_user_draft(
+        &mut self,
+        window_id: HostedWindowId,
+        request_id: String,
+        action: AskUserAction,
+    ) {
+        let Some(pending) = self.task_window_pending_action(window_id, &request_id) else {
+            return;
+        };
+        let Some(spec) = AskUserSpec::from_payload(&pending.payload) else {
+            self.set_task_window_error(window_id, "提问内容无法读取，请重试。".to_owned());
+            return;
+        };
+        let outcome = if window_id == HostedWindowId::PRIMARY {
+            self.task_action_error = None;
+            self.ask_user_drafts
+                .entry(request_id.clone())
+                .or_default()
+                .apply(&spec, action)
+        } else {
+            let Some(popup) = self.task_popups.get_mut(&window_id) else {
+                return;
+            };
+            popup.error = None;
+            popup
+                .ask_user_drafts
+                .entry(request_id.clone())
+                .or_default()
+                .apply(&spec, action)
+        };
+        let AskUserOutcome::Completed { accepted, response } = outcome else {
+            return;
+        };
+        if window_id == HostedWindowId::PRIMARY {
+            self.respond_interaction(request_id, accepted, response);
+        } else {
+            self.respond_task_popup_interaction(window_id, request_id, accepted, response);
+        }
+    }
+
+    fn task_window_pending_action(
+        &self,
+        window_id: HostedWindowId,
+        request_id: &str,
+    ) -> Option<PendingActionView> {
+        let (task_id, session) = if window_id == HostedWindowId::PRIMARY {
+            (self.selected_task.as_ref()?, self.task_session.as_ref()?)
+        } else {
+            let popup = self.task_popups.get(&window_id)?;
+            (popup.active_task_id.as_ref()?, popup.session.as_ref()?)
+        };
+        let (_, debug_pending) = self.debug_timeline.overlay(task_id);
+        session
+            .pending
+            .iter()
+            .chain(debug_pending.iter())
+            .find(|pending| {
+                pending.request_id == request_id
+                    && pending.status == PendingProjectionStatus::Open
+                    && pending.kind == "ask_user"
+            })
+            .cloned()
+    }
+
+    fn inject_debug_timeline(&mut self, window_id: HostedWindowId, action: DebugTimelineAction) {
+        let task_id = if window_id == HostedWindowId::PRIMARY {
+            self.selected_task.clone()
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.active_task_id.clone())
+        };
+        let Some(task_id) = task_id else {
+            return;
+        };
+        if !self.agent_interaction_settings.debug {
+            return;
+        }
+        if action == DebugTimelineAction::TodoTool {
+            for (text, priority) in [
+                ("完成 Todo 工具调试接线", DesktopTodoPriority::High),
+                ("确认 Todo 面板自动刷新", DesktopTodoPriority::Normal),
+                ("验证手动 Todo 可继续编辑", DesktopTodoPriority::Low),
+            ] {
+                if let Err(error) = self.application.create_task_todo(DesktopTodoCreate {
+                    task_id: task_id.clone(),
+                    text: text.to_owned(),
+                    priority,
+                    attachments: Vec::new(),
+                    conversation_references: Vec::new(),
+                    workflow: None,
+                }) {
+                    self.task_action_error = Some(error.to_string());
+                    return;
+                }
+            }
+            if window_id == HostedWindowId::PRIMARY {
+                self.refresh_task_session();
+            } else {
+                self.refresh_task_popup(window_id);
+            }
+        }
+        self.debug_timeline.inject(task_id, action);
+        self.task_action_error = None;
+    }
+
+    fn respond_tool_consent(
+        &mut self,
+        window_id: HostedWindowId,
+        request_id: String,
+        decision: DesktopToolConsentDecision,
+    ) {
+        let state = if window_id == HostedWindowId::PRIMARY {
+            self.selected_task.as_ref().and_then(|task_id| {
+                let pending = self
+                    .task_session
+                    .as_ref()
+                    .and_then(|session| {
+                        session.pending.iter().find(|pending| {
+                            pending.request_id == request_id && pending.kind == "tool_consent"
+                        })
+                    })
+                    .or_else(|| {
+                        let (_, pending) = self.debug_timeline.overlay(task_id);
+                        pending.iter().find(|pending| {
+                            pending.request_id == request_id && pending.kind == "tool_consent"
+                        })
+                    })?;
+                let draft =
+                    tool_consent_draft(pending, self.tool_consent_drafts.get(&pending.request_id));
+                Some((task_id.clone(), pending.clone(), draft))
+            })
+        } else {
+            self.task_popups.get(&window_id).and_then(|popup| {
+                let task_id = popup.active_task_id.as_ref()?;
+                let pending = popup
+                    .session
+                    .as_ref()
+                    .and_then(|session| {
+                        session.pending.iter().find(|pending| {
+                            pending.request_id == request_id && pending.kind == "tool_consent"
+                        })
+                    })
+                    .or_else(|| {
+                        let (_, pending) = self.debug_timeline.overlay(task_id);
+                        pending.iter().find(|pending| {
+                            pending.request_id == request_id && pending.kind == "tool_consent"
+                        })
+                    })?;
+                let draft =
+                    tool_consent_draft(pending, popup.tool_consent_drafts.get(&pending.request_id));
+                Some((task_id.clone(), pending.clone(), draft))
+            })
+        };
+        let Some((task_id, pending, draft)) = state else {
+            self.set_task_window_error(window_id, "工具授权请求已失效，请刷新后重试。".to_owned());
+            return;
+        };
+        let consent = match DesktopToolConsent::from_payload(&pending.payload) {
+            Ok(consent) => consent,
+            Err(error) => {
+                eprintln!("failed to parse Native tool consent request: {error}");
+                self.set_task_window_error(window_id, "无法读取工具授权请求。".to_owned());
+                return;
+            }
+        };
+        let message = (decision == DesktopToolConsentDecision::Deny).then(|| {
+            let message = draft.message.trim();
+            if message.is_empty() {
+                "用户拒绝了此次工具调用"
+            } else {
+                message
+            }
+        });
+        let response = match consent.response(
+            task_id.as_str(),
+            &request_id,
+            decision,
+            message,
+            Some(&draft.command),
+        ) {
+            Ok(response) => response,
+            Err(error) => {
+                eprintln!("failed to prepare Native tool consent response: {error}");
+                self.set_task_window_error(window_id, "请先填写有效命令。".to_owned());
+                return;
+            }
+        };
+        if window_id == HostedWindowId::PRIMARY {
+            self.respond_interaction(request_id, decision.accepted(), response);
+        } else {
+            self.respond_task_popup_interaction(
+                window_id,
+                request_id,
+                decision.accepted(),
+                response,
+            );
         }
     }
 
@@ -7246,9 +12142,142 @@ impl PreviewProgram {
 
     fn clear_task_window_error(&mut self, window_id: HostedWindowId) {
         if window_id == HostedWindowId::PRIMARY {
-            self.task_action_error = None;
+            if let Some(draft) = self.main_conversation_draft.as_mut() {
+                draft.error = None;
+            } else {
+                self.task_action_error = None;
+            }
         } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
             popup.error = None;
+        }
+    }
+
+    fn set_task_window_error(&mut self, window_id: HostedWindowId, message: String) {
+        if window_id == HostedWindowId::PRIMARY {
+            if let Some(draft) = self.main_conversation_draft.as_mut() {
+                draft.error = Some(message);
+            } else {
+                self.task_action_error = Some(message);
+            }
+        } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
+            popup.error = Some(message);
+        }
+    }
+
+    fn copy_timeline_selection(&mut self, window_id: HostedWindowId) {
+        let Some(selection) = self.timeline_text_selections.get(&window_id).cloned() else {
+            return;
+        };
+        let byte_count = selection.text.len();
+        match self
+            .application
+            .execute_host(DesktopHostAction::WriteClipboardText(selection.text))
+        {
+            Ok(DesktopHostResult::Completed) => {
+                self.last_copied_markdown = Some((selection.event_id, byte_count));
+                self.clear_task_window_error(window_id);
+                self.clear_timeline_text_selection(window_id);
+            }
+            Ok(_) => self.set_task_window_error(
+                window_id,
+                "复制内容时宿主返回了无法识别的结果。".to_owned(),
+            ),
+            Err(error) => self.set_task_window_error(window_id, error.to_string()),
+        }
+    }
+
+    fn quote_timeline_selection(&mut self, window_id: HostedWindowId) {
+        let Some(selection) = self.timeline_text_selections.get(&window_id).cloned() else {
+            return;
+        };
+        let quote = quote_timeline_text(&selection.text);
+        if quote.is_empty() {
+            return;
+        }
+        let current = if window_id == HostedWindowId::PRIMARY {
+            self.composer
+                .as_ref()
+                .map(|composer| composer.content.clone())
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.composer.as_ref())
+                .map(|composer| composer.content.clone())
+        }
+        .unwrap_or_default();
+        let updated = format!("{current}{quote}");
+        let applied = if window_id == HostedWindowId::PRIMARY {
+            self.execute_composer_command(DesktopComposerCommand::SetContent(updated))
+        } else {
+            self.task_popup_composer_command(window_id, DesktopComposerCommand::SetContent(updated))
+        };
+        if applied {
+            self.clear_timeline_text_selection(window_id);
+        }
+    }
+
+    fn ask_timeline_selection_in_popup(&mut self, window_id: HostedWindowId) {
+        let Some(selection) = self.timeline_text_selections.get(&window_id).cloned() else {
+            return;
+        };
+        let source_task_id = if window_id == HostedWindowId::PRIMARY {
+            self.selected_task.clone()
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.active_task_id.clone())
+        };
+        let Some(source_task_id) = source_task_id else {
+            return;
+        };
+        let project_id = match self.application.get_task(&source_task_id) {
+            Ok(task) if !task.archived => task.project_id,
+            Ok(_) => {
+                self.set_task_window_error(window_id, "已归档对话无法继续提问。".to_owned());
+                return;
+            }
+            Err(error) => {
+                eprintln!("failed to read Native selection source task: {error}");
+                self.set_task_window_error(window_id, "无法读取当前对话，请重试。".to_owned());
+                return;
+            }
+        };
+        let prompt = popup_question_text(&selection.text);
+        if let Err(error) = self.open_conversation_draft_popup(project_id, None, prompt) {
+            eprintln!("failed to prepare Native selection question: {error}");
+            self.set_task_window_error(window_id, "无法准备提问内容，请重试。".to_owned());
+            return;
+        }
+        self.clear_timeline_text_selection(window_id);
+    }
+
+    fn clear_timeline_text_selection(&mut self, window_id: HostedWindowId) {
+        let Some(selection) = self.timeline_text_selections.remove(&window_id) else {
+            return;
+        };
+        let clear_in_session = |session: &TaskSessionView| {
+            if let Some(document) = session
+                .timeline
+                .iter()
+                .find(|event| event.id == selection.event_id)
+                .and_then(|event| event.markdown_document.as_ref())
+            {
+                document.clear_selection();
+            }
+        };
+        if window_id == HostedWindowId::PRIMARY {
+            if let Some(session) = &self.task_session {
+                clear_in_session(session);
+            }
+            return;
+        }
+        if let Some(popup) = self.task_popups.get(&window_id) {
+            if let Some(session) = &popup.session {
+                clear_in_session(session);
+            }
+            for session in popup.task_sessions.values() {
+                clear_in_session(session);
+            }
         }
     }
 
@@ -7256,6 +12285,7 @@ impl PreviewProgram {
         let Some(task_id) = self.selected_task.clone() else {
             self.task_session = None;
             self.memory_injection = None;
+            self.sync_markdown_images();
             return;
         };
         let restored_runtime = self
@@ -7291,14 +12321,18 @@ impl PreviewProgram {
                         pending.status == PendingProjectionStatus::Open
                             && matches!(
                                 pending.kind.as_str(),
-                                "ask_user" | "plan_approval" | "mcp_elicitation"
+                                "ask_user" | "plan_approval" | "mcp_elicitation" | "tool_consent"
                             )
                     })
                     .map(|pending| pending.request_id.clone())
                     .collect::<BTreeSet<_>>();
                 self.interaction_drafts
                     .retain(|request_id, _| open_interactions.contains(request_id));
+                self.ask_user_drafts
+                    .retain(|request_id, _| open_interactions.contains(request_id));
                 self.mcp_elicitation_drafts
+                    .retain(|request_id, _| open_interactions.contains(request_id));
+                self.tool_consent_drafts
                     .retain(|request_id, _| open_interactions.contains(request_id));
                 self.error_message = None;
             }
@@ -7306,11 +12340,14 @@ impl PreviewProgram {
                 eprintln!("failed to query Native Preview task session: {error}");
                 self.task_session = None;
                 self.interaction_drafts.clear();
+                self.ask_user_drafts.clear();
                 self.mcp_elicitation_drafts.clear();
+                self.tool_consent_drafts.clear();
                 self.error_message = Some("无法读取任务会话，请重试。".to_owned());
             }
         }
         self.refresh_memory_injection();
+        self.sync_markdown_images();
     }
 
     fn refresh_workspace_pane_sessions(&mut self) {
@@ -7337,6 +12374,7 @@ impl PreviewProgram {
                 self.pane_task_sessions.insert(task_id, session);
             }
         }
+        self.sync_markdown_images();
     }
 
     fn refresh_workspace_project_previews(&mut self) {
@@ -7365,6 +12403,13 @@ impl PreviewProgram {
                     .application
                     .project_architecture(&project_id)
                     .map(ProjectWorkspacePreview::Architecture),
+                ProjectWorkspaceSurface::Files => self
+                    .application
+                    .project_files_snapshot(&project_id, ProjectFilesViewState::default())
+                    .map(|snapshot| ProjectWorkspacePreview::Files {
+                        entry_count: snapshot.entries.len(),
+                        revision: snapshot.revision,
+                    }),
             }
             .unwrap_or_else(|error| {
                 eprintln!(
@@ -7407,6 +12452,7 @@ impl PreviewProgram {
                 self.task_action_error = Some("无法读取更早的时间线，请重试。".to_owned());
             }
         }
+        self.sync_markdown_images();
     }
 
     fn update_timeline_viewport(
@@ -7481,6 +12527,48 @@ impl PreviewProgram {
             self.error_message = Some("主题已应用，但未能保存。".to_owned());
         } else {
             self.error_message = None;
+        }
+    }
+
+    fn update_appearance(&mut self, event: AppearanceEvent) {
+        let changed = match event {
+            AppearanceEvent::Theme(theme) => {
+                if self.theme == theme {
+                    false
+                } else {
+                    self.set_theme(theme);
+                    true
+                }
+            }
+            AppearanceEvent::StandardRadius(radius) => {
+                self.appearance.set_standard_radius(f32::from(radius))
+            }
+            AppearanceEvent::WorkspaceCorners(enabled) => {
+                self.appearance.set_workspace_corners_enabled(enabled)
+            }
+            AppearanceEvent::WindowMaterial(mode) => self.appearance.set_window_material(mode),
+            AppearanceEvent::BackdropTarget(target) => self.appearance.set_backdrop_target(target),
+            AppearanceEvent::BackdropOpacity(opacity) => {
+                self.appearance.set_backdrop_opacity(opacity)
+            }
+            AppearanceEvent::TitlebarFollowsSidebar(enabled) => {
+                self.appearance.set_titlebar_follows_sidebar(enabled)
+            }
+            AppearanceEvent::Reset => {
+                let changed = self.appearance.reset();
+                if self.theme != AppearanceSettings::RESET_THEME {
+                    self.set_theme(AppearanceSettings::RESET_THEME);
+                    true
+                } else {
+                    changed
+                }
+            }
+        };
+        if changed {
+            if let Err(error) = save_appearance(&self.home, &self.appearance) {
+                eprintln!("{error}");
+                self.error_message = Some("外观已应用，但未能保存。".to_owned());
+            }
         }
     }
 
@@ -7562,6 +12650,196 @@ impl PreviewProgram {
         }
     }
 
+    fn refresh_provider_ai_settings(&mut self) {
+        if !self.provider_ai_settings.assistant_dirty() {
+            match (
+                self.application.assistant_ai_settings(),
+                self.application.assistant_ai_secret_configured(),
+            ) {
+                (Ok(settings), Ok(secret_configured)) => self
+                    .provider_ai_settings
+                    .sync_assistant(settings, secret_configured),
+                (settings, secret) => {
+                    eprintln!(
+                        "failed to refresh Native Assistant AI settings: settings={:?}, secret={:?}",
+                        settings.err(),
+                        secret.err()
+                    );
+                    self.provider_error = Some("无法读取辅助模型配置，请稍后重试。".to_owned());
+                }
+            }
+        }
+        if !self.provider_ai_settings.model_features_dirty() {
+            match self.application.model_feature_settings() {
+                Ok(settings) => self.provider_ai_settings.sync_model_features(settings),
+                Err(error) => {
+                    eprintln!("failed to refresh Native feature model settings: {error}");
+                    self.provider_error = Some("无法读取功能模型配置，请稍后重试。".to_owned());
+                }
+            }
+        }
+        match self.application.conversation_suggestion_settings() {
+            Ok(settings) => self
+                .provider_ai_settings
+                .sync_conversation_suggestions(settings),
+            Err(error) => {
+                eprintln!("failed to refresh Native conversation suggestion settings: {error}");
+                self.provider_error = Some("无法读取新对话建议设置，请稍后重试。".to_owned());
+            }
+        }
+    }
+
+    fn save_assistant_ai_configuration(&mut self) {
+        if self.provider_busy || self.assistant_ai_probe_busy {
+            return;
+        }
+        let update = self.provider_ai_settings.assistant_update();
+        match self.application.save_assistant_ai_configuration(update) {
+            Ok(settings) => match self.application.assistant_ai_secret_configured() {
+                Ok(secret_configured) => {
+                    self.provider_ai_settings
+                        .sync_assistant(settings, secret_configured);
+                    self.provider_error = None;
+                }
+                Err(error) => {
+                    eprintln!("failed to confirm Native Assistant AI credential: {error}");
+                    self.provider_error = Some("配置已保存，但暂时无法确认密钥状态。".to_owned());
+                }
+            },
+            Err(error) => {
+                eprintln!("failed to save Native Assistant AI settings: {error}");
+                self.provider_error = Some("无法保存辅助模型配置，请重试。".to_owned());
+            }
+        }
+    }
+
+    fn clear_assistant_ai_secret(&mut self) {
+        if self.provider_busy || self.assistant_ai_probe_busy {
+            return;
+        }
+        let update = self.provider_ai_settings.clear_secret_update();
+        match self.application.save_assistant_ai_configuration(update) {
+            Ok(settings) => {
+                self.provider_ai_settings.sync_assistant(settings, false);
+                self.provider_error = None;
+            }
+            Err(error) => {
+                eprintln!("failed to clear Native Assistant AI credential: {error}");
+                self.provider_error = Some("无法移除辅助模型密钥，请重试。".to_owned());
+            }
+        }
+    }
+
+    fn assistant_ai_probe_input(&self) -> DesktopAssistantAiProbeInput {
+        DesktopAssistantAiProbeInput {
+            base_url: Some(self.provider_ai_settings.assistant_base_url.clone()),
+            model: Some(self.provider_ai_settings.assistant_model.clone()),
+            api_key: (!self.provider_ai_settings.assistant_secret.trim().is_empty()).then(|| {
+                DesktopSecret::new(
+                    self.provider_ai_settings
+                        .assistant_secret
+                        .trim()
+                        .as_bytes()
+                        .to_vec(),
+                )
+            }),
+        }
+    }
+
+    fn begin_assistant_ai_probe(&mut self) -> Option<(u64, DesktopAssistantAiProbeInput)> {
+        if self.provider_busy || self.assistant_ai_probe_busy {
+            return None;
+        }
+        self.assistant_ai_probe_busy = true;
+        self.assistant_ai_probe_notice = None;
+        self.assistant_ai_probe_sequence = self.assistant_ai_probe_sequence.saturating_add(1);
+        let operation_id = self.assistant_ai_probe_sequence;
+        self.active_assistant_ai_probe = Some(operation_id);
+        Some((operation_id, self.assistant_ai_probe_input()))
+    }
+
+    fn start_assistant_ai_models_fetch(&mut self) {
+        let Some((operation_id, input)) = self.begin_assistant_ai_probe() else {
+            return;
+        };
+        let application = self.application.clone();
+        let message_sender = Arc::clone(&self.message_sender);
+        let spawn = std::thread::Builder::new()
+            .name("lilia-assistant-ai-models".to_owned())
+            .spawn(move || {
+                let result = application.fetch_assistant_ai_models(input);
+                let _ = message_sender(Message::AssistantAiModelsFetched {
+                    operation_id,
+                    result,
+                });
+            });
+        if let Err(error) = spawn {
+            eprintln!("failed to start Native Assistant AI model fetch: {error}");
+            self.active_assistant_ai_probe = None;
+            self.assistant_ai_probe_busy = false;
+            self.assistant_ai_probe_notice =
+                Some((false, "无法启动模型获取，请稍后重试。".to_owned()));
+        }
+    }
+
+    fn start_assistant_ai_connection_test(&mut self) {
+        let Some((operation_id, input)) = self.begin_assistant_ai_probe() else {
+            return;
+        };
+        let application = self.application.clone();
+        let message_sender = Arc::clone(&self.message_sender);
+        let spawn = std::thread::Builder::new()
+            .name("lilia-assistant-ai-test".to_owned())
+            .spawn(move || {
+                let result = application.test_assistant_ai_connection(input);
+                let _ = message_sender(Message::AssistantAiConnectionTested {
+                    operation_id,
+                    result,
+                });
+            });
+        if let Err(error) = spawn {
+            eprintln!("failed to start Native Assistant AI connection test: {error}");
+            self.active_assistant_ai_probe = None;
+            self.assistant_ai_probe_busy = false;
+            self.assistant_ai_probe_notice =
+                Some((false, "无法启动连接测试，请稍后重试。".to_owned()));
+        }
+    }
+
+    fn save_model_feature_settings(&mut self) {
+        let update = self.provider_ai_settings.model_features_update();
+        match self.application.save_model_feature_settings(update) {
+            Ok(settings) => {
+                self.provider_ai_settings.sync_model_features(settings);
+                self.provider_error = None;
+            }
+            Err(error) => {
+                eprintln!("failed to save Native feature model settings: {error}");
+                self.provider_error = Some("无法保存功能模型配置，请重试。".to_owned());
+            }
+        }
+    }
+
+    fn set_conversation_suggestions_enabled(&mut self, enabled: bool) {
+        let update = self
+            .provider_ai_settings
+            .conversation_suggestion_update(enabled);
+        match self
+            .application
+            .save_conversation_suggestion_settings(update)
+        {
+            Ok(settings) => {
+                self.provider_ai_settings
+                    .sync_conversation_suggestions(settings);
+                self.provider_error = None;
+            }
+            Err(error) => {
+                eprintln!("failed to save Native conversation suggestion settings: {error}");
+                self.provider_error = Some("无法保存新对话建议设置，请重试。".to_owned());
+            }
+        }
+    }
+
     fn refresh_agent_interaction(&mut self) {
         match (
             self.application.agent_interaction_settings(),
@@ -7592,6 +12870,10 @@ impl PreviewProgram {
         let mut update =
             DesktopAgentInteractionSettingsUpdate::from_settings(&self.agent_interaction_settings);
         match toggle {
+            AgentInteractionToggle::NonInterrupt => {
+                update.non_interrupt_mode = !update.non_interrupt_mode
+            }
+            AgentInteractionToggle::Debug => update.debug = !update.debug,
             AgentInteractionToggle::Subagents => {
                 update.subagent_mode.enabled = !update.subagent_mode.enabled
             }
@@ -8327,6 +13609,64 @@ impl PreviewProgram {
         });
     }
 
+    fn update_hook_handler_draft(
+        &mut self,
+        source_id: &str,
+        index: usize,
+        field: HookHandlerDraftField,
+        value: String,
+    ) {
+        if self.extensions_busy {
+            return;
+        }
+        let draft = self
+            .hook_drafts
+            .get(source_id)
+            .cloned()
+            .unwrap_or_else(|| hook_handlers_draft(&[]));
+        match edit_hook_handler_draft(&draft, index, field, value) {
+            Ok(draft) => {
+                self.hook_drafts.insert(source_id.to_owned(), draft);
+                self.extensions_error = None;
+            }
+            Err(error) => self.extensions_error = Some(error),
+        }
+    }
+
+    fn add_hook_handler_draft(&mut self, source_id: &str) {
+        if self.extensions_busy {
+            return;
+        }
+        let draft = self
+            .hook_drafts
+            .get(source_id)
+            .cloned()
+            .unwrap_or_else(|| hook_handlers_draft(&[]));
+        match add_hook_handler_to_draft(&draft) {
+            Ok(draft) => {
+                self.hook_drafts.insert(source_id.to_owned(), draft);
+                self.extensions_error = None;
+            }
+            Err(error) => self.extensions_error = Some(error),
+        }
+    }
+
+    fn remove_hook_handler_draft(&mut self, source_id: &str, index: usize) {
+        if self.extensions_busy {
+            return;
+        }
+        let Some(draft) = self.hook_drafts.get(source_id).cloned() else {
+            return;
+        };
+        match remove_hook_handler_from_draft(&draft, index) {
+            Ok(draft) => {
+                self.hook_drafts.insert(source_id.to_owned(), draft);
+                self.extensions_error = None;
+            }
+            Err(error) => self.extensions_error = Some(error),
+        }
+    }
+
     fn save_hook_source(&mut self, source_id: &str) {
         let Some(source) = self.hook_source_by_id(source_id) else {
             return;
@@ -8339,10 +13679,10 @@ impl PreviewProgram {
             .get(source_id)
             .map(String::as_str)
             .unwrap_or("[]");
-        let handlers = match serde_json::from_str::<Vec<DesktopHookHandlerUpdate>>(draft) {
+        let handlers = match validated_hook_handlers(draft) {
             Ok(handlers) => handlers,
             Err(error) => {
-                self.extensions_error = Some(format!("Handlers 格式无效：{error}"));
+                self.extensions_error = Some(error);
                 return;
             }
         };
@@ -8466,12 +13806,7 @@ impl PreviewProgram {
         self.hook_drafts = snapshot
             .documents
             .iter()
-            .map(|(source_id, document)| {
-                (
-                    source_id.clone(),
-                    hook_document_draft(document).unwrap_or_else(|_| "[]".to_owned()),
-                )
-            })
+            .map(|(source_id, document)| (source_id.clone(), hook_document_draft(document)))
             .collect();
         self.hook_documents = snapshot.documents;
         self.hooks = Some(snapshot.overview);
@@ -8864,6 +14199,30 @@ impl PreviewProgram {
         }
     }
 
+    fn update_prompt_is_visible(&self) -> bool {
+        self.project_removal.is_none()
+            && match &self.update_state {
+                DesktopUpdateState::Available { version, .. } => {
+                    !self.dismissed_update_versions.contains(version)
+                }
+                DesktopUpdateState::Downloading { .. }
+                | DesktopUpdateState::Installing { .. }
+                | DesktopUpdateState::Restarting { .. } => true,
+                DesktopUpdateState::Failed { .. } => !self.update_failure_dismissed,
+                _ => false,
+            }
+    }
+
+    fn update_prompt_is_busy(&self) -> bool {
+        self.update_busy
+            || matches!(
+                &self.update_state,
+                DesktopUpdateState::Downloading { .. }
+                    | DesktopUpdateState::Installing { .. }
+                    | DesktopUpdateState::Restarting { .. }
+            )
+    }
+
     #[cfg(debug_assertions)]
     fn handle_debug_request(&mut self, request: DebugRequest) {
         let DebugRequest { command, reply } = request;
@@ -9041,10 +14400,62 @@ impl PreviewProgram {
                 }
             }
             DebugCommand::Input { target_id, text } => {
-                if self.application_surface_is_visible(ApplicationWorkspaceSurface::Settings)
+                if target_id == target_ids::COMMAND_PALETTE_INPUT && self.command_picker.is_open() {
+                    self.command_picker.set_query(text);
+                    let count = self.command_palette_items().len();
+                    self.command_picker.sync_results(count);
+                    let _ = reply.send(success_response("input", &self.debug_observation()));
+                    return;
+                }
+                let iab_window_url = self
+                    .iab_windows
+                    .keys()
+                    .copied()
+                    .find(|window_id| target_ids::iab_window_url(window_id.0) == target_id);
+                let iab_window_note = self
+                    .iab_windows
+                    .keys()
+                    .copied()
+                    .find(|window_id| target_ids::iab_window_note(window_id.0) == target_id);
+                if let Some(window_id) = iab_window_url {
+                    self.update_iab_window(
+                        window_id,
+                        IabWindowMessage::Browser(IabPanelMessage::DraftUrlChanged(text)),
+                    );
+                    let _ = reply.send(success_response("input", &self.debug_observation()));
+                    return;
+                } else if let Some(window_id) = iab_window_note {
+                    self.update_iab_window(window_id, IabWindowMessage::NoteChanged(text));
+                    let _ = reply.send(success_response("input", &self.debug_observation()));
+                    return;
+                } else if self.application_surface_is_visible(ApplicationWorkspaceSurface::Settings)
                     && self.settings_state.active_tab().as_str() == "extensions"
                     && !self.extensions_busy
                 {
+                    let hook_handler_input =
+                        self.hook_drafts.iter().find_map(|(source_id, draft)| {
+                            let handler_count = parse_hook_handlers_draft(draft).ok()?.len();
+                            (0..handler_count).find_map(|index| {
+                                HookHandlerDraftField::ALL.into_iter().find_map(|field| {
+                                    (target_ids::extensions_hook_handler_field(
+                                        source_id,
+                                        index,
+                                        field.target_key(),
+                                    ) == target_id)
+                                        .then(|| (source_id.clone(), index, field))
+                                })
+                            })
+                        });
+                    if let Some((source_id, index, field)) = hook_handler_input {
+                        self.update_message(Message::HookHandlerDraftChanged {
+                            source_id,
+                            index,
+                            field,
+                            value: text,
+                        });
+                        let _ = reply.send(success_response("input", &self.debug_observation()));
+                        return;
+                    }
                     let editor_message = match target_id.as_str() {
                         target_ids::EXTENSIONS_SKILL_ID => {
                             Some(Message::SkillIdChanged(text.clone()))
@@ -9160,7 +14571,54 @@ impl PreviewProgram {
                             })
                     })
                     .map(str::to_owned);
-                if target_id == target_ids::PROJECT_CLONE_REPOSITORY
+                let feature_preset_model = target_ids::parse_feature_preset_model(&target_id)
+                    .filter(|preset_id| {
+                        settings_visible
+                            && self.settings_state.active_tab().as_str() == "provider"
+                            && !self.provider_busy
+                            && self.provider_ai_settings.has_preset(preset_id)
+                    })
+                    .map(str::to_owned);
+                let feature_preset_label = target_ids::parse_feature_preset_label(&target_id)
+                    .filter(|preset_id| {
+                        settings_visible
+                            && self.settings_state.active_tab().as_str() == "provider"
+                            && !self.provider_busy
+                            && self
+                                .provider_ai_settings
+                                .custom_presets()
+                                .any(|preset| preset.id == *preset_id)
+                    })
+                    .map(str::to_owned);
+                let assistant_ai_model_label =
+                    target_ids::parse_assistant_ai_model_label(&target_id)
+                        .filter(|model_id| {
+                            settings_visible
+                                && self.settings_state.active_tab().as_str() == "provider"
+                                && !self.provider_busy
+                                && !self.assistant_ai_probe_busy
+                                && self
+                                    .provider_ai_settings
+                                    .assistant_model_pool()
+                                    .any(|item| item.id == *model_id)
+                        })
+                        .map(str::to_owned);
+                if target_id == target_ids::CONVERSATION_STATUS_OPACITY
+                    && self.conversation_status_open
+                {
+                    match text.parse::<f32>() {
+                        Ok(opacity) => {
+                            self.update_message(Message::ConversationStatusOpacityChanged(opacity));
+                            success_response("input", &self.debug_observation())
+                        }
+                        Err(_) => failure_response(
+                            "input",
+                            "invalid_opacity",
+                            "conversation status opacity must be a number from 0.4 to 1.0",
+                            Some(&self.debug_observation()),
+                        ),
+                    }
+                } else if target_id == target_ids::PROJECT_CLONE_REPOSITORY
                     && !self.settings_open
                     && !self.automations_open
                     && self.project_surface == ProjectSurface::Clone
@@ -9267,6 +14725,12 @@ impl PreviewProgram {
                     self.memory_cooldown_input = text;
                     self.memory_error = None;
                     success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::IAB_URL
+                    && self.inspector_surface == InspectorSurface::Iab
+                    && self.inspector_region_is_visible()
+                {
+                    self.update_iab(IabPanelMessage::DraftUrlChanged(text));
+                    success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::CODING_TOOLS_QUERY
                     && self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
@@ -9274,6 +14738,17 @@ impl PreviewProgram {
                 {
                     self.coding_query = text;
                     self.coding_error = None;
+                    success_response("input", &self.debug_observation())
+                } else if let Some(session_id) = self
+                    .visible_terminal_snapshots()
+                    .into_iter()
+                    .find(|snapshot| {
+                        snapshot.process.is_running()
+                            && target_ids::terminal_input(snapshot.id.as_str()) == target_id
+                    })
+                    .map(|snapshot| snapshot.id)
+                {
+                    self.terminal_inputs.insert(session_id, text);
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::AUTOMATIONS_NAME
                     && automations_visible
@@ -9297,6 +14772,25 @@ impl PreviewProgram {
                     success_response("input", &self.debug_observation())
                 } else if let Some(field) = automation_config_field {
                     self.update_automation_node_config_field(field, json!(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::PROJECT_SETTINGS_CLONE_PARENT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "project"
+                {
+                    self.update_message(Message::ProjectCloneParentChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::PROJECT_WORKTREE_PARENT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "project"
+                {
+                    self.update_message(Message::ProjectWorktreeParentChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::PROJECT_WORKTREE_INSTRUCTIONS
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "project"
+                {
+                    self.project_worktree_instructions.set_text(&text);
+                    self.project_settings_error = None;
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::AUTOMATIONS_HUMAN_RESPONSE
                     && automations_visible
@@ -9329,6 +14823,106 @@ impl PreviewProgram {
                     && !self.provider_busy
                 {
                     self.update_message(Message::ProviderAnthropicEndpointChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::ASSISTANT_AI_BASE_URL_INPUT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy
+                {
+                    self.update_message(Message::AssistantAiBaseUrlChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::ASSISTANT_AI_MODEL_INPUT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy
+                {
+                    self.update_message(Message::AssistantAiModelChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::ASSISTANT_AI_SECRET_INPUT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy
+                {
+                    self.update_message(Message::AssistantAiSecretChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::ASSISTANT_AI_NEW_MODEL_ID
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy
+                {
+                    self.update_message(Message::AssistantAiNewModelIdChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::ASSISTANT_AI_NEW_MODEL_LABEL
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy
+                {
+                    self.update_message(Message::AssistantAiNewModelLabelChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if let Some(model_id) = assistant_ai_model_label {
+                    self.update_message(Message::RenameAssistantAiModel {
+                        model_id,
+                        value: text,
+                    });
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::FEATURE_MODEL_TITLE_INPUT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                {
+                    self.update_message(Message::TitleModelChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::FEATURE_MODEL_SUGGESTION_INPUT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                {
+                    self.update_message(Message::SuggestionModelChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::FEATURE_MODEL_PROMPT_ROUTER_INPUT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                {
+                    self.update_message(Message::PromptRouterModelChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::FEATURE_MODEL_PROMPT_OPTIMIZE_INPUT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                {
+                    self.update_message(Message::PromptOptimizeModelChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::FEATURE_MODEL_AUTO_TURN_INPUT
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                {
+                    self.update_message(Message::AutoTurnDecisionModelChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::FEATURE_CUSTOM_PRESET_NAME
+                    && settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                {
+                    self.update_message(Message::CustomPresetDraftChanged(text));
+                    success_response("input", &self.debug_observation())
+                } else if let Some(preset_id) = feature_preset_label {
+                    self.update_message(Message::RenameCustomPreset {
+                        preset_id,
+                        value: text,
+                    });
+                    success_response("input", &self.debug_observation())
+                } else if let Some(preset_id) = feature_preset_model {
+                    self.update_message(Message::FeaturePresetModelChanged {
+                        preset_id,
+                        value: text,
+                    });
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::PROVIDER_SECRET_INPUT
                     && settings_visible
@@ -9392,6 +14986,93 @@ impl PreviewProgram {
                 {
                     self.todo_draft = text;
                     self.task_action_error = None;
+                    success_response("input", &self.debug_observation())
+                } else if target_id == target_ids::COMPOSER_MODEL
+                    && self.project_surface == ProjectSurface::Tasks
+                    && !self.composer_input_is_locked()
+                {
+                    if self.debug_select_composer_model(HostedWindowId::PRIMARY, &text) {
+                        success_response("input", &self.debug_observation())
+                    } else {
+                        failure_response(
+                            "input",
+                            "model_not_available",
+                            "the requested composer model is not available",
+                            Some(&self.debug_observation()),
+                        )
+                    }
+                } else if target_id == target_ids::COMPOSER_REASONING
+                    && self.project_surface == ProjectSurface::Tasks
+                    && !self.composer_input_is_locked()
+                {
+                    if self.debug_select_composer_reasoning(HostedWindowId::PRIMARY, &text) {
+                        success_response("input", &self.debug_observation())
+                    } else {
+                        failure_response(
+                            "input",
+                            "reasoning_not_available",
+                            "the requested reasoning effort is not available",
+                            Some(&self.debug_observation()),
+                        )
+                    }
+                } else if let Some((window_id, model_target)) =
+                    self.task_popups.values().find_map(|popup| {
+                        let configurable = popup
+                            .turn_state
+                            .as_ref()
+                            .is_none_or(|(_, state)| !turn_state_is_active(state))
+                            && popup
+                                .session
+                                .as_ref()
+                                .is_none_or(|session| session.blocking_pending_count == 0);
+                        configurable.then(|| {
+                            if target_ids::task_popup_model(popup.id.0) == target_id {
+                                Some((popup.id, true))
+                            } else if target_ids::task_popup_reasoning(popup.id.0) == target_id {
+                                Some((popup.id, false))
+                            } else {
+                                None
+                            }
+                        })?
+                    })
+                {
+                    let updated = if model_target {
+                        self.debug_select_composer_model(window_id, &text)
+                    } else {
+                        self.debug_select_composer_reasoning(window_id, &text)
+                    };
+                    if updated {
+                        success_response("input", &self.debug_observation())
+                    } else {
+                        failure_response(
+                            "input",
+                            "composer_selection_not_available",
+                            "the requested task window composer selection is not available",
+                            Some(&self.debug_observation()),
+                        )
+                    }
+                } else if target_id
+                    == target_ids::review_workflow_target_input(HostedWindowId::PRIMARY.0)
+                    && self
+                        .pending_review_slash_workflow
+                        .as_ref()
+                        .is_some_and(|pending| {
+                            pending.target_kind != PendingReviewTargetKind::UncommittedChanges
+                        })
+                {
+                    self.update_review_workflow_target(HostedWindowId::PRIMARY, text);
+                    success_response("input", &self.debug_observation())
+                } else if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+                    (target_ids::review_workflow_target_input(popup.id.0) == target_id
+                        && popup
+                            .pending_review_slash_workflow
+                            .as_ref()
+                            .is_some_and(|pending| {
+                                pending.target_kind != PendingReviewTargetKind::UncommittedChanges
+                            }))
+                    .then_some(popup.id)
+                }) {
+                    self.update_review_workflow_target(window_id, text);
                     success_response("input", &self.debug_observation())
                 } else if let Some(window_id) = self.task_popups.values().find_map(|popup| {
                     (target_ids::task_popup_composer(popup.id.0) == target_id).then_some(popup.id)
@@ -9467,16 +15148,61 @@ impl PreviewProgram {
         {
             return false;
         }
-        let request_id = self.task_session.as_ref().and_then(|session| {
+        let interaction = self
+            .task_session
+            .as_ref()
+            .map(|session| self.task_session_with_debug_overlay(session))
+            .and_then(|session| {
+                session.pending.into_iter().find_map(|pending| {
+                    (pending.status == PendingProjectionStatus::Open
+                        && matches!(pending.kind.as_str(), "ask_user" | "plan_approval")
+                        && target_ids::interaction_input(&pending.request_id) == target_id)
+                        .then_some((pending.request_id, pending.kind))
+                })
+            });
+        if let Some((request_id, kind)) = interaction {
+            if kind == "ask_user" {
+                self.update_ask_user_draft(
+                    HostedWindowId::PRIMARY,
+                    request_id,
+                    AskUserAction::SetFreeform(value),
+                );
+            } else {
+                self.interaction_drafts.insert(request_id, value);
+                self.task_action_error = None;
+            }
+            return true;
+        }
+        let tool_field = self.task_session.as_ref().and_then(|session| {
             session.pending.iter().find_map(|pending| {
-                (pending.status == PendingProjectionStatus::Open
-                    && matches!(pending.kind.as_str(), "ask_user" | "plan_approval")
-                    && target_ids::interaction_input(&pending.request_id) == target_id)
-                    .then(|| pending.request_id.clone())
+                if pending.status != PendingProjectionStatus::Open || pending.kind != "tool_consent"
+                {
+                    return None;
+                }
+                if target_ids::tool_consent_command(HostedWindowId::PRIMARY.0, &pending.request_id)
+                    == target_id
+                {
+                    Some((pending.clone(), true))
+                } else if target_ids::tool_consent_message(
+                    HostedWindowId::PRIMARY.0,
+                    &pending.request_id,
+                ) == target_id
+                {
+                    Some((pending.clone(), false))
+                } else {
+                    None
+                }
             })
         });
-        if let Some(request_id) = request_id {
-            self.interaction_drafts.insert(request_id, value);
+        if let Some((pending, command_field)) = tool_field {
+            let mut draft =
+                tool_consent_draft(&pending, self.tool_consent_drafts.get(&pending.request_id));
+            if command_field {
+                draft.command = value;
+            } else {
+                draft.message = value;
+            }
+            self.tool_consent_drafts.insert(pending.request_id, draft);
             self.task_action_error = None;
             return true;
         }
@@ -9849,6 +15575,36 @@ impl PreviewProgram {
     }
 
     #[cfg(debug_assertions)]
+    fn visible_document_editor_locations(&self) -> Vec<(HostedWindowId, WorkspaceItemId)> {
+        let mut locations = Vec::new();
+        if let Ok(Some(item_id)) = self.panel_layout.active_workspace_item() {
+            if self
+                .workspace_items
+                .iter()
+                .any(|item| item.id == *item_id && is_document_editor_item(item))
+            {
+                locations.push((HostedWindowId::PRIMARY, item_id.clone()));
+            }
+        }
+        for popup in self.task_popups.values() {
+            let Some(item_id) = popup.workspace.snapshot().ok().and_then(|snapshot| {
+                snapshot
+                    .panel_layout
+                    .active_workspace_item()
+                    .ok()
+                    .flatten()
+                    .cloned()
+            }) else {
+                continue;
+            };
+            if self.document_editors.contains_key(&item_id) {
+                locations.push((popup.id, item_id));
+            }
+        }
+        locations
+    }
+
+    #[cfg(debug_assertions)]
     fn debug_click(&mut self, target_id: &str) -> bool {
         let automations_visible =
             self.application_surface_is_visible(ApplicationWorkspaceSurface::Automations);
@@ -9860,6 +15616,137 @@ impl PreviewProgram {
             .any(|visible| visible == target_id)
         {
             return false;
+        }
+        if target_id == target_ids::COMMAND_PALETTE_OPEN {
+            self.update_message(Message::ToggleCommandPalette);
+            return true;
+        }
+        if let Some(action_id) = target_ids::parse_command_palette_action(target_id) {
+            self.execute_native_action(ActionId::new(action_id));
+            return true;
+        }
+        if let Some(action) = DebugTimelineAction::ALL
+            .into_iter()
+            .find(|action| target_ids::debug_timeline_action(action.id()) == target_id)
+        {
+            self.update_message(Message::InjectDebugTimeline {
+                window_id: HostedWindowId::PRIMARY,
+                action,
+            });
+            return true;
+        }
+        if let Some(task_id) = self
+            .task_move_candidates
+            .iter()
+            .find(|task| target_ids::unified_sidebar_task(task.id.as_str()) == target_id)
+            .map(|task| task.id.clone())
+        {
+            self.update_message(Message::SelectTask(task_id));
+            return true;
+        }
+        for (window_id, item_id) in self.visible_document_editor_locations() {
+            if target_ids::document_editor_definition(item_id.as_str()) == target_id {
+                self.start_document_definition(item_id, window_id);
+                return true;
+            }
+            let definition_target = self.document_editors.get(&item_id).and_then(|state| {
+                state
+                    .definition_targets
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, _)| {
+                        (target_ids::document_editor_definition_target(item_id.as_str(), index)
+                            == target_id)
+                            .then_some(index)
+                    })
+            });
+            if let Some(index) = definition_target {
+                self.open_document_definition_target(item_id, window_id, index);
+                return true;
+            }
+        }
+        if let Some(window_id) = self
+            .iab_windows
+            .keys()
+            .copied()
+            .find(|window_id| target_ids::iab_window_navigate(window_id.0) == target_id)
+        {
+            self.update_iab_window(
+                window_id,
+                IabWindowMessage::Browser(IabPanelMessage::Navigate),
+            );
+            return true;
+        }
+        if let Some(window_id) = self
+            .iab_windows
+            .keys()
+            .copied()
+            .find(|window_id| target_ids::iab_window_submit(window_id.0) == target_id)
+        {
+            let can_submit = self
+                .iab_windows
+                .get(&window_id)
+                .is_some_and(|window| window.browser_ready() && !window.capture_pending());
+            if can_submit {
+                self.update_iab_window(window_id, IabWindowMessage::Submit);
+            }
+            return can_submit;
+        }
+        if let Some(window_id) = self
+            .iab_windows
+            .keys()
+            .copied()
+            .find(|window_id| target_ids::iab_window_close(window_id.0) == target_id)
+        {
+            self.close_iab_window(window_id);
+            return true;
+        }
+        if let Some(session_id) = self
+            .terminal_snapshots
+            .keys()
+            .find(|session_id| {
+                target_ids::coding_terminal_session(session_id.as_str()) == target_id
+            })
+            .cloned()
+        {
+            self.update_terminal(TerminalViewMessage::Reveal(session_id));
+            return true;
+        }
+        if let Some(snapshot) = self
+            .visible_terminal_snapshots()
+            .into_iter()
+            .find(|snapshot| {
+                target_ids::terminal_submit(snapshot.id.as_str()) == target_id
+                    || target_ids::terminal_interrupt(snapshot.id.as_str()) == target_id
+                    || target_ids::terminal_eof(snapshot.id.as_str()) == target_id
+                    || target_ids::terminal_copy(snapshot.id.as_str()) == target_id
+                    || target_ids::terminal_resize(snapshot.id.as_str()) == target_id
+                    || target_ids::terminal_terminate(snapshot.id.as_str()) == target_id
+                    || target_ids::terminal_new(snapshot.id.as_str()) == target_id
+            })
+        {
+            let message = if target_ids::terminal_submit(snapshot.id.as_str()) == target_id {
+                TerminalViewMessage::Submit(snapshot.id)
+            } else if target_ids::terminal_interrupt(snapshot.id.as_str()) == target_id {
+                TerminalViewMessage::Interrupt(snapshot.id)
+            } else if target_ids::terminal_eof(snapshot.id.as_str()) == target_id {
+                TerminalViewMessage::Eof(snapshot.id)
+            } else if target_ids::terminal_copy(snapshot.id.as_str()) == target_id {
+                TerminalViewMessage::CopyVisible(snapshot.id)
+            } else if target_ids::terminal_resize(snapshot.id.as_str()) == target_id {
+                let (rows, columns) = if snapshot.rows < 36 || snapshot.columns < 120 {
+                    (36, 120)
+                } else {
+                    (24, 80)
+                };
+                TerminalViewMessage::Resize(snapshot.id, rows, columns)
+            } else if target_ids::terminal_terminate(snapshot.id.as_str()) == target_id {
+                TerminalViewMessage::Terminate(snapshot.id)
+            } else {
+                TerminalViewMessage::NewSession(snapshot.scope)
+            };
+            self.update_terminal(message);
+            return true;
         }
         if settings_visible && self.settings_state.active_tab().as_str() == "extensions" {
             if target_id == target_ids::EXTENSIONS_SKILL_CREATE
@@ -9936,6 +15823,7 @@ impl PreviewProgram {
             if let Some(source) = self.hooks.as_ref().and_then(|overview| {
                 overview.sources.iter().find(|source| {
                     target_ids::extensions_hook_create(&source.id) == target_id
+                        || target_ids::extensions_hook_add_handler(&source.id) == target_id
                         || target_ids::extensions_hook_save(&source.id) == target_id
                         || target_ids::extensions_hook_toggle(&source.id) == target_id
                         || target_ids::extensions_hook_delete(&source.id) == target_id
@@ -9944,6 +15832,8 @@ impl PreviewProgram {
                 let source_id = source.id.clone();
                 let message = if target_ids::extensions_hook_create(&source_id) == target_id {
                     Message::CreateHookSource(source_id)
+                } else if target_ids::extensions_hook_add_handler(&source_id) == target_id {
+                    Message::AddHookHandler(source_id)
                 } else if target_ids::extensions_hook_save(&source_id) == target_id {
                     Message::SaveHookSource(source_id)
                 } else if target_ids::extensions_hook_toggle(&source_id) == target_id {
@@ -9952,6 +15842,18 @@ impl PreviewProgram {
                     Message::RequestDeleteHookSource(source_id)
                 };
                 self.update_message(message);
+                return true;
+            }
+            if let Some((source_id, index)) =
+                self.hook_drafts.iter().find_map(|(source_id, draft)| {
+                    let handler_count = parse_hook_handlers_draft(draft).ok()?.len();
+                    (0..handler_count).find_map(|index| {
+                        (target_ids::extensions_hook_remove_handler(source_id, index) == target_id)
+                            .then(|| (source_id.clone(), index))
+                    })
+                })
+            {
+                self.update_message(Message::RemoveHookHandler { source_id, index });
                 return true;
             }
             if let Some(source_id) = self.hook_delete_confirmation.clone() {
@@ -10103,6 +16005,130 @@ impl PreviewProgram {
                 })
                 .unwrap_or(false);
         }
+        if target_id == target_ids::COMPOSER_SUGGESTIONS_REFRESH {
+            self.refresh_conversation_suggestions(HostedWindowId::PRIMARY, true);
+            return true;
+        }
+        let main_suggestion_prompt = {
+            let suggestions = self
+                .main_conversation_draft
+                .as_ref()
+                .map(|draft| &draft.suggestions)
+                .unwrap_or(&self.conversation_suggestions);
+            suggestions
+                .visible_item_ids()
+                .find(|item_id| target_ids::composer_suggestion(item_id) == target_id)
+                .and_then(|item_id| suggestions.prompt_for(item_id))
+        };
+        if let Some(prompt) = main_suggestion_prompt {
+            self.apply_conversation_suggestion(HostedWindowId::PRIMARY, prompt);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_suggestions_refresh(popup.id.0) == target_id)
+                .then_some(popup.id)
+        }) {
+            self.refresh_conversation_suggestions(window_id, true);
+            return true;
+        }
+        if let Some((window_id, prompt)) = self.task_popups.values().find_map(|popup| {
+            popup
+                .conversation_suggestions
+                .visible_item_ids()
+                .find(|item_id| target_ids::task_popup_suggestion(popup.id.0, item_id) == target_id)
+                .and_then(|item_id| {
+                    popup
+                        .conversation_suggestions
+                        .prompt_for(item_id)
+                        .map(|prompt| (popup.id, prompt))
+                })
+        }) {
+            self.apply_conversation_suggestion(window_id, prompt);
+            return true;
+        }
+        if let Some((window_id, event_id)) =
+            std::iter::once((HostedWindowId::PRIMARY, self.task_session.as_ref()))
+                .chain(
+                    self.task_popups
+                        .values()
+                        .map(|popup| (popup.id, popup.session.as_ref())),
+                )
+                .find_map(|(window_id, session)| {
+                    session?.timeline.iter().find_map(|event| {
+                        (event.can_retry
+                            && target_ids::timeline_retry(window_id.0, &event.id) == target_id)
+                            .then(|| (window_id, event.id.clone()))
+                    })
+                })
+        {
+            self.retry_timeline_event(window_id, &event_id);
+            return true;
+        }
+        if let Some(event_id) = self.task_session.as_ref().and_then(|session| {
+            session.timeline.iter().find_map(|event| {
+                (event.batch_apply.is_some()
+                    && target_ids::timeline_apply_suggestion(HostedWindowId::PRIMARY.0, &event.id)
+                        == target_id)
+                    .then(|| event.id.clone())
+            })
+        }) {
+            self.apply_timeline_suggestion(HostedWindowId::PRIMARY, &event_id);
+            return true;
+        }
+        if let Some((window_id, event_id)) = self.task_popups.values().find_map(|popup| {
+            popup.session.as_ref().and_then(|session| {
+                session.timeline.iter().find_map(|event| {
+                    (event.batch_apply.is_some()
+                        && target_ids::timeline_apply_suggestion(popup.id.0, &event.id)
+                            == target_id)
+                        .then(|| (popup.id, event.id.clone()))
+                })
+            })
+        }) {
+            self.apply_timeline_suggestion(window_id, &event_id);
+            return true;
+        }
+        if let Some((window_id, event_id, mode)) =
+            std::iter::once((HostedWindowId::PRIMARY, self.task_session.as_ref()))
+                .chain(
+                    self.task_popups
+                        .values()
+                        .map(|popup| (popup.id, popup.session.as_ref())),
+                )
+                .find_map(|(window_id, session)| {
+                    session?.timeline.iter().find_map(|event| {
+                        event.session_branch_turn_id.as_ref()?;
+                        if target_ids::timeline_continue(window_id.0, &event.id) == target_id {
+                            Some((
+                                window_id,
+                                event.id.clone(),
+                                DesktopSessionBranchMode::Continue,
+                            ))
+                        } else if target_ids::timeline_fork(window_id.0, &event.id) == target_id {
+                            Some((window_id, event.id.clone(), DesktopSessionBranchMode::Fork))
+                        } else {
+                            None
+                        }
+                    })
+                })
+        {
+            self.set_timeline_session_branch(window_id, &event_id, mode);
+            return true;
+        }
+        if target_ids::session_branch_clear(HostedWindowId::PRIMARY.0) == target_id
+            && self.pending_session_branch.is_some()
+        {
+            self.pending_session_branch = None;
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (popup.pending_session_branch.is_some()
+                && target_ids::session_branch_clear(popup.id.0) == target_id)
+                .then_some(popup.id)
+        }) {
+            self.clear_session_branch(window_id);
+            return true;
+        }
         if let Some((event_id, value)) = self.task_session.as_ref().and_then(|session| {
             session.timeline.iter().find_map(|event| {
                 (target_ids::timeline_copy(&event.id) == target_id)
@@ -10121,21 +16147,63 @@ impl PreviewProgram {
             });
             return true;
         }
-        if let Some(name) = self.slash_commands.iter().find_map(|result| {
+        if let Some(command) = self.slash_commands.iter().find_map(|result| {
             (target_ids::composer_slash_command(&result.command.name) == target_id)
-                .then(|| result.command.name.clone())
+                .then(|| result.command.clone())
         }) {
-            self.update_message(Message::SelectSlashCommand(name));
+            self.update_message(Message::SelectSlashCommand(command));
             return true;
         }
-        if let Some((window_id, name)) = self.task_popups.values().find_map(|popup| {
+        if let Some((window_id, command)) = self.task_popups.values().find_map(|popup| {
             popup.slash_commands.iter().find_map(|result| {
                 (target_ids::task_popup_slash_command(popup.id.0, &result.command.name)
                     == target_id)
-                    .then(|| (popup.id, result.command.name.clone()))
+                    .then(|| (popup.id, result.command.clone()))
             })
         }) {
-            self.update_message(Message::TaskPopupSelectSlashCommand { window_id, name });
+            self.update_message(Message::TaskPopupSelectSlashCommand { window_id, command });
+            return true;
+        }
+        let review_windows = std::iter::once((
+            HostedWindowId::PRIMARY,
+            self.pending_review_slash_workflow.as_ref(),
+        ))
+        .chain(
+            self.task_popups
+                .values()
+                .map(|popup| (popup.id, popup.pending_review_slash_workflow.as_ref())),
+        )
+        .filter_map(|(window_id, pending)| pending.cloned().map(|pending| (window_id, pending)))
+        .collect::<Vec<_>>();
+        if let Some((window_id, kind)) = review_windows.iter().find_map(|(window_id, _)| {
+            [
+                PendingReviewTargetKind::UncommittedChanges,
+                PendingReviewTargetKind::BaseBranch,
+                PendingReviewTargetKind::Commit,
+            ]
+            .into_iter()
+            .find(|kind| {
+                target_ids::review_workflow_target(window_id.0, pending_review_target_id(*kind))
+                    == target_id
+            })
+            .map(|kind| (*window_id, kind))
+        }) {
+            self.select_review_workflow_target(window_id, kind);
+            return true;
+        }
+        if let Some(window_id) = review_windows.iter().find_map(|(window_id, pending)| {
+            (target_ids::review_workflow_submit(window_id.0) == target_id
+                && (pending.target_kind == PendingReviewTargetKind::UncommittedChanges
+                    || !pending.target_value.trim().is_empty()))
+            .then_some(*window_id)
+        }) {
+            self.submit_review_slash_workflow(window_id);
+            return true;
+        }
+        if let Some(window_id) = review_windows.iter().find_map(|(window_id, _)| {
+            (target_ids::review_workflow_cancel(window_id.0) == target_id).then_some(*window_id)
+        }) {
+            self.clear_review_slash_workflow(window_id);
             return true;
         }
         if let Some(task_id) = self
@@ -10218,11 +16286,26 @@ impl PreviewProgram {
             });
             return true;
         }
+        if target_id == target_ids::NEW_CONVERSATION
+            && !self.settings_open
+            && !self.automations_open
+        {
+            self.open_main_conversation_draft();
+            return true;
+        }
+        if target_id == target_ids::NEW_CONVERSATION_CLOSE && self.main_conversation_draft.is_some()
+        {
+            self.close_main_conversation_draft();
+            return true;
+        }
         if target_id == target_ids::CONVERSATION_STATUS_OPEN {
             let already_open = self.conversation_status_open;
             self.refresh_conversation_status();
             self.pending_window_commands
-                .push(conversation_status_window_command(already_open));
+                .push(conversation_status_window_command(
+                    already_open,
+                    self.conversation_status_window,
+                ));
             return true;
         }
         if target_id == target_ids::CONVERSATION_STATUS_CLOSE && self.conversation_status_open {
@@ -10232,11 +16315,35 @@ impl PreviewProgram {
                 .push(HostedWindowCommand::Close(CONVERSATION_STATUS_WINDOW_ID));
             return true;
         }
+        if target_id == target_ids::CONVERSATION_STATUS_PIN && self.conversation_status_open {
+            self.update_message(Message::ToggleConversationStatusAlwaysOnTop);
+            return true;
+        }
+        if target_id == target_ids::CONVERSATION_STATUS_OPACITY && self.conversation_status_open {
+            self.update_message(Message::ToggleConversationStatusOpacityPanel);
+            return true;
+        }
+        if target_id == target_ids::CONVERSATION_STATUS_NEW_CHAT && self.conversation_status_open {
+            self.update_message(Message::OpenConversationStatusNewChat);
+            return true;
+        }
         if target_id == target_ids::TASK_POPUP_OPEN
             && self.selected_task.is_some()
             && self.project_surface == ProjectSurface::Tasks
         {
             self.open_selected_task_popup();
+            return true;
+        }
+        if target_id == target_ids::TASK_POPUP_ASK_CHILD
+            && self.selected_task.is_some()
+            && self.project_surface == ProjectSurface::Tasks
+        {
+            self.open_child_question_popup(
+                HostedWindowId::PRIMARY,
+                self.selected_task
+                    .clone()
+                    .expect("selected task was checked"),
+            );
             return true;
         }
         if target_id == target_ids::TASK_POPUP_MOVE_SELECTED
@@ -10262,9 +16369,110 @@ impl PreviewProgram {
             return true;
         }
         if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_focus_main(popup.id.0) == target_id).then_some(popup.id)
+        }) {
+            self.focus_task_popup_main(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_new_chat(popup.id.0) == target_id).then_some(popup.id)
+        }) {
+            self.open_task_popup_new_chat(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
             (target_ids::task_popup_move_to_main(popup.id.0) == target_id).then_some(popup.id)
         }) {
             self.move_task_popup_to_main(window_id);
+            return true;
+        }
+        if let Some((window_id, parent_task_id)) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_ask_child(popup.id.0) == target_id)
+                .then(|| {
+                    popup
+                        .active_task_id
+                        .clone()
+                        .map(|task_id| (popup.id, task_id))
+                })
+                .flatten()
+        }) {
+            self.open_child_question_popup(window_id, parent_task_id);
+            return true;
+        }
+        if let Some(window_id) = self
+            .markdown_image_previews
+            .keys()
+            .copied()
+            .find(|window_id| target_ids::markdown_image_close(window_id.0) == target_id)
+        {
+            self.markdown_image_previews.remove(&window_id);
+            return true;
+        }
+        let markdown_image_retry_target = std::iter::once(HostedWindowId::PRIMARY)
+            .chain(self.task_popups.keys().copied())
+            .find_map(|window_id| {
+                self.markdown_image_items_for_window(window_id)
+                    .into_iter()
+                    .find(|image| {
+                        matches!(
+                            self.markdown_images.get(&image.source),
+                            None | Some(MarkdownImageLoadState::Failed)
+                                | Some(MarkdownImageLoadState::Pending { requested: false })
+                        ) && target_ids::markdown_image_retry(window_id.0, &image.source)
+                            == target_id
+                    })
+                    .map(|image| image.source)
+            });
+        if let Some(source) = markdown_image_retry_target {
+            self.request_markdown_image_load(&source);
+            return true;
+        }
+        let markdown_image_target = std::iter::once(HostedWindowId::PRIMARY)
+            .chain(self.task_popups.keys().copied())
+            .find_map(|window_id| {
+                self.markdown_image_items_for_window(window_id)
+                    .into_iter()
+                    .find(|image| {
+                        matches!(
+                            self.markdown_images.get(&image.source),
+                            Some(MarkdownImageLoadState::Ready(_))
+                        ) && target_ids::markdown_image(window_id.0, &image.source) == target_id
+                    })
+                    .map(|image| (window_id, image))
+            });
+        if let Some((window_id, image)) = markdown_image_target {
+            self.update_message(Message::OpenMarkdownImage { window_id, image });
+            return true;
+        }
+        if let Some((window_id, action)) =
+            self.timeline_text_selections
+                .iter()
+                .find_map(|(window_id, selection)| {
+                    [
+                        (
+                            target_ids::timeline_selection_copy(window_id.0, &selection.event_id),
+                            0_u8,
+                        ),
+                        (
+                            target_ids::timeline_selection_quote(window_id.0, &selection.event_id),
+                            1_u8,
+                        ),
+                        (
+                            target_ids::timeline_selection_ask(window_id.0, &selection.event_id),
+                            2_u8,
+                        ),
+                    ]
+                    .into_iter()
+                    .find_map(|(candidate, action)| {
+                        (candidate == target_id).then_some((*window_id, action))
+                    })
+                })
+        {
+            match action {
+                0 => self.copy_timeline_selection(window_id),
+                1 => self.quote_timeline_selection(window_id),
+                _ => self.ask_timeline_selection_in_popup(window_id),
+            }
             return true;
         }
         let main_pane_ids = self.panel_layout.pane_ids();
@@ -10421,9 +16629,74 @@ impl PreviewProgram {
             return true;
         }
         if let Some(window_id) = self.task_popups.values().find_map(|popup| {
-            (target_ids::task_popup_send(popup.id.0) == target_id).then_some(popup.id)
+            (popup
+                .draft
+                .as_ref()
+                .is_some_and(|draft| draft.project_id.is_some())
+                && target_ids::task_popup_worktree(popup.id.0) == target_id)
+                .then_some(popup.id)
+        }) {
+            self.cycle_draft_worktree(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (popup
+                .draft
+                .as_ref()
+                .is_some_and(|draft| draft.project_id.is_some())
+                && matches!(popup.draft_worktree, DraftWorktreeSelection::Existing(_))
+                && target_ids::task_popup_worktree_pick(popup.id.0) == target_id)
+                .then_some(popup.id)
+        }) {
+            self.pick_draft_worktree(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (popup
+                .active_task_id
+                .as_ref()
+                .is_some_and(|task_id| self.pending_initial_worktrees.contains_key(task_id))
+                && target_ids::task_popup_worktree_retry(popup.id.0) == target_id)
+                .then_some(popup.id)
+        }) {
+            self.retry_initial_worktree(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_route_apply(popup.id.0) == target_id).then_some(popup.id)
+        }) {
+            self.apply_prompt_route_workflow(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_route_dismiss(popup.id.0) == target_id).then_some(popup.id)
+        }) {
+            self.dismiss_prompt_route_workflow(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_optimize_prompt(popup.id.0) == target_id).then_some(popup.id)
+        }) {
+            self.start_prompt_optimization(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_send(popup.id.0) == target_id
+                && popup
+                    .composer
+                    .as_ref()
+                    .is_some_and(composer_has_turn_payload)
+                && popup.pending_review_slash_workflow.is_none()
+                && !matches!(popup.draft_worktree, DraftWorktreeSelection::Existing(None)))
+            .then_some(popup.id)
         }) {
             self.submit_task_popup_turn(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_compact_context(popup.id.0) == target_id).then_some(popup.id)
+        }) {
+            self.compact_task_popup_context(window_id);
             return true;
         }
         if let Some(window_id) = self.task_popups.values().find_map(|popup| {
@@ -10438,9 +16711,19 @@ impl PreviewProgram {
             .find(|entry| target_ids::conversation_status_task(entry.task_id.as_str()) == target_id)
             .map(|entry| entry.task_id.clone())
         {
-            self.navigate(DesktopNavigationTarget::Task(task_id));
-            self.pending_window_commands
-                .push(HostedWindowCommand::Focus(HostedWindowId::PRIMARY));
+            self.open_task_popup_with_transfer(task_id, false);
+            return true;
+        }
+        if let Some(task_id) = self
+            .conversation_status_entries
+            .iter()
+            .find(|entry| {
+                entry.runtime_phase != "idle"
+                    && target_ids::conversation_status_stop(entry.task_id.as_str()) == target_id
+            })
+            .map(|entry| entry.task_id.clone())
+        {
+            self.stop_conversation_status_task(task_id);
             return true;
         }
         let project_reorder = (!self.settings_open && !self.automations_open)
@@ -10823,6 +17106,32 @@ impl PreviewProgram {
             {
                 self.open_coding_tools();
             }
+            target_ids::IAB_OPEN
+                if !self.settings_open
+                    && !self.automations_open
+                    && self.selected_task.is_some() =>
+            {
+                self.open_iab();
+            }
+            target_ids::IAB_NAVIGATE
+                if self.inspector_surface == InspectorSurface::Iab
+                    && self.inspector_region_is_visible() =>
+            {
+                self.update_iab(IabPanelMessage::Navigate);
+            }
+            target_ids::IAB_OPEN_WINDOW
+                if self.inspector_surface == InspectorSurface::Iab
+                    && self.inspector_region_is_visible()
+                    && self.selected_task.is_some() =>
+            {
+                self.open_iab_window();
+            }
+            target_ids::IAB_CLOSE
+                if self.inspector_surface == InspectorSurface::Iab
+                    && self.inspector_region_is_visible() =>
+            {
+                self.close_inspector_dock();
+            }
             target_ids::CODING_TOOLS_REFRESH
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
@@ -10835,9 +17144,32 @@ impl PreviewProgram {
                     && self.inspector_region_is_visible()
                     && !self.coding_busy
                     && !self.coding_query.trim().is_empty()
-                    && self.selected_project_workspace().is_some() =>
+                    && (self.selected_project_workspace().is_some()
+                        || (self.coding_search_all_projects
+                            && self.has_searchable_project_workspace())) =>
             {
                 self.search_coding_tools();
+            }
+            target_ids::CODING_TOOLS_SEARCH_MODE
+                if self.inspector_surface == InspectorSurface::CodingTools
+                    && self.inspector_region_is_visible()
+                    && !self.coding_busy =>
+            {
+                self.update_message(Message::CycleCodingSearchMode);
+            }
+            target_ids::CODING_TOOLS_SEARCH_SCOPE
+                if self.inspector_surface == InspectorSurface::CodingTools
+                    && self.inspector_region_is_visible()
+                    && !self.coding_busy =>
+            {
+                self.update_message(Message::ToggleCodingSearchScope);
+            }
+            target_ids::CODING_TOOLS_DIFF_SCOPE
+                if self.inspector_surface == InspectorSurface::CodingTools
+                    && self.inspector_region_is_visible()
+                    && !self.coding_busy =>
+            {
+                self.update_message(Message::CycleCodingGitDiffScope);
             }
             target_ids::CODING_TOOLS_CLOSE
                 if self.inspector_surface == InspectorSurface::CodingTools
@@ -10850,21 +17182,85 @@ impl PreviewProgram {
                     && self.inspector_region_is_visible()
                     && self.selected_project_workspace().is_some() =>
             {
-                self.open_project_workspace(false);
+                self.open_project_workspace(ExternalWorkspaceTarget::FileManager);
+            }
+            target_ids::CODING_TOOLS_OPEN_CODE_EDITOR
+                if self.inspector_surface == InspectorSurface::CodingTools
+                    && self.inspector_region_is_visible()
+                    && self.selected_project_workspace().is_some() =>
+            {
+                self.open_project_workspace(ExternalWorkspaceTarget::CodeEditor);
             }
             target_ids::CODING_TOOLS_OPEN_TERMINAL
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
                     && self.selected_project_workspace().is_some() =>
             {
-                self.open_project_workspace(true);
+                self.open_project_workspace(ExternalWorkspaceTarget::Terminal);
+            }
+            target_ids::CODING_TOOLS_NEW_TERMINAL
+                if self.inspector_surface == InspectorSurface::CodingTools
+                    && self.inspector_region_is_visible()
+                    && self.selected_project_workspace().is_some() =>
+            {
+                self.open_native_project_terminal();
+            }
+            target
+                if target.starts_with(target_ids::CODING_TOOLS_TASK_PREFIX)
+                    && self.inspector_surface == InspectorSurface::CodingTools
+                    && self.inspector_region_is_visible()
+                    && !self.coding_busy =>
+            {
+                let task_id = self.coding_project_tasks.as_ref().and_then(|catalog| {
+                    catalog
+                        .tasks
+                        .iter()
+                        .find(|task| target_ids::coding_project_task(&task.id) == target)
+                        .map(|task| task.id.clone())
+                });
+                if let Some(task_id) = task_id {
+                    self.run_project_task(task_id);
+                }
             }
             target_ids::CODING_TOOLS_SAVE_MEMORY
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
+                    && !self.coding_search_all_projects
                     && self.coding_search.is_some() =>
             {
                 self.save_coding_search_to_memory();
+            }
+            target
+                if target.starts_with(target_ids::CODING_TOOLS_SEARCH_HIT_PREFIX)
+                    && self.inspector_surface == InspectorSurface::CodingTools
+                    && self.inspector_region_is_visible()
+                    && !self.coding_busy =>
+            {
+                if let Some(hit) = self.coding_search.as_ref().and_then(|result| {
+                    result
+                        .hits
+                        .iter()
+                        .find(|hit| {
+                            let hit_target = if self.coding_search_all_projects {
+                                target_ids::coding_project_search_hit(
+                                    hit.project_id.as_str(),
+                                    &hit.hit.path,
+                                    hit.hit.start_line,
+                                    hit.hit.start_character,
+                                )
+                            } else {
+                                target_ids::coding_search_hit(
+                                    &hit.hit.path,
+                                    hit.hit.start_line,
+                                    hit.hit.start_character,
+                                )
+                            };
+                            hit_target == target
+                        })
+                        .cloned()
+                }) {
+                    self.open_coding_search_hit(hit);
+                }
             }
             target_ids::ARCHITECTURE_OPEN
                 if !self.settings_open
@@ -10999,6 +17395,9 @@ impl PreviewProgram {
             target_ids::SETTINGS_APPEARANCE if settings_visible => {
                 self.update_message(Message::SelectSettingsTab(SettingsTabId::new("appearance")));
             }
+            target_ids::SETTINGS_PROJECT if settings_visible => {
+                self.update_message(Message::SelectSettingsTab(SettingsTabId::new("project")));
+            }
             target_ids::SETTINGS_PROVIDER if settings_visible => {
                 self.update_message(Message::SelectSettingsTab(SettingsTabId::new("provider")));
             }
@@ -11020,10 +17419,50 @@ impl PreviewProgram {
             target_ids::SETTINGS_DATA if settings_visible => {
                 self.update_message(Message::SelectSettingsTab(SettingsTabId::new("data")));
             }
+            target_ids::SETTINGS_ABOUT if settings_visible => {
+                self.update_message(Message::SelectSettingsTab(SettingsTabId::new("about")));
+            }
+            target_ids::PROJECT_WORKTREE_MODE
+                if settings_visible && self.settings_state.active_tab().as_str() == "project" =>
+            {
+                self.cycle_project_worktree_mode();
+            }
+            target_ids::PROJECT_SETTINGS_PICK_CLONE_PARENT
+                if settings_visible && self.settings_state.active_tab().as_str() == "project" =>
+            {
+                self.pick_project_clone_parent();
+            }
+            target_ids::PROJECT_WORKTREE_PICK_PARENT
+                if settings_visible && self.settings_state.active_tab().as_str() == "project" =>
+            {
+                self.pick_project_worktree_parent();
+            }
+            target_ids::PROJECT_WORKTREE_CLEANUP
+                if settings_visible && self.settings_state.active_tab().as_str() == "project" =>
+            {
+                self.project_settings.worktree.cleanup_on_archive =
+                    !self.project_settings.worktree.cleanup_on_archive;
+                self.project_settings_error = None;
+            }
+            target_ids::PROJECT_SETTINGS_SAVE
+                if settings_visible && self.settings_state.active_tab().as_str() == "project" =>
+            {
+                self.save_project_preferences();
+            }
             target_ids::AGENT_SUBAGENT_MODE
                 if settings_visible && self.settings_state.active_tab().as_str() == "agent" =>
             {
                 self.toggle_agent_interaction_setting(AgentInteractionToggle::Subagents);
+            }
+            target_ids::AGENT_NON_INTERRUPT_MODE
+                if settings_visible && self.settings_state.active_tab().as_str() == "agent" =>
+            {
+                self.toggle_agent_interaction_setting(AgentInteractionToggle::NonInterrupt);
+            }
+            target_ids::AGENT_DEBUG_MODE
+                if settings_visible && self.settings_state.active_tab().as_str() == "agent" =>
+            {
+                self.toggle_agent_interaction_setting(AgentInteractionToggle::Debug);
             }
             target_ids::AGENT_AUTO_TURN
                 if settings_visible && self.settings_state.active_tab().as_str() == "agent" =>
@@ -11132,6 +17571,22 @@ impl PreviewProgram {
             {
                 self.set_theme(ThemeMode::Dark);
             }
+            target_ids::SIDEBAR_MODE_GROUPED
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "appearance" =>
+            {
+                self.update_message(Message::SetSidebarDisplayMode(
+                    NativeSidebarDisplayMode::Grouped,
+                ));
+            }
+            target_ids::SIDEBAR_MODE_UNIFIED
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "appearance" =>
+            {
+                self.update_message(Message::SetSidebarDisplayMode(
+                    NativeSidebarDisplayMode::Unified,
+                ));
+            }
             target_ids::PROVIDER_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
@@ -11158,6 +17613,110 @@ impl PreviewProgram {
                         || self.provider_runtime_settings.anthropic_endpoint.is_some()) =>
             {
                 self.reset_provider_runtime_settings();
+            }
+            target_ids::ASSISTANT_AI_SAVE
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy
+                    && self.provider_ai_settings.assistant_dirty() =>
+            {
+                self.save_assistant_ai_configuration();
+            }
+            target_ids::ASSISTANT_AI_CLEAR_SECRET
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy
+                    && self.provider_ai_settings.assistant_secret_configured =>
+            {
+                self.clear_assistant_ai_secret();
+            }
+            target_ids::ASSISTANT_AI_ADD_MODEL
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy
+                    && !self.assistant_ai_new_model_id.trim().is_empty() =>
+            {
+                self.update_message(Message::AddAssistantAiModel);
+            }
+            target_ids::ASSISTANT_AI_FETCH_MODELS
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy =>
+            {
+                self.start_assistant_ai_models_fetch();
+            }
+            target_ids::ASSISTANT_AI_TEST_CONNECTION
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.assistant_ai_probe_busy =>
+            {
+                self.start_assistant_ai_connection_test();
+            }
+            target_ids::FEATURE_MODEL_SAVE
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && self.provider_ai_settings.model_features_dirty() =>
+            {
+                self.save_model_feature_settings();
+            }
+            target_ids::FEATURE_CUSTOM_PRESET_ADD
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy =>
+            {
+                self.update_message(Message::AddCustomPreset);
+            }
+            target_id
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && target_ids::parse_feature_preset_effort(target_id).is_some() =>
+            {
+                let preset_id = target_ids::parse_feature_preset_effort(target_id)
+                    .expect("guarded feature preset effort target");
+                if self.provider_ai_settings.has_preset(preset_id) {
+                    self.provider_ai_settings.cycle_preset_effort(preset_id);
+                    self.provider_error = None;
+                }
+            }
+            target_id
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && target_ids::parse_feature_preset_remove(target_id).is_some() =>
+            {
+                let preset_id = target_ids::parse_feature_preset_remove(target_id)
+                    .expect("guarded custom preset remove target");
+                if self
+                    .provider_ai_settings
+                    .custom_presets()
+                    .any(|preset| preset.id == preset_id)
+                {
+                    self.provider_ai_settings.remove_custom_preset(preset_id);
+                    self.provider_error = None;
+                }
+            }
+            target_ids::CONVERSATION_SUGGESTIONS_ENABLE
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && !self.provider_ai_settings.conversation_suggestions_enabled() =>
+            {
+                self.set_conversation_suggestions_enabled(true);
+            }
+            target_ids::CONVERSATION_SUGGESTIONS_DISABLE
+                if settings_visible
+                    && self.settings_state.active_tab().as_str() == "provider"
+                    && !self.provider_busy
+                    && self.provider_ai_settings.conversation_suggestions_enabled() =>
+            {
+                self.set_conversation_suggestions_enabled(false);
             }
             target_ids::PROVIDER_REFRESH
                 if settings_visible
@@ -11271,6 +17830,11 @@ impl PreviewProgram {
             {
                 self.update_message(Message::SaveShellShortcut);
             }
+            target_ids::DESKTOP_SHORTCUT
+                if settings_visible && self.settings_state.active_tab().as_str() == "desktop" =>
+            {
+                self.update_message(Message::BeginShellShortcutCapture);
+            }
             target_ids::DESKTOP_SHORTCUT_CLEAR
                 if settings_visible && self.settings_state.active_tab().as_str() == "desktop" =>
             {
@@ -11283,6 +17847,20 @@ impl PreviewProgram {
                     && !self.update_busy =>
             {
                 self.update_message(Message::CheckForUpdate);
+            }
+            target_ids::DESKTOP_UPDATE_PROMPT_CONFIRM
+                if self.update_prompt_is_visible() && !self.update_prompt_is_busy() =>
+            {
+                if matches!(&self.update_state, DesktopUpdateState::Available { .. }) {
+                    self.update_message(Message::InstallUpdate);
+                } else {
+                    self.update_message(Message::CheckForUpdate);
+                }
+            }
+            target_ids::DESKTOP_UPDATE_PROMPT_DISMISS
+                if self.update_prompt_is_visible() && !self.update_prompt_is_busy() =>
+            {
+                self.update_message(Message::DismissUpdatePrompt);
             }
             target_ids::DESKTOP_UPDATE_INSTALL
                 if settings_visible
@@ -11326,6 +17904,20 @@ impl PreviewProgram {
                     && !self.task_title_edit.trim().is_empty() =>
             {
                 self.save_task();
+            }
+            target_ids::TASK_DEPENDENCY_TARGET
+                if self.selected_task.is_some()
+                    && !self.composer_is_locked()
+                    && self.effective_task_dependency_target().is_some() =>
+            {
+                self.cycle_task_dependency();
+            }
+            target_ids::TASK_DEPENDENCY_TOGGLE
+                if self.selected_task.is_some()
+                    && !self.composer_is_locked()
+                    && self.effective_task_dependency_target().is_some() =>
+            {
+                self.toggle_task_dependency();
             }
             target_ids::TASK_STATUS
                 if self.selected_task.is_some() && !self.composer_is_locked() =>
@@ -11539,15 +18131,92 @@ impl PreviewProgram {
             target_ids::COMPOSER_PERMISSION if !self.composer_input_is_locked() => {
                 self.update_message(Message::CyclePermission);
             }
+            target_ids::COMPOSER_WORKTREE
+                if self
+                    .main_conversation_draft
+                    .as_ref()
+                    .is_some_and(|draft| draft.task.project_id.is_some()) =>
+            {
+                self.cycle_draft_worktree(HostedWindowId::PRIMARY);
+            }
+            target_ids::COMPOSER_WORKTREE_PICK
+                if self.main_conversation_draft.as_ref().is_some_and(|draft| {
+                    draft.task.project_id.is_some()
+                        && matches!(draft.worktree, DraftWorktreeSelection::Existing(_))
+                }) =>
+            {
+                self.pick_draft_worktree(HostedWindowId::PRIMARY);
+            }
+            target_ids::COMPOSER_WORKTREE_RETRY
+                if self.selected_task.as_ref().is_some_and(|task_id| {
+                    self.pending_initial_worktrees.contains_key(task_id)
+                }) =>
+            {
+                self.retry_initial_worktree(HostedWindowId::PRIMARY);
+            }
+            target_ids::COMPOSER_OPTIMIZE_PROMPT
+                if !self.composer_is_locked()
+                    && self
+                        .main_surface_composer()
+                        .is_some_and(|composer| !composer.content.trim().is_empty())
+                    && !self.prompt_optimization_is_busy(
+                        HostedWindowId::PRIMARY,
+                        self.main_conversation_draft
+                            .as_ref()
+                            .map(|draft| &draft.task.id)
+                            .or(self.selected_task.as_ref()),
+                    ) =>
+            {
+                self.start_prompt_optimization(HostedWindowId::PRIMARY);
+            }
+            target_ids::COMPOSER_ROUTE_APPLY
+                if self
+                    .prompt_route_suggestion(
+                        HostedWindowId::PRIMARY,
+                        self.main_conversation_draft
+                            .as_ref()
+                            .map(|draft| &draft.task.id)
+                            .or(self.selected_task.as_ref()),
+                    )
+                    .is_some_and(|route| {
+                        self.main_surface_composer()
+                            .and_then(|composer| composer.workflow.as_ref())
+                            != route.workflow.as_ref()
+                    }) =>
+            {
+                self.apply_prompt_route_workflow(HostedWindowId::PRIMARY);
+            }
+            target_ids::COMPOSER_ROUTE_DISMISS
+                if self
+                    .prompt_route_suggestion(
+                        HostedWindowId::PRIMARY,
+                        self.main_conversation_draft
+                            .as_ref()
+                            .map(|draft| &draft.task.id)
+                            .or(self.selected_task.as_ref()),
+                    )
+                    .is_some()
+                    || self
+                        .main_surface_composer()
+                        .is_some_and(|composer| composer.workflow.is_some()) =>
+            {
+                self.dismiss_prompt_route_workflow(HostedWindowId::PRIMARY);
+            }
             target_ids::COMPOSER_SEND
                 if !self.settings_open
                     && !self.automations_open
-                    && self.selected_task.is_some()
-                    && self.composer.as_ref().is_some_and(|composer| {
-                        !composer.content.trim().is_empty() || !composer.attachments.is_empty()
+                    && (self.selected_task.is_some() || self.main_conversation_draft.is_some())
+                    && self
+                        .main_surface_composer()
+                        .is_some_and(composer_has_turn_payload)
+                    && self.main_conversation_draft.as_ref().is_none_or(|draft| {
+                        !matches!(draft.worktree, DraftWorktreeSelection::Existing(None))
                     }) =>
             {
                 self.submit_turn();
+            }
+            target_ids::COMPOSER_COMPACT_CONTEXT if !self.composer_is_locked() => {
+                self.compact_context();
             }
             target_ids::COMPOSER_INTERRUPT
                 if !self.settings_open
@@ -11577,6 +18246,13 @@ impl PreviewProgram {
                 }
                 if !self.settings_open && !self.automations_open && target_id == target_ids::INBOX {
                     self.update_message(Message::SelectInbox);
+                    return true;
+                }
+                if !self.settings_open
+                    && !self.automations_open
+                    && target_id == target_ids::PROJECTS_LIST
+                {
+                    self.update_message(Message::OpenProjectsOverview);
                     return true;
                 }
                 let project_target = (!self.settings_open && !self.automations_open)
@@ -11891,6 +18567,7 @@ impl PreviewProgram {
                         }
                     }
                     if let Some(session) = &self.task_session {
+                        let session = self.task_session_with_debug_overlay(session);
                         if let Some((request_id, approved)) =
                             session.pending.iter().find_map(|pending| {
                                 (pending.status == PendingProjectionStatus::Open
@@ -11914,6 +18591,34 @@ impl PreviewProgram {
                             self.respond_approval(request_id, approved);
                             return true;
                         }
+                        if let Some((request_id, accepted)) =
+                            session.pending.iter().find_map(|pending| {
+                                (pending.status == PendingProjectionStatus::Open
+                                    && pending.kind == TITLE_UPDATE_ACTION_KIND)
+                                    .then(|| {
+                                        if target_ids::title_update_accept(&pending.request_id)
+                                            == target_id
+                                        {
+                                            Some((pending.request_id.clone(), true))
+                                        } else if target_ids::title_update_decline(
+                                            &pending.request_id,
+                                        ) == target_id
+                                        {
+                                            Some((pending.request_id.clone(), false))
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .flatten()
+                            })
+                        {
+                            self.respond_title_update_review(
+                                HostedWindowId::PRIMARY,
+                                request_id,
+                                accepted,
+                            );
+                            return true;
+                        }
                         if let Some((request_id, decision)) =
                             session.pending.iter().find_map(|pending| {
                                 (pending.status == PendingProjectionStatus::Open
@@ -11933,6 +18638,49 @@ impl PreviewProgram {
                                 && pending_debug_cancels_turn(pending, target_id)
                         }) {
                             self.interrupt_turn();
+                            return true;
+                        }
+                        let tool_consent = session.pending.iter().find_map(|pending| {
+                            if pending.status != PendingProjectionStatus::Open
+                                || pending.kind != "tool_consent"
+                            {
+                                return None;
+                            }
+                            let draft = tool_consent_draft(
+                                pending,
+                                self.tool_consent_drafts.get(&pending.request_id),
+                            );
+                            if target_ids::tool_consent_allow(
+                                HostedWindowId::PRIMARY.0,
+                                &pending.request_id,
+                            ) == target_id
+                                && (DesktopToolConsent::from_payload(&pending.payload)
+                                    .ok()
+                                    .and_then(|consent| consent.editable_command())
+                                    .is_none()
+                                    || !draft.command.trim().is_empty())
+                            {
+                                Some((
+                                    pending.request_id.clone(),
+                                    DesktopToolConsentDecision::Allow,
+                                ))
+                            } else if target_ids::tool_consent_deny(
+                                HostedWindowId::PRIMARY.0,
+                                &pending.request_id,
+                            ) == target_id
+                                && !draft.message.trim().is_empty()
+                            {
+                                Some((pending.request_id.clone(), DesktopToolConsentDecision::Deny))
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some((request_id, decision)) = tool_consent {
+                            self.respond_tool_consent(
+                                HostedWindowId::PRIMARY,
+                                request_id,
+                                decision,
+                            );
                             return true;
                         }
                         let mcp_action = session.pending.iter().find_map(|pending| {
@@ -11978,29 +18726,44 @@ impl PreviewProgram {
                             }
                             return true;
                         }
+                        if let Some((request_id, action)) =
+                            session.pending.iter().find_map(|pending| {
+                                (pending.status == PendingProjectionStatus::Open
+                                    && pending.kind == "ask_user")
+                                    .then(|| {
+                                        ask_user_debug_action(
+                                            pending,
+                                            self.ask_user_drafts.get(&pending.request_id),
+                                            target_id,
+                                        )
+                                        .map(|action| (pending.request_id.clone(), action))
+                                    })
+                                    .flatten()
+                            })
+                        {
+                            self.update_ask_user_draft(HostedWindowId::PRIMARY, request_id, action);
+                            return true;
+                        }
                         if let Some((request_id, accepted, response)) =
                             session.pending.iter().find_map(|pending| {
                                 (pending.status == PendingProjectionStatus::Open
-                                    && matches!(
-                                        pending.kind.as_str(),
-                                        "ask_user" | "plan_approval"
-                                    ))
-                                .then(|| {
-                                    pending_debug_response(
-                                        pending,
-                                        target_id,
-                                        self.interaction_drafts
-                                            .get(&pending.request_id)
-                                            .map(String::as_str)
-                                            .unwrap_or_default(),
-                                    )
-                                    .map(
-                                        |(accepted, response)| {
-                                            (pending.request_id.clone(), accepted, response)
-                                        },
-                                    )
-                                })
-                                .flatten()
+                                    && pending.kind == "plan_approval")
+                                    .then(|| {
+                                        pending_debug_response(
+                                            pending,
+                                            target_id,
+                                            self.interaction_drafts
+                                                .get(&pending.request_id)
+                                                .map(String::as_str)
+                                                .unwrap_or_default(),
+                                        )
+                                        .map(
+                                            |(accepted, response)| {
+                                                (pending.request_id.clone(), accepted, response)
+                                            },
+                                        )
+                                    })
+                                    .flatten()
                             })
                         {
                             self.respond_interaction(request_id, accepted, response);
@@ -12126,6 +18889,10 @@ impl PreviewProgram {
                     .count()
             })
             .unwrap_or_default();
+        let observed_task_session = self
+            .task_session
+            .as_ref()
+            .map(|session| self.task_session_with_debug_overlay(session));
         DebugObservation {
             page: if self.settings_open {
                 format!("settings/{}", self.settings_state.active_tab().as_str())
@@ -12134,6 +18901,8 @@ impl PreviewProgram {
                     .as_ref()
                     .map(|workflow_id| format!("automations/{workflow_id}"))
                     .unwrap_or_else(|| "automations".to_owned())
+            } else if self.projects_overview_open {
+                "projects/overview".to_owned()
             } else if self.project_surface == ProjectSurface::Clone {
                 "projects/clone".to_owned()
             } else if self.project_surface == ProjectSurface::Roadmap {
@@ -12327,7 +19096,12 @@ impl PreviewProgram {
                 .task_session
                 .as_ref()
                 .map(|session| session.timeline.len())
-                .unwrap_or_default(),
+                .unwrap_or_default()
+                + self
+                    .selected_task
+                    .as_ref()
+                    .map(|task_id| self.debug_timeline.event_count(task_id))
+                    .unwrap_or_default(),
             timeline_has_more_before: self
                 .task_session
                 .as_ref()
@@ -12388,11 +19162,13 @@ impl PreviewProgram {
             project_count: self.projects.len(),
             archived_project_count: self.archived_projects.len(),
             task_count: self.tasks.len(),
-            visible_task_count: self
-                .tasks
-                .iter()
-                .filter(|task| task_matches_search(task, &self.task_search))
-                .count(),
+            visible_task_count: {
+                let session_hits = session_search_hit_ids(&self.application, &self.task_search);
+                self.tasks
+                    .iter()
+                    .filter(|task| task_matches_search(task, &self.task_search, &session_hits))
+                    .count()
+            },
             archived_task_count: self.archived_tasks.len(),
             selected_project_name: self
                 .projects
@@ -12556,6 +19332,41 @@ impl PreviewProgram {
                 .active_panel(DockSlot::Right)
                 .filter(|panel| panel.id.as_str() == CODING_TOOLS_PANEL_ID)
                 .map(|panel| panel.extent),
+            iab_dock_open: self.inspector_surface == InspectorSurface::Iab
+                && self.inspector_region_is_visible(),
+            iab_browser_attached: self.iab.browser_attached(),
+            iab_browser_ready: self.iab.browser_ready(),
+            iab_url: self.iab.active_url().to_owned(),
+            iab_error: self.iab.error().map(str::to_owned),
+            iab_window_count: self.iab_windows.len(),
+            iab_window_ready_count: self
+                .iab_windows
+                .values()
+                .filter(|window| window.browser_ready())
+                .count(),
+            iab_window_task_ids: self
+                .iab_windows
+                .values()
+                .map(|window| window.task_id.as_str().to_owned())
+                .collect(),
+            iab_window_urls: self
+                .iab_windows
+                .values()
+                .map(|window| window.active_url().to_owned())
+                .collect(),
+            iab_window_capture_pending_count: self
+                .iab_windows
+                .values()
+                .filter(|window| window.capture_pending())
+                .count(),
+            iab_window_notice: self
+                .iab_windows
+                .values()
+                .find_map(|window| window.notice().map(str::to_owned)),
+            iab_window_error: self
+                .iab_windows
+                .values()
+                .find_map(|window| window.error().map(str::to_owned)),
             coding_tools_busy: self.coding_busy,
             coding_tools_shared_identity: self
                 .coding_tools
@@ -12619,8 +19430,7 @@ impl PreviewProgram {
                 .as_ref()
                 .map(|runtime| runtime.queued_turn_ids.clone())
                 .unwrap_or_default(),
-            pending_interaction_ids: self
-                .task_session
+            pending_interaction_ids: observed_task_session
                 .as_ref()
                 .map(|session| {
                     session
@@ -12631,8 +19441,7 @@ impl PreviewProgram {
                         .collect()
                 })
                 .unwrap_or_default(),
-            pending_interaction_kinds: self
-                .task_session
+            pending_interaction_kinds: observed_task_session
                 .as_ref()
                 .map(|session| {
                     session
@@ -12647,6 +19456,10 @@ impl PreviewProgram {
             theme: match self.theme {
                 ThemeMode::Dark => "dark",
                 ThemeMode::Light => "light",
+            },
+            sidebar_display_mode: match self.sidebar_display_mode {
+                NativeSidebarDisplayMode::Grouped => "grouped",
+                NativeSidebarDisplayMode::Unified => "unified",
             },
             settings_tab: self.settings_state.active_tab().as_str().to_owned(),
             provider_id: self.selected_provider.clone(),
@@ -12673,6 +19486,8 @@ impl PreviewProgram {
             provider_busy: self.provider_busy,
             provider_error: self.provider_error.clone(),
             agent_interaction_revision: self.agent_interaction_settings.revision,
+            agent_non_interrupt_mode: self.agent_interaction_settings.non_interrupt_mode,
+            agent_debug_enabled: self.agent_interaction_settings.debug,
             agent_subagents_enabled: self.agent_interaction_settings.subagent_mode.enabled,
             agent_auto_turn_enabled: self.agent_interaction_settings.auto_turn_decision.enabled,
             agent_auto_model_tier: self
@@ -13024,6 +19839,7 @@ impl PreviewProgram {
             tray_active: self.shell.tray_active(),
             shell_shortcut: self.shell.shortcut().map(str::to_owned),
             shell_shortcut_active: self.shell.shortcut_active(),
+            shell_shortcut_capturing: self.shell_shortcut_capturing,
             shell_error: self.shell_error.clone(),
             update_configured: self.update_configured,
             update_state: update_state_key(&self.update_state),
@@ -13045,23 +19861,19 @@ impl PreviewProgram {
             data_import_restart_required: self.data_import.restart_required,
             data_import_error: self.data_import.error.clone(),
             composer_revision: self
-                .composer
-                .as_ref()
+                .main_surface_composer()
                 .map(|composer| composer.revision)
                 .unwrap_or_default(),
             composer_length: self
-                .composer
-                .as_ref()
+                .main_surface_composer()
                 .map(|composer| composer.content.len())
                 .unwrap_or_default(),
             composer_attachment_count: self
-                .composer
-                .as_ref()
+                .main_surface_composer()
                 .map(|composer| composer.attachments.len())
                 .unwrap_or_default(),
             composer_conversation_reference_count: self
-                .composer
-                .as_ref()
+                .main_surface_composer()
                 .map(|composer| composer.conversation_references.len())
                 .unwrap_or_default(),
             context_usage_used_tokens: self
@@ -13346,6 +20158,16 @@ impl PreviewProgram {
                 );
                 targets
             }
+            ProjectWorkspaceSurface::Files => self
+                .project_files
+                .as_ref()
+                .map(project_files_panel::project_files_debug_targets)
+                .unwrap_or_else(|| {
+                    vec![
+                        target_ids::PROJECT_FILES_OPEN.to_owned(),
+                        target_ids::PROJECT_FILES_REFRESH.to_owned(),
+                    ]
+                }),
         }
     }
 
@@ -13369,6 +20191,67 @@ impl PreviewProgram {
     }
 
     #[cfg(debug_assertions)]
+    fn visible_terminal_snapshots(&self) -> Vec<DesktopTerminalSnapshot> {
+        let mut items = Vec::new();
+        if let Some(item_id) = self.panel_layout.active_workspace_item().ok().flatten() {
+            if let Some(item) = self.workspace_items.iter().find(|item| &item.id == item_id) {
+                if let Some(snapshot) = self.terminal_snapshot_for_item(item) {
+                    items.push(snapshot);
+                }
+            }
+        }
+        for popup in self.task_popups.values() {
+            let Some(item_id) = popup.active_workspace_item_id.as_ref() else {
+                continue;
+            };
+            let Some(item) = popup.workspace.snapshot().ok().and_then(|snapshot| {
+                snapshot
+                    .workspace_items
+                    .into_iter()
+                    .find(|item| &item.id == item_id)
+            }) else {
+                continue;
+            };
+            if let Some(snapshot) = self.terminal_snapshot_for_item(&item) {
+                items.push(snapshot);
+            }
+        }
+        items
+    }
+
+    #[cfg(debug_assertions)]
+    fn markdown_image_items_for_window(&self, window_id: HostedWindowId) -> Vec<MarkdownImage> {
+        let mut images = BTreeMap::new();
+        let mut collect =
+            |session: &TaskSessionView| {
+                for image in session.timeline.iter().filter_map(|event| {
+                    event.markdown_document.as_ref().map(NativeMarkdown::images)
+                }) {
+                    for image in image {
+                        images.entry(image.source.clone()).or_insert(image);
+                    }
+                }
+            };
+        if window_id == HostedWindowId::PRIMARY {
+            if let Some(session) = &self.task_session {
+                let session = self.task_session_with_debug_overlay(session);
+                collect(&session);
+            }
+            for session in self.pane_task_sessions.values() {
+                collect(session);
+            }
+        } else if let Some(popup) = self.task_popups.get(&window_id) {
+            if let Some(session) = &popup.session {
+                collect(session);
+            }
+            for session in popup.task_sessions.values() {
+                collect(session);
+            }
+        }
+        images.into_values().collect()
+    }
+
+    #[cfg(debug_assertions)]
     fn visible_debug_targets(&self) -> Vec<String> {
         let automations_visible =
             self.application_surface_is_visible(ApplicationWorkspaceSurface::Automations);
@@ -13376,24 +20259,145 @@ impl PreviewProgram {
             self.application_surface_is_visible(ApplicationWorkspaceSurface::Settings);
         let mut targets = vec![
             target_ids::APP_ROOT.to_owned(),
+            target_ids::COMMAND_PALETTE_OPEN.to_owned(),
             target_ids::CONVERSATION_STATUS_OPEN.to_owned(),
         ];
+        if !self.settings_open && !self.automations_open {
+            targets.push(target_ids::NEW_CONVERSATION.to_owned());
+            if self.sidebar_display_mode == NativeSidebarDisplayMode::Unified {
+                targets.extend(
+                    self.task_move_candidates
+                        .iter()
+                        .map(|task| target_ids::unified_sidebar_task(task.id.as_str())),
+                );
+            }
+            if self.agent_interaction_settings.debug && self.selected_task.is_some() {
+                targets.extend(
+                    DebugTimelineAction::ALL
+                        .into_iter()
+                        .map(|action| target_ids::debug_timeline_action(action.id())),
+                );
+            }
+        }
+        if self.update_prompt_is_visible() {
+            if self.update_prompt_is_busy() {
+                return targets;
+            }
+            targets.extend([
+                target_ids::DESKTOP_UPDATE_PROMPT_CONFIRM.to_owned(),
+                target_ids::DESKTOP_UPDATE_PROMPT_DISMISS.to_owned(),
+            ]);
+            return targets;
+        }
+        if self.command_picker.is_open() {
+            targets.push(target_ids::COMMAND_PALETTE_INPUT.to_owned());
+            targets.extend(
+                self.command_palette_items()
+                    .into_iter()
+                    .map(|item| target_ids::command_palette_action(item.action.as_str())),
+            );
+            return targets;
+        }
+        targets.extend(
+            self.markdown_image_items_for_window(HostedWindowId::PRIMARY)
+                .into_iter()
+                .filter_map(|image| match self.markdown_images.get(&image.source) {
+                    Some(MarkdownImageLoadState::Ready(_)) => Some(target_ids::markdown_image(
+                        HostedWindowId::PRIMARY.0,
+                        &image.source,
+                    )),
+                    None
+                    | Some(MarkdownImageLoadState::Failed)
+                    | Some(MarkdownImageLoadState::Pending { requested: false }) => Some(
+                        target_ids::markdown_image_retry(HostedWindowId::PRIMARY.0, &image.source),
+                    ),
+                    Some(
+                        MarkdownImageLoadState::Loading
+                        | MarkdownImageLoadState::Pending { requested: true },
+                    ) => None,
+                }),
+        );
+        if self
+            .markdown_image_previews
+            .contains_key(&HostedWindowId::PRIMARY)
+        {
+            targets.push(target_ids::markdown_image_close(HostedWindowId::PRIMARY.0));
+        }
+        for snapshot in self.visible_terminal_snapshots() {
+            if snapshot.process.is_running() {
+                targets.extend([
+                    target_ids::terminal_input(snapshot.id.as_str()),
+                    target_ids::terminal_submit(snapshot.id.as_str()),
+                    target_ids::terminal_interrupt(snapshot.id.as_str()),
+                    target_ids::terminal_eof(snapshot.id.as_str()),
+                    target_ids::terminal_resize(snapshot.id.as_str()),
+                    target_ids::terminal_terminate(snapshot.id.as_str()),
+                ]);
+            } else {
+                targets.push(target_ids::terminal_new(snapshot.id.as_str()));
+            }
+            targets.push(target_ids::terminal_copy(snapshot.id.as_str()));
+        }
         if self.conversation_status_open {
             targets.extend([
                 target_ids::CONVERSATION_STATUS_WINDOW.to_owned(),
                 target_ids::CONVERSATION_STATUS_CLOSE.to_owned(),
+                target_ids::CONVERSATION_STATUS_PIN.to_owned(),
+                target_ids::CONVERSATION_STATUS_OPACITY.to_owned(),
+                target_ids::CONVERSATION_STATUS_NEW_CHAT.to_owned(),
             ]);
             targets.extend(
                 self.conversation_status_entries
                     .iter()
                     .map(|entry| target_ids::conversation_status_task(entry.task_id.as_str())),
             );
+            targets.extend(
+                self.conversation_status_entries
+                    .iter()
+                    .filter(|entry| entry.runtime_phase != "idle")
+                    .map(|entry| target_ids::conversation_status_stop(entry.task_id.as_str())),
+            );
         }
         for popup in self.task_popups.values() {
             targets.extend([
                 target_ids::task_popup(popup.id.0),
                 target_ids::task_popup_close(popup.id.0),
+                target_ids::task_popup_focus_main(popup.id.0),
             ]);
+            if popup.active_task_id.is_some() {
+                targets.extend([
+                    target_ids::task_popup_ask_child(popup.id.0),
+                    target_ids::task_popup_new_chat(popup.id.0),
+                ]);
+            }
+            if let Some(selection) = self.timeline_text_selections.get(&popup.id) {
+                targets.extend([
+                    target_ids::timeline_selection_copy(popup.id.0, &selection.event_id),
+                    target_ids::timeline_selection_quote(popup.id.0, &selection.event_id),
+                    target_ids::timeline_selection_ask(popup.id.0, &selection.event_id),
+                ]);
+            }
+            targets.extend(
+                self.markdown_image_items_for_window(popup.id)
+                    .into_iter()
+                    .filter_map(|image| match self.markdown_images.get(&image.source) {
+                        Some(MarkdownImageLoadState::Ready(_)) => {
+                            Some(target_ids::markdown_image(popup.id.0, &image.source))
+                        }
+                        None
+                        | Some(MarkdownImageLoadState::Failed)
+                        | Some(MarkdownImageLoadState::Pending { requested: false }) => {
+                            Some(target_ids::markdown_image_retry(popup.id.0, &image.source))
+                        }
+                        Some(
+                            MarkdownImageLoadState::Loading
+                            | MarkdownImageLoadState::Pending { requested: true },
+                        ) => None,
+                    }),
+            );
+            if self.markdown_image_previews.contains_key(&popup.id) {
+                targets.push(target_ids::markdown_image_close(popup.id.0));
+            }
             if popup.active_workspace_item_id.is_some() {
                 targets.push(target_ids::task_popup_move_to_main(popup.id.0));
             }
@@ -13514,7 +20518,7 @@ impl PreviewProgram {
                         }),
                 );
             }
-            if popup.active_task_id.is_none() {
+            if popup.active_task_id.is_none() && popup.draft.is_none() {
                 continue;
             }
             targets.push(target_ids::task_popup_composer(popup.id.0));
@@ -13562,6 +20566,9 @@ impl PreviewProgram {
             targets.extend(popup.slash_commands.iter().map(|result| {
                 target_ids::task_popup_slash_command(popup.id.0, &result.command.name)
             }));
+            if let Some(pending) = &popup.pending_review_slash_workflow {
+                targets.extend(review_workflow_target_ids(popup.id, pending));
+            }
             targets.extend(
                 popup
                     .conversation_reference_results
@@ -13588,19 +20595,152 @@ impl PreviewProgram {
                         )
                     }),
             );
-            let has_payload = popup.composer.as_ref().is_some_and(|composer| {
-                !composer.content.trim().is_empty()
-                    || !composer.attachments.is_empty()
-                    || !composer.conversation_references.is_empty()
-            });
+            let has_payload = popup
+                .composer
+                .as_ref()
+                .is_some_and(composer_has_turn_payload);
+            let popup_task_id = popup
+                .draft
+                .as_ref()
+                .map(|draft| &draft.id)
+                .or(popup.active_task_id.as_ref());
             let turn_active = popup
                 .turn_state
                 .as_ref()
                 .is_some_and(|(_, state)| turn_state_is_active(state));
+            if popup
+                .session
+                .as_ref()
+                .is_some_and(|session| session.run_block.is_none())
+            {
+                targets.extend(
+                    popup
+                        .session
+                        .iter()
+                        .flat_map(|session| &session.timeline)
+                        .filter(|event| event.can_retry)
+                        .map(|event| target_ids::timeline_retry(popup.id.0, &event.id)),
+                );
+            }
+            if !turn_active
+                && popup.session.as_ref().is_some_and(|session| {
+                    session.blocking_pending_count == 0 && session.run_block.is_none()
+                })
+            {
+                targets.extend(
+                    popup
+                        .session
+                        .iter()
+                        .flat_map(|session| &session.timeline)
+                        .filter(|event| event.batch_apply.is_some())
+                        .map(|event| target_ids::timeline_apply_suggestion(popup.id.0, &event.id)),
+                );
+                targets.extend(
+                    popup
+                        .session
+                        .iter()
+                        .flat_map(|session| &session.timeline)
+                        .filter(|event| event.session_branch_turn_id.is_some())
+                        .flat_map(|event| {
+                            [
+                                target_ids::timeline_continue(popup.id.0, &event.id),
+                                target_ids::timeline_fork(popup.id.0, &event.id),
+                            ]
+                        }),
+                );
+            }
+            if popup.pending_session_branch.is_some() {
+                targets.push(target_ids::session_branch_clear(popup.id.0));
+            }
+            if let Some(route) = self.prompt_route_suggestion(popup.id, popup_task_id) {
+                targets.push(target_ids::task_popup_route_dismiss(popup.id.0));
+                if popup
+                    .composer
+                    .as_ref()
+                    .and_then(|composer| composer.workflow.as_ref())
+                    != route.workflow.as_ref()
+                {
+                    targets.push(target_ids::task_popup_route_apply(popup.id.0));
+                }
+            } else if popup
+                .composer
+                .as_ref()
+                .is_some_and(|composer| composer.workflow.is_some())
+            {
+                targets.push(target_ids::task_popup_route_dismiss(popup.id.0));
+            }
+            if !turn_active
+                && popup
+                    .session
+                    .as_ref()
+                    .is_none_or(|session| session.blocking_pending_count == 0)
+                && popup.composer.is_some()
+            {
+                targets.push(target_ids::task_popup_model(popup.id.0));
+                targets.push(target_ids::task_popup_reasoning(popup.id.0));
+            }
+            if !turn_active
+                && popup
+                    .session
+                    .as_ref()
+                    .is_none_or(|session| session.blocking_pending_count == 0)
+                && popup
+                    .composer
+                    .as_ref()
+                    .is_some_and(|composer| !composer.content.trim().is_empty())
+                && !self.prompt_optimization_is_busy(popup.id, popup_task_id)
+            {
+                targets.push(target_ids::task_popup_optimize_prompt(popup.id.0));
+            }
+            if popup
+                .draft
+                .as_ref()
+                .is_some_and(|draft| draft.project_id.is_some())
+            {
+                targets.push(target_ids::task_popup_worktree(popup.id.0));
+                if matches!(popup.draft_worktree, DraftWorktreeSelection::Existing(_)) {
+                    targets.push(target_ids::task_popup_worktree_pick(popup.id.0));
+                }
+            }
+            if popup
+                .active_task_id
+                .as_ref()
+                .is_some_and(|task_id| self.pending_initial_worktrees.contains_key(task_id))
+            {
+                targets.push(target_ids::task_popup_worktree_retry(popup.id.0));
+            }
+            if !turn_active
+                && !has_payload
+                && popup
+                    .session
+                    .as_ref()
+                    .is_none_or(|session| session.blocking_pending_count == 0)
+                && popup.conversation_suggestions.should_show()
+            {
+                if popup.conversation_suggestions.can_refresh() {
+                    targets.push(target_ids::task_popup_suggestions_refresh(popup.id.0));
+                }
+                targets.extend(
+                    popup
+                        .conversation_suggestions
+                        .visible_item_ids()
+                        .map(|item_id| target_ids::task_popup_suggestion(popup.id.0, item_id)),
+                );
+            }
             if turn_active && !has_payload {
                 targets.push(target_ids::task_popup_interrupt(popup.id.0));
-            } else if has_payload {
+            } else if has_payload
+                && popup.pending_review_slash_workflow.is_none()
+                && !matches!(popup.draft_worktree, DraftWorktreeSelection::Existing(None))
+            {
                 targets.push(target_ids::task_popup_send(popup.id.0));
+            }
+            if !turn_active
+                && popup.session.as_ref().is_some_and(|session| {
+                    session.context_usage.is_some() && session.blocking_pending_count == 0
+                })
+            {
+                targets.push(target_ids::task_popup_compact_context(popup.id.0));
             }
         }
         self.append_workspace_debug_targets(&mut targets);
@@ -13610,6 +20750,7 @@ impl PreviewProgram {
                 target_ids::SETTINGS_SIDEBAR.to_owned(),
                 target_ids::SETTINGS_BACK.to_owned(),
                 target_ids::SETTINGS_APPEARANCE.to_owned(),
+                target_ids::SETTINGS_PROJECT.to_owned(),
                 target_ids::SETTINGS_PROVIDER.to_owned(),
                 target_ids::SETTINGS_AGENT.to_owned(),
                 target_ids::SETTINGS_QUOTA.to_owned(),
@@ -13617,15 +20758,63 @@ impl PreviewProgram {
                 target_ids::SETTINGS_REMOTE.to_owned(),
                 target_ids::SETTINGS_DESKTOP.to_owned(),
                 target_ids::SETTINGS_DATA.to_owned(),
+                target_ids::SETTINGS_ABOUT.to_owned(),
             ]);
-            if self.settings_state.active_tab().as_str() == "provider" {
+            if self.settings_state.active_tab().as_str() == "project" {
+                targets.extend([
+                    target_ids::PROJECT_SETTINGS_CLONE_PARENT.to_owned(),
+                    target_ids::PROJECT_SETTINGS_PICK_CLONE_PARENT.to_owned(),
+                    target_ids::PROJECT_WORKTREE_MODE.to_owned(),
+                    target_ids::PROJECT_WORKTREE_PARENT.to_owned(),
+                    target_ids::PROJECT_WORKTREE_PICK_PARENT.to_owned(),
+                    target_ids::PROJECT_WORKTREE_INSTRUCTIONS.to_owned(),
+                    target_ids::PROJECT_WORKTREE_CLEANUP.to_owned(),
+                    target_ids::PROJECT_SETTINGS_SAVE.to_owned(),
+                ]);
+            } else if self.settings_state.active_tab().as_str() == "provider" {
                 if !self.provider_busy {
                     targets.extend([
                         target_ids::PROVIDER_REFRESH.to_owned(),
                         target_ids::PROVIDER_MODEL_INPUT.to_owned(),
                         target_ids::PROVIDER_OPENAI_ENDPOINT_INPUT.to_owned(),
                         target_ids::PROVIDER_ANTHROPIC_ENDPOINT_INPUT.to_owned(),
+                        target_ids::FEATURE_MODEL_TITLE_INPUT.to_owned(),
+                        target_ids::FEATURE_MODEL_SUGGESTION_INPUT.to_owned(),
+                        target_ids::FEATURE_MODEL_PROMPT_ROUTER_INPUT.to_owned(),
+                        target_ids::FEATURE_MODEL_PROMPT_OPTIMIZE_INPUT.to_owned(),
+                        target_ids::FEATURE_MODEL_AUTO_TURN_INPUT.to_owned(),
+                        target_ids::FEATURE_CUSTOM_PRESET_NAME.to_owned(),
+                        target_ids::FEATURE_CUSTOM_PRESET_ADD.to_owned(),
                     ]);
+                    if !self.assistant_ai_probe_busy {
+                        targets.extend([
+                            target_ids::ASSISTANT_AI_BASE_URL_INPUT.to_owned(),
+                            target_ids::ASSISTANT_AI_MODEL_INPUT.to_owned(),
+                            target_ids::ASSISTANT_AI_SECRET_INPUT.to_owned(),
+                            target_ids::ASSISTANT_AI_NEW_MODEL_ID.to_owned(),
+                            target_ids::ASSISTANT_AI_NEW_MODEL_LABEL.to_owned(),
+                            target_ids::ASSISTANT_AI_FETCH_MODELS.to_owned(),
+                            target_ids::ASSISTANT_AI_TEST_CONNECTION.to_owned(),
+                        ]);
+                        targets.extend(
+                            self.provider_ai_settings
+                                .assistant_model_pool()
+                                .map(|item| target_ids::assistant_ai_model_label(&item.id)),
+                        );
+                        if !self.assistant_ai_new_model_id.trim().is_empty() {
+                            targets.push(target_ids::ASSISTANT_AI_ADD_MODEL.to_owned());
+                        }
+                    }
+                    for preset in self.provider_ai_settings.builtin_presets() {
+                        targets.push(target_ids::feature_preset_model(&preset.id));
+                        targets.push(target_ids::feature_preset_effort(&preset.id));
+                    }
+                    for preset in self.provider_ai_settings.custom_presets() {
+                        targets.push(target_ids::feature_preset_label(&preset.id));
+                        targets.push(target_ids::feature_preset_model(&preset.id));
+                        targets.push(target_ids::feature_preset_effort(&preset.id));
+                        targets.push(target_ids::feature_preset_remove(&preset.id));
+                    }
                     if self.provider_runtime_settings_dirty() {
                         targets.push(target_ids::PROVIDER_RUNTIME_SAVE.to_owned());
                     }
@@ -13635,6 +20824,26 @@ impl PreviewProgram {
                     {
                         targets.push(target_ids::PROVIDER_RUNTIME_RESET.to_owned());
                     }
+                    if !self.assistant_ai_probe_busy && self.provider_ai_settings.assistant_dirty()
+                    {
+                        targets.push(target_ids::ASSISTANT_AI_SAVE.to_owned());
+                    }
+                    if !self.assistant_ai_probe_busy
+                        && self.provider_ai_settings.assistant_secret_configured
+                    {
+                        targets.push(target_ids::ASSISTANT_AI_CLEAR_SECRET.to_owned());
+                    }
+                    if self.provider_ai_settings.model_features_dirty() {
+                        targets.push(target_ids::FEATURE_MODEL_SAVE.to_owned());
+                    }
+                    targets.push(
+                        if self.provider_ai_settings.conversation_suggestions_enabled() {
+                            target_ids::CONVERSATION_SUGGESTIONS_DISABLE
+                        } else {
+                            target_ids::CONVERSATION_SUGGESTIONS_ENABLE
+                        }
+                        .to_owned(),
+                    );
                 }
                 targets.extend(
                     self.provider
@@ -13665,6 +20874,8 @@ impl PreviewProgram {
                 }
             } else if self.settings_state.active_tab().as_str() == "agent" {
                 targets.extend([
+                    target_ids::AGENT_NON_INTERRUPT_MODE.to_owned(),
+                    target_ids::AGENT_DEBUG_MODE.to_owned(),
                     target_ids::AGENT_SUBAGENT_MODE.to_owned(),
                     target_ids::AGENT_AUTO_TURN.to_owned(),
                     target_ids::AGENT_AUTO_MODEL_TIER.to_owned(),
@@ -13821,10 +21032,29 @@ impl PreviewProgram {
                             if source.exists {
                                 targets.extend([
                                     target_ids::extensions_hook_draft(&source.id),
+                                    target_ids::extensions_hook_add_handler(&source.id),
                                     target_ids::extensions_hook_save(&source.id),
                                     target_ids::extensions_hook_toggle(&source.id),
                                     target_ids::extensions_hook_delete(&source.id),
                                 ]);
+                                if let Some(handlers) = self
+                                    .hook_drafts
+                                    .get(&source.id)
+                                    .and_then(|draft| parse_hook_handlers_draft(draft).ok())
+                                {
+                                    for (index, _) in handlers.iter().enumerate() {
+                                        targets.push(target_ids::extensions_hook_remove_handler(
+                                            &source.id, index,
+                                        ));
+                                        targets.extend(HookHandlerDraftField::ALL.map(|field| {
+                                            target_ids::extensions_hook_handler_field(
+                                                &source.id,
+                                                index,
+                                                field.target_key(),
+                                            )
+                                        }));
+                                    }
+                                }
                             } else {
                                 targets.push(target_ids::extensions_hook_create(&source.id));
                             }
@@ -13925,6 +21155,8 @@ impl PreviewProgram {
                 targets.extend([
                     target_ids::THEME_LIGHT.to_owned(),
                     target_ids::THEME_DARK.to_owned(),
+                    target_ids::SIDEBAR_MODE_GROUPED.to_owned(),
+                    target_ids::SIDEBAR_MODE_UNIFIED.to_owned(),
                 ]);
             }
         }
@@ -14165,7 +21397,9 @@ impl PreviewProgram {
         if self.selected_task.is_some() && self.project_surface == ProjectSurface::Tasks {
             targets.extend([
                 target_ids::TASK_POPUP_OPEN.to_owned(),
+                target_ids::TASK_POPUP_ASK_CHILD.to_owned(),
                 target_ids::TASK_POPUP_MOVE_SELECTED.to_owned(),
+                target_ids::IAB_OPEN.to_owned(),
             ]);
         }
         if self.project_surface == ProjectSurface::Tasks && self.selected_task.is_none() {
@@ -14284,21 +21518,107 @@ impl PreviewProgram {
                 targets.extend([
                     target_ids::CODING_TOOLS_REFRESH.to_owned(),
                     target_ids::CODING_TOOLS_QUERY.to_owned(),
+                    target_ids::CODING_TOOLS_SEARCH_MODE.to_owned(),
+                    target_ids::CODING_TOOLS_SEARCH_SCOPE.to_owned(),
+                    target_ids::CODING_TOOLS_DIFF_SCOPE.to_owned(),
                 ]);
                 if self.selected_project_workspace().is_some() {
                     targets.extend([
                         target_ids::CODING_TOOLS_OPEN_WORKSPACE.to_owned(),
+                        target_ids::CODING_TOOLS_OPEN_CODE_EDITOR.to_owned(),
                         target_ids::CODING_TOOLS_OPEN_TERMINAL.to_owned(),
+                        target_ids::CODING_TOOLS_NEW_TERMINAL.to_owned(),
                     ]);
                 }
+                if let Some(project_id) = self.selected_project.as_ref() {
+                    targets.extend(
+                        self.terminal_snapshots
+                            .values()
+                            .filter(|snapshot| {
+                                matches!(
+                                    &snapshot.scope,
+                                    DesktopTerminalScope::Project(session_project_id)
+                                        if session_project_id == project_id
+                                )
+                            })
+                            .map(|snapshot| {
+                                target_ids::coding_terminal_session(snapshot.id.as_str())
+                            }),
+                    );
+                }
+                if let Some(catalog) = &self.coding_project_tasks {
+                    targets.extend(
+                        catalog
+                            .tasks
+                            .iter()
+                            .map(|task| target_ids::coding_project_task(&task.id)),
+                    );
+                }
                 if !self.coding_query.trim().is_empty()
-                    && self.selected_project_workspace().is_some()
+                    && (self.selected_project_workspace().is_some()
+                        || (self.coding_search_all_projects
+                            && self.has_searchable_project_workspace()))
                 {
                     targets.push(target_ids::CODING_TOOLS_SEARCH.to_owned());
                 }
-                if self.coding_search.is_some() {
+                if self.coding_search.is_some() && !self.coding_search_all_projects {
                     targets.push(target_ids::CODING_TOOLS_SAVE_MEMORY.to_owned());
                 }
+                if let Some(result) = &self.coding_search {
+                    targets.extend(result.hits.iter().map(|hit| {
+                        if self.coding_search_all_projects {
+                            target_ids::coding_project_search_hit(
+                                hit.project_id.as_str(),
+                                &hit.hit.path,
+                                hit.hit.start_line,
+                                hit.hit.start_character,
+                            )
+                        } else {
+                            target_ids::coding_search_hit(
+                                &hit.hit.path,
+                                hit.hit.start_line,
+                                hit.hit.start_character,
+                            )
+                        }
+                    }));
+                }
+            }
+        }
+        if self.inspector_surface == InspectorSurface::Iab && self.inspector_region_is_visible() {
+            targets.extend([
+                target_ids::IAB_PANEL.to_owned(),
+                target_ids::IAB_URL.to_owned(),
+                target_ids::IAB_NAVIGATE.to_owned(),
+                target_ids::IAB_OPEN_WINDOW.to_owned(),
+                target_ids::IAB_CLOSE.to_owned(),
+            ]);
+        }
+        for (_, item_id) in self.visible_document_editor_locations() {
+            if let Some(state) = self.document_editors.get(&item_id) {
+                if state.language_label != "plaintext" && state.definition_operation.is_none() {
+                    targets.push(target_ids::document_editor_definition(item_id.as_str()));
+                }
+                targets.extend(
+                    state
+                        .definition_targets
+                        .iter()
+                        .enumerate()
+                        .map(|(index, _)| {
+                            target_ids::document_editor_definition_target(item_id.as_str(), index)
+                        }),
+                );
+            }
+        }
+        for (window_id, window) in &self.iab_windows {
+            targets.extend([
+                target_ids::iab_window(window_id.0),
+                target_ids::iab_window_url(window_id.0),
+                target_ids::iab_window_navigate(window_id.0),
+                target_ids::iab_window_note(window_id.0),
+                target_ids::iab_window_close(window_id.0),
+            ]);
+            if window.browser_ready() && !window.capture_pending() {
+                targets.push(target_ids::iab_window_submit(window_id.0));
             }
         }
         if self.project_surface == ProjectSurface::Architecture {
@@ -14334,6 +21654,22 @@ impl PreviewProgram {
                 target_ids::TASK_SESSION_TIMELINE.to_owned(),
                 target_ids::TASK_SESSION_INSPECTOR_TOGGLE.to_owned(),
             ]);
+            if let Some(selection) = self.timeline_text_selections.get(&HostedWindowId::PRIMARY) {
+                targets.extend([
+                    target_ids::timeline_selection_copy(
+                        HostedWindowId::PRIMARY.0,
+                        &selection.event_id,
+                    ),
+                    target_ids::timeline_selection_quote(
+                        HostedWindowId::PRIMARY.0,
+                        &selection.event_id,
+                    ),
+                    target_ids::timeline_selection_ask(
+                        HostedWindowId::PRIMARY.0,
+                        &selection.event_id,
+                    ),
+                ]);
+            }
             if self.inspector_surface == InspectorSurface::Task
                 && self.inspector_region_is_visible()
             {
@@ -14386,6 +21722,12 @@ impl PreviewProgram {
                     if self.selected_task_parent_id().is_some() {
                         targets.push(target_ids::TASK_PARENT_CLEAR.to_owned());
                     }
+                    if self.effective_task_dependency_target().is_some() {
+                        targets.extend([
+                            target_ids::TASK_DEPENDENCY_TARGET.to_owned(),
+                            target_ids::TASK_DEPENDENCY_TOGGLE.to_owned(),
+                        ]);
+                    }
                     if !self.task_title_edit.trim().is_empty() {
                         targets.push(target_ids::TASK_SAVE.to_owned());
                     }
@@ -14394,7 +21736,93 @@ impl PreviewProgram {
             if let Some(task_id) = &self.selected_task {
                 targets.push(target_ids::task(task_id.as_str()));
             }
+            if let Some(draft) = &self.main_conversation_draft {
+                targets.extend([
+                    target_ids::NEW_CONVERSATION_CLOSE.to_owned(),
+                    target_ids::COMPOSER_INPUT.to_owned(),
+                    target_ids::COMPOSER_ATTACH_FILE.to_owned(),
+                    target_ids::COMPOSER_ATTACH_DIRECTORY.to_owned(),
+                    target_ids::COMPOSER_PASTE_TEXT.to_owned(),
+                    target_ids::COMPOSER_PASTE_IMAGE.to_owned(),
+                    target_ids::COMPOSER_PLAN_MODE.to_owned(),
+                    target_ids::COMPOSER_GOAL_MODE.to_owned(),
+                    target_ids::COMPOSER_PERMISSION.to_owned(),
+                    target_ids::COMPOSER_MODEL.to_owned(),
+                    target_ids::COMPOSER_REASONING.to_owned(),
+                ]);
+                targets.extend(
+                    draft
+                        .composer
+                        .attachments
+                        .iter()
+                        .map(|attachment| target_ids::composer_remove_attachment(&attachment.id)),
+                );
+                if draft.suggestions.can_refresh() {
+                    targets.push(target_ids::COMPOSER_SUGGESTIONS_REFRESH.to_owned());
+                }
+                targets.extend(
+                    draft
+                        .suggestions
+                        .visible_item_ids()
+                        .map(target_ids::composer_suggestion),
+                );
+                targets.extend(
+                    self.slash_commands
+                        .iter()
+                        .map(|result| target_ids::composer_slash_command(&result.command.name)),
+                );
+                targets.extend(self.conversation_reference_results.iter().map(|reference| {
+                    target_ids::composer_conversation_reference(&reference.task_id)
+                }));
+                targets.extend(
+                    self.context_attachment_results.iter().map(|result| {
+                        target_ids::composer_context_attachment(&result.relative_path)
+                    }),
+                );
+                targets.extend(
+                    draft
+                        .composer
+                        .conversation_references
+                        .iter()
+                        .map(|reference| {
+                            target_ids::composer_conversation_reference_remove(&reference.task_id)
+                        }),
+                );
+                if let Some(pending) = &self.pending_review_slash_workflow {
+                    targets.extend(review_workflow_target_ids(HostedWindowId::PRIMARY, pending));
+                }
+                if draft.task.project_id.is_some() {
+                    targets.push(target_ids::COMPOSER_WORKTREE.to_owned());
+                    if matches!(draft.worktree, DraftWorktreeSelection::Existing(_)) {
+                        targets.push(target_ids::COMPOSER_WORKTREE_PICK.to_owned());
+                    }
+                }
+                if !draft.composer.content.trim().is_empty()
+                    && !self
+                        .prompt_optimization_is_busy(HostedWindowId::PRIMARY, Some(&draft.task.id))
+                {
+                    targets.push(target_ids::COMPOSER_OPTIMIZE_PROMPT.to_owned());
+                }
+                if let Some(route) =
+                    self.prompt_route_suggestion(HostedWindowId::PRIMARY, Some(&draft.task.id))
+                {
+                    targets.push(target_ids::COMPOSER_ROUTE_DISMISS.to_owned());
+                    if draft.composer.workflow.as_ref() != route.workflow.as_ref() {
+                        targets.push(target_ids::COMPOSER_ROUTE_APPLY.to_owned());
+                    }
+                } else if draft.composer.workflow.is_some() {
+                    targets.push(target_ids::COMPOSER_ROUTE_DISMISS.to_owned());
+                }
+                if composer_has_turn_payload(&draft.composer)
+                    && !matches!(draft.worktree, DraftWorktreeSelection::Existing(None))
+                    && self.pending_review_slash_workflow.is_none()
+                {
+                    targets.push(target_ids::COMPOSER_SEND.to_owned());
+                }
+                return targets;
+            }
             if let Some(session) = &self.task_session {
+                let session = self.task_session_with_debug_overlay(session);
                 if session.timeline_has_more_before {
                     targets.push(target_ids::TASK_SESSION_TIMELINE_LOAD_EARLIER.to_owned());
                 }
@@ -14459,6 +21887,43 @@ impl PreviewProgram {
                         .filter(|event| event.markdown_plain_text.is_some())
                         .map(|event| target_ids::timeline_copy(&event.id)),
                 );
+                if session.run_block.is_none() {
+                    targets.extend(session.timeline.iter().filter(|event| event.can_retry).map(
+                        |event| target_ids::timeline_retry(HostedWindowId::PRIMARY.0, &event.id),
+                    ));
+                }
+                if !self.composer_is_locked() && session.run_block.is_none() {
+                    targets.extend(
+                        session
+                            .timeline
+                            .iter()
+                            .filter(|event| event.batch_apply.is_some())
+                            .map(|event| {
+                                target_ids::timeline_apply_suggestion(
+                                    HostedWindowId::PRIMARY.0,
+                                    &event.id,
+                                )
+                            }),
+                    );
+                    targets.extend(
+                        session
+                            .timeline
+                            .iter()
+                            .filter(|event| event.session_branch_turn_id.is_some())
+                            .flat_map(|event| {
+                                [
+                                    target_ids::timeline_continue(
+                                        HostedWindowId::PRIMARY.0,
+                                        &event.id,
+                                    ),
+                                    target_ids::timeline_fork(HostedWindowId::PRIMARY.0, &event.id),
+                                ]
+                            }),
+                    );
+                }
+                if self.pending_session_branch.is_some() {
+                    targets.push(target_ids::session_branch_clear(HostedWindowId::PRIMARY.0));
+                }
                 targets.push(target_ids::COMPOSER_INPUT.to_owned());
                 if !self.composer_input_is_locked() {
                     targets.extend([
@@ -14469,6 +21934,8 @@ impl PreviewProgram {
                         target_ids::COMPOSER_PLAN_MODE.to_owned(),
                         target_ids::COMPOSER_GOAL_MODE.to_owned(),
                         target_ids::COMPOSER_PERMISSION.to_owned(),
+                        target_ids::COMPOSER_MODEL.to_owned(),
+                        target_ids::COMPOSER_REASONING.to_owned(),
                     ]);
                     targets.extend(
                         self.composer
@@ -14507,6 +21974,10 @@ impl PreviewProgram {
                             .iter()
                             .map(|result| target_ids::composer_slash_command(&result.command.name)),
                     );
+                    if let Some(pending) = &self.pending_review_slash_workflow {
+                        targets
+                            .extend(review_workflow_target_ids(HostedWindowId::PRIMARY, pending));
+                    }
                     targets.extend(self.conversation_reference_results.iter().map(|reference| {
                         target_ids::composer_conversation_reference(&reference.task_id)
                     }));
@@ -14524,19 +21995,77 @@ impl PreviewProgram {
                             }),
                     );
                 }
-                let has_payload = self.composer.as_ref().is_some_and(|composer| {
-                    !composer.content.trim().is_empty()
-                        || !composer.attachments.is_empty()
-                        || !composer.conversation_references.is_empty()
-                });
+                let has_payload = self
+                    .composer
+                    .as_ref()
+                    .is_some_and(composer_has_turn_payload);
                 let turn_active = self
                     .turn_state
                     .as_ref()
                     .is_some_and(|(_, state)| turn_state_is_active(state));
+                if self
+                    .selected_task
+                    .as_ref()
+                    .is_some_and(|task_id| self.pending_initial_worktrees.contains_key(task_id))
+                {
+                    targets.push(target_ids::COMPOSER_WORKTREE_RETRY.to_owned());
+                }
+                if let Some(route) = self
+                    .prompt_route_suggestion(HostedWindowId::PRIMARY, self.selected_task.as_ref())
+                {
+                    targets.push(target_ids::COMPOSER_ROUTE_DISMISS.to_owned());
+                    if self
+                        .composer
+                        .as_ref()
+                        .and_then(|composer| composer.workflow.as_ref())
+                        != route.workflow.as_ref()
+                    {
+                        targets.push(target_ids::COMPOSER_ROUTE_APPLY.to_owned());
+                    }
+                } else if self
+                    .composer
+                    .as_ref()
+                    .is_some_and(|composer| composer.workflow.is_some())
+                {
+                    targets.push(target_ids::COMPOSER_ROUTE_DISMISS.to_owned());
+                }
+                if !turn_active
+                    && session.blocking_pending_count == 0
+                    && self
+                        .composer
+                        .as_ref()
+                        .is_some_and(|composer| !composer.content.trim().is_empty())
+                    && !self.prompt_optimization_is_busy(
+                        HostedWindowId::PRIMARY,
+                        self.selected_task.as_ref(),
+                    )
+                {
+                    targets.push(target_ids::COMPOSER_OPTIMIZE_PROMPT.to_owned());
+                }
+                if !turn_active
+                    && !has_payload
+                    && session.blocking_pending_count == 0
+                    && self.conversation_suggestions.should_show()
+                {
+                    if self.conversation_suggestions.can_refresh() {
+                        targets.push(target_ids::COMPOSER_SUGGESTIONS_REFRESH.to_owned());
+                    }
+                    targets.extend(
+                        self.conversation_suggestions
+                            .visible_item_ids()
+                            .map(target_ids::composer_suggestion),
+                    );
+                }
                 if turn_active && !has_payload {
                     targets.push(target_ids::COMPOSER_INTERRUPT.to_owned());
-                } else if has_payload {
+                } else if has_payload && self.pending_review_slash_workflow.is_none() {
                     targets.push(target_ids::COMPOSER_SEND.to_owned());
+                }
+                if !turn_active
+                    && session.context_usage.is_some()
+                    && session.blocking_pending_count == 0
+                {
+                    targets.push(target_ids::COMPOSER_COMPACT_CONTEXT.to_owned());
                 }
                 for pending in session.pending.iter().filter(|pending| {
                     pending.status == PendingProjectionStatus::Open
@@ -14544,6 +22073,13 @@ impl PreviewProgram {
                 }) {
                     targets.push(target_ids::approval_approve(&pending.request_id));
                     targets.push(target_ids::approval_deny(&pending.request_id));
+                }
+                for pending in session.pending.iter().filter(|pending| {
+                    pending.status == PendingProjectionStatus::Open
+                        && pending.kind == TITLE_UPDATE_ACTION_KIND
+                }) {
+                    targets.push(target_ids::title_update_accept(&pending.request_id));
+                    targets.push(target_ids::title_update_decline(&pending.request_id));
                 }
                 for pending in session.pending.iter().filter(|pending| {
                     pending.status == PendingProjectionStatus::Open
@@ -14560,27 +22096,58 @@ impl PreviewProgram {
                     pending.status == PendingProjectionStatus::Open
                         && matches!(pending.kind.as_str(), "ask_user" | "plan_approval")
                 }) {
+                    if pending.kind == "ask_user" {
+                        targets.extend(ask_user_debug_targets(
+                            pending,
+                            self.ask_user_drafts.get(&pending.request_id),
+                        ));
+                        continue;
+                    }
                     targets.push(target_ids::interaction_input(&pending.request_id));
                     let draft = self
                         .interaction_drafts
                         .get(&pending.request_id)
                         .map(String::as_str)
                         .unwrap_or_default();
-                    if pending.kind == "ask_user" {
-                        targets.push(target_ids::interaction_cancel(&pending.request_id));
-                        if !draft.trim().is_empty() {
-                            targets.push(target_ids::interaction_submit(&pending.request_id));
-                        }
-                        targets.extend(interaction_choices(pending).iter().enumerate().map(
-                            |(index, _)| target_ids::interaction_option(&pending.request_id, index),
+                    targets.push(target_ids::plan_approve(&pending.request_id));
+                    targets.push(target_ids::plan_decline(&pending.request_id));
+                    targets.push(target_ids::plan_cancel(&pending.request_id));
+                    if !draft.trim().is_empty() {
+                        targets.push(target_ids::plan_revise(&pending.request_id));
+                    }
+                }
+                for pending in session.pending.iter().filter(|pending| {
+                    pending.status == PendingProjectionStatus::Open
+                        && pending.kind == "tool_consent"
+                }) {
+                    let Ok(consent) = DesktopToolConsent::from_payload(&pending.payload) else {
+                        continue;
+                    };
+                    let draft = tool_consent_draft(
+                        pending,
+                        self.tool_consent_drafts.get(&pending.request_id),
+                    );
+                    if consent.editable_command().is_some() {
+                        targets.push(target_ids::tool_consent_command(
+                            HostedWindowId::PRIMARY.0,
+                            &pending.request_id,
                         ));
-                    } else {
-                        targets.push(target_ids::plan_approve(&pending.request_id));
-                        targets.push(target_ids::plan_decline(&pending.request_id));
-                        targets.push(target_ids::plan_cancel(&pending.request_id));
-                        if !draft.trim().is_empty() {
-                            targets.push(target_ids::plan_revise(&pending.request_id));
-                        }
+                    }
+                    targets.push(target_ids::tool_consent_message(
+                        HostedWindowId::PRIMARY.0,
+                        &pending.request_id,
+                    ));
+                    if consent.editable_command().is_none() || !draft.command.trim().is_empty() {
+                        targets.push(target_ids::tool_consent_allow(
+                            HostedWindowId::PRIMARY.0,
+                            &pending.request_id,
+                        ));
+                    }
+                    if !draft.message.trim().is_empty() {
+                        targets.push(target_ids::tool_consent_deny(
+                            HostedWindowId::PRIMARY.0,
+                            &pending.request_id,
+                        ));
                     }
                 }
                 for pending in session.pending.iter().filter(|pending| {
@@ -14644,10 +22211,11 @@ impl PreviewProgram {
             && (self.selected_project.is_some() || self.inbox_selected)
         {
             targets.push(target_ids::TASKS_LIST.to_owned());
+            let session_hits = session_search_hit_ids(&self.application, &self.task_search);
             targets.extend(
                 self.tasks
                     .iter()
-                    .filter(|task| task_matches_search(task, &self.task_search))
+                    .filter(|task| task_matches_search(task, &self.task_search, &session_hits))
                     .map(|task| target_ids::task(task.id.as_str())),
             );
             if self.task_search.trim().is_empty() {
@@ -14743,7 +22311,11 @@ impl PreviewProgram {
                     &item.id == item_id
                         && item.capabilities.movable_across_windows
                         && (item.application_surface().ok().flatten().is_some()
-                            || item.project_surface().ok().flatten().is_some())
+                            || item.project_surface().ok().flatten().is_some()
+                            || is_document_editor_item(item)
+                            || item
+                                .terminal_session_id()
+                                .is_ok_and(|value| value.is_some()))
                 }) {
                     targets.push(target_ids::workspace_tab_move_to_new_window(
                         item_id.as_str(),
@@ -14849,7 +22421,16 @@ impl PreviewProgram {
                 if self.selected_task.as_ref() == Some(&task_id) {
                     self.worktree_busy = false;
                     self.worktree_confirmation = None;
-                    self.refresh_task_session();
+                    if self
+                        .application
+                        .get_task(&task_id)
+                        .is_ok_and(|task| task.archived)
+                    {
+                        self.execute_workspace_command(DesktopCommand::BackToTaskList);
+                        self.refresh_tasks();
+                    } else {
+                        self.refresh_task_session();
+                    }
                 }
                 self.refresh_task_popups_for_task(&task_id);
             }
@@ -14865,6 +22446,7 @@ impl PreviewProgram {
             DesktopEventKind::ProviderChanged { .. }
             | DesktopEventKind::CredentialChanged { .. } => {
                 self.refresh_provider();
+                self.reload_conversation_suggestions();
             }
             DesktopEventKind::GitHubBindingChanged { .. } => {
                 if self.project_surface == ProjectSurface::Clone {
@@ -14957,6 +22539,35 @@ impl PreviewProgram {
                     Some(&project_id),
                 );
             }
+            DesktopEventKind::ProjectFilesChanged { project_id } => {
+                if self.selected_project.as_ref() == Some(&project_id) {
+                    self.refresh_project_files();
+                }
+            }
+            DesktopEventKind::TerminalChanged { session_id, .. } => {
+                self.refresh_terminal(&session_id);
+            }
+            DesktopEventKind::ModelFeatureSettingsChanged { .. }
+            | DesktopEventKind::AssistantAiSettingsChanged { .. } => {
+                self.refresh_provider_ai_settings();
+                self.reload_conversation_suggestions();
+            }
+            DesktopEventKind::ConversationSuggestionSettingsChanged => {
+                self.refresh_provider_ai_settings();
+                self.reload_conversation_suggestions();
+            }
+            DesktopEventKind::RouterModeSettingsChanged { .. } => {
+                self.reload_conversation_suggestions();
+            }
+            DesktopEventKind::ProjectSettingsChanged => self.refresh_project_settings(),
+            DesktopEventKind::ConversationSuggestionsChanged { .. }
+            | DesktopEventKind::PopupWindowSettingsChanged => {}
+            DesktopEventKind::HooksRegistryChanged
+            | DesktopEventKind::SkillsRegistryChanged
+            | DesktopEventKind::McpRegistryChanged
+            | DesktopEventKind::PluginsRegistryChanged => {
+                self.refresh_extensions();
+            }
             DesktopEventKind::UpdateStateChanged { state } => {
                 self.update_state = state;
             }
@@ -15031,9 +22642,13 @@ impl PreviewProgram {
                 ProjectSurface::Roadmap => format!("{project} · 路线图"),
                 ProjectSurface::Memory => format!("{project} · Memory"),
                 ProjectSurface::Architecture => format!("{project} · 架构"),
+                ProjectSurface::Files => format!("{project} · 文件"),
             }
         };
         let trailing = row![
+            button(text("命令").size(10))
+                .on_press(Message::ToggleCommandPalette)
+                .style(button_style(tokens, ButtonKind::Ghost)),
             button(text("会话状态").size(10))
                 .on_press(Message::OpenConversationStatus)
                 .style(button_style(tokens, ButtonKind::Ghost)),
@@ -15046,6 +22661,56 @@ impl PreviewProgram {
             .trailing(trailing)
             .window_chrome(&self.window_chrome, Message::WindowChrome)
             .view()
+    }
+
+    fn command_palette_view(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        CommandPalette::new(
+            "命令",
+            self.command_palette_items(),
+            self.command_picker.query().to_owned(),
+            self.command_picker.selected(),
+            Message::CommandPalette,
+            tokens,
+        )
+        .placeholder("搜索命令")
+        .view()
+    }
+
+    fn with_command_palette(
+        &self,
+        window_id: HostedWindowId,
+        base: Element<'static, Message>,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        if self.command_picker.is_open() && self.command_source_window == window_id {
+            stack![base, self.command_palette_view(tokens)].into()
+        } else {
+            base
+        }
+    }
+
+    fn with_command_keymap(
+        &self,
+        window_id: HostedWindowId,
+        base: Element<'static, Message>,
+    ) -> Element<'static, Message> {
+        if self.shell_shortcut_capturing {
+            return KeyCaptureLayer::new(base, Message::ShellShortcutCaptured).view();
+        }
+        let item_id = self.active_item_for_window(window_id);
+        let context = self.command_context(window_id, item_id.as_ref());
+        KeymapLayer::new(
+            base,
+            self.command_keymap.clone(),
+            context,
+            self.action_registry.clone(),
+            move |action| Message::DispatchCommandAction {
+                window_id,
+                item_id: item_id.clone(),
+                action,
+            },
+        )
+        .view()
     }
 
     fn refresh_conversation_status(&mut self) {
@@ -15069,7 +22734,7 @@ impl PreviewProgram {
                                 .as_ref()
                                 .and_then(|project_id| project_names.get(project_id))
                                 .cloned()
-                                .unwrap_or_else(|| "无项目".to_owned()),
+                                .unwrap_or_else(|| "收集箱".to_owned()),
                             product_status: task.status,
                             runtime_phase: runtime.phase,
                             queued_turns: runtime.queued_turns,
@@ -15095,56 +22760,159 @@ impl PreviewProgram {
         }
     }
 
+    fn stop_conversation_status_task(&mut self, task_id: TaskId) {
+        match self.application.interrupt_task_turn(&task_id) {
+            Ok(_) => {
+                self.conversation_status_error = None;
+                self.refresh_conversation_status();
+            }
+            Err(error) => {
+                eprintln!("failed to stop Native conversation-status task: {error}");
+                self.conversation_status_error =
+                    Some("无法停止当前处理，请刷新状态后重试。".to_owned());
+            }
+        }
+    }
+
+    fn provider_runtime_badge(&self, colors: Colors) -> (&'static str, iced::Color) {
+        let selected_credential_usable =
+            self.selected_provider.as_deref().is_some_and(|provider| {
+                self.provider
+                    .capability_limits
+                    .iter()
+                    .find(|capability| capability.provider_id == provider)
+                    .is_some_and(|capability| capability.has_usable_credential)
+            });
+        if !self.provider.broker_ready || !self.provider.runtime.runtime_ready {
+            ("服务不可用", colors.danger)
+        } else if selected_credential_usable
+            && self.provider.runtime.profile_has_credential_refs
+            && self.provider.runtime.live_model_adapter_drives_turn
+        {
+            ("已连接", colors.success)
+        } else if selected_credential_usable {
+            ("正在准备", colors.warning)
+        } else {
+            ("等待凭据", colors.warning)
+        }
+    }
+
     fn conversation_status_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let tokens = theme_tokens_with_opacity(tokens, self.conversation_status_window.opacity);
         let colors = tokens.colors;
         let active_count = self
             .conversation_status_entries
             .iter()
             .filter(|entry| entry.runtime_phase != "idle")
             .count();
-        let mut content = column![row![
-            column![
-                text("会话状态")
-                    .size(18)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                text(format!(
-                    "{} 个任务 · {} 个正在处理",
-                    self.conversation_status_entries.len(),
-                    active_count
-                ))
-                .size(11)
-                .color(colors.muted),
+        let (provider_status, provider_color) = self.provider_runtime_badge(colors);
+        let mut content = column![
+            row![
+                column![
+                    text("会话状态")
+                        .size(18)
+                        .font(ui_font(font::Weight::Semibold))
+                        .color(colors.text),
+                    row![
+                        text(format!(
+                            "{} 个任务 · {} 个正在处理",
+                            self.conversation_status_entries.len(),
+                            active_count
+                        ))
+                        .size(11)
+                        .color(colors.muted),
+                        text(provider_status).size(10).color(provider_color),
+                    ]
+                    .spacing(8),
+                ]
+                .spacing(2)
+                .width(Length::Fill),
+                button(text("新对话").size(11))
+                    .on_press(Message::OpenConversationStatusNewChat)
+                    .style(button_style(tokens, ButtonKind::Primary)),
+                button(text("关闭").size(11))
+                    .on_press(Message::CloseConversationStatus)
+                    .style(button_style(tokens, ButtonKind::Ghost)),
             ]
-            .spacing(2)
-            .width(Length::Fill),
-            button(text("刷新").size(11))
-                .on_press(Message::OpenConversationStatus)
+            .align_y(Alignment::Center),
+            row![
+                button(
+                    text(if self.conversation_status_window.always_on_top {
+                        "取消置顶"
+                    } else {
+                        "置顶"
+                    })
+                    .size(10)
+                )
+                .on_press(Message::ToggleConversationStatusAlwaysOnTop)
                 .style(button_style(tokens, ButtonKind::Ghost)),
-            button(text("关闭").size(11))
-                .on_press(Message::CloseConversationStatus)
+                button(
+                    text(format!(
+                        "透明度 {}%",
+                        (self.conversation_status_window.opacity * 100.0).round() as u32
+                    ))
+                    .size(10)
+                )
+                .on_press(Message::ToggleConversationStatusOpacityPanel)
                 .style(button_style(tokens, ButtonKind::Ghost)),
+                button(text("刷新").size(10))
+                    .on_press(Message::OpenConversationStatus)
+                    .style(button_style(tokens, ButtonKind::Ghost)),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
         ]
-        .align_y(Alignment::Center),]
         .spacing(10)
         .width(Length::Fill);
+        if self.conversation_status_opacity_panel_open {
+            content = content.push(
+                Card::new(
+                    row![
+                        text("40%").size(10).color(colors.muted),
+                        slider(
+                            0.4..=1.0,
+                            self.conversation_status_window.opacity,
+                            Message::ConversationStatusOpacityChanged,
+                        )
+                        .step(0.02)
+                        .width(Length::Fill),
+                        text("100%").size(10).color(colors.muted),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .title("窗口透明度")
+                .view(tokens),
+            );
+        }
         if let Some(error) = &self.conversation_status_error {
             content = content.push(
                 EmptyState::new("无法读取会话状态")
                     .message(error.clone())
                     .icon(Icon::About)
                     .action(
-                        button(text("重试").size(12))
-                            .on_press(Message::OpenConversationStatus)
-                            .style(button_style(tokens, ButtonKind::Primary)),
+                        row![
+                            button(text("重试").size(12))
+                                .on_press(Message::OpenConversationStatus)
+                                .style(button_style(tokens, ButtonKind::Primary)),
+                            button(text("忽略").size(12))
+                                .on_press(Message::DismissConversationStatusError)
+                                .style(button_style(tokens, ButtonKind::Ghost)),
+                        ]
+                        .spacing(6),
                     )
                     .view(tokens),
             );
         } else if self.conversation_status_entries.is_empty() {
             content = content.push(
                 EmptyState::new("还没有会话")
-                    .message("创建任务后，会在这里显示处理状态。")
+                    .message("开始新对话后，会在这里显示处理状态。")
                     .icon(Icon::Workspace)
+                    .action(
+                        button(text("新对话").size(12))
+                            .on_press(Message::OpenConversationStatusNewChat)
+                            .style(button_style(tokens, ButtonKind::Primary)),
+                    )
                     .view(tokens),
             );
         } else {
@@ -15159,35 +22927,45 @@ impl PreviewProgram {
                 } else {
                     String::new()
                 };
-                content = content.push(
-                    button(
-                        column![
-                            text(entry.title.clone())
-                                .size(13)
-                                .font(ui_font(font::Weight::Semibold))
-                                .color(colors.text),
-                            row![
-                                text(entry.project_name.clone())
-                                    .size(10)
-                                    .color(colors.muted),
-                                text(format!(
-                                    "{} · {}{}",
-                                    status_label(entry.product_status),
-                                    runtime_phase_label(&entry.runtime_phase),
-                                    queue
-                                ))
+                let task_button = button(
+                    column![
+                        text(entry.title.clone())
+                            .size(13)
+                            .font(ui_font(font::Weight::Semibold))
+                            .color(colors.text),
+                        row![
+                            text(entry.project_name.clone())
                                 .size(10)
-                                .color(phase_color),
-                            ]
-                            .spacing(8),
+                                .color(colors.muted),
+                            text(format!(
+                                "{} · {}{}",
+                                status_label(entry.product_status),
+                                runtime_phase_label(&entry.runtime_phase),
+                                queue
+                            ))
+                            .size(10)
+                            .color(phase_color),
                         ]
-                        .spacing(3)
-                        .width(Length::Fill),
-                    )
-                    .on_press(Message::FocusConversationStatusTask(entry.task_id.clone()))
-                    .width(Length::Fill)
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
+                        .spacing(8),
+                    ]
+                    .spacing(3)
+                    .width(Length::Fill),
+                )
+                .on_press(Message::OpenConversationStatusTask(entry.task_id.clone()))
+                .width(Length::Fill)
+                .style(button_style(tokens, ButtonKind::Ghost));
+                let mut task_row = row![task_button]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .width(Length::Fill);
+                if entry.runtime_phase != "idle" {
+                    task_row = task_row.push(
+                        button(text("停止").size(11))
+                            .on_press(Message::StopConversationStatusTask(entry.task_id.clone()))
+                            .style(button_style(tokens, ButtonKind::Danger)),
+                    );
+                }
+                content = content.push(task_row);
             }
         }
         container(scrollable(content).direction(vertical_scrollbar()))
@@ -15233,7 +23011,7 @@ impl PreviewProgram {
                         .find(|project| &project.id == project_id)
                 })
                 .map(|project| project.name.clone())
-                .unwrap_or_else(|| "无项目".to_owned())
+                .unwrap_or_else(|| "收集箱".to_owned())
         } else {
             "Workspace".to_owned()
         };
@@ -15264,7 +23042,9 @@ impl PreviewProgram {
             popup.composer = None;
             popup.turn_state = None;
             popup.interaction_drafts.clear();
+            popup.ask_user_drafts.clear();
             popup.mcp_elicitation_drafts.clear();
+            popup.tool_consent_drafts.clear();
             popup.error = None;
         }
         if task_changed {
@@ -15272,11 +23052,15 @@ impl PreviewProgram {
                 .remove(&TimelineSurfaceKey::TaskPopup(window_id));
         }
         self.refresh_task_popup(window_id);
+        if task_changed {
+            self.refresh_conversation_suggestions(window_id, false);
+        }
         if item_changed {
             self.sync_workspace_window_application_surface(window_id);
             self.sync_workspace_window_project_surfaces(window_id, false);
         }
         self.sync_workspace_window_splits(window_id);
+        self.sync_document_editors_from_workspaces();
         true
     }
 
@@ -15471,6 +23255,8 @@ impl PreviewProgram {
                     workspace,
                     active_workspace_item_id: item_id,
                     active_task_id: task_id,
+                    draft: None,
+                    draft_worktree: DraftWorktreeSelection::Current,
                     title,
                     project_name,
                     task_sessions: BTreeMap::new(),
@@ -15479,9 +23265,14 @@ impl PreviewProgram {
                     slash_commands: Vec::new(),
                     conversation_reference_results: Vec::new(),
                     context_attachment_results: Vec::new(),
+                    conversation_suggestions: ConversationSuggestionState::default(),
+                    pending_session_branch: None,
+                    pending_review_slash_workflow: None,
                     turn_state: None,
                     interaction_drafts: BTreeMap::new(),
+                    ask_user_drafts: BTreeMap::new(),
                     mcp_elicitation_drafts: BTreeMap::new(),
+                    tool_consent_drafts: BTreeMap::new(),
                     error: None,
                     ready: false,
                     geometry: persisted.geometry,
@@ -15493,8 +23284,10 @@ impl PreviewProgram {
             );
             self.sync_workspace_window_splits(window_id);
             self.refresh_task_popup(window_id);
+            self.refresh_conversation_suggestions(window_id, false);
             self.sync_workspace_window_application_surface(window_id);
             self.sync_workspace_window_project_surfaces(window_id, false);
+            self.sync_document_editors_from_workspaces();
             let Some(popup) = self.task_popups.get(&window_id) else {
                 continue;
             };
@@ -15520,7 +23313,11 @@ impl PreviewProgram {
             return;
         };
         let is_full_window_surface = item.application_surface().ok().flatten().is_some()
-            || item.project_surface().ok().flatten().is_some();
+            || item.project_surface().ok().flatten().is_some()
+            || is_document_editor_item(&item)
+            || item
+                .terminal_session_id()
+                .is_ok_and(|value| value.is_some());
         if !item.capabilities.movable_across_windows || !is_full_window_surface {
             self.error_message = Some("当前视图尚不支持移至新窗口。".to_owned());
             return;
@@ -15553,7 +23350,6 @@ impl PreviewProgram {
             }
         };
         let title = item.title.clone();
-        self.apply_workspace_snapshot(outcome.source);
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -15561,6 +23357,8 @@ impl PreviewProgram {
                 workspace,
                 active_workspace_item_id: Some(item_id),
                 active_task_id: None,
+                draft: None,
+                draft_worktree: DraftWorktreeSelection::Current,
                 title: title.clone(),
                 project_name: "Workspace".to_owned(),
                 task_sessions: BTreeMap::new(),
@@ -15569,9 +23367,14 @@ impl PreviewProgram {
                 slash_commands: Vec::new(),
                 conversation_reference_results: Vec::new(),
                 context_attachment_results: Vec::new(),
+                conversation_suggestions: ConversationSuggestionState::default(),
+                pending_session_branch: None,
+                pending_review_slash_workflow: None,
                 turn_state: None,
                 interaction_drafts: BTreeMap::new(),
+                ask_user_drafts: BTreeMap::new(),
                 mcp_elicitation_drafts: BTreeMap::new(),
+                tool_consent_drafts: BTreeMap::new(),
                 error: None,
                 ready: false,
                 geometry: None,
@@ -15581,6 +23384,7 @@ impl PreviewProgram {
                 project_states: BTreeMap::new(),
             },
         );
+        self.apply_workspace_snapshot(outcome.source);
         self.sync_workspace_window_splits(window_id);
         self.refresh_task_popup(window_id);
         self.sync_workspace_window_application_surface(window_id);
@@ -15595,17 +23399,223 @@ impl PreviewProgram {
     }
 
     fn open_selected_task_popup(&mut self) {
-        self.open_selected_task_popup_with_transfer(false);
-    }
-
-    fn move_selected_task_to_popup(&mut self) {
-        self.open_selected_task_popup_with_transfer(true);
-    }
-
-    fn open_selected_task_popup_with_transfer(&mut self, transfer: bool) {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
+        self.open_task_popup_with_transfer(task_id, false);
+    }
+
+    fn open_child_question_popup(&mut self, source_window: HostedWindowId, parent_task_id: TaskId) {
+        let parent = match self.application.get_task(&parent_task_id) {
+            Ok(parent) if !parent.archived => parent,
+            Ok(_) => {
+                self.set_child_question_error(source_window, "已归档对话无法创建子对话。");
+                return;
+            }
+            Err(error) => {
+                eprintln!("failed to read Native child-question parent: {error}");
+                self.set_child_question_error(source_window, "无法读取当前对话，请重试。");
+                return;
+            }
+        };
+        match self.open_conversation_draft_popup(
+            parent.project_id,
+            Some(parent_task_id),
+            String::new(),
+        ) {
+            Ok(_) => self.clear_task_window_error(source_window),
+            Err(error) => {
+                eprintln!("failed to create Native child-question draft: {error}");
+                self.set_child_question_error(source_window, "无法创建子对话，请重试。");
+            }
+        }
+    }
+
+    fn set_child_question_error(&mut self, source_window: HostedWindowId, message: &str) {
+        if let Some(popup) = self.task_popups.get_mut(&source_window) {
+            popup.error = Some(message.to_owned());
+        } else {
+            self.task_action_error = Some(message.to_owned());
+        }
+    }
+
+    fn move_selected_task_to_popup(&mut self) {
+        let Some(task_id) = self.selected_task.clone() else {
+            return;
+        };
+        self.open_task_popup_with_transfer(task_id, true);
+    }
+
+    fn open_shortcut_conversation_popup(&mut self) {
+        let project_id = self.preferred_popup_project();
+        match self.open_conversation_draft_popup(project_id, None, String::new()) {
+            Ok(_) => self.shell_error = None,
+            Err(error) => {
+                eprintln!("failed to create Native shortcut conversation draft: {error}");
+                self.shell_error = Some("无法创建新对话窗口，请重试。".to_owned());
+            }
+        }
+    }
+
+    fn preferred_popup_project(&self) -> Option<ProjectId> {
+        self.application
+            .popup_last_project_id()
+            .ok()
+            .flatten()
+            .and_then(|project_id| ProjectId::new(project_id).ok())
+            .filter(|project_id| {
+                self.application
+                    .get_project(project_id)
+                    .is_ok_and(|project| project.archive == ProjectArchiveState::Active)
+            })
+    }
+
+    fn open_conversation_draft_popup(
+        &mut self,
+        project_id: Option<ProjectId>,
+        parent_id: Option<TaskId>,
+        initial_content: String,
+    ) -> Result<HostedWindowId, String> {
+        if let Some(project_id) = &project_id {
+            let project = self
+                .application
+                .get_project(project_id)
+                .map_err(|error| error.to_string())?;
+            if project.archive != ProjectArchiveState::Active {
+                return Err("project is archived".to_owned());
+            }
+            if let Err(error) = self
+                .application
+                .remember_popup_last_project(project_id.as_str())
+            {
+                eprintln!("failed to remember Native popup draft project: {error}");
+            }
+        }
+        let mut input = DesktopTaskCreate::new(project_id.clone(), "新对话");
+        input.parent_id = parent_id;
+        let mut composer = DesktopComposerState::transient(input.id.clone());
+        composer
+            .apply_transient_command(DesktopComposerCommand::SetContent(initial_content))
+            .map_err(|error| error.to_string())?;
+        let window_id = HostedWindowId(self.next_task_popup_window_id);
+        self.next_task_popup_window_id = self.next_task_popup_window_id.saturating_add(1);
+        let workspace_id = DesktopWorkspaceSessionId::new(format!(
+            "native-preview.popup.draft.{}.{}",
+            input.id.as_str(),
+            window_id.0
+        ))
+        .map_err(|error| error.to_string())?;
+        let workspace = self.application.create_workspace_session(workspace_id);
+        workspace
+            .execute(DesktopCommand::RefreshWorkspace)
+            .map_err(|error| error.to_string())?;
+        let project_name = project_id
+            .as_ref()
+            .and_then(|project_id| {
+                self.projects
+                    .iter()
+                    .find(|project| &project.id == project_id)
+            })
+            .map(|project| project.name.clone())
+            .unwrap_or_else(|| "收集箱".to_owned());
+        let draft_worktree = self.initial_draft_worktree(project_id.as_ref());
+        self.task_popups.insert(
+            window_id,
+            TaskPopupWindow {
+                id: window_id,
+                workspace,
+                active_workspace_item_id: None,
+                active_task_id: None,
+                draft: Some(input),
+                draft_worktree,
+                title: "新对话".to_owned(),
+                project_name,
+                task_sessions: BTreeMap::new(),
+                session: None,
+                composer: Some(composer),
+                slash_commands: Vec::new(),
+                conversation_reference_results: Vec::new(),
+                context_attachment_results: Vec::new(),
+                conversation_suggestions: ConversationSuggestionState::default(),
+                pending_session_branch: None,
+                pending_review_slash_workflow: None,
+                turn_state: None,
+                interaction_drafts: BTreeMap::new(),
+                ask_user_drafts: BTreeMap::new(),
+                mcp_elicitation_drafts: BTreeMap::new(),
+                tool_consent_drafts: BTreeMap::new(),
+                error: None,
+                ready: false,
+                geometry: None,
+                surface_position: None,
+                scale_factor: 1.0,
+                workspace_splits: BTreeMap::new(),
+                project_states: BTreeMap::new(),
+            },
+        );
+        self.refresh_conversation_suggestions(window_id, false);
+        self.pending_window_commands
+            .push(HostedWindowCommand::Open {
+                id: window_id,
+                settings: task_popup_window_settings("新对话", None),
+            });
+        Ok(window_id)
+    }
+
+    fn select_task_popup_draft_project(
+        &mut self,
+        window_id: HostedWindowId,
+        project_id: Option<ProjectId>,
+    ) {
+        if let Some(project_id) = &project_id {
+            let valid = self
+                .application
+                .get_project(project_id)
+                .is_ok_and(|project| project.archive == ProjectArchiveState::Active);
+            if !valid {
+                if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.error = Some("项目已不可用，请选择其他项目。".to_owned());
+                }
+                return;
+            }
+        }
+        let project_name = project_id
+            .as_ref()
+            .and_then(|project_id| {
+                self.projects
+                    .iter()
+                    .find(|project| &project.id == project_id)
+            })
+            .map(|project| project.name.clone())
+            .unwrap_or_else(|| "收集箱".to_owned());
+        let draft_worktree = self.initial_draft_worktree(project_id.as_ref());
+        let Some(popup) = self.task_popups.get_mut(&window_id) else {
+            return;
+        };
+        let Some(draft) = popup.draft.as_mut() else {
+            return;
+        };
+        draft.project_id = project_id.clone();
+        popup.draft_worktree = draft_worktree;
+        popup.project_name = project_name;
+        popup.error = None;
+        popup.slash_commands.clear();
+        popup.conversation_reference_results.clear();
+        popup.context_attachment_results.clear();
+        popup.conversation_suggestions.clear();
+        if let Some(project_id) = project_id {
+            if let Err(error) = self
+                .application
+                .remember_popup_last_project(project_id.as_str())
+            {
+                eprintln!("failed to remember Native popup draft project: {error}");
+            }
+        }
+        self.refresh_task_popup_composer_suggestions(window_id);
+        self.refresh_conversation_suggestions(window_id, false);
+    }
+
+    fn open_task_popup_with_transfer(&mut self, task_id: TaskId, transfer: bool) {
         let existing = self.task_popups.values().find_map(|popup| {
             let snapshot = popup.workspace.snapshot().ok()?;
             snapshot.workspace_items.iter().find_map(|item| {
@@ -15640,6 +23650,14 @@ impl PreviewProgram {
                 return;
             }
         };
+        if let Some(project_id) = task.project_id.as_ref() {
+            if let Err(error) = self
+                .application
+                .remember_popup_last_project(project_id.as_str())
+            {
+                eprintln!("failed to remember Native popup project: {error}");
+            }
+        }
         let window_id = HostedWindowId(self.next_task_popup_window_id);
         self.next_task_popup_window_id = self.next_task_popup_window_id.saturating_add(1);
         let workspace = match DesktopWorkspaceSessionId::new(format!(
@@ -15740,7 +23758,7 @@ impl PreviewProgram {
                     .find(|project| &project.id == project_id)
             })
             .map(|project| project.name.clone())
-            .unwrap_or_else(|| "无项目".to_owned());
+            .unwrap_or_else(|| "收集箱".to_owned());
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -15748,6 +23766,8 @@ impl PreviewProgram {
                 workspace,
                 active_workspace_item_id: Some(workspace_item_id),
                 active_task_id: Some(task_id),
+                draft: None,
+                draft_worktree: DraftWorktreeSelection::Current,
                 title: task.title,
                 project_name,
                 task_sessions: BTreeMap::new(),
@@ -15756,9 +23776,14 @@ impl PreviewProgram {
                 slash_commands: Vec::new(),
                 conversation_reference_results: Vec::new(),
                 context_attachment_results: Vec::new(),
+                conversation_suggestions: ConversationSuggestionState::default(),
+                pending_session_branch: None,
+                pending_review_slash_workflow: None,
                 turn_state: None,
                 interaction_drafts: BTreeMap::new(),
+                ask_user_drafts: BTreeMap::new(),
                 mcp_elicitation_drafts: BTreeMap::new(),
+                tool_consent_drafts: BTreeMap::new(),
                 error: None,
                 ready: false,
                 geometry: None,
@@ -15771,6 +23796,7 @@ impl PreviewProgram {
         self.sync_workspace_window_splits(window_id);
         self.persist_workspace_topology();
         self.refresh_task_popup(window_id);
+        self.refresh_conversation_suggestions(window_id, false);
         let title = self
             .task_popups
             .get(&window_id)
@@ -15785,6 +23811,16 @@ impl PreviewProgram {
     }
 
     fn refresh_task_popup(&mut self, window_id: HostedWindowId) {
+        if self
+            .task_popups
+            .get(&window_id)
+            .is_some_and(|popup| popup.draft.is_some())
+        {
+            if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                popup.ready = true;
+            }
+            return;
+        }
         let Some((active_task_id, workspace, previous_sessions)) =
             self.task_popups.get(&window_id).map(|popup| {
                 (
@@ -15842,13 +23878,18 @@ impl PreviewProgram {
                 popup.slash_commands.clear();
                 popup.conversation_reference_results.clear();
                 popup.context_attachment_results.clear();
+                popup.pending_session_branch = None;
+                popup.pending_review_slash_workflow = None;
                 popup.turn_state = None;
                 popup.interaction_drafts.clear();
+                popup.ask_user_drafts.clear();
                 popup.mcp_elicitation_drafts.clear();
+                popup.tool_consent_drafts.clear();
                 popup.error =
                     session_error.then(|| "部分窗格内容暂时无法读取，请稍后重试。".to_owned());
                 popup.ready = true;
             }
+            self.sync_markdown_images();
             return;
         };
         let task = self.application.get_task(&task_id);
@@ -15860,6 +23901,20 @@ impl PreviewProgram {
         let Some(popup) = self.task_popups.get_mut(&window_id) else {
             return;
         };
+        if popup
+            .pending_session_branch
+            .as_ref()
+            .is_some_and(|pending| pending.task_id != task_id)
+        {
+            popup.pending_session_branch = None;
+        }
+        if popup
+            .pending_review_slash_workflow
+            .as_ref()
+            .is_some_and(|pending| pending.task_id != task_id)
+        {
+            popup.pending_review_slash_workflow = None;
+        }
         popup.task_sessions = task_sessions;
         match (task, session, composer) {
             (Ok(task), Some(session), Ok(composer)) => {
@@ -15873,7 +23928,7 @@ impl PreviewProgram {
                             .find(|project| &project.id == project_id)
                     })
                     .map(|project| project.name.clone())
-                    .unwrap_or_else(|| "无项目".to_owned());
+                    .unwrap_or_else(|| "收集箱".to_owned());
                 popup.turn_state = runtime
                     .as_ref()
                     .ok()
@@ -15897,7 +23952,7 @@ impl PreviewProgram {
                         pending.status == PendingProjectionStatus::Open
                             && matches!(
                                 pending.kind.as_str(),
-                                "ask_user" | "plan_approval" | "mcp_elicitation"
+                                "ask_user" | "plan_approval" | "mcp_elicitation" | "tool_consent"
                             )
                     })
                     .map(|pending| pending.request_id.clone())
@@ -15906,7 +23961,13 @@ impl PreviewProgram {
                     .interaction_drafts
                     .retain(|request_id, _| open_interactions.contains(request_id));
                 popup
+                    .ask_user_drafts
+                    .retain(|request_id, _| open_interactions.contains(request_id));
+                popup
                     .mcp_elicitation_drafts
+                    .retain(|request_id, _| open_interactions.contains(request_id));
+                popup
+                    .tool_consent_drafts
                     .retain(|request_id, _| open_interactions.contains(request_id));
             }
             (task, _, composer) => {
@@ -15924,6 +23985,7 @@ impl PreviewProgram {
             }
         }
         self.refresh_task_popup_composer_suggestions(window_id);
+        self.sync_markdown_images();
     }
 
     fn sync_workspace_window_application_surface(&mut self, window_id: HostedWindowId) {
@@ -15944,6 +24006,7 @@ impl PreviewProgram {
             return;
         };
         match item.application_surface().ok().flatten() {
+            Some(ApplicationWorkspaceSurface::Projects) => self.refresh_project_dashboard(),
             Some(ApplicationWorkspaceSurface::Automations) => self.refresh_automations(),
             Some(ApplicationWorkspaceSurface::Settings) => {
                 if let Some(tab) = item
@@ -15955,12 +24018,15 @@ impl PreviewProgram {
                         matches!(
                             *tab,
                             "appearance"
+                                | "agent"
+                                | "project"
                                 | "provider"
                                 | "quota"
                                 | "extensions"
                                 | "remote"
                                 | "desktop"
                                 | "data"
+                                | "about"
                         )
                     })
                 {
@@ -16343,22 +24409,31 @@ impl PreviewProgram {
     }
 
     fn refresh_task_popup_slash_commands(&mut self, window_id: HostedWindowId) {
-        let Some((task_id, query)) = self.task_popups.get(&window_id).and_then(|popup| {
-            popup.active_task_id.clone().zip(
-                popup
+        let Some((task_id, project_id, query, transient)) =
+            self.task_popups.get(&window_id).and_then(|popup| {
+                let query = popup
                     .composer
                     .as_ref()
-                    .and_then(|composer| composer_slash_query(&composer.content)),
-            )
-        }) else {
+                    .and_then(|composer| composer_slash_query(&composer.content))?;
+                if let Some(draft) = popup.draft.as_ref() {
+                    Some((draft.id.clone(), draft.project_id.clone(), query, true))
+                } else {
+                    Some((popup.active_task_id.clone()?, None, query, false))
+                }
+            })
+        else {
             if let Some(popup) = self.task_popups.get_mut(&window_id) {
                 popup.slash_commands.clear();
             }
             return;
         };
-        let commands = self
-            .application
-            .search_task_slash_commands(&task_id, &query, 8);
+        let commands = if transient {
+            self.application
+                .search_project_slash_commands(project_id.as_ref(), &query, 8)
+        } else {
+            self.application
+                .search_task_slash_commands(&task_id, &query, 8)
+        };
         if let Some(popup) = self.task_popups.get_mut(&window_id) {
             match commands {
                 Ok(commands) => popup.slash_commands = commands,
@@ -16371,22 +24446,35 @@ impl PreviewProgram {
     }
 
     fn refresh_task_popup_conversation_references(&mut self, window_id: HostedWindowId) {
-        let Some((task_id, query)) = self.task_popups.get(&window_id).and_then(|popup| {
-            popup.active_task_id.clone().zip(
-                popup
+        let Some((task_id, query, transient)) =
+            self.task_popups.get(&window_id).and_then(|popup| {
+                let query = popup
                     .composer
                     .as_ref()
-                    .and_then(|composer| composer_conversation_query(&composer.content)),
-            )
-        }) else {
+                    .and_then(|composer| composer_conversation_query(&composer.content))?;
+                Some((
+                    popup
+                        .draft
+                        .as_ref()
+                        .map(|draft| draft.id.clone())
+                        .or_else(|| popup.active_task_id.clone())?,
+                    query,
+                    popup.draft.is_some(),
+                ))
+            })
+        else {
             if let Some(popup) = self.task_popups.get_mut(&window_id) {
                 popup.conversation_reference_results.clear();
             }
             return;
         };
-        let references = self
-            .application
-            .search_conversation_references(&task_id, &query, 8);
+        let references = if transient {
+            self.application
+                .search_conversation_references_from(&task_id, &query, 8)
+        } else {
+            self.application
+                .search_conversation_references(&task_id, &query, 8)
+        };
         if let Some(popup) = self.task_popups.get_mut(&window_id) {
             match references {
                 Ok(references) => popup.conversation_reference_results = references,
@@ -16401,22 +24489,36 @@ impl PreviewProgram {
     }
 
     fn refresh_task_popup_context_attachments(&mut self, window_id: HostedWindowId) {
-        let Some((task_id, query)) = self.task_popups.get(&window_id).and_then(|popup| {
-            popup.active_task_id.clone().zip(
-                popup
+        let Some((task_id, project_id, query)) =
+            self.task_popups.get(&window_id).and_then(|popup| {
+                let query = popup
                     .composer
                     .as_ref()
-                    .and_then(|composer| composer_context_query(&composer.content)),
-            )
-        }) else {
+                    .and_then(|composer| composer_context_query(&composer.content))?;
+                if let Some(draft) = popup.draft.as_ref() {
+                    Some((None, draft.project_id.clone()?, query))
+                } else {
+                    let task_id = popup.active_task_id.clone()?;
+                    let project_id = self.application.get_task(&task_id).ok()?.project_id?;
+                    Some((Some(task_id), project_id, query))
+                }
+            })
+        else {
             if let Some(popup) = self.task_popups.get_mut(&window_id) {
                 popup.context_attachment_results.clear();
             }
             return;
         };
-        let attachments = self
-            .application
-            .search_task_context_attachments(&task_id, &query, 8);
+        let attachments = task_id.map_or_else(
+            || {
+                self.application
+                    .search_project_context_attachments(&project_id, &query, 8)
+            },
+            |task_id| {
+                self.application
+                    .search_task_context_attachments(&task_id, &query, 8)
+            },
+        );
         if let Some(popup) = self.task_popups.get_mut(&window_id) {
             match attachments {
                 Ok(attachments) => popup.context_attachment_results = attachments,
@@ -16532,17 +24634,142 @@ impl PreviewProgram {
                 }
             }
         }
+        self.sync_markdown_images();
     }
 
-    fn close_task_popup(&mut self, window_id: HostedWindowId) {
-        if self.task_popups.remove(&window_id).is_some() {
-            self.file_drop_hovered_windows.remove(&window_id);
-            self.attachment_previews.remove(&window_id);
-            self.timeline_viewports
-                .retain(|surface, _| surface.window_id() != window_id);
-            self.persist_workspace_topology();
+    fn close_task_popup(&mut self, window_id: HostedWindowId) -> bool {
+        self.close_task_popup_with_command(window_id, true)
+    }
+
+    fn close_task_popup_with_command(
+        &mut self,
+        window_id: HostedWindowId,
+        enqueue_close: bool,
+    ) -> bool {
+        let document_items = self.document_items_in_workspace_window(window_id);
+        if let Some(title) = self.first_dirty_document_title(&document_items) {
+            if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                popup.error = Some(format!("“{title}”有未保存更改，请先保存或丢弃更改。"));
+            }
+            return false;
+        }
+        let documents_to_close = self.document_ids_released_by_closing(&document_items);
+        if self.task_popups.remove(&window_id).is_none() {
+            return false;
+        }
+        self.release_document_views(&document_items, documents_to_close);
+        self.clear_task_popup_ephemeral_state(window_id);
+        self.persist_workspace_topology();
+        if enqueue_close {
             self.pending_window_commands
                 .push(HostedWindowCommand::Close(window_id));
+        }
+        true
+    }
+
+    fn clear_task_popup_ephemeral_state(&mut self, window_id: HostedWindowId) {
+        self.file_drop_hovered_windows.remove(&window_id);
+        self.attachment_previews.remove(&window_id);
+        self.timeline_text_selections.remove(&window_id);
+        self.markdown_image_previews.remove(&window_id);
+        self.timeline_viewports
+            .retain(|surface, _| surface.window_id() != window_id);
+        self.sync_markdown_images();
+    }
+
+    fn focus_task_popup_main(&mut self, window_id: HostedWindowId) {
+        let Some((is_draft, draft_project_id, active_task_id, active_item_id, item_count)) =
+            self.task_popups.get(&window_id).and_then(|popup| {
+                let item_count = popup.workspace.snapshot().ok()?.workspace_items.len();
+                Some((
+                    popup.draft.is_some(),
+                    popup
+                        .draft
+                        .as_ref()
+                        .and_then(|draft| draft.project_id.clone()),
+                    popup.active_task_id.clone(),
+                    popup.active_workspace_item_id.clone(),
+                    item_count,
+                ))
+            })
+        else {
+            return;
+        };
+
+        if is_draft {
+            if self.close_task_popup(window_id) {
+                if let Some(project_id) = draft_project_id {
+                    self.execute_workspace_command(DesktopCommand::SelectProject(project_id));
+                }
+                self.pending_window_commands
+                    .push(HostedWindowCommand::Focus(HostedWindowId::PRIMARY));
+            }
+            return;
+        }
+
+        let Some(task_id) = active_task_id else {
+            self.pending_window_commands
+                .push(HostedWindowCommand::Focus(HostedWindowId::PRIMARY));
+            return;
+        };
+        let main_has_task_view = self
+            .workspace_items
+            .iter()
+            .any(|item| item.task_id().ok().flatten().as_ref() == Some(&task_id));
+        if main_has_task_view {
+            if item_count <= 1 {
+                if !self.close_task_popup(window_id) {
+                    return;
+                }
+            } else if let Some(item_id) = active_item_id {
+                self.close_workspace_window_item(window_id, item_id);
+            }
+            self.select_task(task_id);
+        } else {
+            self.move_task_popup_to_main(window_id);
+        }
+        self.pending_window_commands
+            .push(HostedWindowCommand::Focus(HostedWindowId::PRIMARY));
+    }
+
+    fn open_task_popup_new_chat(&mut self, source_window: HostedWindowId) {
+        let Some((project_id, item_count)) =
+            self.task_popups.get(&source_window).and_then(|popup| {
+                if popup.draft.is_some() {
+                    return None;
+                }
+                let project_id = popup
+                    .active_task_id
+                    .as_ref()
+                    .and_then(|task_id| self.application.get_task(task_id).ok())
+                    .and_then(|task| task.project_id);
+                let item_count = popup.workspace.snapshot().ok()?.workspace_items.len();
+                Some((project_id, item_count))
+            })
+        else {
+            return;
+        };
+        if item_count <= 1 {
+            let document_items = self.document_items_in_workspace_window(source_window);
+            if let Some(title) = self.first_dirty_document_title(&document_items) {
+                if let Some(popup) = self.task_popups.get_mut(&source_window) {
+                    popup.error = Some(format!("“{title}”有未保存更改，请先保存或丢弃更改。"));
+                }
+                return;
+            }
+        }
+        match self.open_conversation_draft_popup(project_id, None, String::new()) {
+            Ok(_) => {
+                if item_count <= 1 {
+                    self.close_task_popup(source_window);
+                }
+            }
+            Err(error) => {
+                eprintln!("failed to open Native conversation draft from task window: {error}");
+                if let Some(popup) = self.task_popups.get_mut(&source_window) {
+                    popup.error = Some("无法打开新对话，请重试。".to_owned());
+                }
+            }
         }
     }
 
@@ -16674,16 +24901,43 @@ impl PreviewProgram {
     }
 
     fn close_workspace_window_item(&mut self, window_id: HostedWindowId, item_id: WorkspaceItemId) {
-        let pane_id = self
+        let snapshot = self
             .task_popups
             .get(&window_id)
-            .and_then(|popup| popup.workspace.snapshot().ok())
-            .and_then(|snapshot| snapshot.panel_layout.pane_for_item(&item_id).cloned());
-        if let Some(pane_id) = pane_id {
-            self.execute_workspace_window_command(
-                window_id,
-                DesktopCommand::CloseWorkspaceItem { pane_id, item_id },
-            );
+            .and_then(|popup| popup.workspace.snapshot().ok());
+        let Some(snapshot) = snapshot else {
+            return;
+        };
+        let document_item = snapshot
+            .workspace_items
+            .iter()
+            .find(|item| item.id == item_id && is_document_editor_item(item))
+            .cloned();
+        if let Some(item) = &document_item {
+            if self
+                .first_dirty_document_title(std::slice::from_ref(item))
+                .is_some()
+            {
+                if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.error = Some("文档有未保存更改，请先保存或丢弃更改。".to_owned());
+                }
+                return;
+            }
+        }
+        let Some(pane_id) = snapshot.panel_layout.pane_for_item(&item_id).cloned() else {
+            return;
+        };
+        let documents_to_close = document_item
+            .as_ref()
+            .map(|item| self.document_ids_released_by_closing(std::slice::from_ref(item)))
+            .unwrap_or_default();
+        if self.execute_workspace_window_command(
+            window_id,
+            DesktopCommand::CloseWorkspaceItem { pane_id, item_id },
+        ) {
+            if let Some(item) = document_item {
+                self.release_document_views(&[item], documents_to_close);
+            }
         }
     }
 
@@ -16713,8 +24967,7 @@ impl PreviewProgram {
                     && self.apply_task_popup_workspace_snapshot(window_id, outcome.source);
                 if !keep_source {
                     self.task_popups.remove(&window_id);
-                    self.file_drop_hovered_windows.remove(&window_id);
-                    self.attachment_previews.remove(&window_id);
+                    self.clear_task_popup_ephemeral_state(window_id);
                     self.pending_window_commands
                         .push(HostedWindowCommand::Close(window_id));
                 }
@@ -16816,8 +25069,7 @@ impl PreviewProgram {
                     Ok(outcome) => {
                         if outcome.source.workspace_items.is_empty() {
                             self.task_popups.remove(&source_window);
-                            self.file_drop_hovered_windows.remove(&source_window);
-                            self.attachment_previews.remove(&source_window);
+                            self.clear_task_popup_ephemeral_state(source_window);
                             self.pending_window_commands
                                 .push(HostedWindowCommand::Close(source_window));
                         } else if !self
@@ -16890,6 +25142,30 @@ impl PreviewProgram {
         window_id: HostedWindowId,
         command: DesktopComposerCommand,
     ) -> bool {
+        if self
+            .task_popups
+            .get(&window_id)
+            .is_some_and(|popup| popup.draft.is_some())
+        {
+            let Some(popup) = self.task_popups.get_mut(&window_id) else {
+                return false;
+            };
+            let Some(composer) = popup.composer.as_mut() else {
+                popup.error = Some("草稿输入已失效，请重新打开窗口。".to_owned());
+                return false;
+            };
+            return match composer.apply_transient_command(command) {
+                Ok(_) => {
+                    popup.error = None;
+                    true
+                }
+                Err(error) => {
+                    eprintln!("failed to update Native transient composer: {error}");
+                    popup.error = Some("无法更新输入内容，请重试。".to_owned());
+                    false
+                }
+            };
+        }
         let Some(task_id) = self
             .task_popups
             .get(&window_id)
@@ -16916,11 +25192,15 @@ impl PreviewProgram {
     }
 
     fn pick_task_popup_attachments(&mut self, window_id: HostedWindowId, select_directories: bool) {
-        let Some(task_id) = self
-            .task_popups
-            .get(&window_id)
-            .and_then(|popup| popup.active_task_id.clone())
-        else {
+        let Some((task_id, project_id)) = self.task_popups.get(&window_id).map(|popup| {
+            (
+                popup.active_task_id.clone(),
+                popup
+                    .draft
+                    .as_ref()
+                    .and_then(|draft| draft.project_id.clone()),
+            )
+        }) else {
             return;
         };
         let request = DesktopFileDialogRequest {
@@ -16941,11 +25221,17 @@ impl PreviewProgram {
                 }
                 .to_owned(),
             ),
-            initial_directory: self
-                .application
-                .task_workspace_path(&task_id)
-                .ok()
-                .flatten()
+            initial_directory: task_id
+                .as_ref()
+                .and_then(|task_id| self.application.task_workspace_path(task_id).ok().flatten())
+                .or_else(|| {
+                    project_id.and_then(|project_id| {
+                        self.projects
+                            .iter()
+                            .find(|project| project.id == project_id)
+                            .and_then(|project| project.workspace_path.clone())
+                    })
+                })
                 .map(PathBuf::from),
             filters: Vec::new(),
             select_directories,
@@ -16978,14 +25264,13 @@ impl PreviewProgram {
         incoming: Vec<ChatAttachment>,
     ) -> bool {
         let Some(mut attachments) = self.task_popups.get(&window_id).and_then(|popup| {
-            popup.active_task_id.as_ref()?;
-            Some(
+            (popup.active_task_id.is_some() || popup.draft.is_some()).then(|| {
                 popup
                     .composer
                     .as_ref()
                     .map(|composer| composer.attachments.clone())
-                    .unwrap_or_default(),
-            )
+                    .unwrap_or_default()
+            })
         }) else {
             return false;
         };
@@ -17043,10 +25328,21 @@ impl PreviewProgram {
     }
 
     fn submit_task_popup_turn(&mut self, window_id: HostedWindowId) {
+        if self
+            .task_popups
+            .get(&window_id)
+            .is_some_and(|popup| popup.draft.is_some())
+        {
+            if self.materialize_task_popup_draft(window_id) {
+                self.submit_task_popup_turn(window_id);
+            }
+            return;
+        }
         let Some((task_id, can_send)) = self.task_popups.get(&window_id).and_then(|popup| {
-            let can_send = popup.composer.as_ref().is_some_and(|composer| {
-                !composer.content.trim().is_empty() || !composer.attachments.is_empty()
-            });
+            let can_send = popup
+                .composer
+                .as_ref()
+                .is_some_and(composer_has_turn_payload);
             Some((popup.active_task_id.clone()?, can_send))
         }) else {
             return;
@@ -17054,8 +25350,235 @@ impl PreviewProgram {
         if !can_send {
             return;
         }
-        match self.application.submit_composer(&task_id) {
+        if self.pending_initial_worktrees.contains_key(&task_id) {
+            if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                popup.error = Some("请先重试准备所选工作树，再发送第一条消息。".to_owned());
+            }
+            return;
+        }
+        if self.task_popups.get(&window_id).is_some_and(|popup| {
+            popup
+                .pending_review_slash_workflow
+                .as_ref()
+                .is_some_and(|pending| pending.task_id == task_id)
+        }) {
+            return;
+        }
+        let session_branch = self
+            .task_popups
+            .get(&window_id)
+            .and_then(|popup| popup.pending_session_branch.as_ref())
+            .filter(|pending| pending.task_id == task_id)
+            .map(|pending| pending.anchor.clone());
+        let submission = session_branch.map_or_else(
+            || self.application.submit_composer(&task_id),
+            |branch| {
+                self.application
+                    .submit_composer_with_session_branch(&task_id, branch)
+            },
+        );
+        match submission {
             Ok(DesktopComposerSubmission::Turn(dispatch)) => {
+                self.prompt_route_suggestions.remove(&window_id);
+                if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.turn_state = Some((
+                        dispatch.turn_id,
+                        match dispatch.kind {
+                            DesktopTurnDispatchKind::Started => DesktopTurnState::Starting,
+                            DesktopTurnDispatchKind::Queued { position } => {
+                                DesktopTurnState::Queued { position }
+                            }
+                        },
+                    ));
+                    popup.error = None;
+                    popup.pending_session_branch = None;
+                }
+                self.refresh_task_popup(window_id);
+            }
+            Ok(DesktopComposerSubmission::Guide { .. }) => {
+                self.prompt_route_suggestions.remove(&window_id);
+                if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.error = None;
+                    popup.pending_session_branch = None;
+                }
+                self.refresh_task_popup(window_id);
+            }
+            Ok(DesktopComposerSubmission::Command(_)) => {
+                self.prompt_route_suggestions.remove(&window_id);
+                if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.error = None;
+                    popup.pending_session_branch = None;
+                }
+                self.refresh_task_popup(window_id);
+            }
+            Err(error) => {
+                eprintln!("failed to start Native task popup turn: {error}");
+                if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.error = Some("无法发送消息，请重试。".to_owned());
+                }
+            }
+        }
+    }
+
+    fn materialize_task_popup_draft(&mut self, window_id: HostedWindowId) -> bool {
+        let Some((mut input, composer, workspace, draft_worktree)) =
+            self.task_popups.get(&window_id).and_then(|popup| {
+                Some((
+                    popup.draft.clone()?,
+                    popup.composer.clone()?,
+                    popup.workspace.clone(),
+                    popup.draft_worktree.clone(),
+                ))
+            })
+        else {
+            return false;
+        };
+        if !composer_has_turn_payload(&composer) {
+            return false;
+        }
+        if matches!(draft_worktree, DraftWorktreeSelection::Existing(None)) {
+            if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                popup.error = Some("请先选择已有工作树。".to_owned());
+            }
+            return false;
+        }
+        input.title = composer_draft_title(&composer);
+        let worktree_intent = self
+            .draft_worktree_intent(&draft_worktree)
+            .expect("incomplete existing worktree selections are rejected above");
+        if let Err(error) = self
+            .application
+            .set_initial_worktree_intent(&input.id, worktree_intent.as_ref())
+        {
+            eprintln!("failed to persist Native popup draft worktree intent: {error}");
+            if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                popup.error = Some("无法保存工作树选择，请重试。".to_owned());
+            }
+            return false;
+        }
+        let reserved_task_id = input.id.clone();
+        let task = match self.application.materialize_task_draft(input, composer) {
+            Ok(task) => task,
+            Err(error) => {
+                if let Err(clear_error) = self
+                    .application
+                    .set_initial_worktree_intent(&reserved_task_id, None)
+                {
+                    eprintln!(
+                        "failed to clear Native popup draft worktree intent after materialize failure: {clear_error}"
+                    );
+                }
+                eprintln!("failed to materialize Native conversation draft: {error}");
+                if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.error = Some("无法保存新对话，请重试。".to_owned());
+                }
+                return false;
+            }
+        };
+        let worktree_error = worktree_intent
+            .as_ref()
+            .map_or(Ok(false), |_| {
+                self.application.retry_initial_worktree(&task.id)
+            })
+            .err()
+            .map(|error| {
+                eprintln!("failed to prepare Native popup draft worktree: {error}");
+                "对话已保存，但无法准备所选工作树；消息尚未发送。".to_owned()
+            });
+        if let Some(project_id) = task.project_id.clone() {
+            let selected = workspace
+                .execute(DesktopCommand::SelectProject(project_id))
+                .and_then(|_| workspace.execute(DesktopCommand::SelectTask(task.id.clone())));
+            if let Err(error) = selected {
+                eprintln!("failed to select materialized Native draft task: {error}");
+            }
+        }
+        let primary_pane = PaneId::new("primary").expect("primary pane id is valid");
+        let item_id = WorkspaceItemId::new(format!(
+            "task-popup-view:{}:{}",
+            window_id.0,
+            task.id.as_str()
+        ))
+        .expect("task popup view ids are valid");
+        let item = match self
+            .application
+            .task_workspace_item_view(&task.id, item_id.clone())
+        {
+            Ok(item) => item,
+            Err(error) => {
+                eprintln!("failed to describe materialized Native draft task: {error}");
+                if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    popup.draft = None;
+                    popup.active_task_id = Some(task.id);
+                    popup.error = Some("对话已保存，但窗口暂时无法继续，请重新打开。".to_owned());
+                }
+                self.refresh_tasks();
+                return false;
+            }
+        };
+        if let Err(error) = workspace.execute(DesktopCommand::OpenWorkspaceItem {
+            pane_id: primary_pane,
+            item,
+        }) {
+            eprintln!("failed to open materialized Native draft task: {error}");
+            if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                popup.draft = None;
+                popup.active_task_id = Some(task.id);
+                popup.error = Some("对话已保存，但窗口暂时无法继续，请重新打开。".to_owned());
+            }
+            self.refresh_tasks();
+            return false;
+        }
+        let project_name = task
+            .project_id
+            .as_ref()
+            .and_then(|project_id| {
+                self.projects
+                    .iter()
+                    .find(|project| &project.id == project_id)
+            })
+            .map(|project| project.name.clone())
+            .unwrap_or_else(|| "收集箱".to_owned());
+        if let Some(popup) = self.task_popups.get_mut(&window_id) {
+            popup.active_workspace_item_id = Some(item_id);
+            popup.active_task_id = Some(task.id.clone());
+            popup.draft = None;
+            popup.title = task.title;
+            popup.project_name = project_name;
+            popup.conversation_suggestions.clear();
+            popup.error = None;
+        }
+        self.refresh_tasks();
+        self.refresh_task_popup(window_id);
+        self.persist_workspace_topology();
+        if let Some(error) = worktree_error {
+            if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                popup.error = Some(error);
+            }
+            false
+        } else {
+            true
+        }
+    }
+
+    fn compact_task_popup_context(&mut self, window_id: HostedWindowId) {
+        let Some(task_id) = self.task_popups.get(&window_id).and_then(|popup| {
+            let turn_active = popup
+                .turn_state
+                .as_ref()
+                .is_some_and(|(_, state)| turn_state_is_active(state));
+            let pending = popup
+                .session
+                .as_ref()
+                .is_some_and(|session| session.blocking_pending_count > 0);
+            (!turn_active && !pending).then(|| popup.active_task_id.clone())?
+        }) else {
+            return;
+        };
+        let mut request = DesktopTurnRequest::new(task_id, "");
+        request.workflow = Some(LiliaAgentWorkflow::LiliaCompact);
+        match self.application.start_task_turn(request) {
+            Ok(dispatch) => {
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
                     popup.turn_state = Some((
                         dispatch.turn_id,
@@ -17068,24 +25591,11 @@ impl PreviewProgram {
                     ));
                     popup.error = None;
                 }
-                self.refresh_task_popup(window_id);
-            }
-            Ok(DesktopComposerSubmission::Guide { .. }) => {
-                if let Some(popup) = self.task_popups.get_mut(&window_id) {
-                    popup.error = None;
-                }
-                self.refresh_task_popup(window_id);
-            }
-            Ok(DesktopComposerSubmission::Command(_)) => {
-                if let Some(popup) = self.task_popups.get_mut(&window_id) {
-                    popup.error = None;
-                }
-                self.refresh_task_popup(window_id);
             }
             Err(error) => {
-                eprintln!("failed to start Native task popup turn: {error}");
+                eprintln!("failed to compact Native task popup context: {error}");
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
-                    popup.error = Some("无法发送消息，请重试。".to_owned());
+                    popup.error = Some("无法压缩上下文，请重试。".to_owned());
                 }
             }
         }
@@ -17161,6 +25671,18 @@ impl PreviewProgram {
         else {
             return;
         };
+        if self
+            .debug_timeline
+            .resolve(&task_id, &request_id, accepted, &response)
+        {
+            if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                popup.interaction_drafts.remove(&request_id);
+                popup.ask_user_drafts.remove(&request_id);
+                popup.tool_consent_drafts.remove(&request_id);
+                popup.error = None;
+            }
+            return;
+        }
         match self
             .application
             .respond_task_interaction(&task_id, &request_id, accepted, response)
@@ -17168,7 +25690,9 @@ impl PreviewProgram {
             Ok(result) => {
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
                     popup.interaction_drafts.remove(&request_id);
+                    popup.ask_user_drafts.remove(&request_id);
                     popup.mcp_elicitation_drafts.remove(&request_id);
+                    popup.tool_consent_drafts.remove(&request_id);
                     popup.turn_state = result.continuation.map(|dispatch| {
                         (
                             dispatch.turn_id,
@@ -17231,11 +25755,318 @@ impl PreviewProgram {
         }
     }
 
+    fn sync_markdown_images(&mut self) {
+        let mut sources = BTreeSet::new();
+        if let Some(session) = &self.task_session {
+            collect_session_markdown_image_sources(session, &mut sources);
+        }
+        for session in self.pane_task_sessions.values() {
+            collect_session_markdown_image_sources(session, &mut sources);
+        }
+        for popup in self.task_popups.values() {
+            if let Some(session) = &popup.session {
+                collect_session_markdown_image_sources(session, &mut sources);
+            }
+            for session in popup.task_sessions.values() {
+                collect_session_markdown_image_sources(session, &mut sources);
+            }
+        }
+        self.markdown_images
+            .retain(|source, _| sources.contains(source));
+        self.markdown_image_recency
+            .retain(|source, _| sources.contains(source));
+        self.markdown_image_previews
+            .retain(|_, preview| sources.contains(&preview.source));
+        for source in &sources {
+            if !self.markdown_images.contains_key(source) {
+                self.markdown_images.insert(
+                    source.clone(),
+                    MarkdownImageLoadState::Pending { requested: false },
+                );
+                self.touch_markdown_image(source);
+            }
+        }
+
+        let loading = self
+            .markdown_images
+            .values()
+            .filter(|state| matches!(state, MarkdownImageLoadState::Loading))
+            .count();
+        let available_workers = MAX_MARKDOWN_IMAGE_WORKERS.saturating_sub(loading);
+        let requested_waiting = self
+            .markdown_images
+            .values()
+            .any(|state| matches!(state, MarkdownImageLoadState::Pending { requested: true }));
+        if requested_waiting
+            && available_workers > 0
+            && self.markdown_image_resident_count() >= MAX_MARKDOWN_IMAGE_CACHE_ENTRIES
+        {
+            self.evict_oldest_markdown_image(None);
+        }
+        let available_entries =
+            MAX_MARKDOWN_IMAGE_CACHE_ENTRIES.saturating_sub(self.markdown_image_resident_count());
+        let mut pending = self
+            .markdown_images
+            .iter()
+            .filter_map(|(source, state)| match state {
+                MarkdownImageLoadState::Pending { requested } => Some((
+                    !requested,
+                    self.markdown_image_recency
+                        .get(source)
+                        .copied()
+                        .unwrap_or_default(),
+                    source.clone(),
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        pending.sort();
+        for (_, _, source) in pending
+            .into_iter()
+            .take(available_workers.min(available_entries))
+        {
+            self.markdown_images
+                .insert(source.clone(), MarkdownImageLoadState::Loading);
+            self.touch_markdown_image(&source);
+            let message_sender = Arc::clone(&self.message_sender);
+            std::thread::spawn(move || {
+                let result = load_markdown_image(&source);
+                let _ = message_sender(Message::MarkdownImageLoaded { source, result });
+            });
+        }
+    }
+
+    fn touch_markdown_image(&mut self, source: &str) {
+        self.markdown_image_access_clock = self.markdown_image_access_clock.saturating_add(1);
+        self.markdown_image_recency
+            .insert(source.to_owned(), self.markdown_image_access_clock);
+    }
+
+    fn markdown_image_resident_count(&self) -> usize {
+        self.markdown_images
+            .values()
+            .filter(|state| {
+                matches!(
+                    state,
+                    MarkdownImageLoadState::Loading | MarkdownImageLoadState::Ready(_)
+                )
+            })
+            .count()
+    }
+
+    fn markdown_image_ready_bytes(&self) -> usize {
+        self.markdown_images
+            .values()
+            .filter_map(|state| match state {
+                MarkdownImageLoadState::Ready(image) => Some(image.encoded_len()),
+                _ => None,
+            })
+            .sum()
+    }
+
+    fn evict_oldest_markdown_image(&mut self, protected_source: Option<&str>) -> bool {
+        let preview_sources = self
+            .markdown_image_previews
+            .values()
+            .map(|preview| preview.source.as_str())
+            .collect::<BTreeSet<_>>();
+        let candidate = self
+            .markdown_images
+            .iter()
+            .filter(|(source, state)| {
+                matches!(state, MarkdownImageLoadState::Ready(_))
+                    && protected_source != Some(source.as_str())
+                    && !preview_sources.contains(source.as_str())
+            })
+            .min_by_key(|(source, _)| {
+                self.markdown_image_recency
+                    .get(source.as_str())
+                    .copied()
+                    .unwrap_or_default()
+            })
+            .map(|(source, _)| source.clone());
+        let Some(source) = candidate else {
+            return false;
+        };
+        self.markdown_images
+            .insert(source, MarkdownImageLoadState::Pending { requested: false });
+        true
+    }
+
+    fn complete_markdown_image_load(
+        &mut self,
+        source: String,
+        result: Result<LoadedMarkdownImage, String>,
+    ) {
+        if !matches!(
+            self.markdown_images.get(&source),
+            Some(MarkdownImageLoadState::Loading)
+        ) {
+            return;
+        }
+        match result {
+            Ok(image) => {
+                while self
+                    .markdown_image_ready_bytes()
+                    .saturating_add(image.encoded_len())
+                    > MAX_MARKDOWN_IMAGE_CACHE_BYTES
+                {
+                    if !self.evict_oldest_markdown_image(Some(&source)) {
+                        self.markdown_images
+                            .insert(source.clone(), MarkdownImageLoadState::Failed);
+                        self.sync_markdown_images();
+                        return;
+                    }
+                }
+                self.markdown_images
+                    .insert(source.clone(), MarkdownImageLoadState::Ready(image));
+                self.touch_markdown_image(&source);
+            }
+            Err(error) => {
+                eprintln!("failed to load Native Markdown image: {error}");
+                self.markdown_images
+                    .insert(source, MarkdownImageLoadState::Failed);
+            }
+        }
+        self.sync_markdown_images();
+    }
+
+    fn request_markdown_image_load(&mut self, source: &str) {
+        if matches!(
+            self.markdown_images.get(source),
+            Some(MarkdownImageLoadState::Loading | MarkdownImageLoadState::Ready(_))
+        ) {
+            return;
+        }
+        self.markdown_images.insert(
+            source.to_owned(),
+            MarkdownImageLoadState::Pending { requested: true },
+        );
+        self.touch_markdown_image(source);
+        if self.markdown_image_resident_count() >= MAX_MARKDOWN_IMAGE_CACHE_ENTRIES {
+            self.evict_oldest_markdown_image(Some(source));
+        }
+        self.sync_markdown_images();
+    }
+
+    fn markdown_document_view(
+        &self,
+        document: &NativeMarkdown,
+        window_id: HostedWindowId,
+        event_id: &str,
+        selectable: bool,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let image_states = document
+            .images()
+            .into_iter()
+            .map(|image| {
+                let state = self.markdown_images.get(&image.source).cloned();
+                (image.source, state)
+            })
+            .collect::<BTreeMap<_, _>>();
+        if selectable {
+            let image_states_for_render = image_states.clone();
+            let event_id = event_id.to_owned();
+            document.view_with_media(
+                tokens,
+                Message::OpenMarkdownLink,
+                move |image| {
+                    markdown_image_fragment(
+                        image.clone(),
+                        image_states_for_render
+                            .get(&image.source)
+                            .cloned()
+                            .flatten(),
+                        window_id,
+                        tokens,
+                    )
+                },
+                move |text| Message::TimelineTextSelectionChanged {
+                    window_id,
+                    event_id: event_id.clone(),
+                    text,
+                },
+            )
+        } else {
+            document.view_with_images(tokens, Message::OpenMarkdownLink, move |image| {
+                markdown_image_fragment(
+                    image.clone(),
+                    image_states.get(&image.source).cloned().flatten(),
+                    window_id,
+                    tokens,
+                )
+            })
+        }
+    }
+
+    fn with_markdown_image_preview(
+        &self,
+        window_id: HostedWindowId,
+        content: Element<'static, Message>,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let Some(preview) = self.markdown_image_previews.get(&window_id) else {
+            return content;
+        };
+        let Some(MarkdownImageLoadState::Ready(image)) = self.markdown_images.get(&preview.source)
+        else {
+            return content;
+        };
+        let visual = loaded_markdown_image_visual(image, Length::Fill);
+        let source = ImageViewerSource::new(visual)
+            .name(markdown_image_label(preview))
+            .metadata(markdown_image_format_label(image.media_type()));
+        stack![
+            content,
+            ImageViewer::new(
+                source,
+                Message::CloseMarkdownImage(window_id),
+                Message::CloseMarkdownImage(window_id),
+                Message::MarkdownImageViewerInteraction,
+                tokens,
+            )
+            .view(),
+        ]
+        .into()
+    }
+
+    fn timeline_selection_actions(
+        &self,
+        window_id: HostedWindowId,
+        event_id: &str,
+        tokens: ThemeTokens,
+    ) -> Option<Element<'static, Message>> {
+        let selection = self.timeline_text_selections.get(&window_id)?;
+        if selection.event_id != event_id || selection.text.trim().is_empty() {
+            return None;
+        }
+        Some(
+            row![
+                button(text("复制选中内容").size(10))
+                    .on_press(Message::CopyTimelineSelection { window_id })
+                    .style(button_style(tokens, ButtonKind::Text)),
+                button(text("引用").size(10))
+                    .on_press(Message::QuoteTimelineSelection { window_id })
+                    .style(button_style(tokens, ButtonKind::Text)),
+                button(text("在弹窗提问").size(10))
+                    .on_press(Message::AskTimelineSelectionInPopup { window_id })
+                    .style(button_style(tokens, ButtonKind::Text)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .into(),
+        )
+    }
+
     fn task_popup_content(
         &self,
         popup: &TaskPopupWindow,
         tokens: ThemeTokens,
     ) -> Element<'static, Message> {
+        if popup.draft.is_some() {
+            return self.task_popup_draft_content(popup, tokens);
+        }
         let Ok(snapshot) = popup.workspace.snapshot() else {
             return container(
                 EmptyState::new("无法读取窗口")
@@ -17249,7 +26080,567 @@ impl PreviewProgram {
             .style(canvas_style(tokens))
             .into();
         };
-        self.workspace_window_pane_tree(popup, &snapshot, &snapshot.panel_layout.panes, tokens)
+        let focus_main = button(text("回主窗口").size(11))
+            .on_press(Message::FocusTaskPopupMain(popup.id))
+            .style(button_style(tokens, ButtonKind::Ghost));
+        let new_chat = button(text("新对话").size(11))
+            .on_press(Message::OpenTaskPopupNewChat(popup.id))
+            .style(button_style(tokens, ButtonKind::Ghost));
+        let mut ask_child =
+            button(text("询问").size(11)).style(button_style(tokens, ButtonKind::Ghost));
+        if let Some(parent_task_id) = popup.active_task_id.clone() {
+            ask_child = ask_child.on_press(Message::OpenChildQuestionPopup {
+                source_window: popup.id,
+                parent_task_id,
+            });
+        }
+        let window_chrome = row![
+            text(popup.project_name.clone())
+                .size(10)
+                .width(Length::Fill)
+                .color(tokens.colors.muted),
+            focus_main,
+            new_chat,
+            ask_child,
+            button(text("关闭窗口").size(11))
+                .on_press(Message::CloseTaskPopup(popup.id))
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        ]
+        .spacing(6)
+        .padding(Padding::from([4, 8]))
+        .align_y(Alignment::Center);
+        column![
+            window_chrome,
+            self.workspace_window_pane_tree(
+                popup,
+                &snapshot,
+                &snapshot.panel_layout.panes,
+                tokens,
+            ),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn task_popup_draft_content(
+        &self,
+        popup: &TaskPopupWindow,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let Some(draft) = popup.draft.as_ref() else {
+            return space().into();
+        };
+        self.conversation_draft_content(
+            popup.id,
+            ConversationDraftSurface {
+                task: draft,
+                worktree: &popup.draft_worktree,
+                composer: popup.composer.as_ref(),
+                suggestions: &popup.conversation_suggestions,
+                error: popup.error.as_deref(),
+            },
+            tokens,
+        )
+    }
+
+    fn main_conversation_draft_content(
+        &self,
+        draft: &MainConversationDraft,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        self.conversation_draft_content(
+            HostedWindowId::PRIMARY,
+            ConversationDraftSurface {
+                task: &draft.task,
+                worktree: &draft.worktree,
+                composer: Some(&draft.composer),
+                suggestions: &draft.suggestions,
+                error: draft.error.as_deref(),
+            },
+            tokens,
+        )
+    }
+
+    fn conversation_draft_content(
+        &self,
+        window_id: HostedWindowId,
+        surface: ConversationDraftSurface<'_>,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let ConversationDraftSurface {
+            task: draft,
+            worktree: draft_worktree,
+            composer,
+            suggestions,
+            error,
+        } = surface;
+        let colors = tokens.colors;
+        let primary = window_id == HostedWindowId::PRIMARY;
+        let project_name = draft
+            .project_id
+            .as_ref()
+            .and_then(|project_id| {
+                self.projects
+                    .iter()
+                    .find(|project| &project.id == project_id)
+            })
+            .map(|project| project.name.as_str())
+            .unwrap_or("收集箱");
+        let content_value = composer
+            .map(|composer| composer.content.clone())
+            .unwrap_or_default();
+        let has_payload = composer.is_some_and(composer_has_turn_payload);
+        let worktree_ready = !matches!(draft_worktree, DraftWorktreeSelection::Existing(None));
+        let mut body = column![
+            text(if draft.parent_id.is_some() {
+                "继续提问"
+            } else {
+                "开始新对话"
+            })
+            .size(19)
+            .font(ui_font(font::Weight::Semibold))
+            .color(colors.text),
+            text("发送第一条消息后，对话才会保存。")
+                .size(11)
+                .color(colors.muted),
+        ]
+        .spacing(8)
+        .width(Length::Fill);
+        if let Some(error) = error {
+            body = body.push(text(error.to_owned()).size(11).color(colors.danger));
+        }
+        if draft.project_id.is_none() && draft.parent_id.is_none() {
+            let mut options = vec![DropdownOption::new(None, "收集箱")];
+            options.extend(self.projects.iter().map(|project| {
+                DropdownOption::new(Some(project.id.clone()), project.name.clone())
+            }));
+            body = body.push(
+                Card::new(
+                    Dropdown::single(Some(None), options, move |event| {
+                        Message::TaskPopupDraftProjectSelection { window_id, event }
+                    })
+                    .display_label("选择项目")
+                    .size(ControlSize::Small)
+                    .view(tokens),
+                )
+                .title("保存位置")
+                .view(tokens),
+            );
+        }
+        if draft.project_id.is_some() {
+            let mut controls = row![button(text(draft_worktree_label(draft_worktree)).size(10))
+                .on_press(Message::CycleDraftWorktree(window_id))
+                .style(button_style(tokens, ButtonKind::Ghost)),]
+            .spacing(6)
+            .align_y(Alignment::Center);
+            if matches!(draft_worktree, DraftWorktreeSelection::Existing(_)) {
+                controls = controls.push(
+                    button(text("选择工作树").size(10))
+                        .on_press(Message::PickDraftWorktree(window_id))
+                        .style(button_style(tokens, ButtonKind::Ghost)),
+                );
+            }
+            if let DraftWorktreeSelection::Existing(Some(path)) = draft_worktree {
+                controls = controls.push(
+                    text(path.to_string_lossy().into_owned())
+                        .size(10)
+                        .color(colors.muted),
+                );
+            }
+            body = body.push(Card::new(controls).title("工作目录").view(tokens));
+        }
+        if !has_payload {
+            if let Some(suggestions) = conversation_suggestions_view(suggestions, tokens) {
+                body = body.push(suggestions.map(move |message| match message {
+                    ConversationSuggestionViewMessage::Refresh => {
+                        Message::RefreshConversationSuggestions {
+                            window_id,
+                            force: true,
+                        }
+                    }
+                    ConversationSuggestionViewMessage::Apply(prompt) => {
+                        Message::ApplyConversationSuggestion { window_id, prompt }
+                    }
+                }));
+            }
+        }
+        if let Some(composer) = composer {
+            if !composer.attachments.is_empty() {
+                let mut attachments = column![].spacing(4).width(Length::Fill);
+                for attachment in &composer.attachments {
+                    let details: Element<'static, Message> = row![
+                        icon(attachment_icon(attachment), 14.0, colors.muted),
+                        column![
+                            text(attachment.name.clone()).size(11).color(colors.text),
+                            text(attachment_meta_label(attachment))
+                                .size(10)
+                                .color(colors.muted),
+                        ]
+                        .spacing(1)
+                        .width(Length::Fill),
+                        button(icon(Icon::Close, 12.0, colors.muted))
+                            .on_press(if primary {
+                                Message::RemoveAttachment(attachment.id.clone())
+                            } else {
+                                Message::TaskPopupRemoveAttachment {
+                                    window_id,
+                                    attachment_id: attachment.id.clone(),
+                                }
+                            })
+                            .style(button_style(tokens, ButtonKind::Ghost)),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into();
+                    attachments = attachments.push(ListItem::new(details).view(tokens));
+                }
+                body = body.push(attachments);
+            }
+            if !composer.conversation_references.is_empty() {
+                let mut references = column![].spacing(4).width(Length::Fill);
+                for reference in &composer.conversation_references {
+                    let task_id = reference.task_id.clone();
+                    references = references.push(
+                        ListItem::new(
+                            row![
+                                icon(Icon::Workspace, 14.0, colors.muted),
+                                column![
+                                    text(reference.title.clone()).size(11).color(colors.text),
+                                    text(
+                                        reference
+                                            .project_name
+                                            .clone()
+                                            .unwrap_or_else(|| "收集箱".to_owned())
+                                    )
+                                    .size(10)
+                                    .color(colors.muted),
+                                ]
+                                .spacing(1)
+                                .width(Length::Fill),
+                                button(icon(Icon::Close, 12.0, colors.muted))
+                                    .on_press(if primary {
+                                        Message::RemoveConversationReference(task_id)
+                                    } else {
+                                        Message::TaskPopupRemoveConversationReference {
+                                            window_id,
+                                            task_id,
+                                        }
+                                    })
+                                    .style(button_style(tokens, ButtonKind::Ghost)),
+                            ]
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                        )
+                        .view(tokens),
+                    );
+                }
+                body = body.push(references);
+            }
+        }
+        if let Some(attachment) = self.attachment_previews.get(&window_id) {
+            body = body.push(attachment_preview_card(attachment, window_id, tokens));
+        }
+        if self.file_drop_hovered_windows.contains(&window_id) {
+            body = body.push(
+                Card::new(text("释放以添加到新对话").size(12).color(colors.accent))
+                    .title("拖放附件")
+                    .view(tokens),
+            );
+        }
+        let (slash_commands, conversation_references, context_attachments) = if primary {
+            (
+                &self.slash_commands,
+                &self.conversation_reference_results,
+                &self.context_attachment_results,
+            )
+        } else if let Some(popup) = self.task_popups.get(&window_id) {
+            (
+                &popup.slash_commands,
+                &popup.conversation_reference_results,
+                &popup.context_attachment_results,
+            )
+        } else {
+            (
+                &self.slash_commands,
+                &self.conversation_reference_results,
+                &self.context_attachment_results,
+            )
+        };
+        if !conversation_references.is_empty() {
+            let mut references = column![].spacing(3).width(Length::Fill);
+            for reference in conversation_references {
+                references = references.push(
+                    button(
+                        row![
+                            text(reference.title.clone()).size(11).color(colors.text),
+                            text(
+                                reference
+                                    .project_name
+                                    .clone()
+                                    .unwrap_or_else(|| "收集箱".to_owned())
+                            )
+                            .size(10)
+                            .color(colors.muted),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .on_press(if primary {
+                        Message::SelectConversationReference(reference.task_id.clone())
+                    } else {
+                        Message::TaskPopupSelectConversationReference {
+                            window_id,
+                            task_id: reference.task_id.clone(),
+                        }
+                    })
+                    .style(button_style(tokens, ButtonKind::Ghost)),
+                );
+            }
+            body = body.push(Card::new(references).title("对话引用").view(tokens));
+        }
+        if !context_attachments.is_empty() {
+            let mut context = column![].spacing(3).width(Length::Fill);
+            for result in context_attachments {
+                context = context.push(
+                    button(
+                        row![
+                            icon(attachment_icon(&result.attachment), 13.0, colors.muted),
+                            text(result.relative_path.clone())
+                                .size(11)
+                                .color(colors.text),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .on_press(if primary {
+                        Message::SelectContextAttachment(result.relative_path.clone())
+                    } else {
+                        Message::TaskPopupSelectContextAttachment {
+                            window_id,
+                            relative_path: result.relative_path.clone(),
+                        }
+                    })
+                    .style(button_style(tokens, ButtonKind::Ghost)),
+                );
+            }
+            body = body.push(Card::new(context).title("项目上下文").view(tokens));
+        }
+        if !slash_commands.is_empty() {
+            let mut commands = column![].spacing(3).width(Length::Fill);
+            for result in slash_commands {
+                let command = &result.command;
+                commands = commands.push(
+                    button(
+                        row![
+                            text(format!("/{}", command.name))
+                                .size(11)
+                                .color(colors.text),
+                            text(command.title.clone()).size(10).color(colors.muted),
+                            text(slash_command_source_label(command.source))
+                                .size(9)
+                                .color(colors.muted),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    )
+                    .width(Length::Fill)
+                    .on_press(if primary {
+                        Message::SelectSlashCommand(command.clone())
+                    } else {
+                        Message::TaskPopupSelectSlashCommand {
+                            window_id,
+                            command: command.clone(),
+                        }
+                    })
+                    .style(button_style(tokens, ButtonKind::Ghost)),
+                );
+            }
+            body = body.push(Card::new(commands).title("斜杠命令").view(tokens));
+        }
+        let pending_review = if primary {
+            self.pending_review_slash_workflow.as_ref()
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.pending_review_slash_workflow.as_ref())
+        };
+        if let Some(pending) = pending_review.filter(|pending| pending.task_id == draft.id) {
+            body = body.push(review_slash_workflow_view(pending, window_id, tokens));
+        }
+        if let Some(route) = self.prompt_route_suggestion(window_id, Some(&draft.id)) {
+            let applied =
+                composer.and_then(|composer| composer.workflow.as_ref()) == route.workflow.as_ref();
+            body = body.push(prompt_route_suggestion_view(
+                route, applied, window_id, tokens,
+            ));
+        } else if let Some(workflow) = composer.and_then(|composer| composer.workflow.as_ref()) {
+            body = body.push(applied_prompt_workflow_view(workflow, window_id, tokens));
+        }
+        let input = Input::new("输入消息", content_value.clone())
+            .on_input(move |value| {
+                if primary {
+                    Message::ComposerChanged(value)
+                } else {
+                    Message::TaskPopupComposerChanged { window_id, value }
+                }
+            })
+            .view(tokens);
+        let send = button(text("发送").size(11)).style(button_style(tokens, ButtonKind::Primary));
+        let send = if has_payload && worktree_ready && pending_review.is_none() {
+            send.on_press(if primary {
+                Message::SubmitTurn
+            } else {
+                Message::TaskPopupSubmitTurn(window_id)
+            })
+        } else {
+            send
+        };
+        let mut attach_file = button(row![
+            icon(Icon::File, 13.0, colors.muted),
+            text("文件").size(10),
+        ])
+        .style(button_style(tokens, ButtonKind::Ghost));
+        let mut attach_directory = button(row![
+            icon(Icon::Folder, 13.0, colors.muted),
+            text("目录").size(10),
+        ])
+        .style(button_style(tokens, ButtonKind::Ghost));
+        let mut paste_text =
+            button(text("文字").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+        let mut paste_image =
+            button(text("图片").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+        let optimizing_prompt = self.prompt_optimization_is_busy(window_id, Some(&draft.id));
+        let mut optimize_prompt = button(
+            text(if optimizing_prompt {
+                "优化中"
+            } else {
+                "优化提示"
+            })
+            .size(10),
+        )
+        .style(button_style(tokens, ButtonKind::Ghost));
+        attach_file = attach_file.on_press(if primary {
+            Message::PickAttachmentFiles
+        } else {
+            Message::TaskPopupPickAttachmentFiles(window_id)
+        });
+        attach_directory = attach_directory.on_press(if primary {
+            Message::PickAttachmentDirectories
+        } else {
+            Message::TaskPopupPickAttachmentDirectories(window_id)
+        });
+        paste_text = paste_text.on_press(if primary {
+            Message::PasteClipboardText
+        } else {
+            Message::TaskPopupPasteClipboardText(window_id)
+        });
+        paste_image = paste_image.on_press(if primary {
+            Message::PasteClipboardImage
+        } else {
+            Message::TaskPopupPasteClipboardImage(window_id)
+        });
+        if !optimizing_prompt && !content_value.trim().is_empty() {
+            optimize_prompt = optimize_prompt.on_press(Message::OptimizePrompt(window_id));
+        }
+        let permission = composer
+            .map(|composer| composer.permission)
+            .unwrap_or_default();
+        let plan_mode = composer.is_some_and(|composer| composer.plan_mode);
+        let goal_mode = composer.is_some_and(|composer| composer.goal_mode);
+        let permission_button = button(text(permission_label(permission)).size(10))
+            .on_press(if primary {
+                Message::CyclePermission
+            } else {
+                Message::TaskPopupCyclePermission(window_id)
+            })
+            .style(button_style(tokens, ButtonKind::Ghost));
+        let plan_button = button(
+            text(if plan_mode {
+                "计划：开"
+            } else {
+                "计划：关"
+            })
+            .size(10),
+        )
+        .on_press(if primary {
+            Message::TogglePlanMode
+        } else {
+            Message::TaskPopupTogglePlanMode(window_id)
+        })
+        .style(button_style(tokens, ButtonKind::Ghost));
+        let goal_button = button(
+            text(if goal_mode {
+                "目标：开"
+            } else {
+                "目标：关"
+            })
+            .size(10),
+        )
+        .on_press(if primary {
+            Message::ToggleGoalMode
+        } else {
+            Message::TaskPopupToggleGoalMode(window_id)
+        })
+        .style(button_style(tokens, ButtonKind::Ghost));
+        body = body.push(container(space()).width(Length::Fill).height(Length::Fill));
+        body = body.push(
+            column![
+                row![
+                    attach_file,
+                    attach_directory,
+                    paste_text,
+                    paste_image,
+                    optimize_prompt
+                ]
+                .spacing(4),
+                row![input, send].spacing(6).align_y(Alignment::Center),
+                composer
+                    .map(|composer| self
+                        .composer_model_controls(window_id, composer, false, tokens,))
+                    .unwrap_or_else(|| space().into()),
+                row![permission_button, plan_button, goal_button].spacing(4),
+            ]
+            .spacing(5),
+        );
+        let focus_main: Element<'static, Message> = if primary {
+            space().into()
+        } else {
+            button(text("回主窗口").size(11))
+                .on_press(Message::FocusTaskPopupMain(window_id))
+                .style(button_style(tokens, ButtonKind::Ghost))
+                .into()
+        };
+        let chrome = row![
+            text(project_name.to_owned())
+                .size(10)
+                .width(Length::Fill)
+                .color(colors.muted),
+            focus_main,
+            button(text(if primary { "返回" } else { "关闭窗口" }).size(11))
+                .on_press(if primary {
+                    Message::CloseMainConversationDraft
+                } else {
+                    Message::CloseTaskPopup(window_id)
+                })
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        ]
+        .spacing(6)
+        .padding(Padding::from([4, 8]))
+        .align_y(Alignment::Center);
+        column![
+            chrome,
+            container(body)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .padding(Padding::from([16, 14]))
+                .style(canvas_style(tokens)),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
     }
 
     fn workspace_window_pane_tree(
@@ -17259,108 +26650,130 @@ impl PreviewProgram {
         node: &PaneNode,
         tokens: ThemeTokens,
     ) -> Element<'static, Message> {
-        match node {
-            PaneNode::Leaf {
-                id, active_item, ..
-            } if snapshot.panel_layout.active_pane() == id => self
-                .workspace_window_active_pane_content(
+        let root = nana_pane_tree_node(node);
+        let mut leaves = Vec::new();
+        root.visit_leaves(|pane_id| {
+            let items = snapshot
+                .panel_layout
+                .pane_items(pane_id)
+                .unwrap_or_default();
+            let active_item = snapshot.panel_layout.active_item(pane_id).ok().flatten();
+            let content = if snapshot.panel_layout.active_pane() == pane_id {
+                self.workspace_window_active_pane_content(
                     popup,
                     snapshot,
-                    active_item.as_ref(),
+                    pane_id,
+                    items,
+                    active_item,
                     tokens,
-                ),
-            PaneNode::Leaf {
-                id,
-                items,
-                active_item,
-            } => self.workspace_window_inactive_pane_content(
-                popup,
-                snapshot,
-                id,
-                items,
-                active_item.as_ref(),
-                tokens,
-            ),
-            PaneNode::Split {
-                axis,
-                ratio,
-                first,
-                second,
-            } => {
-                let key = WorkspaceSplitKey {
-                    first_pane_id: first_workspace_pane_id(first).clone(),
-                    second_pane_id: first_workspace_pane_id(second).clone(),
+                )
+            } else {
+                self.workspace_window_inactive_pane_content(
+                    popup,
+                    snapshot,
+                    pane_id,
+                    items,
+                    active_item,
+                    tokens,
+                )
+            };
+            leaves.push((pane_id.clone(), Some(content)));
+        });
+        let leaves = Rc::new(RefCell::new(leaves));
+        let controllers = popup
+            .workspace_splits
+            .iter()
+            .map(|(key, state)| (key.clone(), state.controller.clone()))
+            .collect::<Vec<_>>();
+        let window_id = popup.id;
+        PaneTree::new(
+            root,
+            move |pane_id| {
+                leaves
+                    .borrow_mut()
+                    .iter_mut()
+                    .find(|(id, _)| id == pane_id)
+                    .and_then(|(_, element)| element.take())
+                    .expect("pane tree leaf is rendered once")
+            },
+            move |key, axis, ratio, first, second| {
+                let Some((_, controller)) =
+                    controllers.iter().find(|(candidate, _)| candidate == key)
+                else {
+                    return ratio_pane_split(axis, ratio, first, second, tokens);
                 };
-                let first = self.workspace_window_pane_tree(popup, snapshot, first, tokens);
-                let second = self.workspace_window_pane_tree(popup, snapshot, second, tokens);
-                if let Some(state) = popup.workspace_splits.get(&key) {
-                    let resize_key = key.clone();
-                    let window_id = popup.id;
-                    split_pane(
-                        &state.controller,
-                        first.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
-                        second.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
-                        WorkspaceSplitMessage::Resize,
-                        tokens,
-                    )
-                    .map(move |message| match message {
-                        WorkspaceSplitMessage::Preview(message) => *message,
-                        WorkspaceSplitMessage::Resize(action) => {
-                            Message::WorkspaceWindowSplitAction {
-                                window_id,
-                                key: resize_key.clone(),
-                                action,
-                            }
-                        }
-                    })
-                } else {
-                    let (first_portion, second_portion) = split_ratio_portions(*ratio);
-                    match axis {
-                        SplitAxis::Horizontal => row![
-                            container(first)
-                                .width(Length::FillPortion(first_portion))
-                                .height(Length::Fill),
-                            container(second)
-                                .width(Length::FillPortion(second_portion))
-                                .height(Length::Fill),
-                        ]
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .into(),
-                        SplitAxis::Vertical => column![
-                            container(first)
-                                .width(Length::Fill)
-                                .height(Length::FillPortion(first_portion)),
-                            container(second)
-                                .width(Length::Fill)
-                                .height(Length::FillPortion(second_portion)),
-                        ]
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .into(),
-                    }
-                }
-            }
-        }
+                let resize_key = key.clone();
+                split_pane(
+                    controller,
+                    first.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
+                    second.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
+                    WorkspaceSplitMessage::Resize,
+                    tokens,
+                )
+                .map(move |message| match message {
+                    WorkspaceSplitMessage::Preview(message) => *message,
+                    WorkspaceSplitMessage::Resize(action) => Message::WorkspaceWindowSplitAction {
+                        window_id,
+                        key: resize_key.clone(),
+                        action,
+                    },
+                })
+            },
+        )
+        .view()
     }
 
     fn workspace_window_active_pane_content(
         &self,
         popup: &TaskPopupWindow,
         snapshot: &DesktopWorkspaceSnapshot,
+        pane_id: &PaneId,
+        item_ids: &[WorkspaceItemId],
         active_item: Option<&WorkspaceItemId>,
         tokens: ThemeTokens,
     ) -> Element<'static, Message> {
-        let application_surface = active_item
-            .and_then(|item_id| {
-                snapshot
-                    .workspace_items
-                    .iter()
-                    .find(|item| &item.id == item_id)
-            })
-            .and_then(|item| item.application_surface().ok().flatten());
+        let body = self.workspace_window_active_pane_body(popup, snapshot, active_item, tokens);
+        self.workspace_window_pane_chrome(
+            popup,
+            snapshot,
+            WorkspaceWindowPaneChrome {
+                pane_id,
+                item_ids,
+                active_item,
+                body,
+                active: true,
+            },
+            tokens,
+        )
+    }
+
+    fn workspace_window_active_pane_body(
+        &self,
+        popup: &TaskPopupWindow,
+        snapshot: &DesktopWorkspaceSnapshot,
+        active_item: Option<&WorkspaceItemId>,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let active_workspace_item = active_item.and_then(|item_id| {
+            snapshot
+                .workspace_items
+                .iter()
+                .find(|item| &item.id == item_id)
+        });
+        if let Some(item) = active_workspace_item.filter(|item| is_document_editor_item(item)) {
+            return self.document_editor_pane_content(item, popup.id, tokens);
+        }
+        if let Some(item) = active_workspace_item.filter(|item| {
+            item.terminal_session_id()
+                .is_ok_and(|value| value.is_some())
+        }) {
+            return self.terminal_pane_content(item, tokens);
+        }
+        let application_surface =
+            active_workspace_item.and_then(|item| item.application_surface().ok().flatten());
         if let Some(surface) = application_surface {
             let content = match surface {
+                ApplicationWorkspaceSurface::Projects => self.projects_overview_content(tokens),
                 ApplicationWorkspaceSurface::Automations => self.automations_content(tokens),
                 ApplicationWorkspaceSurface::Settings => self.settings_content(tokens),
             };
@@ -17370,19 +26783,24 @@ impl PreviewProgram {
                 message: Box::new(message),
             });
         }
-        let project_item = active_item.and_then(|item_id| {
-            snapshot
-                .workspace_items
-                .iter()
-                .find(|item| &item.id == item_id)
-                .and_then(|item| {
-                    item.project_surface()
-                        .ok()
-                        .flatten()
-                        .map(|(project_id, surface)| (item_id.clone(), project_id, surface))
-                })
-        });
+        let project_item = active_item
+            .zip(active_workspace_item)
+            .and_then(|(item_id, item)| {
+                item.project_surface()
+                    .ok()
+                    .flatten()
+                    .map(|(project_id, surface)| (item_id.clone(), project_id, surface))
+            });
         if let Some((item_id, project_id, surface)) = project_item {
+            if surface == ProjectWorkspaceSurface::Files {
+                let content = self.project_files_content(tokens);
+                let window_id = popup.id;
+                return content.map(move |message| Message::WorkspaceWindowProjectAction {
+                    window_id,
+                    item_id: item_id.clone(),
+                    message: Box::new(message),
+                });
+            }
             let project = snapshot
                 .projects
                 .iter()
@@ -17399,6 +26817,7 @@ impl PreviewProgram {
                     ProjectWorkspaceSurface::Architecture => {
                         self.architecture_content_for(project, Some(editor), tokens)
                     }
+                    ProjectWorkspaceSurface::Files => self.project_files_content(tokens),
                 };
                 let window_id = popup.id;
                 return content.map(move |message| Message::WorkspaceWindowProjectAction {
@@ -17422,6 +26841,179 @@ impl PreviewProgram {
     ) -> Element<'static, Message> {
         let window_id = popup.id;
         let colors = tokens.colors;
+        let active_workspace_item = active_item.and_then(|item_id| {
+            snapshot
+                .workspace_items
+                .iter()
+                .find(|item| &item.id == item_id)
+        });
+        let title = active_workspace_item
+            .map(|item| item.title.clone())
+            .unwrap_or_else(|| "空窗格".to_owned());
+        let task_session = active_workspace_item
+            .and_then(|item| item.task_id().ok().flatten())
+            .and_then(|task_id| popup.task_sessions.get(&task_id));
+        let pane_body: Element<'static, Message> = if let Some(session) = task_session {
+            let timeline_surface = TimelineSurfaceKey::TaskPopupPane {
+                window_id,
+                pane_id: pane_id.as_str().to_owned(),
+            };
+            let mut timeline = column![].spacing(6).width(Length::Fill);
+            if session.timeline.is_empty() {
+                timeline = timeline.push(
+                    EmptyState::new("暂无时间线")
+                        .message("这个任务还没有会话事件。")
+                        .icon(Icon::Workspace)
+                        .view(tokens),
+                );
+            } else {
+                let window = self.timeline_window(session, &timeline_surface, false);
+                if window.leading_extent > 0.0 {
+                    timeline = timeline.push(space().height(window.leading_extent));
+                }
+                for event in &session.timeline[window.range.clone()] {
+                    let mut event_header = row![
+                        text(event.title.clone())
+                            .size(12)
+                            .width(Length::Fill)
+                            .color(colors.text),
+                        text(format!("{} · {}", event.kind, event.status))
+                            .size(10)
+                            .color(colors.muted),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center);
+                    if let Some(value) = &event.markdown_plain_text {
+                        let copied = self
+                            .last_copied_markdown
+                            .as_ref()
+                            .is_some_and(|(event_id, _)| event_id == &event.id);
+                        event_header = event_header.push(
+                            button(text(if copied { "已复制" } else { "复制" }).size(10))
+                                .on_press(Message::CopyTimelineMarkdown {
+                                    event_id: event.id.clone(),
+                                    text: value.clone(),
+                                })
+                                .style(button_style(tokens, ButtonKind::Text)),
+                        );
+                    }
+                    let mut event_content = column![event_header].spacing(3);
+                    if let Some(document) = &event.markdown_document {
+                        event_content = event_content.push(self.markdown_document_view(
+                            document,
+                            popup.id,
+                            &event.id,
+                            event.selectable_reply,
+                            tokens,
+                        ));
+                    } else if let Some(summary) = &event.summary {
+                        event_content =
+                            event_content.push(text(summary.clone()).size(11).color(colors.muted));
+                    }
+                    if let Some(actions) =
+                        self.timeline_selection_actions(popup.id, &event.id, tokens)
+                    {
+                        event_content = event_content.push(actions);
+                    }
+                    if !event.attachments.is_empty() {
+                        let mut attachments = column![].spacing(3).width(Length::Fill);
+                        for attachment in &event.attachments {
+                            attachments = attachments
+                                .push(timeline_attachment_row(attachment, popup.id, tokens));
+                        }
+                        event_content = event_content.push(attachments);
+                    }
+                    timeline =
+                        timeline.push(ListItem::new(event_content).auto_height().view(tokens));
+                }
+                if window.trailing_extent > 0.0 {
+                    timeline = timeline.push(space().height(window.trailing_extent));
+                }
+            }
+            let scroll_surface = timeline_surface.clone();
+            column![
+                row![
+                    text(title).size(12).color(colors.text),
+                    text(format!("产物 {}", session.artifact_count))
+                        .size(10)
+                        .color(colors.muted),
+                    text(format!("Todo {}", session.todo_count))
+                        .size(10)
+                        .color(colors.muted),
+                    text(format!("待处理 {}", session.open_pending_count))
+                        .size(10)
+                        .color(if session.open_pending_count > 0 {
+                            colors.warning
+                        } else {
+                            colors.muted
+                        }),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                scrollable(timeline)
+                    .id(timeline_surface.scrollable_id())
+                    .on_scroll(move |viewport| Message::TimelineScrolled {
+                        surface: scroll_surface.clone(),
+                        offset: viewport.absolute_offset().y,
+                        viewport_extent: viewport.bounds().height,
+                    })
+                    .direction(vertical_scrollbar())
+                    .height(Length::Fill),
+            ]
+            .spacing(8)
+            .padding(10)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        } else if let Some(item) =
+            active_workspace_item.filter(|item| is_document_editor_item(item))
+        {
+            document_editor_inactive_preview(item, self.document_editors.get(&item.id), tokens)
+        } else if let Some(snapshot) =
+            active_workspace_item.and_then(|item| self.terminal_snapshot_for_item(item))
+        {
+            terminal_inactive_preview(&snapshot, tokens).map(Message::Terminal)
+        } else {
+            container(
+                EmptyState::new(title)
+                    .message("聚焦此窗格以继续。")
+                    .icon(Icon::Workspace)
+                    .view(tokens),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center(Length::Fill)
+            .into()
+        };
+        self.workspace_window_pane_chrome(
+            popup,
+            snapshot,
+            WorkspaceWindowPaneChrome {
+                pane_id,
+                item_ids,
+                active_item,
+                body: pane_body,
+                active: false,
+            },
+            tokens,
+        )
+    }
+
+    fn workspace_window_pane_chrome(
+        &self,
+        popup: &TaskPopupWindow,
+        snapshot: &DesktopWorkspaceSnapshot,
+        pane: WorkspaceWindowPaneChrome<'_>,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let WorkspaceWindowPaneChrome {
+            pane_id,
+            item_ids,
+            active_item,
+            body: pane_body,
+            active,
+        } = pane;
+        let window_id = popup.id;
         let active_item = active_item.cloned();
         let mut options = item_ids
             .iter()
@@ -17491,54 +27083,56 @@ impl PreviewProgram {
         .accepts_external_drop(true)
         .size(ControlSize::Small)
         .view(tokens);
-        let mut tab_bar = row![container(tabs).width(Length::Fill)]
-            .width(Length::Fill)
-            .align_y(Alignment::Center)
-            .push(
-                button(text("聚焦").size(10))
-                    .on_press(Message::FocusWorkspaceWindowPane {
-                        window_id,
-                        pane_id: pane_id.clone(),
-                    })
-                    .style(button_style(tokens, ButtonKind::Text)),
-            )
-            .push(
-                button(text("左右分栏").size(10))
-                    .on_press(Message::SplitWorkspaceWindowPane {
-                        window_id,
-                        pane_id: pane_id.clone(),
-                        axis: SplitAxis::Horizontal,
-                    })
-                    .style(button_style(tokens, ButtonKind::Text)),
-            )
-            .push(
-                button(text("上下分栏").size(10))
-                    .on_press(Message::SplitWorkspaceWindowPane {
-                        window_id,
-                        pane_id: pane_id.clone(),
-                        axis: SplitAxis::Vertical,
-                    })
-                    .style(button_style(tokens, ButtonKind::Text)),
-            );
+        let mut pane_actions = Vec::new();
+        if !active {
+            pane_actions.push(PaneChromeAction::new(
+                PaneChromeActionKind::Focus,
+                "聚焦",
+                Message::FocusWorkspaceWindowPane {
+                    window_id,
+                    pane_id: pane_id.clone(),
+                },
+            ));
+        }
+        pane_actions.extend([
+            PaneChromeAction::new(
+                PaneChromeActionKind::SplitHorizontal,
+                "左右分栏",
+                Message::SplitWorkspaceWindowPane {
+                    window_id,
+                    pane_id: pane_id.clone(),
+                    axis: SplitAxis::Horizontal,
+                },
+            ),
+            PaneChromeAction::new(
+                PaneChromeActionKind::SplitVertical,
+                "上下分栏",
+                Message::SplitWorkspaceWindowPane {
+                    window_id,
+                    pane_id: pane_id.clone(),
+                    axis: SplitAxis::Vertical,
+                },
+            ),
+        ]);
         if snapshot.panel_layout.pane_ids().len() > 1 {
             if let Some(item_id) = &active_item {
-                tab_bar = tab_bar.push(
-                    button(text("移至下一窗格").size(10))
-                        .on_press(Message::MoveWorkspaceWindowItemToNextPane {
-                            window_id,
-                            item_id: item_id.clone(),
-                        })
-                        .style(button_style(tokens, ButtonKind::Text)),
-                );
+                pane_actions.push(PaneChromeAction::new(
+                    PaneChromeActionKind::MoveToNextPane,
+                    "移至下一窗格",
+                    Message::MoveWorkspaceWindowItemToNextPane {
+                        window_id,
+                        item_id: item_id.clone(),
+                    },
+                ));
             } else if item_ids.is_empty() {
-                tab_bar = tab_bar.push(
-                    button(text("关闭窗格").size(10))
-                        .on_press(Message::CloseWorkspaceWindowPane {
-                            window_id,
-                            pane_id: pane_id.clone(),
-                        })
-                        .style(button_style(tokens, ButtonKind::Text)),
-                );
+                pane_actions.push(PaneChromeAction::new(
+                    PaneChromeActionKind::ClosePane,
+                    "关闭窗格",
+                    Message::CloseWorkspaceWindowPane {
+                        window_id,
+                        pane_id: pane_id.clone(),
+                    },
+                ));
             }
         }
         if let Some(item) = active_item
@@ -17551,166 +27145,25 @@ impl PreviewProgram {
             })
             .filter(|item| item.capabilities.closable)
         {
-            tab_bar = tab_bar.push(
-                button(icon(Icon::Close, 13.0, tokens.colors.muted))
-                    .on_press(Message::CloseWorkspaceWindowItem {
+            pane_actions.push(
+                PaneChromeAction::new(
+                    PaneChromeActionKind::CloseItem,
+                    "关闭",
+                    Message::CloseWorkspaceWindowItem {
                         window_id,
                         item_id: item.id.clone(),
-                    })
-                    .style(button_style(tokens, ButtonKind::Text)),
+                    },
+                )
+                .icon(Icon::Close),
             );
         }
-        let title = active_item
-            .as_ref()
-            .and_then(|item_id| {
-                snapshot
-                    .workspace_items
-                    .iter()
-                    .find(|item| &item.id == item_id)
-            })
-            .map(|item| item.title.clone())
-            .unwrap_or_else(|| "空窗格".to_owned());
-        let task_session = active_item
-            .as_ref()
-            .and_then(|item_id| {
-                snapshot
-                    .workspace_items
-                    .iter()
-                    .find(|item| &item.id == item_id)
-            })
-            .and_then(|item| item.task_id().ok().flatten())
-            .and_then(|task_id| popup.task_sessions.get(&task_id));
-        let tab_bar = container(tab_bar)
-            .width(Length::Fill)
-            .height(Length::Fixed(34.0))
-            .padding([0, 8])
-            .style(move |_theme| {
-                iced::widget::container::Style::default().background(tokens.colors.faint)
-            });
-        let pane_body: Element<'static, Message> = if let Some(session) = task_session {
-            let timeline_surface = TimelineSurfaceKey::TaskPopupPane {
-                window_id,
-                pane_id: pane_id.as_str().to_owned(),
-            };
-            let mut timeline = column![].spacing(6).width(Length::Fill);
-            if session.timeline.is_empty() {
-                timeline = timeline.push(
-                    EmptyState::new("暂无时间线")
-                        .message("这个任务还没有会话事件。")
-                        .icon(Icon::Workspace)
-                        .view(tokens),
-                );
-            } else {
-                let window = self.timeline_window(session, &timeline_surface, false);
-                if window.leading_extent > 0.0 {
-                    timeline = timeline.push(space().height(window.leading_extent));
-                }
-                for event in &session.timeline[window.range.clone()] {
-                    let mut event_header = row![
-                        text(event.title.clone())
-                            .size(12)
-                            .width(Length::Fill)
-                            .color(colors.text),
-                        text(format!("{} · {}", event.kind, event.status))
-                            .size(10)
-                            .color(colors.muted),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center);
-                    if let Some(value) = &event.markdown_plain_text {
-                        let copied = self
-                            .last_copied_markdown
-                            .as_ref()
-                            .is_some_and(|(event_id, _)| event_id == &event.id);
-                        event_header = event_header.push(
-                            button(text(if copied { "已复制" } else { "复制" }).size(10))
-                                .on_press(Message::CopyTimelineMarkdown {
-                                    event_id: event.id.clone(),
-                                    text: value.clone(),
-                                })
-                                .style(button_style(tokens, ButtonKind::Text)),
-                        );
-                    }
-                    let mut event_content = column![event_header].spacing(3);
-                    if let Some(document) = &event.markdown_document {
-                        event_content =
-                            event_content.push(document.view(tokens, Message::OpenMarkdownLink));
-                    } else if let Some(summary) = &event.summary {
-                        event_content =
-                            event_content.push(text(summary.clone()).size(11).color(colors.muted));
-                    }
-                    if !event.attachments.is_empty() {
-                        let mut attachments = column![].spacing(3).width(Length::Fill);
-                        for attachment in &event.attachments {
-                            attachments = attachments
-                                .push(timeline_attachment_row(attachment, popup.id, tokens));
-                        }
-                        event_content = event_content.push(attachments);
-                    }
-                    timeline =
-                        timeline.push(ListItem::new(event_content).auto_height().view(tokens));
-                }
-                if window.trailing_extent > 0.0 {
-                    timeline = timeline.push(space().height(window.trailing_extent));
-                }
-            }
-            let scroll_surface = timeline_surface.clone();
-            column![
-                row![
-                    text(title).size(12).color(colors.text),
-                    text(format!("产物 {}", session.artifact_count))
-                        .size(10)
-                        .color(colors.muted),
-                    text(format!("Todo {}", session.todo_count))
-                        .size(10)
-                        .color(colors.muted),
-                    text(format!("待处理 {}", session.open_pending_count))
-                        .size(10)
-                        .color(if session.open_pending_count > 0 {
-                            colors.warning
-                        } else {
-                            colors.muted
-                        }),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                scrollable(timeline)
-                    .id(timeline_surface.scrollable_id())
-                    .on_scroll(move |viewport| Message::TimelineScrolled {
-                        surface: scroll_surface.clone(),
-                        offset: viewport.absolute_offset().y,
-                        viewport_extent: viewport.bounds().height,
-                    })
-                    .direction(vertical_scrollbar())
-                    .height(Length::Fill),
-            ]
-            .spacing(8)
-            .padding(10)
+        let pane_body = container(pane_body)
             .width(Length::Fill)
             .height(Length::Fill)
-            .into()
-        } else {
-            container(
-                EmptyState::new(title)
-                    .message("聚焦此窗格以继续。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .into()
-        };
-        column![
-            tab_bar,
-            container(pane_body)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(canvas_style(tokens)),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+            .style(canvas_style(tokens));
+        PaneChrome::new(tabs, pane_body, pane_actions, tokens)
+            .active(active)
+            .view()
     }
 
     fn task_popup_active_pane_content(
@@ -17720,174 +27173,20 @@ impl PreviewProgram {
     ) -> Element<'static, Message> {
         let colors = tokens.colors;
         let popup_id = popup.id;
-        let snapshot = popup.workspace.snapshot().ok();
-        let popup_pane = snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.panel_layout.active_pane().clone())
-            .unwrap_or_else(|| PaneId::new("primary").expect("primary pane id is valid"));
-        let popup_item_ids = snapshot
-            .as_ref()
-            .and_then(|snapshot| snapshot.panel_layout.pane_items(&popup_pane).ok())
-            .map(<[_]>::to_vec)
-            .unwrap_or_default();
-        let mut popup_options = popup_item_ids
-            .iter()
-            .filter_map(|item_id| {
-                snapshot
-                    .as_ref()?
-                    .workspace_items
-                    .iter()
-                    .find(|item| &item.id == item_id)
-                    .map(|item| {
-                        SelectionOption::new(Some(item.id.clone()), item.title.clone())
-                            .icon(Icon::Workspace)
-                    })
-            })
-            .collect::<Vec<_>>();
-        if popup_options.is_empty() {
-            popup_options.push(
-                SelectionOption::new(None, "空窗格")
-                    .icon(Icon::Workspace)
-                    .draggable(false),
-            );
-        }
-        let popup_item_id = popup.active_workspace_item_id.clone();
-        let select_pane = popup_pane.clone();
-        let reorder_pane = popup_pane.clone();
-        let fallback_pane = popup_pane.clone();
-        let popup_tab = Tabs::new(popup_item_id.clone(), popup_options, move |item_id| {
-            Message::SelectWorkspaceWindowTab {
-                window_id: popup_id,
-                pane_id: select_pane.clone(),
-                item_id,
-            }
-        })
-        .on_reorder(move |item_id, before| match item_id {
-            Some(item_id) => Message::ReorderWorkspaceWindowTab {
-                window_id: popup_id,
-                pane_id: reorder_pane.clone(),
-                item_id,
-                before: before.flatten(),
-            },
-            None => Message::SelectWorkspaceWindowTab {
-                window_id: popup_id,
-                pane_id: reorder_pane.clone(),
-                item_id: None,
-            },
-        })
-        .drag_group_on_surface(
-            self.workspace_tab_drag_group.clone(),
-            workspace_tab_drag_surface(
-                format!("window:{}", popup_id.0),
-                popup.surface_position,
-                popup.scale_factor,
-            ),
-            task_popup_tab_strip_id(popup_id, &popup_pane),
-            move |source_strip, item_id, target_strip, before| match item_id {
-                Some(item_id) => Message::TransferWorkspaceTab {
-                    source_strip,
-                    target_strip,
-                    item_id,
-                    before: before.flatten(),
-                },
-                None => Message::SelectWorkspaceWindowTab {
-                    window_id: popup_id,
-                    pane_id: fallback_pane.clone(),
-                    item_id: None,
-                },
-            },
-        )
-        .accepts_external_drop(true)
-        .size(ControlSize::Small)
-        .view(tokens);
-        let mut header = row![column![
-            popup_tab,
-            text(popup.project_name.clone())
-                .size(10)
-                .color(colors.muted),
-        ]
-        .spacing(2)
-        .width(Length::Fill)]
-        .align_y(Alignment::Center);
-        let mut move_to_main =
-            button(text("移回主窗口").size(11)).style(button_style(tokens, ButtonKind::Ghost));
-        if popup.active_workspace_item_id.is_some() {
-            move_to_main = move_to_main.on_press(Message::MoveTaskPopupToMain(popup_id));
-        }
-        header = header
-            .push(move_to_main)
-            .push(
-                button(text("左右分栏").size(10))
-                    .on_press(Message::SplitWorkspaceWindowPane {
-                        window_id: popup_id,
-                        pane_id: popup_pane.clone(),
-                        axis: SplitAxis::Horizontal,
-                    })
-                    .style(button_style(tokens, ButtonKind::Text)),
-            )
-            .push(
-                button(text("上下分栏").size(10))
-                    .on_press(Message::SplitWorkspaceWindowPane {
-                        window_id: popup_id,
-                        pane_id: popup_pane.clone(),
-                        axis: SplitAxis::Vertical,
-                    })
-                    .style(button_style(tokens, ButtonKind::Text)),
-            );
-        let popup_pane_count = snapshot
-            .as_ref()
-            .map(|snapshot| snapshot.panel_layout.pane_ids().len())
-            .unwrap_or(1);
-        if popup_pane_count > 1 {
-            if let Some(item_id) = popup.active_workspace_item_id.clone() {
-                header = header.push(
-                    button(text("移至下一窗格").size(10))
-                        .on_press(Message::MoveWorkspaceWindowItemToNextPane {
-                            window_id: popup_id,
-                            item_id,
-                        })
-                        .style(button_style(tokens, ButtonKind::Text)),
-                );
-            } else if popup_item_ids.is_empty() {
-                header = header.push(
-                    button(text("关闭窗格").size(10))
-                        .on_press(Message::CloseWorkspaceWindowPane {
-                            window_id: popup_id,
-                            pane_id: popup_pane.clone(),
-                        })
-                        .style(button_style(tokens, ButtonKind::Text)),
-                );
-            }
-        }
-        if let Some(item) = popup
-            .active_workspace_item_id
-            .as_ref()
-            .and_then(|item_id| {
-                snapshot
-                    .as_ref()?
-                    .workspace_items
-                    .iter()
-                    .find(|item| &item.id == item_id)
-            })
-            .filter(|item| item.capabilities.closable)
-        {
-            header = header.push(
-                button(icon(Icon::Close, 13.0, colors.muted))
-                    .on_press(Message::CloseWorkspaceWindowItem {
-                        window_id: popup_id,
-                        item_id: item.id.clone(),
-                    })
-                    .style(button_style(tokens, ButtonKind::Text)),
-            );
-        }
-        header = header.push(
-            button(text("关闭窗口").size(11))
-                .on_press(Message::CloseTaskPopup(popup_id))
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        );
-        let mut content = column![header].spacing(10).width(Length::Fill);
+        let mut content = column![].spacing(10).width(Length::Fill);
         if let Some(error) = &popup.error {
             content = content.push(text(error.clone()).size(11).color(colors.danger));
+            if popup
+                .active_task_id
+                .as_ref()
+                .is_some_and(|task_id| self.pending_initial_worktrees.contains_key(task_id))
+            {
+                content = content.push(
+                    button(text("重试准备工作树并发送").size(11))
+                        .on_press(Message::RetryInitialWorktree(popup_id))
+                        .style(button_style(tokens, ButtonKind::Primary)),
+                );
+            }
         }
         if popup.active_task_id.is_none() {
             return column![
@@ -17925,6 +27224,22 @@ impl PreviewProgram {
             .height(Length::Fill)
             .into();
         };
+        let session = popup
+            .active_task_id
+            .as_ref()
+            .map(|task_id| {
+                let (events, pending) = self.debug_timeline.overlay(task_id);
+                session.with_ephemeral_debug_overlay(events, pending)
+            })
+            .unwrap_or_else(|| session.clone());
+        let turn_active = popup
+            .turn_state
+            .as_ref()
+            .is_some_and(|(_, state)| turn_state_is_active(state));
+        let pending_blocks_send = session.blocking_pending_count > 0;
+        let can_apply_timeline_suggestion =
+            !turn_active && !pending_blocks_send && session.run_block.is_none();
+        let can_retry_timeline = session.run_block.is_none();
         content = content.push(
             row![
                 text(format!("产物 {}", session.artifact_count))
@@ -17943,6 +27258,7 @@ impl PreviewProgram {
             ]
             .spacing(10),
         );
+        content = content.push(self.debug_timeline_panel(popup_id, true, tokens));
         let mut timeline = column![].spacing(6).width(Length::Fill);
         if session.timeline_has_more_before {
             timeline = timeline.push(
@@ -17960,7 +27276,7 @@ impl PreviewProgram {
             );
         } else {
             let surface = TimelineSurfaceKey::TaskPopup(popup_id);
-            let window = self.timeline_window(session, &surface, true);
+            let window = self.timeline_window(&session, &surface, true);
             if window.leading_extent > 0.0 {
                 timeline = timeline.push(space().height(window.leading_extent));
             }
@@ -17990,13 +27306,63 @@ impl PreviewProgram {
                             .style(button_style(tokens, ButtonKind::Text)),
                     );
                 }
+                if can_retry_timeline && event.can_retry {
+                    event_header = event_header.push(
+                        button(text("重试").size(10))
+                            .on_press(Message::RetryTimelineEvent {
+                                window_id: popup_id,
+                                event_id: event.id.clone(),
+                            })
+                            .style(button_style(tokens, ButtonKind::Text)),
+                    );
+                }
+                if can_apply_timeline_suggestion && event.session_branch_turn_id.is_some() {
+                    event_header = event_header
+                        .push(
+                            button(text("从这里继续").size(10))
+                                .on_press(Message::SetTimelineSessionBranch {
+                                    window_id: popup_id,
+                                    event_id: event.id.clone(),
+                                    mode: DesktopSessionBranchMode::Continue,
+                                })
+                                .style(button_style(tokens, ButtonKind::Text)),
+                        )
+                        .push(
+                            button(text("从这里分叉").size(10))
+                                .on_press(Message::SetTimelineSessionBranch {
+                                    window_id: popup_id,
+                                    event_id: event.id.clone(),
+                                    mode: DesktopSessionBranchMode::Fork,
+                                })
+                                .style(button_style(tokens, ButtonKind::Text)),
+                        );
+                }
+                if can_apply_timeline_suggestion && event.batch_apply.is_some() {
+                    event_header = event_header.push(
+                        button(text("应用建议").size(10))
+                            .on_press(Message::ApplyTimelineSuggestion {
+                                window_id: popup_id,
+                                event_id: event.id.clone(),
+                            })
+                            .style(button_style(tokens, ButtonKind::Primary)),
+                    );
+                }
                 let mut event_content = column![event_header].spacing(3);
                 if let Some(document) = &event.markdown_document {
-                    event_content =
-                        event_content.push(document.view(tokens, Message::OpenMarkdownLink));
+                    event_content = event_content.push(self.markdown_document_view(
+                        document,
+                        popup_id,
+                        &event.id,
+                        event.selectable_reply,
+                        tokens,
+                    ));
                 } else if let Some(summary) = &event.summary {
                     event_content =
                         event_content.push(text(summary.clone()).size(11).color(colors.muted));
+                }
+                if let Some(actions) = self.timeline_selection_actions(popup_id, &event.id, tokens)
+                {
+                    event_content = event_content.push(actions);
                 }
                 if !event.attachments.is_empty() {
                     let mut attachments = column![].spacing(3).width(Length::Fill);
@@ -18057,6 +27423,33 @@ impl PreviewProgram {
                     ]
                     .spacing(6),
                 );
+            } else if pending.kind == TITLE_UPDATE_ACTION_KIND {
+                action = action.push(
+                    row![
+                        button(text("采用标题").size(11))
+                            .on_press(Message::TaskPopupRespondTitleUpdate {
+                                window_id: popup_id,
+                                request_id: pending.request_id.clone(),
+                                accepted: true,
+                            })
+                            .style(button_style(tokens, ButtonKind::Primary)),
+                        button(text("保留当前").size(11))
+                            .on_press(Message::TaskPopupRespondTitleUpdate {
+                                window_id: popup_id,
+                                request_id: pending.request_id.clone(),
+                                accepted: false,
+                            })
+                            .style(button_style(tokens, ButtonKind::Ghost)),
+                    ]
+                    .spacing(6),
+                );
+            } else if pending.kind == "tool_consent" {
+                action = action.push(tool_consent_action_view(
+                    pending,
+                    popup.tool_consent_drafts.get(&pending.request_id),
+                    popup_id,
+                    tokens,
+                ));
             } else if pending.kind == "mcp_elicitation" {
                 action = action.push(mcp_elicitation_action_view(
                     pending,
@@ -18068,7 +27461,14 @@ impl PreviewProgram {
                 action = action.push(architecture_interaction_action_view(
                     pending, popup_id, tokens,
                 ));
-            } else if matches!(pending.kind.as_str(), "ask_user" | "plan_approval") {
+            } else if pending.kind == "ask_user" {
+                action = action.push(ask_user_action_view(
+                    pending,
+                    popup.ask_user_drafts.get(&pending.request_id),
+                    popup_id,
+                    tokens,
+                ));
+            } else if pending.kind == "plan_approval" {
                 let request_id = pending.request_id.clone();
                 let draft = popup
                     .interaction_drafts
@@ -18077,100 +27477,49 @@ impl PreviewProgram {
                     .unwrap_or_default();
                 let input_request_id = request_id.clone();
                 action = action.push(
-                    Input::new(
-                        if pending.kind == "plan_approval" {
-                            "修改意见（可选）"
-                        } else {
-                            "输入回答"
-                        },
-                        draft.clone(),
-                    )
-                    .on_input(move |value| Message::TaskPopupInteractionDraftChanged {
-                        window_id: popup_id,
-                        request_id: input_request_id.clone(),
-                        value,
-                    })
-                    .view(tokens),
+                    Input::new("修改意见（可选）", draft.clone())
+                        .on_input(move |value| Message::TaskPopupInteractionDraftChanged {
+                            window_id: popup_id,
+                            request_id: input_request_id.clone(),
+                            value,
+                        })
+                        .view(tokens),
                 );
-                if pending.kind == "plan_approval" {
-                    let mut revise = button(text("要求修改").size(11))
-                        .style(button_style(tokens, ButtonKind::Ghost));
-                    if !draft.trim().is_empty() {
-                        revise = revise.on_press(Message::TaskPopupRespondInteraction {
-                            window_id: popup_id,
-                            request_id: request_id.clone(),
-                            accepted: true,
-                            response: json!({ "action": "revise", "feedback": draft }),
-                        });
-                    }
-                    action = action.push(
-                        row![
-                            button(text("执行计划").size(11))
-                                .on_press(Message::TaskPopupRespondInteraction {
-                                    window_id: popup_id,
-                                    request_id: request_id.clone(),
-                                    accepted: true,
-                                    response: json!({ "action": "approve" }),
-                                })
-                                .style(button_style(tokens, ButtonKind::Primary)),
-                            button(text("拒绝").size(11))
-                                .on_press(Message::TaskPopupRespondInteraction {
-                                    window_id: popup_id,
-                                    request_id: request_id.clone(),
-                                    accepted: false,
-                                    response: json!({ "action": "decline" }),
-                                })
-                                .style(button_style(tokens, ButtonKind::Ghost)),
-                            revise,
-                            button(text("取消任务").size(11))
-                                .on_press(Message::TaskPopupInterruptTurn(popup_id))
-                                .style(button_style(tokens, ButtonKind::Ghost)),
-                        ]
-                        .spacing(6),
-                    );
-                } else {
-                    let choices = interaction_choices(pending);
-                    if !choices.is_empty() {
-                        let mut choice_buttons = row![].spacing(6).align_y(Alignment::Center);
-                        for choice in choices {
-                            choice_buttons = choice_buttons.push(
-                                button(text(choice.label).size(11))
-                                    .on_press(Message::TaskPopupRespondInteraction {
-                                        window_id: popup_id,
-                                        request_id: request_id.clone(),
-                                        accepted: true,
-                                        response: json!({ "answer": choice.value }),
-                                    })
-                                    .style(button_style(tokens, ButtonKind::Ghost)),
-                            );
-                        }
-                        action = action.push(choice_buttons);
-                    }
-                    let mut reply = button(text("回复").size(11))
-                        .style(button_style(tokens, ButtonKind::Primary));
-                    if !draft.trim().is_empty() {
-                        reply = reply.on_press(Message::TaskPopupRespondInteraction {
-                            window_id: popup_id,
-                            request_id: request_id.clone(),
-                            accepted: true,
-                            response: json!({ "answer": draft }),
-                        });
-                    }
-                    action = action.push(
-                        row![
-                            reply,
-                            button(text("取消").size(11))
-                                .on_press(Message::TaskPopupRespondInteraction {
-                                    window_id: popup_id,
-                                    request_id,
-                                    accepted: false,
-                                    response: json!({ "cancelled": true }),
-                                })
-                                .style(button_style(tokens, ButtonKind::Ghost)),
-                        ]
-                        .spacing(6),
-                    );
+                let mut revise = button(text("要求修改").size(11))
+                    .style(button_style(tokens, ButtonKind::Ghost));
+                if !draft.trim().is_empty() {
+                    revise = revise.on_press(Message::TaskPopupRespondInteraction {
+                        window_id: popup_id,
+                        request_id: request_id.clone(),
+                        accepted: true,
+                        response: json!({ "action": "revise", "feedback": draft }),
+                    });
                 }
+                action = action.push(
+                    row![
+                        button(text("执行计划").size(11))
+                            .on_press(Message::TaskPopupRespondInteraction {
+                                window_id: popup_id,
+                                request_id: request_id.clone(),
+                                accepted: true,
+                                response: json!({ "action": "approve" }),
+                            })
+                            .style(button_style(tokens, ButtonKind::Primary)),
+                        button(text("拒绝").size(11))
+                            .on_press(Message::TaskPopupRespondInteraction {
+                                window_id: popup_id,
+                                request_id: request_id.clone(),
+                                accepted: false,
+                                response: json!({ "action": "decline" }),
+                            })
+                            .style(button_style(tokens, ButtonKind::Ghost)),
+                        revise,
+                        button(text("取消任务").size(11))
+                            .on_press(Message::TaskPopupInterruptTurn(popup_id))
+                            .style(button_style(tokens, ButtonKind::Ghost)),
+                    ]
+                    .spacing(6),
+                );
             }
             pending_actions = pending_actions.push(Card::new(action).view(tokens));
         }
@@ -18182,15 +27531,12 @@ impl PreviewProgram {
             .as_ref()
             .map(|composer| composer.content.clone())
             .unwrap_or_default();
-        let turn_active = popup
-            .turn_state
+        let has_payload = popup
+            .composer
             .as_ref()
-            .is_some_and(|(_, state)| turn_state_is_active(state));
-        let has_payload = popup.composer.as_ref().is_some_and(|composer| {
-            !composer.content.trim().is_empty()
-                || !composer.attachments.is_empty()
-                || !composer.conversation_references.is_empty()
-        });
+            .is_some_and(composer_has_turn_payload);
+        let task_run_block = session.run_block.as_ref().map(ToString::to_string);
+        let review_target_pending = popup.pending_review_slash_workflow.is_some();
         if let Some(composer) = &popup.composer {
             if !composer.attachments.is_empty() {
                 let mut attachments = column![].spacing(4).width(Length::Fill);
@@ -18360,12 +27706,82 @@ impl PreviewProgram {
                     .width(Length::Fill)
                     .on_press(Message::TaskPopupSelectSlashCommand {
                         window_id: popup_id,
-                        name: command.name.clone(),
+                        command: command.clone(),
                     })
                     .style(button_style(tokens, ButtonKind::Ghost)),
                 );
             }
             content = content.push(Card::new(commands).title("斜杠命令").view(tokens));
+        }
+        if let Some(pending) = popup
+            .pending_review_slash_workflow
+            .as_ref()
+            .filter(|pending| popup.active_task_id.as_ref() == Some(&pending.task_id))
+        {
+            content = content.push(review_slash_workflow_view(pending, popup_id, tokens));
+        }
+        if !turn_active && !has_payload && !pending_blocks_send {
+            if let Some(suggestions) =
+                conversation_suggestions_view(&popup.conversation_suggestions, tokens)
+            {
+                content = content.push(suggestions.map(move |message| match message {
+                    ConversationSuggestionViewMessage::Refresh => {
+                        Message::RefreshConversationSuggestions {
+                            window_id: popup_id,
+                            force: true,
+                        }
+                    }
+                    ConversationSuggestionViewMessage::Apply(prompt) => {
+                        Message::ApplyConversationSuggestion {
+                            window_id: popup_id,
+                            prompt,
+                        }
+                    }
+                }));
+            }
+        }
+        if let Some(pending) = popup
+            .pending_session_branch
+            .as_ref()
+            .filter(|pending| popup.active_task_id.as_ref() == Some(&pending.task_id))
+        {
+            content = content.push(
+                Card::new(
+                    row![
+                        text(format!(
+                            "{} · {}",
+                            session_branch_mode_label(pending.anchor.mode),
+                            pending.anchor.source_turn_id
+                        ))
+                        .size(10)
+                        .width(Length::Fill)
+                        .color(colors.muted),
+                        button(text("清除").size(10))
+                            .on_press(Message::ClearSessionBranch(popup_id))
+                            .style(button_style(tokens, ButtonKind::Text)),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .title("会话分支")
+                .view(tokens),
+            );
+        }
+        if let Some(route) = self.prompt_route_suggestion(popup_id, popup.active_task_id.as_ref()) {
+            let applied = popup
+                .composer
+                .as_ref()
+                .and_then(|composer| composer.workflow.as_ref())
+                == route.workflow.as_ref();
+            content = content.push(prompt_route_suggestion_view(
+                route, applied, popup_id, tokens,
+            ));
+        } else if let Some(workflow) = popup
+            .composer
+            .as_ref()
+            .and_then(|composer| composer.workflow.as_ref())
+        {
+            content = content.push(applied_prompt_workflow_view(workflow, popup_id, tokens));
         }
         let input_window_id = popup_id;
         let input = Input::new("输入消息", composer_content.clone())
@@ -18374,7 +27790,9 @@ impl PreviewProgram {
                 value,
             })
             .view(tokens);
-        let action = if turn_active && !has_payload {
+        let action = if review_target_pending {
+            button(text("请选择范围").size(11)).style(button_style(tokens, ButtonKind::Ghost))
+        } else if turn_active && !has_payload {
             button(text("停止").size(11))
                 .on_press(Message::TaskPopupInterruptTurn(popup_id))
                 .style(button_style(tokens, ButtonKind::Danger))
@@ -18388,7 +27806,7 @@ impl PreviewProgram {
                 .size(11),
             )
             .style(button_style(tokens, ButtonKind::Primary));
-            if !has_payload {
+            if !has_payload || (pending_blocks_send && !turn_active) || task_run_block.is_some() {
                 send
             } else {
                 send.on_press(Message::TaskPopupSubmitTurn(popup_id))
@@ -18421,6 +27839,17 @@ impl PreviewProgram {
             button(text("文字").size(10)).style(button_style(tokens, ButtonKind::Ghost));
         let mut paste_image =
             button(text("图片").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+        let optimizing_prompt =
+            self.prompt_optimization_is_busy(popup_id, popup.active_task_id.as_ref());
+        let mut optimize_prompt = button(
+            text(if optimizing_prompt {
+                "优化中"
+            } else {
+                "优化提示"
+            })
+            .size(10),
+        )
+        .style(button_style(tokens, ButtonKind::Ghost));
         let mut permission_button = button(text(permission_label(permission)).size(10))
             .style(button_style(tokens, ButtonKind::Ghost));
         let mut plan_button = button(
@@ -18446,20 +27875,61 @@ impl PreviewProgram {
             attach_directory.on_press(Message::TaskPopupPickAttachmentDirectories(popup_id));
         paste_text = paste_text.on_press(Message::TaskPopupPasteClipboardText(popup_id));
         paste_image = paste_image.on_press(Message::TaskPopupPasteClipboardImage(popup_id));
+        if !optimizing_prompt
+            && !turn_active
+            && !pending_blocks_send
+            && !composer_content.trim().is_empty()
+        {
+            optimize_prompt = optimize_prompt.on_press(Message::OptimizePrompt(popup_id));
+        }
         permission_button = permission_button.on_press(Message::TaskPopupCyclePermission(popup_id));
         plan_button = plan_button.on_press(Message::TaskPopupTogglePlanMode(popup_id));
         goal_button = goal_button.on_press(Message::TaskPopupToggleGoalMode(popup_id));
+        let model_controls = popup
+            .composer
+            .as_ref()
+            .map(|composer| {
+                self.composer_model_controls(
+                    popup_id,
+                    composer,
+                    turn_active || pending_blocks_send,
+                    tokens,
+                )
+            })
+            .unwrap_or_else(|| space().into());
         let mut composer_controls = column![
-            row![attach_file, attach_directory, paste_text, paste_image].spacing(4),
+            row![
+                attach_file,
+                attach_directory,
+                paste_text,
+                paste_image,
+                optimize_prompt
+            ]
+            .spacing(4),
             row![input, action].spacing(6).align_y(Alignment::Center),
+            model_controls,
             row![permission_button, plan_button, goal_button].spacing(4),
         ]
         .spacing(5);
+        if let Some(reason) = task_run_block {
+            composer_controls = composer_controls.push(text(reason).size(10).color(colors.warning));
+        }
         if let Some(usage) = session.context_usage.as_ref() {
+            let mut compact =
+                button(text("压缩上下文").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+            if !turn_active && !pending_blocks_send {
+                compact = compact.on_press(Message::TaskPopupCompactContext(popup_id));
+            }
             composer_controls = composer_controls.push(
-                text(context_usage_label(usage))
-                    .size(10)
-                    .color(context_usage_color(usage, colors)),
+                row![
+                    text(context_usage_label(usage))
+                        .size(10)
+                        .width(Length::Fill)
+                        .color(context_usage_color(usage, colors)),
+                    compact,
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
             );
         }
         content = content.push(composer_controls);
@@ -18473,6 +27943,15 @@ impl PreviewProgram {
 
     fn projects_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
         let colors = tokens.colors;
+        let overview = SidebarRow::new("全部项目")
+            .leading(icon(Icon::Workspace, 14.0, colors.muted))
+            .state(if self.projects_overview_open {
+                SidebarRowState::Active
+            } else {
+                SidebarRowState::Idle
+            })
+            .on_select(Message::OpenProjectsOverview)
+            .view(tokens);
         let inbox = SidebarRow::new("收集箱")
             .leading(icon(Icon::Workspace, 14.0, colors.muted))
             .state(if self.inbox_selected {
@@ -18482,59 +27961,143 @@ impl PreviewProgram {
             })
             .on_select(Message::SelectInbox)
             .view(tokens);
-        let mut section = SidebarSection::new("项目").count(self.projects.len());
-        for pinned in [true, false] {
-            let items = self
-                .projects
-                .iter()
-                .filter(|project| project.pinned == pinned)
-                .map(|project| {
-                    ReorderItem::new(
-                        project.id.clone(),
-                        SidebarRow::new(project.name.clone())
-                            .leading(icon(Icon::Folder, 14.0, colors.muted))
-                            .state(if Some(&project.id) == self.selected_project.as_ref() {
-                                SidebarRowState::Active
-                            } else {
-                                SidebarRowState::Idle
-                            })
-                            .view(tokens),
-                    )
-                })
-                .collect::<Vec<_>>();
-            if items.is_empty() {
-                continue;
-            }
-            let height = ControlSize::Small.height_in(tokens.metrics) * items.len() as f32
-                + (items.len().saturating_sub(1)) as f32;
-            section = section.push(
-                container(
-                    ReorderList::new(items, Message::SelectProject)
-                        .on_reorder(|project_id, before_project_id| Message::ReorderProject {
-                            project_id,
-                            before_project_id,
+        let mut body = column![overview, inbox].spacing(8);
+        match self.sidebar_display_mode {
+            NativeSidebarDisplayMode::Grouped => {
+                let mut section = SidebarSection::new("项目").count(self.projects.len());
+                for pinned in [true, false] {
+                    let items = self
+                        .projects
+                        .iter()
+                        .filter(|project| project.pinned == pinned)
+                        .map(|project| {
+                            ReorderItem::new(
+                                project.id.clone(),
+                                SidebarRow::new(project.name.clone())
+                                    .leading(icon(Icon::Folder, 14.0, colors.muted))
+                                    .state(if Some(&project.id) == self.selected_project.as_ref() {
+                                        SidebarRowState::Active
+                                    } else {
+                                        SidebarRowState::Idle
+                                    })
+                                    .view(tokens),
+                            )
                         })
-                        .indicator(colors.accent)
-                        .view(),
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(height)),
-            );
-        }
-        let mut body = column![inbox, section.view(tokens)].spacing(8);
-        if !self.archived_projects.is_empty() {
-            let mut archived = SidebarSection::new("已归档").count(self.archived_projects.len());
-            for project in &self.archived_projects {
-                archived = archived.push(
-                    SidebarRow::new(format!("恢复 · {}", project.name))
-                        .leading(icon(Icon::Folder, 14.0, colors.faint))
-                        .on_select(Message::RestoreProject(project.id.clone()))
-                        .view(tokens),
-                );
+                        .collect::<Vec<_>>();
+                    if items.is_empty() {
+                        continue;
+                    }
+                    let height = ControlSize::Small.height_in(tokens.metrics) * items.len() as f32
+                        + (items.len().saturating_sub(1)) as f32;
+                    section = section.push(
+                        container(
+                            ReorderList::new(items, Message::SelectProject)
+                                .on_reorder(|project_id, before_project_id| {
+                                    Message::ReorderProject {
+                                        project_id,
+                                        before_project_id,
+                                    }
+                                })
+                                .indicator(colors.accent)
+                                .view(),
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fixed(height)),
+                    );
+                }
+                body = body.push(section.view(tokens));
+                if !self.archived_projects.is_empty() {
+                    let mut archived =
+                        SidebarSection::new("已归档").count(self.archived_projects.len());
+                    for project in &self.archived_projects {
+                        archived = archived.push(
+                            SidebarRow::new(format!("恢复 · {}", project.name))
+                                .leading(icon(Icon::Folder, 14.0, colors.faint))
+                                .on_select(Message::RestoreProject(project.id.clone()))
+                                .view(tokens),
+                        );
+                    }
+                    body = body.push(archived.view(tokens));
+                }
             }
-            body = body.push(archived.view(tokens));
+            NativeSidebarDisplayMode::Unified => {
+                let mut tasks = self.task_move_candidates.iter().collect::<Vec<_>>();
+                tasks.sort_by(|left, right| {
+                    right
+                        .pinned
+                        .cmp(&left.pinned)
+                        .then_with(|| right.created_at.cmp(&left.created_at))
+                        .then_with(|| left.sort_order.cmp(&right.sort_order))
+                });
+                let mut section = SidebarSection::new("会话").count(tasks.len());
+                if tasks.is_empty() {
+                    section = section.push(text("还没有会话").size(11).color(colors.faint));
+                } else {
+                    for task in tasks {
+                        let project_name = task
+                            .project_id
+                            .as_ref()
+                            .and_then(|project_id| {
+                                self.projects
+                                    .iter()
+                                    .find(|project| &project.id == project_id)
+                                    .map(|project| project.name.as_str())
+                                    .or_else(|| {
+                                        self.archived_projects
+                                            .iter()
+                                            .find(|project| &project.id == project_id)
+                                            .map(|project| project.name.as_str())
+                                    })
+                            })
+                            .unwrap_or("收集箱");
+                        section = section.push(
+                            ListItem::new(
+                                row![
+                                    text(if task.title.trim().is_empty() {
+                                        "未命名对话".to_owned()
+                                    } else {
+                                        task.title.clone()
+                                    })
+                                    .size(12)
+                                    .width(Length::Fill)
+                                    .color(colors.text),
+                                    text(format!("{project_name} · {}", status_label(task.status)))
+                                        .size(10)
+                                        .color(colors.muted),
+                                ]
+                                .spacing(8)
+                                .align_y(Alignment::Center),
+                            )
+                            .selected(Some(&task.id) == self.selected_task.as_ref())
+                            .on_select(Message::SelectTask(task.id.clone()))
+                            .view(tokens),
+                        );
+                    }
+                }
+                body = body.push(section.view(tokens));
+            }
+        }
+        if let Some(snapshot) = &self.project_files {
+            body = body.push(
+                project_files_tree(snapshot, tokens).map(|message| match message {
+                    ProjectFilesPanelMessage::ToggleExpand(path) => {
+                        Message::ToggleProjectFileExpand(path)
+                    }
+                    ProjectFilesPanelMessage::OpenPath(path) => Message::OpenProjectFile(path),
+                    ProjectFilesPanelMessage::Refresh => Message::RefreshProjectFiles,
+                }),
+            );
+        } else if self.selected_project.is_some() {
+            if let Some(error) = &self.project_files_error {
+                body = body.push(text(error.clone()).size(11).color(colors.danger));
+            }
         }
         let mut footer = SidebarFooter::new()
+            .push(
+                SidebarFooterButton::new("新对话", Icon::Add)
+                    .on_press(Message::OpenMainConversationDraft)
+                    .view(tokens),
+            )
             .push(
                 SidebarFooterButton::new("新建项目", Icon::Add)
                     .on_press(Message::CreateProject)
@@ -18555,6 +28118,11 @@ impl PreviewProgram {
                 .push(
                     SidebarFooterButton::new("任务", Icon::Workspace)
                         .on_press(Message::OpenProjectTasks)
+                        .view(tokens),
+                )
+                .push(
+                    SidebarFooterButton::new("文件", Icon::Folder)
+                        .on_press(Message::OpenProjectFiles)
                         .view(tokens),
                 )
                 .push(
@@ -18586,6 +28154,17 @@ impl PreviewProgram {
                         .view(tokens),
                 )
                 .push(
+                    SidebarFooterButton::new("询问", Icon::Add)
+                        .on_press(Message::OpenChildQuestionPopup {
+                            source_window: HostedWindowId::PRIMARY,
+                            parent_task_id: self
+                                .selected_task
+                                .clone()
+                                .expect("selected task was checked"),
+                        })
+                        .view(tokens),
+                )
+                .push(
                     SidebarFooterButton::new("移至窗口", Icon::Workspace)
                         .on_press(Message::MoveSelectedTaskToPopup)
                         .view(tokens),
@@ -18593,6 +28172,11 @@ impl PreviewProgram {
                 .push(
                     SidebarFooterButton::new("检查器", Icon::About)
                         .on_press(Message::ToggleTaskInspector)
+                        .view(tokens),
+                )
+                .push(
+                    SidebarFooterButton::new("浏览器", Icon::Eye)
+                        .on_press(Message::OpenIab)
                         .view(tokens),
                 );
         }
@@ -19222,6 +28806,15 @@ impl PreviewProgram {
             })
             .on_select(Message::SelectSettingsTab(SettingsTabId::new("appearance")))
             .view(tokens);
+        let project = SidebarRow::new("项目")
+            .leading(icon(Icon::Folder, 15.0, colors.text))
+            .state(if active == "project" {
+                SidebarRowState::Active
+            } else {
+                SidebarRowState::Idle
+            })
+            .on_select(Message::SelectSettingsTab(SettingsTabId::new("project")))
+            .view(tokens);
         let provider = SidebarRow::new("模型服务")
             .leading(icon(Icon::Nodes, 15.0, colors.text))
             .state(if active == "provider" {
@@ -19285,9 +28878,21 @@ impl PreviewProgram {
             })
             .on_select(Message::SelectSettingsTab(SettingsTabId::new("data")))
             .view(tokens);
+        let about = SidebarRow::new("关于")
+            .leading(icon(Icon::About, 15.0, colors.text))
+            .state(if active == "about" {
+                SidebarRowState::Active
+            } else {
+                SidebarRowState::Idle
+            })
+            .on_select(Message::SelectSettingsTab(SettingsTabId::new("about")))
+            .view(tokens);
         SidebarFrame::new(
-            column![appearance, provider, agent, quota, extensions, remote, desktop, data]
-                .spacing(4),
+            column![
+                appearance, project, provider, agent, quota, extensions, remote, desktop, data,
+                about
+            ]
+            .spacing(4),
         )
         .top(back)
         .gap(12.0)
@@ -19296,6 +28901,7 @@ impl PreviewProgram {
 
     fn settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
         match self.settings_state.active_tab().as_str() {
+            "project" => self.project_settings_content(tokens),
             "provider" => self.provider_settings_content(tokens),
             "agent" => self.agent_settings_content(tokens),
             "quota" => self.quota_settings_content(tokens),
@@ -19303,39 +28909,46 @@ impl PreviewProgram {
             "remote" => self.remote_settings_content(tokens),
             "desktop" => self.desktop_settings_content(tokens),
             "data" => self.data_import_settings_content(tokens),
+            "about" => self.about_settings_content(tokens),
             _ => self.appearance_settings_content(tokens),
         }
     }
 
     fn appearance_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
         let colors = tokens.colors;
-        let control_height = ControlSize::Medium.height_in(tokens.metrics);
-        let light_kind = if self.theme == ThemeMode::Light {
-            ButtonKind::Selected
-        } else {
-            ButtonKind::Ghost
-        };
-        let dark_kind = if self.theme == ThemeMode::Dark {
-            ButtonKind::Selected
-        } else {
-            ButtonKind::Ghost
-        };
-        let choices = row![
-            button(text("浅色").size(13))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 14.0])
-                .on_press(Message::SetTheme(ThemeMode::Light))
-                .style(button_style(tokens, light_kind)),
-            button(text("深色").size(13))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 14.0])
-                .on_press(Message::SetTheme(ThemeMode::Dark))
-                .style(button_style(tokens, dark_kind)),
-        ]
-        .spacing(6);
-        let card = SettingsCard::new(
-            "主题",
-            column![text("选择界面外观").size(12).color(colors.muted), choices,].spacing(10),
+        let card =
+            AppearanceSection::new(self.theme, &self.appearance, Message::Appearance).view(tokens);
+        let sidebar_mode = SettingsCard::new(
+            "侧边栏样式",
+            row![
+                button(text("按项目分组").size(11))
+                    .padding([7.0, 12.0])
+                    .on_press(Message::SetSidebarDisplayMode(
+                        NativeSidebarDisplayMode::Grouped,
+                    ))
+                    .style(button_style(
+                        tokens,
+                        if self.sidebar_display_mode == NativeSidebarDisplayMode::Grouped {
+                            ButtonKind::Selected
+                        } else {
+                            ButtonKind::Ghost
+                        },
+                    )),
+                button(text("统一列表").size(11))
+                    .padding([7.0, 12.0])
+                    .on_press(Message::SetSidebarDisplayMode(
+                        NativeSidebarDisplayMode::Unified,
+                    ))
+                    .style(button_style(
+                        tokens,
+                        if self.sidebar_display_mode == NativeSidebarDisplayMode::Unified {
+                            ButtonKind::Selected
+                        } else {
+                            ButtonKind::Ghost
+                        },
+                    )),
+            ]
+            .spacing(8),
         )
         .view(tokens);
         container(
@@ -19345,6 +28958,7 @@ impl PreviewProgram {
                     .font(ui_font(font::Weight::Semibold))
                     .color(colors.text),
                 card,
+                sidebar_mode,
             ]
             .spacing(16),
         )
@@ -19353,6 +28967,132 @@ impl PreviewProgram {
         .padding(Padding::from([20, 24]))
         .style(canvas_style(tokens))
         .into()
+    }
+
+    fn project_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        let control_height = ControlSize::Medium.height_in(tokens.metrics);
+        let clone_parent = Input::new("默认克隆位置", self.project_clone_parent.clone())
+            .on_input(Message::ProjectCloneParentChanged)
+            .view(tokens);
+        let clone_parent = row![
+            container(clone_parent).width(Length::Fill),
+            button(text("选择目录").size(11))
+                .height(Length::Fixed(control_height))
+                .padding([0.0, 12.0])
+                .on_press(Message::PickProjectCloneParent)
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        let repository = SettingsCard::new(
+            "仓库",
+            column![
+                text("新克隆的仓库默认保存到此目录。")
+                    .size(11)
+                    .color(colors.muted),
+                clone_parent,
+            ]
+            .spacing(8),
+        )
+        .view(tokens);
+
+        let worktree_parent = Input::new(
+            "工作树存放位置",
+            self.project_settings
+                .worktree
+                .parent_dir
+                .clone()
+                .unwrap_or_default(),
+        )
+        .on_input(Message::ProjectWorktreeParentChanged)
+        .view(tokens);
+        let worktree_parent = row![
+            container(worktree_parent).width(Length::Fill),
+            button(text("选择目录").size(11))
+                .height(Length::Fixed(control_height))
+                .padding([0.0, 12.0])
+                .on_press(Message::PickProjectWorktreeParent)
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+        let instructions = HostedTextarea::new(&self.project_worktree_instructions)
+            .id(target_ids::PROJECT_WORKTREE_INSTRUCTIONS)
+            .placeholder("创建工作树后附加到任务上下文的说明")
+            .height(120.0)
+            .on_action(Message::ProjectWorktreeInstructionsEdited)
+            .view(tokens);
+        let worktree = SettingsCard::new(
+            "任务工作树",
+            column![
+                row![
+                    column![
+                        text("新任务默认位置").size(12).color(colors.text),
+                        text("发送首条消息前仍可为当前任务单独选择。")
+                            .size(11)
+                            .color(colors.muted),
+                    ]
+                    .spacing(3)
+                    .width(Length::Fill),
+                    button(
+                        text(worktree_selection_mode_label(
+                            self.project_settings.worktree.default_mode,
+                        ))
+                        .size(11),
+                    )
+                    .height(Length::Fixed(control_height))
+                    .padding([0.0, 12.0])
+                    .on_press(Message::CycleProjectWorktreeMode)
+                    .style(button_style(tokens, ButtonKind::Selected)),
+                ]
+                .align_y(Alignment::Center),
+                worktree_parent,
+                column![
+                    text("工作树说明").size(11).color(colors.muted),
+                    instructions,
+                ]
+                .spacing(5),
+                settings_toggle_row(
+                    "归档时清理工作树",
+                    "没有未合并提交时，普通归档会移除工作树和分支。",
+                    self.project_settings.worktree.cleanup_on_archive,
+                    Message::ToggleProjectWorktreeCleanup,
+                    tokens,
+                ),
+                button(text("保存项目设置").size(12))
+                    .height(Length::Fixed(control_height))
+                    .padding([0.0, 14.0])
+                    .on_press(Message::SaveProjectSettings)
+                    .style(button_style(tokens, ButtonKind::Primary)),
+            ]
+            .spacing(10),
+        )
+        .view(tokens);
+        let mut content = column![
+            text("项目")
+                .size(18)
+                .font(ui_font(font::Weight::Semibold))
+                .color(colors.text),
+            repository,
+            worktree,
+        ]
+        .spacing(16);
+        if let Some(error) = &self.project_settings_error {
+            content = content.push(
+                SettingsCard::new(
+                    "需要处理",
+                    text(error.clone()).size(11).color(colors.danger),
+                )
+                .view(tokens),
+            );
+        }
+        container(scrollable(content).direction(vertical_scrollbar()))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding::from([20, 24]))
+            .style(canvas_style(tokens))
+            .into()
     }
 
     fn desktop_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
@@ -19387,13 +29127,37 @@ impl PreviewProgram {
         let shortcut = SettingsCard::new(
             "全局唤起快捷键",
             column![
-                text("输入组合键并保存，例如 Ctrl+Shift+L；留空或点击清除即可停用。")
+                text("点击快捷键区域后直接按下组合键；Escape 取消，Delete 或 Backspace 清空。")
                     .size(11)
                     .color(colors.muted),
                 row![
-                    Input::new("Ctrl+Shift+L", self.shell_shortcut_edit.clone())
-                        .on_input(Message::ShellShortcutChanged)
-                        .view(tokens),
+                    container(
+                        button(
+                            container(
+                                text(if self.shell_shortcut_capturing {
+                                    "请按组合键…".to_owned()
+                                } else if self.shell_shortcut_edit.is_empty() {
+                                    "未设置".to_owned()
+                                } else {
+                                    self.shell_shortcut_edit.clone()
+                                })
+                                .size(12),
+                            )
+                            .width(Length::Fill),
+                        )
+                        .height(Length::Fixed(control_height))
+                        .padding([0.0, 10.0])
+                        .on_press(Message::BeginShellShortcutCapture)
+                        .style(button_style(
+                            tokens,
+                            if self.shell_shortcut_capturing {
+                                ButtonKind::Selected
+                            } else {
+                                ButtonKind::Ghost
+                            },
+                        )),
+                    )
+                    .width(Length::Fill),
                     button(text("保存").size(11))
                         .height(Length::Fixed(control_height))
                         .padding([0.0, 14.0])
@@ -19443,11 +29207,12 @@ impl PreviewProgram {
                 "更新包将在安装前完成签名验证。".to_owned(),
                 colors.success,
             ),
-            DesktopUpdateState::Downloading { version, .. } => (
-                format!("正在下载 {version}"),
-                "下载完成后将自动启动安装。".to_owned(),
-                colors.warning,
-            ),
+            DesktopUpdateState::Downloading { version, progress } => {
+                let detail = update_download_percent(*progress)
+                    .map(|percent| format!("已下载 {percent}%，完成后将自动启动安装。"))
+                    .unwrap_or_else(|| "正在下载更新包，完成后将自动启动安装。".to_owned());
+                (format!("正在下载 {version}"), detail, colors.warning)
+            }
             DesktopUpdateState::Installing { version } => (
                 format!("正在安装 {version}"),
                 "安装器已准备完成。".to_owned(),
@@ -19554,6 +29319,92 @@ impl PreviewProgram {
             .into()
     }
 
+    fn about_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        let row = |label: String, value: String| -> Element<'static, Message> {
+            row![
+                container(text(label).size(12).color(colors.text)).width(Length::Fill),
+                text(value).size(11).color(colors.muted),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        let app_license = self
+            .license_manifest
+            .app
+            .as_ref()
+            .and_then(|app| app.license.as_deref())
+            .filter(|license| !license.trim().is_empty())
+            .unwrap_or("未声明")
+            .to_owned();
+        let application = SettingsCard::new(
+            "应用",
+            column![
+                row("名称".to_owned(), PRODUCT_NAME.to_owned()),
+                row("版本".to_owned(), env!("CARGO_PKG_VERSION").to_owned()),
+                row("许可证".to_owned(), app_license),
+            ]
+            .spacing(10),
+        )
+        .view(tokens);
+
+        let mut dependencies = column![].spacing(10);
+        if !self.license_manifest.npm_dependencies.is_empty() {
+            dependencies = dependencies.push(
+                text("前端依赖")
+                    .size(11)
+                    .font(ui_font(font::Weight::Semibold))
+                    .color(colors.muted),
+            );
+            for dependency in &self.license_manifest.npm_dependencies {
+                dependencies = dependencies.push(row(
+                    format!("{} {}", dependency.name, dependency.version),
+                    dependency.license.clone(),
+                ));
+            }
+        }
+        if !self.license_manifest.rust_dependencies.is_empty() {
+            dependencies = dependencies.push(
+                text("Rust 依赖")
+                    .size(11)
+                    .font(ui_font(font::Weight::Semibold))
+                    .color(colors.muted),
+            );
+            for dependency in &self.license_manifest.rust_dependencies {
+                dependencies = dependencies.push(row(
+                    format!("{} {}", dependency.name, dependency.version),
+                    dependency.license.clone(),
+                ));
+            }
+        }
+        if self.license_manifest.npm_dependencies.is_empty()
+            && self.license_manifest.rust_dependencies.is_empty()
+        {
+            dependencies = dependencies.push(
+                text("未发现可汇总的依赖记录。")
+                    .size(11)
+                    .color(colors.muted),
+            );
+        }
+        let licenses = SettingsCard::new("第三方许可证协议", dependencies).view(tokens);
+        let content = column![
+            text("关于")
+                .size(18)
+                .font(ui_font(font::Weight::Semibold))
+                .color(colors.text),
+            application,
+            licenses,
+        ]
+        .spacing(16);
+        container(scrollable(content).direction(vertical_scrollbar()))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding::from([20, 24]))
+            .style(canvas_style(tokens))
+            .into()
+    }
+
     fn data_import_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
         let colors = tokens.colors;
         let control_height = ControlSize::Medium.height_in(tokens.metrics);
@@ -19643,10 +29494,10 @@ impl PreviewProgram {
                         "请确认目录完整且可以读取".to_owned()
                     }
                     DesktopImportPlanItemStatus::RequiresCredentialConfirmation => {
-                        if plan.credential_keys.is_empty() {
+                        if plan.credential_entries.is_empty() {
                             "没有已保存的凭据".to_owned()
                         } else {
-                            format!("发现 {} 项，需要单独确认", plan.credential_keys.len())
+                            format!("发现 {} 项，需要单独确认", plan.credential_entries.len())
                         }
                     }
                 };
@@ -19940,6 +29791,440 @@ impl PreviewProgram {
         )
         .view(tokens);
 
+        let assistant_controls_busy = self.provider_busy || self.assistant_ai_probe_busy;
+        let assistant_base_url = Input::new(
+            "例如 https://api.example.com/v1",
+            self.provider_ai_settings.assistant_base_url.clone(),
+        )
+        .disabled(assistant_controls_busy)
+        .on_input(Message::AssistantAiBaseUrlChanged)
+        .view(tokens);
+        let assistant_model = Input::new(
+            "辅助模型名称",
+            self.provider_ai_settings.assistant_model.clone(),
+        )
+        .disabled(assistant_controls_busy)
+        .on_input(Message::AssistantAiModelChanged)
+        .view(tokens);
+        let assistant_secret = Input::new(
+            if self.provider_ai_settings.assistant_secret_configured {
+                "输入新密钥以替换"
+            } else {
+                "输入 API Key"
+            },
+            self.provider_ai_settings.assistant_secret.clone(),
+        )
+        .secure(true)
+        .disabled(assistant_controls_busy)
+        .on_input(Message::AssistantAiSecretChanged)
+        .view(tokens);
+        let assistant_new_model_id = Input::new("模型 ID", self.assistant_ai_new_model_id.clone())
+            .disabled(assistant_controls_busy)
+            .on_input(Message::AssistantAiNewModelIdChanged)
+            .view(tokens);
+        let assistant_new_model_label =
+            Input::new("显示名（可选）", self.assistant_ai_new_model_label.clone())
+                .disabled(assistant_controls_busy)
+                .on_input(Message::AssistantAiNewModelLabelChanged)
+                .view(tokens);
+        let add_assistant_model = button(text("添加模型").size(12))
+            .height(Length::Fixed(control_height))
+            .padding([0.0, 14.0])
+            .style(button_style(tokens, ButtonKind::Ghost));
+        let add_assistant_model =
+            if assistant_controls_busy || self.assistant_ai_new_model_id.trim().is_empty() {
+                add_assistant_model
+            } else {
+                add_assistant_model.on_press(Message::AddAssistantAiModel)
+            };
+        let mut assistant_model_pool = column![].spacing(7);
+        for item in self.provider_ai_settings.assistant_model_pool() {
+            let model_id = item.id.clone();
+            let label = Input::new("显示名", item.label.clone())
+                .disabled(assistant_controls_busy)
+                .on_input(move |value| Message::RenameAssistantAiModel {
+                    model_id: model_id.clone(),
+                    value,
+                })
+                .view(tokens);
+            assistant_model_pool = assistant_model_pool.push(
+                row![
+                    text(item.id.clone())
+                        .size(11)
+                        .color(colors.muted)
+                        .width(Length::FillPortion(2)),
+                    container(label).width(Length::FillPortion(3)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            );
+        }
+        if self
+            .provider_ai_settings
+            .assistant_model_pool()
+            .next()
+            .is_none()
+        {
+            assistant_model_pool = assistant_model_pool.push(
+                text("暂无模型，可手动添加或从服务获取。")
+                    .size(11)
+                    .color(colors.muted),
+            );
+        }
+        let fetch_assistant_models = button(
+            text(if self.assistant_ai_probe_busy {
+                "处理中"
+            } else {
+                "获取模型"
+            })
+            .size(12),
+        )
+        .height(Length::Fixed(control_height))
+        .padding([0.0, 14.0])
+        .style(button_style(tokens, ButtonKind::Ghost));
+        let fetch_assistant_models = if assistant_controls_busy {
+            fetch_assistant_models
+        } else {
+            fetch_assistant_models.on_press(Message::FetchAssistantAiModels)
+        };
+        let test_assistant = button(
+            text(if self.assistant_ai_probe_busy {
+                "处理中"
+            } else {
+                "测试连接"
+            })
+            .size(12),
+        )
+        .height(Length::Fixed(control_height))
+        .padding([0.0, 14.0])
+        .style(button_style(tokens, ButtonKind::Ghost));
+        let test_assistant = if assistant_controls_busy {
+            test_assistant
+        } else {
+            test_assistant.on_press(Message::TestAssistantAiConnection)
+        };
+        let save_assistant = button(text("保存辅助模型").size(12))
+            .height(Length::Fixed(control_height))
+            .padding([0.0, 14.0])
+            .style(button_style(tokens, ButtonKind::Primary));
+        let save_assistant =
+            if assistant_controls_busy || !self.provider_ai_settings.assistant_dirty() {
+                save_assistant
+            } else {
+                save_assistant.on_press(Message::SaveAssistantAiConfiguration)
+            };
+        let clear_assistant_secret = button(text("移除密钥").size(12))
+            .height(Length::Fixed(control_height))
+            .padding([0.0, 14.0])
+            .style(button_style(tokens, ButtonKind::Ghost));
+        let clear_assistant_secret =
+            if assistant_controls_busy || !self.provider_ai_settings.assistant_secret_configured {
+                clear_assistant_secret
+            } else {
+                clear_assistant_secret.on_press(Message::ClearAssistantAiSecret)
+            };
+        let mut assistant_configuration_content = column![
+            text("用于自动标题、对话建议与提示优化。")
+                .size(11)
+                .color(colors.muted),
+            column![
+                text("服务地址").size(11).color(colors.muted),
+                assistant_base_url
+            ]
+            .spacing(5),
+            column![
+                text("默认模型").size(11).color(colors.muted),
+                assistant_model
+            ]
+            .spacing(5),
+            column![
+                text(if self.provider_ai_settings.assistant_secret_configured {
+                    "密钥已保存"
+                } else {
+                    "尚未保存密钥"
+                })
+                .size(11)
+                .color(if self.provider_ai_settings.assistant_secret_configured {
+                    colors.success
+                } else {
+                    colors.muted
+                }),
+                assistant_secret,
+            ]
+            .spacing(5),
+            column![
+                text("模型池").size(11).color(colors.muted),
+                row![
+                    assistant_new_model_id,
+                    assistant_new_model_label,
+                    add_assistant_model
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                assistant_model_pool,
+            ]
+            .spacing(7),
+            row![
+                save_assistant,
+                clear_assistant_secret,
+                fetch_assistant_models,
+                test_assistant,
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        ]
+        .spacing(10);
+        if let Some((ok, notice)) = &self.assistant_ai_probe_notice {
+            assistant_configuration_content =
+                assistant_configuration_content.push(text(notice.clone()).size(11).color(if *ok {
+                    colors.success
+                } else {
+                    colors.danger
+                }));
+        }
+        let assistant_configuration =
+            SettingsCard::new("辅助模型", assistant_configuration_content).view(tokens);
+
+        let title_model = Input::new(
+            "留空时使用辅助模型默认值",
+            self.provider_ai_settings.title_model.clone(),
+        )
+        .disabled(self.provider_busy)
+        .on_input(Message::TitleModelChanged)
+        .view(tokens);
+        let suggestion_model = Input::new(
+            "留空时使用辅助模型默认值",
+            self.provider_ai_settings.suggestion_model.clone(),
+        )
+        .disabled(self.provider_busy)
+        .on_input(Message::SuggestionModelChanged)
+        .view(tokens);
+        let prompt_router_model = Input::new(
+            "留空时使用辅助模型默认值",
+            self.provider_ai_settings.prompt_router_model.clone(),
+        )
+        .disabled(self.provider_busy)
+        .on_input(Message::PromptRouterModelChanged)
+        .view(tokens);
+        let prompt_optimize_model = Input::new(
+            "留空时使用辅助模型默认值",
+            self.provider_ai_settings.prompt_optimize_model.clone(),
+        )
+        .disabled(self.provider_busy)
+        .on_input(Message::PromptOptimizeModelChanged)
+        .view(tokens);
+        let auto_turn_decision_model = Input::new(
+            "留空时使用当前 Provider 默认模型",
+            self.provider_ai_settings.auto_turn_decision_model.clone(),
+        )
+        .disabled(self.provider_busy)
+        .on_input(Message::AutoTurnDecisionModelChanged)
+        .view(tokens);
+        let save_features = button(text("保存功能模型").size(12))
+            .height(Length::Fixed(control_height))
+            .padding([0.0, 14.0])
+            .style(button_style(tokens, ButtonKind::Primary));
+        let save_features =
+            if self.provider_busy || !self.provider_ai_settings.model_features_dirty() {
+                save_features
+            } else {
+                save_features.on_press(Message::SaveModelFeatureSettings)
+            };
+        let suggestions_enabled = self.provider_ai_settings.conversation_suggestions_enabled();
+        let suggestions_on =
+            button(text("开启").size(11))
+                .padding([5.0, 12.0])
+                .style(button_style(
+                    tokens,
+                    if suggestions_enabled {
+                        ButtonKind::Selected
+                    } else {
+                        ButtonKind::Ghost
+                    },
+                ));
+        let suggestions_on = if self.provider_busy || suggestions_enabled {
+            suggestions_on
+        } else {
+            suggestions_on.on_press(Message::SetConversationSuggestionsEnabled(true))
+        };
+        let suggestions_off =
+            button(text("关闭").size(11))
+                .padding([5.0, 12.0])
+                .style(button_style(
+                    tokens,
+                    if suggestions_enabled {
+                        ButtonKind::Ghost
+                    } else {
+                        ButtonKind::Selected
+                    },
+                ));
+        let suggestions_off = if self.provider_busy || !suggestions_enabled {
+            suggestions_off
+        } else {
+            suggestions_off.on_press(Message::SetConversationSuggestionsEnabled(false))
+        };
+        let feature_models = SettingsCard::new(
+            "功能模型",
+            column![
+                column![text("自动标题").size(11).color(colors.muted), title_model].spacing(5),
+                column![
+                    text("新对话建议").size(11).color(colors.muted),
+                    row![suggestions_on, suggestions_off].spacing(6),
+                ]
+                .spacing(5),
+                column![
+                    text("建议模型").size(11).color(colors.muted),
+                    suggestion_model,
+                ]
+                .spacing(5),
+                column![
+                    text("提示分类模型").size(11).color(colors.muted),
+                    prompt_router_model,
+                ]
+                .spacing(5),
+                column![
+                    text("提示优化模型").size(11).color(colors.muted),
+                    prompt_optimize_model,
+                ]
+                .spacing(5),
+                column![
+                    text("自动回合决策").size(11).color(colors.muted),
+                    auto_turn_decision_model,
+                ]
+                .spacing(5),
+                save_features,
+            ]
+            .spacing(10),
+        )
+        .view(tokens);
+
+        let mut preset_rows =
+            column![
+                text("按回合意图选择模型与思考强度；留空时使用 Provider 的内置默认值。")
+                    .size(11)
+                    .color(colors.muted)
+            ]
+            .spacing(9);
+        for preset in self.provider_ai_settings.builtin_presets() {
+            let preset_id = preset.id.clone();
+            let model_value = preset.model.clone().unwrap_or_default();
+            let model_input = Input::new("Provider 默认", model_value)
+                .disabled(self.provider_busy)
+                .on_input({
+                    let preset_id = preset_id.clone();
+                    move |value| Message::FeaturePresetModelChanged {
+                        preset_id: preset_id.clone(),
+                        value,
+                    }
+                })
+                .view(tokens);
+            let effort = preset.reasoning_effort.as_deref().unwrap_or("默认强度");
+            let effort_button = button(text(effort.to_owned()).size(11))
+                .height(Length::Fixed(control_height))
+                .padding([0.0, 12.0])
+                .style(button_style(tokens, ButtonKind::Ghost));
+            let effort_button = if self.provider_busy {
+                effort_button
+            } else {
+                effort_button.on_press(Message::CycleFeaturePresetEffort(preset_id))
+            };
+            preset_rows = preset_rows.push(
+                column![
+                    text(preset.label.clone())
+                        .size(11)
+                        .font(ui_font(font::Weight::Semibold))
+                        .color(colors.text),
+                    row![model_input, effort_button]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                ]
+                .spacing(5),
+            );
+        }
+        let custom_preset_name = Input::new("名称", self.custom_preset_draft.clone())
+            .disabled(self.provider_busy)
+            .on_input(Message::CustomPresetDraftChanged)
+            .view(tokens);
+        let add_custom_preset = button(text("添加").size(11))
+            .height(Length::Fixed(control_height))
+            .padding([0.0, 12.0])
+            .style(button_style(tokens, ButtonKind::Ghost));
+        let add_custom_preset = if self.provider_busy {
+            add_custom_preset
+        } else {
+            add_custom_preset.on_press(Message::AddCustomPreset)
+        };
+        preset_rows = preset_rows.push(
+            column![
+                text("自定义预设")
+                    .size(11)
+                    .font(ui_font(font::Weight::Semibold))
+                    .color(colors.text),
+                row![custom_preset_name, add_custom_preset]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            ]
+            .spacing(5),
+        );
+        let custom_presets = self
+            .provider_ai_settings
+            .custom_presets()
+            .cloned()
+            .collect::<Vec<_>>();
+        if custom_presets.is_empty() {
+            preset_rows = preset_rows.push(text("暂无自定义预设。").size(10).color(colors.muted));
+        }
+        for preset in custom_presets {
+            let preset_id = preset.id.clone();
+            let label_input = Input::new("预设名称", preset.label)
+                .disabled(self.provider_busy)
+                .on_input({
+                    let preset_id = preset_id.clone();
+                    move |value| Message::RenameCustomPreset {
+                        preset_id: preset_id.clone(),
+                        value,
+                    }
+                })
+                .view(tokens);
+            let model_input = Input::new("未绑定", preset.model.unwrap_or_default())
+                .disabled(self.provider_busy)
+                .on_input({
+                    let preset_id = preset_id.clone();
+                    move |value| Message::FeaturePresetModelChanged {
+                        preset_id: preset_id.clone(),
+                        value,
+                    }
+                })
+                .view(tokens);
+            let effort = preset.reasoning_effort.as_deref().unwrap_or("默认强度");
+            let effort_button = button(text(effort.to_owned()).size(11))
+                .height(Length::Fixed(control_height))
+                .padding([0.0, 12.0])
+                .style(button_style(tokens, ButtonKind::Ghost));
+            let remove_button = button(text("删除").size(11))
+                .height(Length::Fixed(control_height))
+                .padding([0.0, 12.0])
+                .style(button_style(tokens, ButtonKind::Danger));
+            let (effort_button, remove_button) = if self.provider_busy {
+                (effort_button, remove_button)
+            } else {
+                (
+                    effort_button.on_press(Message::CycleFeaturePresetEffort(preset_id.clone())),
+                    remove_button.on_press(Message::RemoveCustomPreset(preset_id)),
+                )
+            };
+            preset_rows = preset_rows.push(
+                column![
+                    label_input,
+                    row![model_input, effort_button, remove_button]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                ]
+                .spacing(5),
+            );
+        }
+        let model_presets = SettingsCard::new("回合模型预设", preset_rows).view(tokens);
+
         let mut provider_choices = row![].spacing(6);
         for provider in &self.provider.providers {
             let provider_id = provider.provider_id.clone();
@@ -20091,6 +30376,9 @@ impl PreviewProgram {
             .align_y(Alignment::Center),
             runtime,
             runtime_configuration,
+            assistant_configuration,
+            feature_models,
+            model_presets,
             setup,
             credentials,
             limits,
@@ -20117,6 +30405,27 @@ impl PreviewProgram {
         let colors = tokens.colors;
         let control_height = ControlSize::Medium.height_in(tokens.metrics);
         let settings = &self.agent_interaction_settings;
+        let interaction_mode = SettingsCard::new(
+            "待处理交互",
+            column![
+                settings_toggle_row(
+                    "非打断模式",
+                    "等待回答或工具确认时，仍可拖入文件和目录补充上下文。",
+                    settings.non_interrupt_mode,
+                    Message::ToggleAgentInteraction(AgentInteractionToggle::NonInterrupt),
+                    tokens,
+                ),
+                settings_toggle_row(
+                    "Debug 面板",
+                    "在任务时间线中显示交互与卡片预览入口。",
+                    settings.debug,
+                    Message::ToggleAgentInteraction(AgentInteractionToggle::Debug),
+                    tokens,
+                ),
+            ]
+            .spacing(10),
+        )
+        .view(tokens);
         let subagent_mode = SettingsCard::new(
             "协作 Agent",
             column![
@@ -20278,6 +30587,7 @@ impl PreviewProgram {
             ]
             .spacing(8)
             .align_y(Alignment::Center),
+            interaction_mode,
             subagent_mode,
             auto_turn,
             agents,
@@ -20833,9 +31143,14 @@ impl PreviewProgram {
             return self.project_clone_content(tokens);
         }
 
+        if let Some(draft) = &self.main_conversation_draft {
+            return self.main_conversation_draft_content(draft, tokens);
+        }
+
         if self.inbox_selected {
             if let Some(session) = &self.task_session {
-                return self.task_session_content("收集箱".to_owned(), session, tokens);
+                let session = self.task_session_with_debug_overlay(session);
+                return self.task_session_content("收集箱".to_owned(), &session, tokens);
             }
             return self.inbox_content(tokens);
         }
@@ -20868,11 +31183,13 @@ impl PreviewProgram {
             ProjectSurface::Roadmap => return self.roadmap_content(project, tokens),
             ProjectSurface::Memory => return self.memory_content(project, tokens),
             ProjectSurface::Architecture => return self.architecture_content(project, tokens),
+            ProjectSurface::Files => return self.project_files_content(tokens),
             ProjectSurface::Tasks => {}
         }
 
         if let Some(session) = &self.task_session {
-            return self.task_session_content(project.name.clone(), session, tokens);
+            let session = self.task_session_with_debug_overlay(session);
+            return self.task_session_content(project.name.clone(), &session, tokens);
         }
 
         let project_name = Input::new("项目名称", self.project_name_edit.clone())
@@ -20979,6 +31296,141 @@ impl PreviewProgram {
             .into()
     }
 
+    fn projects_overview_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        let mut refresh = button(text("刷新").size(12))
+            .style(button_style(tokens, ButtonKind::Ghost))
+            .on_press(Message::RefreshProjectsOverview);
+        if self.project_dashboard.is_empty() && self.project_dashboard_error.is_some() {
+            refresh = refresh.style(button_style(tokens, ButtonKind::Primary));
+        }
+        let mut dashboard = column![row![
+            column![
+                text("项目")
+                    .size(20)
+                    .font(ui_font(font::Weight::Semibold))
+                    .color(colors.text),
+                text(format!(
+                    "{} 个项目 · 任务、状态和用量总览",
+                    self.project_dashboard.len()
+                ))
+                .size(11)
+                .color(colors.muted),
+            ]
+            .spacing(3)
+            .width(Length::Fill),
+            refresh,
+        ]
+        .align_y(Alignment::Center)]
+        .spacing(12)
+        .width(Length::Fill);
+        if let Some(error) = &self.project_dashboard_error {
+            dashboard = dashboard.push(text(error.clone()).size(11).color(colors.danger));
+        }
+        if self.project_dashboard.is_empty() {
+            dashboard = dashboard.push(
+                EmptyState::new("暂无项目")
+                    .message("创建项目后，这里会汇总任务状态与用量。")
+                    .icon(Icon::Folder)
+                    .action(
+                        button(text("新建项目").size(12))
+                            .on_press(Message::CreateProject)
+                            .style(button_style(tokens, ButtonKind::Primary)),
+                    )
+                    .view(tokens),
+            );
+        } else {
+            for project in &self.project_dashboard {
+                let activity = project
+                    .recent_activity_at
+                    .map(format_civil_date)
+                    .unwrap_or_else(|| "暂无活跃".to_owned());
+                let cost = project
+                    .known_cost_usd
+                    .map(|value| format!("${value:.2}"))
+                    .unwrap_or_else(|| "暂无成本".to_owned());
+                let coverage = if project.usage_record_count == 0 {
+                    "无用量记录".to_owned()
+                } else if project.cost_record_count == 0 {
+                    format!("{} 条用量", project.usage_record_count)
+                } else {
+                    format!(
+                        "{}/{} 条成本",
+                        project.cost_record_count, project.usage_record_count
+                    )
+                };
+                let status = &project.status_counts;
+                let path = project
+                    .workspace_path
+                    .clone()
+                    .unwrap_or_else(|| "分类项目".to_owned());
+                let project_id = ProjectId::new(project.project_id.clone())
+                    .expect("dashboard project ids come from Product Core");
+                let card = column![
+                    row![
+                        column![
+                            text(project.name.clone())
+                                .size(14)
+                                .font(ui_font(font::Weight::Semibold))
+                                .color(colors.text),
+                            text(path).size(10).color(colors.muted),
+                        ]
+                        .spacing(2)
+                        .width(Length::Fill),
+                        text(format!("最近活跃 {activity}"))
+                            .size(10)
+                            .color(colors.muted),
+                    ]
+                    .align_y(Alignment::Center),
+                    row![
+                        dashboard_metric("进行中", project.active_count, colors),
+                        dashboard_metric("阻塞", project.blocked_count, colors),
+                        dashboard_metric("完成", status.done, colors),
+                        dashboard_metric("会话", project.session_count, colors),
+                        dashboard_metric("任务", project.task_count, colors),
+                    ]
+                    .spacing(16),
+                    row![
+                        text(format!(
+                            "{} tokens",
+                            format_token_count(project.total_tokens)
+                        ))
+                        .size(10)
+                        .color(colors.muted),
+                        text(cost).size(10).color(colors.muted),
+                        text(coverage).size(10).color(colors.muted),
+                        text(format!(
+                            "草稿 {} · 等待 {} · 运行 {} · 阻塞 {} · 完成 {} · 取消 {}",
+                            status.draft,
+                            status.waiting,
+                            status.running,
+                            status.blocked,
+                            status.done,
+                            status.cancelled
+                        ))
+                        .size(10)
+                        .color(colors.faint),
+                    ]
+                    .spacing(12),
+                ]
+                .spacing(8)
+                .width(Length::Fill);
+                dashboard = dashboard.push(
+                    button(Card::new(card).view(tokens))
+                        .width(Length::Fill)
+                        .on_press(Message::SelectProject(project_id))
+                        .style(button_style(tokens, ButtonKind::Ghost)),
+                );
+            }
+        }
+        container(scrollable(dashboard).direction(vertical_scrollbar()))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding::from([20, 24]))
+            .style(canvas_style(tokens))
+            .into()
+    }
+
     fn inbox_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
         let colors = tokens.colors;
         let task_list = self.task_list_content(
@@ -21032,11 +31484,12 @@ impl PreviewProgram {
         let search = Input::new("搜索任务", self.task_search.clone())
             .on_input(Message::TaskSearchChanged)
             .view(tokens);
+        let session_hits = session_search_hit_ids(&self.application, &self.task_search);
         let filtered_tasks = ordered_task_tree_indices(&self.tasks)
             .into_iter()
             .filter_map(|(index, depth)| {
                 let task = &self.tasks[index];
-                task_matches_search(task, &self.task_search).then_some((task, depth))
+                task_matches_search(task, &self.task_search, &session_hits).then_some((task, depth))
             })
             .collect::<Vec<_>>();
         let mut items = column![].spacing(6).width(Length::Fill);
@@ -21846,13 +32299,19 @@ impl PreviewProgram {
 
         let mut open_workspace =
             button(text("文件管理器").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+        let mut open_editor =
+            button(text("VS Code").size(10)).style(button_style(tokens, ButtonKind::Ghost));
         let mut open_terminal =
             button(text("外部终端").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+        let mut new_terminal =
+            button(text("工作区终端").size(10)).style(button_style(tokens, ButtonKind::Primary));
         if project.workspace_path.is_some() {
             open_workspace = open_workspace.on_press(Message::OpenProjectWorkspace);
+            open_editor = open_editor.on_press(Message::OpenProjectCodeEditor);
             open_terminal = open_terminal.on_press(Message::OpenProjectTerminal);
+            new_terminal = new_terminal.on_press(Message::OpenNativeProjectTerminal);
         }
-        let host_actions = row![open_workspace, open_terminal]
+        let host_actions = row![open_workspace, open_editor, open_terminal, new_terminal]
             .spacing(5)
             .align_y(Alignment::Center);
 
@@ -21886,6 +32345,107 @@ impl PreviewProgram {
                 .title("Agent 服务")
                 .view(tokens)
         };
+
+        let project_terminals = self
+            .terminal_snapshots
+            .values()
+            .filter(|snapshot| {
+                matches!(
+                    &snapshot.scope,
+                    DesktopTerminalScope::Project(project_id) if project_id == &project.id
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut terminal_sessions = column![].spacing(5).width(Length::Fill);
+        if project_terminals.is_empty() {
+            terminal_sessions =
+                terminal_sessions.push(text("尚未创建工作区终端").size(10).color(colors.muted));
+        } else {
+            for snapshot in project_terminals {
+                let status = if snapshot.process.is_running() {
+                    "运行中"
+                } else {
+                    "已结束"
+                };
+                terminal_sessions = terminal_sessions.push(
+                    ListItem::new(
+                        row![
+                            column![
+                                text(snapshot.command_label.clone())
+                                    .size(10)
+                                    .color(colors.text),
+                                text(format!(
+                                    "{} · {}×{}",
+                                    status, snapshot.columns, snapshot.rows
+                                ))
+                                .size(9)
+                                .color(colors.muted),
+                            ]
+                            .spacing(2)
+                            .width(Length::Fill),
+                            text("打开").size(9).color(colors.accent),
+                        ]
+                        .align_y(Alignment::Center),
+                    )
+                    .auto_height()
+                    .on_select(Message::Terminal(TerminalViewMessage::Reveal(
+                        snapshot.id.clone(),
+                    )))
+                    .view(tokens),
+                );
+            }
+        }
+        let terminal_sessions = Card::new(terminal_sessions).title("终端会话").view(tokens);
+
+        let mut task_content = column![].spacing(5).width(Length::Fill);
+        match &self.coding_project_tasks {
+            Some(catalog) if catalog.tasks.is_empty() => {
+                task_content =
+                    task_content.push(text("项目中尚未配置任务").size(10).color(colors.muted));
+            }
+            Some(catalog) => {
+                for task in &catalog.tasks {
+                    let action = if let Some(session_id) = &task.running_session_id {
+                        Message::Terminal(TerminalViewMessage::Reveal(session_id.clone()))
+                    } else {
+                        Message::RunProjectTask(task.id.clone())
+                    };
+                    let action_label = if task.running_session_id.is_some() {
+                        "打开"
+                    } else {
+                        "运行"
+                    };
+                    task_content = task_content.push(
+                        ListItem::new(
+                            row![
+                                column![
+                                    text(task.label.clone()).size(10).color(colors.text),
+                                    text(if task.allow_concurrent_runs {
+                                        "允许并行运行"
+                                    } else {
+                                        "单实例"
+                                    })
+                                    .size(9)
+                                    .color(colors.muted),
+                                ]
+                                .spacing(2)
+                                .width(Length::Fill),
+                                text(action_label).size(9).color(colors.accent),
+                            ]
+                            .align_y(Alignment::Center),
+                        )
+                        .auto_height()
+                        .on_select(action)
+                        .view(tokens),
+                    );
+                }
+            }
+            None => {
+                task_content =
+                    task_content.push(text("正在读取项目任务").size(10).color(colors.muted));
+            }
+        }
+        let project_tasks = Card::new(task_content).title("项目任务").view(tokens);
 
         let mut git_content = column![].spacing(4).width(Length::Fill);
         if let Some(status) = &self.coding_git {
@@ -21947,6 +32507,54 @@ impl PreviewProgram {
         }
         let git = Card::new(git_content).title("Git").view(tokens);
 
+        let mut diff_content = column![].spacing(4).width(Length::Fill);
+        if let Some(diff) = &self.coding_git_diff {
+            let additions = diff.files.iter().map(|file| file.additions).sum::<u64>();
+            let deletions = diff.files.iter().map(|file| file.deletions).sum::<u64>();
+            diff_content = diff_content.push(
+                row![
+                    text(format!(
+                        "{} 个文件  +{} -{}",
+                        diff.files.len(),
+                        additions,
+                        deletions
+                    ))
+                    .size(10)
+                    .width(Length::Fill)
+                    .color(colors.text),
+                    button(
+                        text(match diff.scope {
+                            DesktopGitDiffScope::WorkingTree => "工作区",
+                            DesktopGitDiffScope::Staged => "已暂存",
+                        })
+                        .size(9)
+                    )
+                    .on_press_maybe((!self.coding_busy).then_some(Message::CycleCodingGitDiffScope))
+                    .style(button_style(tokens, ButtonKind::Subtle)),
+                ]
+                .spacing(6),
+            );
+            if let Some(patch) = &diff.patch {
+                let mut lines = patch.lines();
+                let preview = lines.by_ref().take(24).collect::<Vec<_>>().join("\n");
+                if !preview.is_empty() {
+                    diff_content = diff_content.push(
+                        container(text(preview).size(9).color(colors.muted))
+                            .width(Length::Fill)
+                            .padding(8)
+                            .style(canvas_style(tokens)),
+                    );
+                }
+                if lines.next().is_some() {
+                    diff_content =
+                        diff_content.push(text("仅显示前 24 行").size(9).color(colors.faint));
+                }
+            }
+        } else {
+            diff_content = diff_content.push(text("暂无工作区 Diff").size(10).color(colors.muted));
+        }
+        let git_diff = Card::new(diff_content).title("Diff").view(tokens);
+
         let mut workspace_content = column![].spacing(3).width(Length::Fill);
         if let Some(listing) = &self.coding_workspace {
             if listing.entries.is_empty() {
@@ -21989,60 +32597,115 @@ impl PreviewProgram {
                 workspace_content.push(text("暂无目录数据").size(10).color(colors.muted));
         }
         let workspace = Card::new(workspace_content).title("工作区").view(tokens);
-        let query = Input::new("搜索工作区文本", self.coding_query.clone())
+        let search_placeholder = match self.coding_search_mode {
+            DesktopCodeSearchMode::Symbol => "搜索工作区符号",
+            _ => "搜索工作区文本",
+        };
+        let query = Input::new(search_placeholder, self.coding_query.clone())
             .on_input(Message::CodingQueryChanged)
             .view(tokens);
+        let mode_label = match self.coding_search_mode {
+            DesktopCodeSearchMode::Symbol => "符号",
+            _ => "文本",
+        };
+        let mut search_mode =
+            button(text(mode_label).size(10)).style(button_style(tokens, ButtonKind::Subtle));
+        let scope_label = if self.coding_search_all_projects {
+            "全部项目"
+        } else {
+            "当前项目"
+        };
+        let mut search_scope =
+            button(text(scope_label).size(10)).style(button_style(tokens, ButtonKind::Subtle));
+        if !self.coding_busy {
+            search_mode = search_mode.on_press(Message::CycleCodingSearchMode);
+            search_scope = search_scope.on_press(Message::ToggleCodingSearchScope);
+        }
+        let has_searchable_workspace = if self.coding_search_all_projects {
+            self.projects.iter().any(|project| {
+                project
+                    .workspace_path
+                    .as_deref()
+                    .is_some_and(|root| !root.trim().is_empty())
+            })
+        } else {
+            project
+                .workspace_path
+                .as_deref()
+                .is_some_and(|root| !root.trim().is_empty())
+        };
         let mut search =
             button(text("搜索").size(11)).style(button_style(tokens, ButtonKind::Primary));
-        if !self.coding_busy
-            && !self.coding_query.trim().is_empty()
-            && project.workspace_path.is_some()
-        {
+        if !self.coding_busy && !self.coding_query.trim().is_empty() && has_searchable_workspace {
             search = search.on_press(Message::SearchCodingTools);
         }
-        let mut search_content = column![row![query, search].spacing(7).align_y(Alignment::Center)]
-            .spacing(5)
-            .width(Length::Fill);
+        let mut search_content = column![row![query, search_scope, search_mode, search]
+            .spacing(7)
+            .align_y(Alignment::Center)]
+        .spacing(5)
+        .width(Length::Fill);
         if let Some(result) = &self.coding_search {
             if result.hits.is_empty() {
                 search_content =
                     search_content.push(text("没有匹配结果").size(10).color(colors.muted));
             } else {
                 for hit in &result.hits {
-                    let location = hit.start_line.map_or_else(
-                        || hit.path.clone(),
-                        |line| format!("{}:{}", hit.path, line.saturating_add(1)),
+                    let location = hit.hit.start_line.map_or_else(
+                        || format!("{} · {}", hit.project_name, hit.hit.path),
+                        |line| {
+                            format!(
+                                "{} · {}:{}",
+                                hit.project_name,
+                                hit.hit.path,
+                                line.saturating_add(1)
+                            )
+                        },
                     );
                     search_content = search_content.push(
                         ListItem::new(
                             column![
                                 text(location).size(10).color(colors.text),
-                                text(hit.summary.clone()).size(9).color(colors.muted),
+                                text(hit.hit.summary.clone()).size(9).color(colors.muted),
                             ]
                             .spacing(2),
                         )
                         .auto_height()
+                        .on_select(Message::OpenCodingSearchHit(hit.clone()))
                         .view(tokens),
                     );
                 }
                 let mut save_memory = button(text("写入项目 Memory").size(10))
                     .style(button_style(tokens, ButtonKind::Subtle));
-                if !self.coding_busy {
+                if !self.coding_busy && !self.coding_search_all_projects {
                     save_memory = save_memory.on_press(Message::SaveCodingSearchToMemory);
                 }
                 search_content = search_content.push(save_memory);
             }
         } else {
             search_content = search_content.push(
-                text("输入关键词后搜索当前工作区。")
-                    .size(10)
-                    .color(colors.muted),
+                text(if self.coding_search_all_projects {
+                    "输入关键词后搜索全部活动项目工作区。"
+                } else {
+                    "输入关键词后搜索当前工作区。"
+                })
+                .size(10)
+                .color(colors.muted),
             );
         }
         let code_search = Card::new(search_content).title("代码搜索").view(tokens);
-        let mut content = column![heading, host_actions, services, git, workspace, code_search]
-            .spacing(10)
-            .width(Length::Fill);
+        let mut content = column![
+            heading,
+            host_actions,
+            services,
+            project_tasks,
+            terminal_sessions,
+            git,
+            git_diff,
+            workspace,
+            code_search
+        ]
+        .spacing(10)
+        .width(Length::Fill);
         if let Some(error) = &self.coding_error {
             content = content.push(text(error.clone()).size(11).color(colors.danger));
         }
@@ -22428,32 +33091,51 @@ impl PreviewProgram {
                         }
                         source_content = source_content.push(create);
                     } else {
-                        if let Some(document) = self.hook_documents.get(&source.id) {
-                            for handler in &document.handlers {
-                                source_content = source_content.push(
-                                    row![
-                                        text(handler.event.clone())
-                                            .size(10)
-                                            .color(colors.text)
-                                            .width(Length::Fill),
-                                        text(handler.id.clone()).size(9).color(colors.faint),
-                                    ]
-                                    .spacing(6),
-                                );
-                            }
-                        }
                         let source_id = source.id.clone();
                         let draft = self
                             .hook_drafts
                             .get(&source.id)
                             .cloned()
-                            .unwrap_or_else(|| "[]".to_owned());
+                            .unwrap_or_else(|| hook_handlers_draft(&[]));
+                        let mut handlers = column![row![
+                            text("Handlers")
+                                .size(10)
+                                .width(Length::Fill)
+                                .color(colors.muted),
+                            button(text("新增 Handler").size(10))
+                                .on_press_maybe(
+                                    (!self.extensions_busy)
+                                        .then(|| { Message::AddHookHandler(source.id.clone()) })
+                                )
+                                .style(button_style(tokens, ButtonKind::Ghost)),
+                        ]
+                        .spacing(6)
+                        .align_y(Alignment::Center),]
+                        .spacing(6);
+                        match parse_hook_handlers_draft(&draft) {
+                            Ok(draft_handlers) => {
+                                for (index, handler) in draft_handlers.iter().enumerate() {
+                                    handlers = handlers.push(hook_handler_editor(
+                                        source.id.clone(),
+                                        index,
+                                        handler,
+                                        self.extensions_busy,
+                                        tokens,
+                                    ));
+                                }
+                            }
+                            Err(error) => {
+                                handlers = handlers.push(text(error).size(10).color(colors.danger));
+                            }
+                        }
+                        let raw_source_id = source_id.clone();
                         source_content = source_content
-                            .push(text("Handlers").size(10).color(colors.muted))
+                            .push(handlers)
+                            .push(text("高级 JSON").size(10).color(colors.muted))
                             .push(
                                 Input::new("Handler 数组", draft)
                                     .on_input(move |value| Message::HookDraftChanged {
-                                        source_id: source_id.clone(),
+                                        source_id: raw_source_id.clone(),
                                         value,
                                     })
                                     .disabled(self.extensions_busy)
@@ -23278,6 +33960,110 @@ impl PreviewProgram {
             .into()
     }
 
+    fn composer_model_controls(
+        &self,
+        window_id: HostedWindowId,
+        composer: &DesktopComposerState,
+        disabled: bool,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let automatic = self.composer_automatic_selection(window_id);
+        let manual = composer.model.is_some() || composer.reasoning_effort.is_some();
+        let selected_model = composer.model.clone().unwrap_or_default();
+        let effective_model = composer.model.clone().or_else(|| {
+            automatic
+                .as_ref()
+                .and_then(|selection| selection.model.clone())
+        });
+        let effective_effort = composer.reasoning_effort.clone().or_else(|| {
+            automatic
+                .as_ref()
+                .and_then(|selection| selection.reasoning_effort.clone())
+        });
+        let model_label = match effective_model.as_deref() {
+            Some(model) if manual => format!("手动 · {model}"),
+            Some(model) => format!("自动 · {model}"),
+            None => "自动选择".to_owned(),
+        };
+        let model = Dropdown::single(
+            Some(selected_model),
+            self.composer_model_options(composer.model.as_deref()),
+            move |event| Message::ComposerModelSelection { window_id, event },
+        )
+        .display_label(model_label)
+        .size(ControlSize::Small)
+        .disabled(disabled)
+        .view(tokens);
+        let effort_options = ["low", "medium", "high", "xhigh", "max"]
+            .into_iter()
+            .map(|effort| DropdownOption::new(effort.to_owned(), effort))
+            .collect::<Vec<_>>();
+        let effort_label = effective_effort.as_deref().map_or_else(
+            || "thinking auto".to_owned(),
+            |effort| format!("thinking {effort}"),
+        );
+        let effort = Dropdown::single(effective_effort, effort_options, move |event| {
+            Message::ComposerReasoningSelection { window_id, event }
+        })
+        .display_label(effort_label)
+        .size(ControlSize::Small)
+        .disabled(disabled)
+        .view(tokens);
+        row![model, effort]
+            .spacing(4)
+            .align_y(Alignment::Center)
+            .into()
+    }
+
+    fn task_session_with_debug_overlay(&self, session: &TaskSessionView) -> TaskSessionView {
+        let Some(task_id) = self.selected_task.as_ref() else {
+            return session.clone();
+        };
+        let (events, pending) = self.debug_timeline.overlay(task_id);
+        session.with_ephemeral_debug_overlay(events, pending)
+    }
+
+    fn debug_timeline_panel(
+        &self,
+        window_id: HostedWindowId,
+        has_task: bool,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        if !self.agent_interaction_settings.debug || !has_task {
+            return space().height(0).into();
+        }
+        let action = |action: DebugTimelineAction| {
+            button(text(action.label()).size(10))
+                .padding([6.0, 9.0])
+                .on_press(Message::InjectDebugTimeline { window_id, action })
+                .style(button_style(tokens, ButtonKind::Ghost))
+        };
+        Card::new(
+            column![
+                row![
+                    action(DebugTimelineAction::Plan),
+                    action(DebugTimelineAction::AskUser),
+                    action(DebugTimelineAction::AskUserMulti),
+                    action(DebugTimelineAction::AskUserPreview),
+                    action(DebugTimelineAction::AskUserFlow),
+                    action(DebugTimelineAction::Permission),
+                ]
+                .spacing(5),
+                row![
+                    action(DebugTimelineAction::TodoTool),
+                    action(DebugTimelineAction::Todo),
+                    action(DebugTimelineAction::Command),
+                    action(DebugTimelineAction::FileRead),
+                    action(DebugTimelineAction::FileChange),
+                ]
+                .spacing(5),
+            ]
+            .spacing(7),
+        )
+        .title("Debug")
+        .view(tokens)
+    }
+
     fn task_session_content(
         &self,
         location_name: String,
@@ -23338,6 +34124,9 @@ impl PreviewProgram {
         )
         .title("会话状态")
         .view(tokens);
+        let can_apply_timeline_suggestion =
+            !self.composer_is_locked() && session.run_block.is_none();
+        let can_retry_timeline = session.run_block.is_none();
 
         let mut timeline = column![].spacing(6).width(Length::Fill);
         if session.timeline_has_more_before {
@@ -23385,11 +34174,63 @@ impl PreviewProgram {
                             .style(button_style(tokens, ButtonKind::Text)),
                     );
                 }
+                if can_retry_timeline && event.can_retry {
+                    event_header = event_header.push(
+                        button(text("重试").size(11))
+                            .on_press(Message::RetryTimelineEvent {
+                                window_id: HostedWindowId::PRIMARY,
+                                event_id: event.id.clone(),
+                            })
+                            .style(button_style(tokens, ButtonKind::Text)),
+                    );
+                }
+                if can_apply_timeline_suggestion && event.session_branch_turn_id.is_some() {
+                    event_header = event_header
+                        .push(
+                            button(text("从这里继续").size(11))
+                                .on_press(Message::SetTimelineSessionBranch {
+                                    window_id: HostedWindowId::PRIMARY,
+                                    event_id: event.id.clone(),
+                                    mode: DesktopSessionBranchMode::Continue,
+                                })
+                                .style(button_style(tokens, ButtonKind::Text)),
+                        )
+                        .push(
+                            button(text("从这里分叉").size(11))
+                                .on_press(Message::SetTimelineSessionBranch {
+                                    window_id: HostedWindowId::PRIMARY,
+                                    event_id: event.id.clone(),
+                                    mode: DesktopSessionBranchMode::Fork,
+                                })
+                                .style(button_style(tokens, ButtonKind::Text)),
+                        );
+                }
+                if can_apply_timeline_suggestion && event.batch_apply.is_some() {
+                    event_header = event_header.push(
+                        button(text("应用建议").size(11))
+                            .on_press(Message::ApplyTimelineSuggestion {
+                                window_id: HostedWindowId::PRIMARY,
+                                event_id: event.id.clone(),
+                            })
+                            .style(button_style(tokens, ButtonKind::Primary)),
+                    );
+                }
                 let mut content = column![event_header].spacing(3);
                 if let Some(document) = &event.markdown_document {
-                    content = content.push(document.view(tokens, Message::OpenMarkdownLink));
+                    content = content.push(self.markdown_document_view(
+                        document,
+                        HostedWindowId::PRIMARY,
+                        &event.id,
+                        event.selectable_reply,
+                        tokens,
+                    ));
                 } else if let Some(summary) = &event.summary {
                     content = content.push(text(summary.clone()).size(12).color(colors.muted));
+                }
+                if let Some(actions) =
+                    self.timeline_selection_actions(HostedWindowId::PRIMARY, &event.id, tokens)
+                {
+                    content = content.push(actions);
                 }
                 if !event.attachments.is_empty() {
                     let mut attachments = column![].spacing(3).width(Length::Fill);
@@ -23440,6 +34281,31 @@ impl PreviewProgram {
                     ]
                     .spacing(8),
                 );
+            } else if pending.kind == TITLE_UPDATE_ACTION_KIND {
+                action = action.push(
+                    row![
+                        button(text("采用标题").size(12))
+                            .on_press(Message::RespondTitleUpdate {
+                                request_id: pending.request_id.clone(),
+                                accepted: true,
+                            })
+                            .style(button_style(tokens, ButtonKind::Primary)),
+                        button(text("保留当前").size(12))
+                            .on_press(Message::RespondTitleUpdate {
+                                request_id: pending.request_id.clone(),
+                                accepted: false,
+                            })
+                            .style(button_style(tokens, ButtonKind::Ghost)),
+                    ]
+                    .spacing(8),
+                );
+            } else if pending.kind == "tool_consent" {
+                action = action.push(tool_consent_action_view(
+                    pending,
+                    self.tool_consent_drafts.get(&pending.request_id),
+                    HostedWindowId::PRIMARY,
+                    tokens,
+                ));
             } else if pending.kind == "mcp_elicitation" {
                 action = action.push(mcp_elicitation_action_view(
                     pending,
@@ -23454,59 +34320,12 @@ impl PreviewProgram {
                     tokens,
                 ));
             } else if pending.kind == "ask_user" {
-                let request_id = pending.request_id.clone();
-                let draft = self
-                    .interaction_drafts
-                    .get(&request_id)
-                    .cloned()
-                    .unwrap_or_default();
-                let input_request_id = request_id.clone();
-                action = action.push(
-                    Input::new("输入回答", draft.clone())
-                        .on_input(move |value| Message::InteractionDraftChanged {
-                            request_id: input_request_id.clone(),
-                            value,
-                        })
-                        .view(tokens),
-                );
-                let choices = interaction_choices(pending);
-                if !choices.is_empty() {
-                    let mut choice_buttons = row![].spacing(6).align_y(Alignment::Center);
-                    for choice in choices {
-                        choice_buttons = choice_buttons.push(
-                            button(text(choice.label).size(12))
-                                .on_press(Message::RespondInteraction {
-                                    request_id: request_id.clone(),
-                                    accepted: true,
-                                    response: json!({ "answer": choice.value }),
-                                })
-                                .style(button_style(tokens, ButtonKind::Ghost)),
-                        );
-                    }
-                    action = action.push(choice_buttons);
-                }
-                let mut reply =
-                    button(text("回复").size(12)).style(button_style(tokens, ButtonKind::Primary));
-                if !draft.trim().is_empty() {
-                    reply = reply.on_press(Message::RespondInteraction {
-                        request_id: request_id.clone(),
-                        accepted: true,
-                        response: json!({ "answer": draft }),
-                    });
-                }
-                action = action.push(
-                    row![
-                        reply,
-                        button(text("取消").size(12))
-                            .on_press(Message::RespondInteraction {
-                                request_id,
-                                accepted: false,
-                                response: json!({ "cancelled": true }),
-                            })
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(8),
-                );
+                action = action.push(ask_user_action_view(
+                    pending,
+                    self.ask_user_drafts.get(&pending.request_id),
+                    HostedWindowId::PRIMARY,
+                    tokens,
+                ));
             } else if pending.kind == "plan_approval" {
                 let request_id = pending.request_id.clone();
                 let draft = self
@@ -23564,14 +34383,19 @@ impl PreviewProgram {
             .turn_state
             .as_ref()
             .is_some_and(|(_, state)| turn_state_is_active(state));
-        let pending_blocks_send = session.open_pending_count > 0;
+        let pending_blocks_send = session.blocking_pending_count > 0;
+        let task_run_block = session.run_block.as_ref().map(ToString::to_string);
+        let review_target_pending = self.pending_review_slash_workflow.is_some();
         let input = Input::new("输入消息", composer_content.clone())
             .on_input(Message::ComposerChanged)
             .view(tokens);
-        let has_payload = !composer_content.trim().is_empty()
-            || !composer_attachments.is_empty()
-            || !composer_conversation_references.is_empty();
-        let action_button = if turn_active && !has_payload {
+        let has_payload = self
+            .composer
+            .as_ref()
+            .is_some_and(composer_has_turn_payload);
+        let action_button = if review_target_pending {
+            button(text("请选择范围").size(12)).style(button_style(tokens, ButtonKind::Ghost))
+        } else if turn_active && !has_payload {
             button(text("停止").size(12))
                 .on_press(Message::InterruptTurn)
                 .style(button_style(tokens, ButtonKind::Danger))
@@ -23585,7 +34409,7 @@ impl PreviewProgram {
                 .size(12),
             )
             .style(button_style(tokens, ButtonKind::Primary));
-            if !has_payload || (pending_blocks_send && !turn_active) {
+            if !has_payload || (pending_blocks_send && !turn_active) || task_run_block.is_some() {
                 send
             } else {
                 send.on_press(Message::SubmitTurn)
@@ -23595,6 +34419,79 @@ impl PreviewProgram {
             .spacing(8)
             .align_y(Alignment::Center);
         let mut composer_surface = column![].spacing(6).width(Length::Fill);
+        if let Some(pending) = self
+            .pending_session_branch
+            .as_ref()
+            .filter(|pending| self.selected_task.as_ref() == Some(&pending.task_id))
+        {
+            composer_surface = composer_surface.push(
+                Card::new(
+                    row![
+                        text(format!(
+                            "{} · {}",
+                            session_branch_mode_label(pending.anchor.mode),
+                            pending.anchor.source_turn_id
+                        ))
+                        .size(11)
+                        .width(Length::Fill)
+                        .color(colors.muted),
+                        button(text("清除").size(11))
+                            .on_press(Message::ClearSessionBranch(HostedWindowId::PRIMARY))
+                            .style(button_style(tokens, ButtonKind::Text)),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .title("会话分支")
+                .view(tokens),
+            );
+        }
+        if !turn_active && !has_payload && !pending_blocks_send {
+            if let Some(suggestions) =
+                conversation_suggestions_view(&self.conversation_suggestions, tokens)
+            {
+                composer_surface =
+                    composer_surface.push(suggestions.map(|message| match message {
+                        ConversationSuggestionViewMessage::Refresh => {
+                            Message::RefreshConversationSuggestions {
+                                window_id: HostedWindowId::PRIMARY,
+                                force: true,
+                            }
+                        }
+                        ConversationSuggestionViewMessage::Apply(prompt) => {
+                            Message::ApplyConversationSuggestion {
+                                window_id: HostedWindowId::PRIMARY,
+                                prompt,
+                            }
+                        }
+                    }));
+            }
+        }
+        if let Some(route) =
+            self.prompt_route_suggestion(HostedWindowId::PRIMARY, self.selected_task.as_ref())
+        {
+            let applied = self
+                .composer
+                .as_ref()
+                .and_then(|composer| composer.workflow.as_ref())
+                == route.workflow.as_ref();
+            composer_surface = composer_surface.push(prompt_route_suggestion_view(
+                route,
+                applied,
+                HostedWindowId::PRIMARY,
+                tokens,
+            ));
+        } else if let Some(workflow) = self
+            .composer
+            .as_ref()
+            .and_then(|composer| composer.workflow.as_ref())
+        {
+            composer_surface = composer_surface.push(applied_prompt_workflow_view(
+                workflow,
+                HostedWindowId::PRIMARY,
+                tokens,
+            ));
+        }
         if let Some((_, state)) = &self.turn_state {
             composer_surface = composer_surface.push(
                 text(turn_state_label(state))
@@ -23602,9 +34499,23 @@ impl PreviewProgram {
                     .color(turn_state_color(state, colors)),
             );
         }
+        if let Some(reason) = task_run_block {
+            composer_surface = composer_surface.push(text(reason).size(11).color(colors.warning));
+        }
         if let Some(error) = &self.task_action_error {
             composer_surface =
                 composer_surface.push(text(error.clone()).size(11).color(colors.danger));
+            if self
+                .selected_task
+                .as_ref()
+                .is_some_and(|task_id| self.pending_initial_worktrees.contains_key(task_id))
+            {
+                composer_surface = composer_surface.push(
+                    button(text("重试准备工作树并发送").size(11))
+                        .on_press(Message::RetryInitialWorktree(HostedWindowId::PRIMARY))
+                        .style(button_style(tokens, ButtonKind::Primary)),
+                );
+            }
         }
         if let Some(attachment) = self.attachment_previews.get(&HostedWindowId::PRIMARY) {
             composer_surface = composer_surface.push(attachment_preview_card(
@@ -23695,12 +34606,23 @@ impl PreviewProgram {
                         .align_y(Alignment::Center),
                     )
                     .width(Length::Fill)
-                    .on_press(Message::SelectSlashCommand(command.name.clone()))
+                    .on_press(Message::SelectSlashCommand(command.clone()))
                     .style(button_style(tokens, ButtonKind::Ghost)),
                 );
             }
             composer_surface =
                 composer_surface.push(Card::new(commands).title("斜杠命令").view(tokens));
+        }
+        if let Some(pending) = self
+            .pending_review_slash_workflow
+            .as_ref()
+            .filter(|pending| self.selected_task.as_ref() == Some(&pending.task_id))
+        {
+            composer_surface = composer_surface.push(review_slash_workflow_view(
+                pending,
+                HostedWindowId::PRIMARY,
+                tokens,
+            ));
         }
         if !composer_attachments.is_empty() {
             let mut attachments = column![].spacing(4).width(Length::Fill);
@@ -23804,11 +34726,26 @@ impl PreviewProgram {
         .style(button_style(tokens, ButtonKind::Ghost));
         let mut paste_image =
             button(text("图片").size(11)).style(button_style(tokens, ButtonKind::Ghost));
+        let optimizing_prompt =
+            self.prompt_optimization_is_busy(HostedWindowId::PRIMARY, self.selected_task.as_ref());
+        let mut optimize_prompt = button(
+            text(if optimizing_prompt {
+                "优化中"
+            } else {
+                "优化提示"
+            })
+            .size(11),
+        )
+        .style(button_style(tokens, ButtonKind::Ghost));
         if !self.composer_input_is_locked() {
             attach_file = attach_file.on_press(Message::PickAttachmentFiles);
             attach_directory = attach_directory.on_press(Message::PickAttachmentDirectories);
             paste_text = paste_text.on_press(Message::PasteClipboardText);
             paste_image = paste_image.on_press(Message::PasteClipboardImage);
+        }
+        if !optimizing_prompt && !self.composer_is_locked() && !composer_content.trim().is_empty() {
+            optimize_prompt =
+                optimize_prompt.on_press(Message::OptimizePrompt(HostedWindowId::PRIMARY));
         }
         let composer_locked = self.composer_input_is_locked();
         let mut plan_mode = button(
@@ -23850,12 +34787,21 @@ impl PreviewProgram {
             goal_mode = goal_mode.on_press(Message::ToggleGoalMode);
             permission = permission.on_press(Message::CyclePermission);
         }
+        if let Some(composer) = self.composer.as_ref() {
+            composer_surface = composer_surface.push(self.composer_model_controls(
+                HostedWindowId::PRIMARY,
+                composer,
+                composer_locked,
+                tokens,
+            ));
+        }
         composer_surface = composer_surface.push(
             row![
                 attach_file,
                 attach_directory,
                 paste_text,
                 paste_image,
+                optimize_prompt,
                 plan_mode,
                 goal_mode,
                 permission
@@ -23864,10 +34810,21 @@ impl PreviewProgram {
             .align_y(Alignment::Center),
         );
         if let Some(usage) = session.context_usage.as_ref() {
+            let mut compact =
+                button(text("压缩上下文").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+            if !turn_active && !pending_blocks_send {
+                compact = compact.on_press(Message::CompactContext);
+            }
             composer_surface = composer_surface.push(
-                text(context_usage_label(usage))
-                    .size(10)
-                    .color(context_usage_color(usage, colors)),
+                row![
+                    text(context_usage_label(usage))
+                        .size(10)
+                        .width(Length::Fill)
+                        .color(context_usage_color(usage, colors)),
+                    compact,
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
             );
         }
         composer_surface = composer_surface.push(composer);
@@ -23882,6 +34839,11 @@ impl PreviewProgram {
         )
         .on_press(Message::BackToTaskList)
         .style(button_style(tokens, ButtonKind::Ghost));
+        let debug_panel = self.debug_timeline_panel(
+            HostedWindowId::PRIMARY,
+            self.selected_task.is_some(),
+            tokens,
+        );
         let page = column![
             back,
             column![
@@ -23893,6 +34855,7 @@ impl PreviewProgram {
             ]
             .spacing(3),
             status,
+            debug_panel,
             text("时间线")
                 .size(12)
                 .font(ui_font(font::Weight::Semibold))
@@ -23920,6 +34883,9 @@ impl PreviewProgram {
     }
 
     fn inspector_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        if self.inspector_surface == InspectorSurface::Iab {
+            return self.iab.view(tokens, true).map(Message::Iab);
+        }
         if self.inspector_surface == InspectorSurface::CodingTools {
             if let Some(project) = self
                 .projects
@@ -24000,6 +34966,30 @@ impl PreviewProgram {
                 button(text("调整层级").size(10)).style(button_style(tokens, ButtonKind::Primary));
             let mut clear_parent =
                 button(text("移至根级").size(10)).style(button_style(tokens, ButtonKind::Text));
+            let dependency_target = self.effective_task_dependency_target();
+            let dependency_target_label = dependency_target
+                .as_ref()
+                .map(|target| format!("依赖：{}", target.title))
+                .unwrap_or_else(|| "无可选依赖".to_owned());
+            let selected_dependencies = self
+                .application
+                .get_task(&task.id)
+                .map(|task| task.depends_on)
+                .unwrap_or_default();
+            let dependency_is_selected = dependency_target
+                .as_ref()
+                .is_some_and(|target| selected_dependencies.contains(&target.id));
+            let mut dependency_target_button = button(text(dependency_target_label).size(10))
+                .style(button_style(tokens, ButtonKind::Ghost));
+            let mut dependency_toggle = button(
+                text(if dependency_is_selected {
+                    "移除依赖"
+                } else {
+                    "添加依赖"
+                })
+                .size(10),
+            )
+            .style(button_style(tokens, ButtonKind::Primary));
             if !goal_locked {
                 if !self.task_title_edit.trim().is_empty() {
                     save = save.on_press(Message::SaveTask);
@@ -24027,6 +35017,11 @@ impl PreviewProgram {
                 if task.parent_id.is_some() {
                     clear_parent = clear_parent.on_press(Message::ClearTaskParent);
                 }
+                if dependency_target.is_some() {
+                    dependency_target_button =
+                        dependency_target_button.on_press(Message::CycleTaskDependency);
+                    dependency_toggle = dependency_toggle.on_press(Message::ToggleTaskDependency);
+                }
                 archive = archive.on_press(Message::ArchiveTask);
             }
             Card::new(
@@ -24039,6 +35034,9 @@ impl PreviewProgram {
                         .spacing(4)
                         .align_y(Alignment::Center),
                     row![parent_target, reparent, clear_parent]
+                        .spacing(4)
+                        .align_y(Alignment::Center),
+                    row![dependency_target_button, dependency_toggle]
                         .spacing(4)
                         .align_y(Alignment::Center),
                 ]
@@ -24452,69 +35450,56 @@ impl PreviewProgram {
         node: &PaneNode,
         tokens: ThemeTokens,
     ) -> Element<'static, Message> {
-        match node {
-            PaneNode::Leaf {
-                id,
-                items,
-                active_item,
-            } => self.workspace_pane_content(id, items, active_item.as_ref(), tokens),
-            PaneNode::Split {
-                axis,
-                ratio,
-                first,
-                second,
-            } => {
-                let key = WorkspaceSplitKey {
-                    first_pane_id: first_workspace_pane_id(first).clone(),
-                    second_pane_id: first_workspace_pane_id(second).clone(),
+        let root = nana_pane_tree_node(node);
+        let mut leaves = Vec::new();
+        root.visit_leaves(|pane_id| {
+            let items = self.panel_layout.pane_items(pane_id).unwrap_or_default();
+            let active_item = self.panel_layout.active_item(pane_id).ok().flatten();
+            leaves.push((
+                pane_id.clone(),
+                Some(self.workspace_pane_content(pane_id, items, active_item, tokens)),
+            ));
+        });
+        let leaves = Rc::new(RefCell::new(leaves));
+        let controllers = self
+            .workspace_splits
+            .iter()
+            .map(|(key, state)| (key.clone(), state.controller.clone()))
+            .collect::<Vec<_>>();
+        PaneTree::new(
+            root,
+            move |pane_id| {
+                leaves
+                    .borrow_mut()
+                    .iter_mut()
+                    .find(|(id, _)| id == pane_id)
+                    .and_then(|(_, element)| element.take())
+                    .expect("pane tree leaf is rendered once")
+            },
+            move |key, axis, ratio, first, second| {
+                let Some((_, controller)) =
+                    controllers.iter().find(|(candidate, _)| candidate == key)
+                else {
+                    return ratio_pane_split(axis, ratio, first, second, tokens);
                 };
-                let first = self.workspace_pane_tree(first, tokens);
-                let second = self.workspace_pane_tree(second, tokens);
-                if let Some(state) = self.workspace_splits.get(&key) {
-                    let resize_key = key.clone();
-                    split_pane(
-                        &state.controller,
-                        first.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
-                        second.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
-                        WorkspaceSplitMessage::Resize,
-                        tokens,
-                    )
-                    .map(move |message| match message {
-                        WorkspaceSplitMessage::Preview(message) => *message,
-                        WorkspaceSplitMessage::Resize(action) => Message::WorkspaceSplitAction {
-                            key: resize_key.clone(),
-                            action,
-                        },
-                    })
-                } else {
-                    let (first_portion, second_portion) = split_ratio_portions(*ratio);
-                    match axis {
-                        SplitAxis::Horizontal => row![
-                            container(first)
-                                .width(Length::FillPortion(first_portion))
-                                .height(Length::Fill),
-                            container(second)
-                                .width(Length::FillPortion(second_portion))
-                                .height(Length::Fill),
-                        ]
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .into(),
-                        SplitAxis::Vertical => column![
-                            container(first)
-                                .width(Length::Fill)
-                                .height(Length::FillPortion(first_portion)),
-                            container(second)
-                                .width(Length::Fill)
-                                .height(Length::FillPortion(second_portion)),
-                        ]
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .into(),
-                    }
-                }
-            }
-        }
+                let resize_key = key.clone();
+                split_pane(
+                    controller,
+                    first.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
+                    second.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
+                    WorkspaceSplitMessage::Resize,
+                    tokens,
+                )
+                .map(move |message| match message {
+                    WorkspaceSplitMessage::Preview(message) => *message,
+                    WorkspaceSplitMessage::Resize(action) => Message::WorkspaceSplitAction {
+                        key: resize_key.clone(),
+                        action,
+                    },
+                })
+            },
+        )
+        .view()
     }
 
     fn workspace_pane_content(
@@ -24583,61 +35568,64 @@ impl PreviewProgram {
         )
         .size(ControlSize::Small)
         .view(tokens);
-        let mut tab_bar = row![container(tabs).width(Length::Fill)]
-            .width(Length::Fill)
-            .align_y(Alignment::Center);
+        let mut pane_actions = Vec::new();
         if !pane_is_active {
-            tab_bar = tab_bar.push(
-                button(text("聚焦").size(10))
-                    .on_press(Message::FocusWorkspacePane(pane_id.clone()))
-                    .style(button_style(tokens, ButtonKind::Text)),
-            );
+            pane_actions.push(PaneChromeAction::new(
+                PaneChromeActionKind::Focus,
+                "聚焦",
+                Message::FocusWorkspacePane(pane_id.clone()),
+            ));
         }
-        tab_bar = tab_bar
-            .push(
-                button(text("左右分栏").size(10))
-                    .on_press(Message::SplitWorkspacePane {
-                        pane_id: pane_id.clone(),
-                        axis: SplitAxis::Horizontal,
-                    })
-                    .style(button_style(tokens, ButtonKind::Text)),
-            )
-            .push(
-                button(text("上下分栏").size(10))
-                    .on_press(Message::SplitWorkspacePane {
-                        pane_id: pane_id.clone(),
-                        axis: SplitAxis::Vertical,
-                    })
-                    .style(button_style(tokens, ButtonKind::Text)),
-            );
+        pane_actions.extend([
+            PaneChromeAction::new(
+                PaneChromeActionKind::SplitHorizontal,
+                "左右分栏",
+                Message::SplitWorkspacePane {
+                    pane_id: pane_id.clone(),
+                    axis: SplitAxis::Horizontal,
+                },
+            ),
+            PaneChromeAction::new(
+                PaneChromeActionKind::SplitVertical,
+                "上下分栏",
+                Message::SplitWorkspacePane {
+                    pane_id: pane_id.clone(),
+                    axis: SplitAxis::Vertical,
+                },
+            ),
+        ]);
         if let Some(item) = active_item
             .as_ref()
             .and_then(|item_id| self.workspace_items.iter().find(|item| &item.id == item_id))
             .filter(|item| {
                 item.capabilities.movable_across_windows
                     && (item.application_surface().ok().flatten().is_some()
-                        || item.project_surface().ok().flatten().is_some())
+                        || item.project_surface().ok().flatten().is_some()
+                        || is_document_editor_item(item)
+                        || item
+                            .terminal_session_id()
+                            .is_ok_and(|value| value.is_some()))
             })
         {
-            tab_bar = tab_bar.push(
-                button(text("移至新窗口").size(10))
-                    .on_press(Message::MoveWorkspaceItemToNewWindow(item.id.clone()))
-                    .style(button_style(tokens, ButtonKind::Text)),
-            );
+            pane_actions.push(PaneChromeAction::new(
+                PaneChromeActionKind::MoveToWindow,
+                "移至新窗口",
+                Message::MoveWorkspaceItemToNewWindow(item.id.clone()),
+            ));
         }
         if self.panel_layout.pane_ids().len() > 1 {
             if let Some(item_id) = &active_item {
-                tab_bar = tab_bar.push(
-                    button(text("移至下一窗格").size(10))
-                        .on_press(Message::MoveWorkspaceItemToNextPane(item_id.clone()))
-                        .style(button_style(tokens, ButtonKind::Text)),
-                );
+                pane_actions.push(PaneChromeAction::new(
+                    PaneChromeActionKind::MoveToNextPane,
+                    "移至下一窗格",
+                    Message::MoveWorkspaceItemToNextPane(item_id.clone()),
+                ));
             } else if item_ids.is_empty() {
-                tab_bar = tab_bar.push(
-                    button(text("关闭窗格").size(10))
-                        .on_press(Message::CloseWorkspacePane(pane_id.clone()))
-                        .style(button_style(tokens, ButtonKind::Text)),
-                );
+                pane_actions.push(PaneChromeAction::new(
+                    PaneChromeActionKind::ClosePane,
+                    "关闭窗格",
+                    Message::CloseWorkspacePane(pane_id.clone()),
+                ));
             }
         }
         if let Some(item) = active_item
@@ -24645,38 +35633,47 @@ impl PreviewProgram {
             .and_then(|item_id| self.workspace_items.iter().find(|item| &item.id == item_id))
             .filter(|item| item.capabilities.closable)
         {
-            tab_bar = tab_bar.push(
-                button(icon(Icon::Close, 13.0, tokens.colors.muted))
-                    .on_press(Message::CloseWorkspaceItem(item.id.clone()))
-                    .style(button_style(tokens, ButtonKind::Text)),
+            pane_actions.push(
+                PaneChromeAction::new(
+                    PaneChromeActionKind::CloseItem,
+                    "关闭",
+                    Message::CloseWorkspaceItem(item.id.clone()),
+                )
+                .icon(Icon::Close),
             );
         }
-        let tab_bar = container(tab_bar)
-            .width(Length::Fill)
-            .height(Length::Fixed(34.0))
-            .padding([0, 8])
-            .style(move |_theme| {
-                iced::widget::container::Style::default().background(if pane_is_active {
-                    tokens.colors.surface
-                } else {
-                    tokens.colors.faint
-                })
-            });
         let body = if pane_is_active {
-            if self.settings_open {
+            let active_document = active_item.as_ref().and_then(|item_id| {
+                self.workspace_items
+                    .iter()
+                    .find(|item| &item.id == item_id && is_document_editor_item(item))
+            });
+            if let Some(item) = active_document {
+                self.document_editor_pane_content(item, HostedWindowId::PRIMARY, tokens)
+            } else if let Some(item) = active_item
+                .as_ref()
+                .and_then(|item_id| self.workspace_items.iter().find(|item| &item.id == item_id))
+                .filter(|item| {
+                    item.terminal_session_id()
+                        .is_ok_and(|value| value.is_some())
+                })
+            {
+                self.terminal_pane_content(item, tokens)
+            } else if self.settings_open {
                 self.settings_content(tokens)
             } else if self.automations_open {
                 self.automations_content(tokens)
+            } else if self.projects_overview_open {
+                self.projects_overview_content(tokens)
             } else {
                 self.project_content(tokens)
             }
         } else {
             self.workspace_inactive_pane_content(active_item.as_ref(), tokens)
         };
-        column![tab_bar, body]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        PaneChrome::new(tabs, body, pane_actions, tokens)
+            .active(pane_is_active)
+            .view()
     }
 
     fn workspace_inactive_pane_content(
@@ -24701,6 +35698,17 @@ impl PreviewProgram {
         };
         if let Ok(Some(surface)) = item.application_surface() {
             return match surface {
+                ApplicationWorkspaceSurface::Projects => container(
+                    EmptyState::new("项目总览")
+                        .message(format!("{} 个项目", self.project_dashboard.len()))
+                        .icon(Icon::Workspace)
+                        .view(tokens),
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center(Length::Fill)
+                .style(canvas_style(tokens))
+                .into(),
                 ApplicationWorkspaceSurface::Automations => {
                     self.workspace_automation_preview_content(item, tokens)
                 }
@@ -24714,6 +35722,16 @@ impl PreviewProgram {
             .is_ok_and(|surface| surface.is_some())
         {
             return self.workspace_project_preview_content(item, tokens);
+        }
+        if is_document_editor_item(item) {
+            return document_editor_inactive_preview(
+                item,
+                self.document_editors.get(&item.id),
+                tokens,
+            );
+        }
+        if let Some(snapshot) = self.terminal_snapshot_for_item(item) {
+            return terminal_inactive_preview(&snapshot, tokens).map(Message::Terminal);
         }
         let Some(task_id) = item.task_id().ok().flatten() else {
             return container(
@@ -24941,6 +35959,21 @@ impl PreviewProgram {
                     }
                 }
             }
+            Some(ProjectWorkspacePreview::Files {
+                entry_count,
+                revision,
+            }) => {
+                content = content.push(
+                    text(format!("根目录 {entry_count} 项 · 修订 {revision}"))
+                        .size(10)
+                        .color(colors.muted),
+                );
+                content = content.push(
+                    text("聚焦窗格后可展开目录并打开文件。")
+                        .size(11)
+                        .color(colors.text),
+                );
+            }
             Some(ProjectWorkspacePreview::Error(message)) => {
                 content = content.push(
                     EmptyState::new("无法读取项目视图")
@@ -25125,33 +36158,135 @@ impl PreviewProgram {
             .with_region(RegionId::Inspector, self.inspector_content(tokens));
         let workspace = workspace_view(&self.workspace, regions, tokens, Message::Workspace);
         let shell = app_shell(self.title_bar(tokens), workspace, tokens.colors);
-        let Some(removal) = &self.project_removal else {
-            return shell;
+        let update_prompt = match &self.update_state {
+            DesktopUpdateState::Available { version, notes, .. }
+                if !self.dismissed_update_versions.contains(version) =>
+            {
+                Some((
+                    format!("发现 LiliaCode {version}"),
+                    format!(
+                        "当前版本 {}，可以更新到 {version}。安装完成后应用会重启。",
+                        env!("CARGO_PKG_VERSION")
+                    ),
+                    notes
+                        .as_deref()
+                        .filter(|notes| !notes.trim().is_empty())
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| "安装前会验证更新包签名。".to_owned()),
+                    Message::InstallUpdate,
+                    "更新并重启".to_owned(),
+                    "暂不更新".to_owned(),
+                    self.update_busy,
+                    "准备中".to_owned(),
+                ))
+            }
+            DesktopUpdateState::Downloading { progress, .. } => {
+                let percent = update_download_percent(*progress);
+                Some((
+                    "正在下载更新".to_owned(),
+                    percent
+                        .map(|percent| format!("正在下载新版安装包（{percent}%）。"))
+                        .unwrap_or_else(|| "正在下载新版安装包。".to_owned()),
+                    "下载完成后会验证签名并自动启动安装。".to_owned(),
+                    Message::InstallUpdate,
+                    "更新并重启".to_owned(),
+                    "暂不更新".to_owned(),
+                    true,
+                    percent
+                        .map(|percent| format!("下载中 {percent}%"))
+                        .unwrap_or_else(|| "下载中".to_owned()),
+                ))
+            }
+            DesktopUpdateState::Installing { .. } => Some((
+                "正在安装更新".to_owned(),
+                "正在安装新版，完成后将重启应用。".to_owned(),
+                "安装期间请保持应用运行。".to_owned(),
+                Message::InstallUpdate,
+                "更新并重启".to_owned(),
+                "暂不更新".to_owned(),
+                true,
+                "安装中".to_owned(),
+            )),
+            DesktopUpdateState::Restarting { .. } => Some((
+                "正在重启 LiliaCode".to_owned(),
+                "更新已安装，正在重启应用。".to_owned(),
+                "应用会在新版本中重新打开。".to_owned(),
+                Message::InstallUpdate,
+                "更新并重启".to_owned(),
+                "暂不更新".to_owned(),
+                true,
+                "重启中".to_owned(),
+            )),
+            DesktopUpdateState::Failed { .. } if !self.update_failure_dismissed => Some((
+                "更新未完成".to_owned(),
+                "检查或安装更新时没有完成。可以现在重试，也可以稍后在桌面设置中继续。".to_owned(),
+                "现有版本不会被覆盖。".to_owned(),
+                Message::CheckForUpdate,
+                "重试".to_owned(),
+                "稍后".to_owned(),
+                false,
+                "处理中".to_owned(),
+            )),
+            _ => None,
         };
-        let summary = format!(
-            "{} 个任务和 {} 个会话将移入收集箱。",
-            removal.active_task_count, removal.active_conversation_count
-        );
-        let description = removal
-            .workspace_path
-            .as_deref()
-            .map(|path| format!("不会删除磁盘工作区：{path}"))
-            .unwrap_or_else(|| "项目记录会保留为已归档状态，可稍后恢复。".to_owned());
-        stack![
-            shell,
-            ConfirmDialog::new(
-                "移除项目",
-                format!("确认移除“{}”？{summary}", removal.project_name),
-                Message::ConfirmProjectRemoval,
-                Message::CancelProjectRemoval,
-                Message::ProjectRemovalDialogInteraction,
-            )
-            .description(description)
-            .danger(true)
-            .on_outside(Message::CancelProjectRemoval)
-            .view(tokens),
-        ]
-        .into()
+        let base = if let Some(removal) = &self.project_removal {
+            let summary = format!(
+                "{} 个任务和 {} 个会话将移入收集箱。",
+                removal.active_task_count, removal.active_conversation_count
+            );
+            let description = removal
+                .workspace_path
+                .as_deref()
+                .map(|path| format!("不会删除磁盘工作区：{path}"))
+                .unwrap_or_else(|| "项目记录会保留为已归档状态，可稍后恢复。".to_owned());
+            stack![
+                shell,
+                ConfirmDialog::new(
+                    "移除项目",
+                    format!("确认移除“{}”？{summary}", removal.project_name),
+                    Message::ConfirmProjectRemoval,
+                    Message::CancelProjectRemoval,
+                    Message::ProjectRemovalDialogInteraction,
+                )
+                .description(description)
+                .danger(true)
+                .on_outside(Message::CancelProjectRemoval)
+                .view(tokens),
+            ]
+            .into()
+        } else if let Some((
+            title,
+            message,
+            description,
+            confirm,
+            confirm_label,
+            cancel_label,
+            busy,
+            busy_label,
+        )) = update_prompt
+        {
+            stack![
+                shell,
+                ConfirmDialog::new(
+                    title,
+                    message,
+                    confirm,
+                    Message::DismissUpdatePrompt,
+                    Message::UpdatePromptDialogInteraction,
+                )
+                .description(description)
+                .confirm_label(confirm_label)
+                .cancel_label(cancel_label)
+                .busy(busy, busy_label, 0)
+                .on_outside(Message::DismissUpdatePrompt)
+                .view(tokens),
+            ]
+            .into()
+        } else {
+            shell
+        };
+        let base = self.with_command_palette(HostedWindowId::PRIMARY, base, tokens);
+        self.with_command_keymap(HostedWindowId::PRIMARY, base)
     }
 }
 
@@ -25267,6 +36402,36 @@ impl HostedProgram for NativePreviewProgram {
         }
     }
 
+    fn window_material_mode(&self) -> WindowMaterialMode {
+        match &self.state {
+            NativePreviewState::Ready(program) => program.window_material_mode(),
+            NativePreviewState::Loading | NativePreviewState::Failed => WindowMaterialMode::Solid,
+        }
+    }
+
+    fn backdrop_opacity(&self) -> f32 {
+        match &self.state {
+            NativePreviewState::Ready(program) => program.backdrop_opacity(),
+            NativePreviewState::Loading | NativePreviewState::Failed => {
+                AppearanceSettings::DEFAULT_BACKDROP_OPACITY
+            }
+        }
+    }
+
+    fn backdrop_target(&self) -> BackdropTarget {
+        match &self.state {
+            NativePreviewState::Ready(program) => program.backdrop_target(),
+            NativePreviewState::Loading | NativePreviewState::Failed => BackdropTarget::Sidebar,
+        }
+    }
+
+    fn titlebar_follows_sidebar(&self) -> bool {
+        match &self.state {
+            NativePreviewState::Ready(program) => program.titlebar_follows_sidebar(),
+            NativePreviewState::Loading | NativePreviewState::Failed => true,
+        }
+    }
+
     fn window_event(
         &mut self,
         event: HostedWindowEvent,
@@ -25360,6 +36525,12 @@ impl HostedProgram for PreviewProgram {
             NativeMemorySettingsStore::new(&home),
         )
         .map_err(|error| error.to_string())?;
+        if let Err(error) = application.start_product_change_feed() {
+            eprintln!("failed to start Native product change feed: {error}");
+        }
+        if let Err(error) = application.start_registry_file_watch() {
+            eprintln!("failed to start Native registry file watch: {error}");
+        }
         let application_workspace = application.create_workspace_session(
             DesktopWorkspaceSessionId::new("native-preview.primary")
                 .map_err(|error| error.to_string())?,
@@ -25465,6 +36636,7 @@ impl HostedProgram for PreviewProgram {
             "appearance",
             [
                 SettingsTab::new("appearance", "外观").icon(Icon::Appearance),
+                SettingsTab::new("project", "项目").icon(Icon::Folder),
                 SettingsTab::new("provider", "模型服务").icon(Icon::Nodes),
                 SettingsTab::new("agent", "Agent").icon(Icon::Nodes),
                 SettingsTab::new("quota", "用量与额度").icon(Icon::Chart),
@@ -25472,12 +36644,19 @@ impl HostedProgram for PreviewProgram {
                 SettingsTab::new("remote", "远程控制").icon(Icon::Nodes),
                 SettingsTab::new("desktop", "桌面").icon(Icon::Appearance),
                 SettingsTab::new("data", "数据迁移").icon(Icon::Folder),
+                SettingsTab::new("about", "关于").icon(Icon::About),
             ],
         )
         .map_err(|error| error.to_string())?;
         let settings_state = SettingsState::new(&settings_model);
+        let action_registry = native_action_registry()?;
+        let command_keymap = native_command_keymap();
         let theme = load_theme(&home);
+        let appearance = load_appearance(&home);
+        let sidebar_display_mode = load_sidebar_display_mode(&home);
         let provider = application.provider_snapshot();
+        let provider_ai_settings = ProviderAiSettingsState::load(&application)
+            .map_err(|error| format!("failed to load Native AI settings: {error}"))?;
         let provider_runtime_settings = application
             .provider_runtime_settings()
             .map_err(|error| format!("failed to load Native provider runtime settings: {error}"))?;
@@ -25514,16 +36693,21 @@ impl HostedProgram for PreviewProgram {
             Ok(status) => (status, None),
             Err(error) => (unbound_github_status(), Some(github_error_message(&error))),
         };
-        let shell =
-            NativeShellIntegration::initialize(&home, &application, Arc::clone(&message_sender));
+        let shell = NativeShellIntegration::initialize(&application, Arc::clone(&message_sender));
         let shell_shortcut_edit = shell.shortcut().unwrap_or_default().to_owned();
         let shell_error = shell.startup_error();
         let update_state = application
             .update_state()
             .map_err(|error| error.to_string())?;
         let update_configured = crate::updater::is_configured();
+        let license_manifest = serde_json::from_str::<OpenSourceLicenseManifest>(include_str!(
+            "../../desktop/src/generated/openSourceLicenseManifest.json"
+        ))
+        .unwrap_or_default();
         let main_window_geometry = load_window_state(&home);
         let window_state = NativeWindowStateWriter::start(&home, main_window_geometry)?;
+        let conversation_status_window = load_conversation_status_state(&home);
+        let conversation_status_state_writer = NativeConversationStatusStateWriter::start(&home)?;
         let workspace_topology_state = NativeWorkspaceTopologyStateWriter::start(
             &home,
             persisted_workspace_topology_revision,
@@ -25534,6 +36718,19 @@ impl HostedProgram for PreviewProgram {
         if std::env::var_os("LILIA_NATIVE_IMPORT_ACTIVATION_FAILED").is_some() {
             data_import.set_error("上次导入未能完成，原有 Native 数据未被覆盖。");
         }
+        let (project_settings, project_settings_error) = match application.project_settings() {
+            Ok(settings) => (settings, None),
+            Err(error) => (
+                DesktopProjectSettings::default(),
+                Some(format!("无法读取项目设置：{error}")),
+            ),
+        };
+        let project_clone_parent = project_settings
+            .clone_parent_dir
+            .clone()
+            .unwrap_or_default();
+        let project_worktree_instructions =
+            HostedTextareaState::with_text(&project_settings.worktree.auto_instructions);
         let mut program = Self {
             application,
             application_workspace,
@@ -25543,7 +36740,16 @@ impl HostedProgram for PreviewProgram {
             workspace: initial_workspace(),
             workspace_items: Vec::new(),
             panel_layout: PanelLayoutSnapshot::default(),
+            action_registry,
+            command_keymap,
+            command_keymap_state: KeymapState::default(),
+            command_picker: ActionPickerState::new(),
+            command_source_window: HostedWindowId::PRIMARY,
+            command_source_item: None,
             inspector_surface: InspectorSurface::Task,
+            iab: IabPanelState::default(),
+            iab_windows: BTreeMap::new(),
+            abandoned_iab_captures: BTreeMap::new(),
             workspace_tab_drag_group: TabDragGroup::new(),
             main_window_geometry,
             main_window_scale_factor: 1.0,
@@ -25555,6 +36761,9 @@ impl HostedProgram for PreviewProgram {
             archived_projects: Vec::new(),
             archived_tasks: Vec::new(),
             selected_project: None,
+            projects_overview_open: false,
+            project_dashboard: Vec::new(),
+            project_dashboard_error: None,
             inbox_selected: false,
             selected_task: None,
             project_name_edit: String::new(),
@@ -25562,7 +36771,7 @@ impl HostedProgram for PreviewProgram {
             project_action_error: None,
             project_removal: None,
             project_clone_repository: String::new(),
-            project_clone_parent: String::new(),
+            project_clone_parent,
             project_clone_busy: false,
             project_clone_outcome: ProjectCloneOutcome::Idle,
             project_clone_phase: None,
@@ -25588,31 +36797,60 @@ impl HostedProgram for PreviewProgram {
             task_search: String::new(),
             new_task_title: String::new(),
             task_title_edit: String::new(),
+            task_dependency_target: None,
             task_drop_search: String::new(),
             task_move_target: None,
             task_parent_target: None,
             project_surface: ProjectSurface::Tasks,
+            project_files: None,
+            opened_project_document: None,
+            project_files_error: None,
             task_session: None,
             pane_task_sessions: BTreeMap::new(),
             project_workspace_previews: BTreeMap::new(),
+            main_conversation_draft: None,
+            document_editors: BTreeMap::new(),
+            document_definition_operation_sequence: 0,
+            terminal_snapshots: BTreeMap::new(),
+            terminal_inputs: BTreeMap::new(),
+            terminal_scrollback: BTreeMap::new(),
+            terminal_notices: BTreeMap::new(),
             composer: None,
             slash_commands: Vec::new(),
             conversation_reference_results: Vec::new(),
             context_attachment_results: Vec::new(),
+            conversation_suggestions: ConversationSuggestionState::default(),
+            conversation_suggestion_operation_sequence: 0,
+            prompt_optimization_operation_sequence: 0,
+            active_prompt_optimizations: BTreeMap::new(),
+            prompt_route_suggestions: BTreeMap::new(),
+            pending_session_branch: None,
+            pending_review_slash_workflow: None,
             todo_draft: String::new(),
             editing_todo: None,
             goal_draft: String::new(),
             worktree_busy: false,
             worktree_confirmation: None,
+            pending_initial_worktrees: BTreeMap::new(),
             interaction_drafts: BTreeMap::new(),
+            ask_user_drafts: BTreeMap::new(),
             mcp_elicitation_drafts: BTreeMap::new(),
+            tool_consent_drafts: BTreeMap::new(),
             turn_state: None,
             task_action_error: None,
             last_copied_markdown: None,
+            timeline_text_selections: BTreeMap::new(),
+            markdown_images: BTreeMap::new(),
+            markdown_image_recency: BTreeMap::new(),
+            markdown_image_access_clock: 0,
+            markdown_image_previews: BTreeMap::new(),
             conversation_status_open: false,
             conversation_status_ready: false,
             conversation_status_entries: Vec::new(),
             conversation_status_error: None,
+            conversation_status_window,
+            conversation_status_opacity_panel_open: false,
+            conversation_status_state_writer,
             task_popups: BTreeMap::new(),
             file_drop_hovered_windows: BTreeSet::new(),
             attachment_previews: BTreeMap::new(),
@@ -25659,9 +36897,14 @@ impl HostedProgram for PreviewProgram {
             memory_injection: None,
             coding_tools: None,
             coding_git: None,
+            coding_git_diff: None,
+            coding_git_diff_scope: DesktopGitDiffScope::WorkingTree,
             coding_workspace: None,
+            coding_project_tasks: None,
             coding_query: String::new(),
+            coding_search_mode: DesktopCodeSearchMode::Text,
             coding_search: None,
+            coding_search_all_projects: false,
             coding_notice: None,
             coding_busy: false,
             coding_operation_sequence: 0,
@@ -25669,11 +36912,22 @@ impl HostedProgram for PreviewProgram {
             coding_error: None,
             settings_model,
             settings_state,
+            project_settings,
+            project_worktree_instructions,
+            project_settings_error,
             provider,
             provider_runtime_settings,
             provider_model,
             provider_openai_endpoint,
             provider_anthropic_endpoint,
+            provider_ai_settings,
+            assistant_ai_new_model_id: String::new(),
+            assistant_ai_new_model_label: String::new(),
+            assistant_ai_probe_busy: false,
+            assistant_ai_probe_sequence: 0,
+            active_assistant_ai_probe: None,
+            assistant_ai_probe_notice: None,
+            custom_preset_draft: String::new(),
             agent_interaction_settings,
             custom_agents,
             custom_agent_editor_open: false,
@@ -25724,8 +36978,11 @@ impl HostedProgram for PreviewProgram {
             remote_error,
             shell,
             shell_shortcut_edit,
+            shell_shortcut_capturing: false,
             shell_error,
             update_state,
+            dismissed_update_versions: BTreeSet::new(),
+            update_failure_dismissed: false,
             update_configured,
             update_busy: false,
             update_operation_sequence: 0,
@@ -25736,7 +36993,9 @@ impl HostedProgram for PreviewProgram {
             workspace_topology_state,
             workspace_topology_revision: persisted_workspace_topology_revision,
             message_sender,
-            appearance: AppearanceSettings::default(),
+            appearance,
+            sidebar_display_mode,
+            debug_timeline: NativeDebugTimeline::default(),
             theme,
             error_message: None,
             #[cfg(debug_assertions)]
@@ -25744,6 +37003,7 @@ impl HostedProgram for PreviewProgram {
             #[cfg(debug_assertions)]
             pending_debug_frame_response: None,
             window_chrome: WindowChromeState::default(),
+            license_manifest,
         };
         program.refresh_projects();
         if let Some(state) = loaded_workspace_topology {
@@ -25763,11 +37023,7 @@ impl HostedProgram for PreviewProgram {
         let status_was_open = self.conversation_status_open;
         let open_status = matches!(&message, Message::OpenConversationStatus);
         let close_status = matches!(&message, Message::CloseConversationStatus);
-        let focus_main = matches!(
-            &message,
-            Message::Shell(ShellCommand::FocusMainWindow | ShellCommand::OpenTask(_))
-                | Message::FocusConversationStatusTask(_)
-        );
+        let focus_main = matches!(&message, Message::Shell(ShellCommand::FocusMainWindow));
         let shell_exit = matches!(&message, Message::Shell(ShellCommand::Quit));
         let window_action = self.update_message(message);
         #[cfg(debug_assertions)]
@@ -25778,7 +37034,10 @@ impl HostedProgram for PreviewProgram {
             .into_iter()
             .collect::<Vec<_>>();
         if open_status {
-            window_commands.push(conversation_status_window_command(status_was_open));
+            window_commands.push(conversation_status_window_command(
+                status_was_open,
+                self.conversation_status_window,
+            ));
         }
         if close_status && status_was_open {
             window_commands.push(HostedWindowCommand::Close(CONVERSATION_STATUS_WINDOW_ID));
@@ -25787,7 +37046,10 @@ impl HostedProgram for PreviewProgram {
         let ui_commands = std::mem::take(&mut self.pending_ui_commands);
         HostedProgramUpdate {
             window_action,
-            redraw: if self.conversation_status_open || !self.task_popups.is_empty() {
+            redraw: if self.conversation_status_open
+                || !self.task_popups.is_empty()
+                || !self.iab_windows.is_empty()
+            {
                 HostedRedraw::All
             } else {
                 HostedRedraw::Primary
@@ -25799,7 +37061,8 @@ impl HostedProgram for PreviewProgram {
     }
 
     fn view(&self, _native_material: bool) -> Element<'static, Self::Message> {
-        self.view_shell()
+        let tokens = self.theme_tokens();
+        self.with_markdown_image_preview(HostedWindowId::PRIMARY, self.view_shell(), tokens)
     }
 
     fn view_window(
@@ -25809,8 +37072,19 @@ impl HostedProgram for PreviewProgram {
     ) -> Element<'static, Self::Message> {
         if id == CONVERSATION_STATUS_WINDOW_ID {
             self.conversation_status_content(self.theme_tokens())
+        } else if let Some(window) = self.iab_windows.get(&id) {
+            window
+                .view(self.theme_tokens())
+                .map(move |message| Message::IabWindow {
+                    window_id: id,
+                    message,
+                })
         } else if let Some(popup) = self.task_popups.get(&id) {
-            self.task_popup_content(popup, self.theme_tokens())
+            let tokens = self.theme_tokens();
+            let content = self.task_popup_content(popup, tokens);
+            let content = self.with_command_palette(id, content, tokens);
+            let content = self.with_command_keymap(id, content);
+            self.with_markdown_image_preview(id, content, tokens)
         } else {
             self.view_shell()
         }
@@ -25818,6 +37092,22 @@ impl HostedProgram for PreviewProgram {
 
     fn theme_mode(&self) -> ThemeMode {
         self.theme
+    }
+
+    fn window_material_mode(&self) -> WindowMaterialMode {
+        self.appearance.window_material()
+    }
+
+    fn backdrop_opacity(&self) -> f32 {
+        self.appearance.backdrop_opacity()
+    }
+
+    fn backdrop_target(&self) -> BackdropTarget {
+        self.appearance.backdrop_target()
+    }
+
+    fn titlebar_follows_sidebar(&self) -> bool {
+        self.appearance.titlebar_follows_sidebar()
     }
 
     #[cfg(debug_assertions)]
@@ -25841,26 +37131,75 @@ impl HostedProgram for PreviewProgram {
     ) -> HostedProgramUpdate {
         if event.id() == CONVERSATION_STATUS_WINDOW_ID {
             return match event {
-                HostedWindowEvent::Ready { .. } => {
+                HostedWindowEvent::Ready { geometry, .. } => {
                     self.conversation_status_open = true;
                     self.conversation_status_ready = true;
+                    self.record_conversation_status_geometry(geometry);
                     HostedProgramUpdate::redraw_window(CONVERSATION_STATUS_WINDOW_ID)
                 }
-                HostedWindowEvent::Resized { .. } => {
+                HostedWindowEvent::Resized { geometry, .. } => {
+                    self.record_conversation_status_geometry(geometry);
                     HostedProgramUpdate::redraw_window(CONVERSATION_STATUS_WINDOW_ID)
                 }
-                HostedWindowEvent::Moved { .. }
-                | HostedWindowEvent::VisibilityChanged { .. }
+                HostedWindowEvent::Moved { geometry, .. } => {
+                    self.record_conversation_status_geometry(geometry);
+                    HostedProgramUpdate::default()
+                }
+                HostedWindowEvent::VisibilityChanged { .. }
+                | HostedWindowEvent::FocusChanged { .. }
                 | HostedWindowEvent::FileHovered { .. }
                 | HostedWindowEvent::FileDropped { .. }
                 | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
                 HostedWindowEvent::CloseRequested { .. } => {
                     self.conversation_status_open = false;
                     self.conversation_status_ready = false;
+                    self.conversation_status_opacity_panel_open = false;
                     HostedProgramUpdate::default().with_window_commands([
                         HostedWindowCommand::Close(CONVERSATION_STATUS_WINDOW_ID),
                     ])
                 }
+            };
+        }
+        if self.iab_windows.contains_key(&event.id()) {
+            return match event {
+                HostedWindowEvent::Ready { id, .. } => {
+                    let commands = self
+                        .iab_windows
+                        .get_mut(&id)
+                        .map(|window| window.set_visible(true))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(HostedWindowCommand::Browser);
+                    HostedProgramUpdate::redraw_window(id).with_window_commands(commands)
+                }
+                HostedWindowEvent::Resized { id, .. } => HostedProgramUpdate::redraw_window(id),
+                HostedWindowEvent::VisibilityChanged { id, hidden, .. } => {
+                    let commands = self
+                        .iab_windows
+                        .get_mut(&id)
+                        .map(|window| window.set_visible(!hidden))
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(HostedWindowCommand::Browser);
+                    HostedProgramUpdate::default().with_window_commands(commands)
+                }
+                HostedWindowEvent::CloseRequested { id, .. } => {
+                    let Some(mut window) = self.iab_windows.remove(&id) else {
+                        return HostedProgramUpdate::default();
+                    };
+                    self.abandon_iab_capture(id, &mut window);
+                    HostedProgramUpdate::default().with_window_commands([
+                        HostedWindowCommand::Browser(HostedBrowserCommand::Detach(
+                            window.browser_id(),
+                        )),
+                        HostedWindowCommand::Close(id),
+                    ])
+                }
+                HostedWindowEvent::Moved { .. }
+                | HostedWindowEvent::FocusChanged { .. }
+                | HostedWindowEvent::FileHovered { .. }
+                | HostedWindowEvent::FileDropped { .. }
+                | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
             };
         }
         if self.task_popups.contains_key(&event.id()) {
@@ -25871,16 +37210,7 @@ impl HostedProgram for PreviewProgram {
                         popup.scale_factor = geometry.scale_factor;
                         popup.surface_position = geometry.physical_position;
                     }
-                    if let Some((x, y)) = geometry.physical_position {
-                        self.record_task_popup_geometry(
-                            id,
-                            x,
-                            y,
-                            geometry.physical_size.width,
-                            geometry.physical_size.height,
-                            geometry.maximized,
-                        );
-                    }
+                    self.record_task_popup_geometry(id, geometry);
                     self.sync_workspace_window_splits(id);
                     HostedProgramUpdate::redraw_window(id)
                 }
@@ -25889,16 +37219,7 @@ impl HostedProgram for PreviewProgram {
                         popup.scale_factor = geometry.scale_factor;
                         popup.surface_position = geometry.physical_position;
                     }
-                    if let Some((x, y)) = geometry.physical_position {
-                        self.record_task_popup_geometry(
-                            id,
-                            x,
-                            y,
-                            geometry.physical_size.width,
-                            geometry.physical_size.height,
-                            geometry.maximized,
-                        );
-                    }
+                    self.record_task_popup_geometry(id, geometry);
                     self.sync_workspace_window_splits(id);
                     HostedProgramUpdate::redraw_window(id)
                 }
@@ -25907,20 +37228,12 @@ impl HostedProgram for PreviewProgram {
                         popup.scale_factor = geometry.scale_factor;
                         popup.surface_position = geometry.physical_position;
                     }
-                    if let Some((x, y)) = geometry.physical_position {
-                        self.record_task_popup_geometry(
-                            id,
-                            x,
-                            y,
-                            geometry.physical_size.width,
-                            geometry.physical_size.height,
-                            geometry.maximized,
-                        );
-                    }
+                    self.record_task_popup_geometry(id, geometry);
                     self.sync_workspace_window_splits(id);
                     HostedProgramUpdate::default()
                 }
-                HostedWindowEvent::VisibilityChanged { .. } => HostedProgramUpdate::default(),
+                HostedWindowEvent::VisibilityChanged { .. }
+                | HostedWindowEvent::FocusChanged { .. } => HostedProgramUpdate::default(),
                 HostedWindowEvent::FileHovered { id, .. } => {
                     if self.window_accepts_attachment_drop(id) {
                         self.file_drop_hovered_windows.insert(id);
@@ -25941,12 +37254,12 @@ impl HostedProgram for PreviewProgram {
                     HostedProgramUpdate::redraw_window(id)
                 }
                 HostedWindowEvent::CloseRequested { id, .. } => {
-                    self.task_popups.remove(&id);
-                    self.file_drop_hovered_windows.remove(&id);
-                    self.attachment_previews.remove(&id);
-                    self.persist_workspace_topology();
-                    HostedProgramUpdate::default()
-                        .with_window_commands([HostedWindowCommand::Close(id)])
+                    if self.close_task_popup_with_command(id, false) {
+                        HostedProgramUpdate::default()
+                            .with_window_commands([HostedWindowCommand::Close(id)])
+                    } else {
+                        HostedProgramUpdate::redraw_window(id)
+                    }
                 }
             };
         }
@@ -25960,6 +37273,7 @@ impl HostedProgram for PreviewProgram {
                         y,
                         width: geometry.physical_size.width,
                         height: geometry.physical_size.height,
+                        scale_factor: geometry.scale_factor,
                         maximized: geometry.maximized,
                     });
                     if let Err(error) = self.window_state.record(NativeWindowSnapshot {
@@ -25967,6 +37281,7 @@ impl HostedProgram for PreviewProgram {
                         y,
                         width: geometry.physical_size.width,
                         height: geometry.physical_size.height,
+                        scale_factor: geometry.scale_factor,
                         maximized: geometry.maximized,
                     }) {
                         eprintln!("[native-window-state] {error}");
@@ -25992,6 +37307,7 @@ impl HostedProgram for PreviewProgram {
                         y,
                         width: geometry.physical_size.width,
                         height: geometry.physical_size.height,
+                        scale_factor: geometry.scale_factor,
                         maximized: geometry.maximized,
                     });
                     if let Err(error) = self.window_state.record(NativeWindowSnapshot {
@@ -25999,6 +37315,7 @@ impl HostedProgram for PreviewProgram {
                         y,
                         width: geometry.physical_size.width,
                         height: geometry.physical_size.height,
+                        scale_factor: geometry.scale_factor,
                         maximized: geometry.maximized,
                     }) {
                         eprintln!("[native-window-state] {error}");
@@ -26006,7 +37323,8 @@ impl HostedProgram for PreviewProgram {
                 }
                 HostedProgramUpdate::default()
             }
-            HostedWindowEvent::VisibilityChanged { .. } => HostedProgramUpdate::default(),
+            HostedWindowEvent::VisibilityChanged { .. }
+            | HostedWindowEvent::FocusChanged { .. } => HostedProgramUpdate::default(),
             HostedWindowEvent::FileHovered { id, .. } => {
                 if self.window_accepts_attachment_drop(id) {
                     self.file_drop_hovered_windows.insert(id);
@@ -26035,6 +37353,63 @@ impl HostedProgram for PreviewProgram {
         event: HostedRuntimeEvent,
         _context: &HostedProgramContext<Self::Message>,
     ) -> HostedProgramUpdate {
+        if let HostedRuntimeEvent::Browser(browser_event) = &event {
+            if let HostedBrowserEvent::CommandFailed {
+                command, message, ..
+            } = browser_event
+            {
+                eprintln!("Native IAB browser command {command:?} failed: {message}");
+            }
+            if self.iab.handle_browser_event(browser_event.clone()) {
+                return HostedProgramUpdate::redraw();
+            }
+            if let Some(window_id) = self.iab_windows.iter().find_map(|(window_id, window)| {
+                (window.browser_id() == browser_event.id()).then_some(*window_id)
+            }) {
+                if self
+                    .iab_windows
+                    .get_mut(&window_id)
+                    .is_some_and(|window| window.handle_browser_event(browser_event.clone()))
+                {
+                    return HostedProgramUpdate::redraw_window(window_id);
+                }
+            }
+        }
+        if let HostedRuntimeEvent::WindowCaptured {
+            id,
+            capture_id,
+            path,
+        } = &event
+        {
+            if let Some(expected_path) = self.abandoned_iab_captures.remove(&(id.0, capture_id.0)) {
+                remove_abandoned_iab_snapshot(path);
+                if &expected_path != path {
+                    remove_abandoned_iab_snapshot(&expected_path);
+                }
+                return HostedProgramUpdate::redraw();
+            }
+            self.finish_iab_capture(*id, *capture_id, Some(path.clone()), None);
+            return HostedProgramUpdate::redraw_window(*id);
+        }
+        if let HostedRuntimeEvent::WindowCaptureFailed {
+            id,
+            capture_id,
+            message,
+        } = &event
+        {
+            if let Some(path) = self.abandoned_iab_captures.remove(&(id.0, capture_id.0)) {
+                remove_abandoned_iab_snapshot(&path);
+                return HostedProgramUpdate::redraw();
+            }
+            eprintln!("failed to capture Native IAB window: {message}");
+            self.finish_iab_capture(
+                *id,
+                *capture_id,
+                None,
+                Some("当前环境未附带窗口截图，页面信息已提交。".to_owned()),
+            );
+            return HostedProgramUpdate::redraw_window(*id);
+        }
         if let HostedRuntimeEvent::WindowOpenFailed { id, message } = event {
             if id == CONVERSATION_STATUS_WINDOW_ID {
                 eprintln!("failed to open Native conversation-status window: {message}");
@@ -26043,9 +37418,14 @@ impl HostedProgram for PreviewProgram {
                 self.error_message = Some("无法打开会话状态窗口，请重试。".to_owned());
                 return HostedProgramUpdate::redraw();
             }
+            if let Some(mut window) = self.iab_windows.remove(&id) {
+                self.abandon_iab_capture(id, &mut window);
+                eprintln!("failed to open Native IAB window: {message}");
+                self.task_action_error = Some("无法打开浏览器窗口，请重试。".to_owned());
+                return HostedProgramUpdate::redraw();
+            }
             if self.task_popups.remove(&id).is_some() {
-                self.file_drop_hovered_windows.remove(&id);
-                self.attachment_previews.remove(&id);
+                self.clear_task_popup_ephemeral_state(id);
                 self.persist_workspace_topology();
                 eprintln!("failed to open Native task window: {message}");
                 self.task_action_error = Some("无法打开任务窗口，请重试。".to_owned());
@@ -26056,19 +37436,56 @@ impl HostedProgram for PreviewProgram {
     }
 }
 
-fn conversation_status_window_command(already_open: bool) -> HostedWindowCommand {
+fn conversation_status_window_command(
+    already_open: bool,
+    state: NativeConversationStatusWindowState,
+) -> HostedWindowCommand {
     if already_open {
         HostedWindowCommand::Focus(CONVERSATION_STATUS_WINDOW_ID)
     } else {
+        let settings = HostedWindowSettings::new("LiliaCode 会话状态")
+            .initial_size(360.0, 520.0)
+            .minimum_size(300.0, 360.0)
+            .tool_window()
+            .always_on_top(state.always_on_top)
+            .transparent(true);
+        let settings = state.geometry.map_or(settings.clone(), |geometry| {
+            settings.placement(geometry.hosted_placement())
+        });
         HostedWindowCommand::Open {
             id: CONVERSATION_STATUS_WINDOW_ID,
-            settings: HostedWindowSettings::new("LiliaCode 会话状态")
-                .initial_size(360.0, 520.0)
-                .minimum_size(300.0, 360.0)
-                .tool_window()
-                .transparent(false),
+            settings,
         }
     }
+}
+
+fn theme_tokens_with_opacity(mut tokens: ThemeTokens, opacity: f32) -> ThemeTokens {
+    let opacity = normalize_conversation_status_opacity(opacity);
+    let colors = &mut tokens.colors;
+    colors.background.a *= opacity;
+    colors.surface.a *= opacity;
+    colors.subtle.a *= opacity;
+    colors.hover.a *= opacity;
+    colors.active.a *= opacity;
+    colors.selected.a *= opacity;
+    colors.selected_hover.a *= opacity;
+    colors.selected_pressed.a *= opacity;
+    colors.border.a *= opacity;
+    colors.border_soft.a *= opacity;
+    colors.border_strong.a *= opacity;
+    colors.text.a *= opacity;
+    colors.muted.a *= opacity;
+    colors.faint.a *= opacity;
+    colors.accent.a *= opacity;
+    colors.accent_strong.a *= opacity;
+    colors.accent_soft.a *= opacity;
+    colors.accent_on_soft.a *= opacity;
+    colors.accent_text.a *= opacity;
+    colors.success.a *= opacity;
+    colors.warning.a *= opacity;
+    colors.danger.a *= opacity;
+    tokens.titlebar.a *= opacity;
+    tokens
 }
 
 fn task_popup_window_settings(
@@ -26081,11 +37498,21 @@ fn task_popup_window_settings(
         .tool_window()
         .transparent(false);
     match geometry {
-        Some(geometry) => settings
-            .physical_geometry(geometry.x, geometry.y, geometry.width, geometry.height)
-            .maximized(geometry.maximized),
+        Some(geometry) => settings.placement(geometry.hosted_placement()),
         None => settings,
     }
+}
+
+fn iab_window_settings(task_title: &str) -> HostedWindowSettings {
+    HostedWindowSettings::new(format!("Lilia IAB · {task_title}"))
+        .initial_size(1180.0, 760.0)
+        .minimum_size(720.0, 480.0)
+        .tool_window()
+        .transparent(false)
+}
+
+fn iab_browser_id(window_id: HostedWindowId) -> HostedBrowserId {
+    HostedBrowserId(window_id.0.saturating_add(1_000))
 }
 
 fn main_workspace_tab_strip_id(pane_id: &PaneId) -> String {
@@ -26136,6 +37563,146 @@ fn ensure_native_dock_panels(layout: &mut PanelLayoutSnapshot) -> Result<(), Str
             .map_err(|error| error.to_string())?;
     }
     Ok(())
+}
+
+fn collect_session_markdown_image_sources(
+    session: &TaskSessionView,
+    sources: &mut BTreeSet<String>,
+) {
+    for image in session
+        .timeline
+        .iter()
+        .filter_map(|event| event.markdown_document.as_ref().map(NativeMarkdown::images))
+    {
+        sources.extend(image.into_iter().map(|image| image.source));
+    }
+}
+
+fn markdown_image_fragment(
+    image_item: MarkdownImage,
+    state: Option<MarkdownImageLoadState>,
+    window_id: HostedWindowId,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    let colors = tokens.colors;
+    match state {
+        Some(MarkdownImageLoadState::Ready(image_data)) => {
+            let visual = loaded_markdown_image_visual(&image_data, Length::Fixed(240.0));
+            button(visual)
+                .width(Length::Fill)
+                .on_press(Message::OpenMarkdownImage {
+                    window_id,
+                    image: image_item,
+                })
+                .style(button_style(tokens, ButtonKind::Ghost))
+                .into()
+        }
+        Some(MarkdownImageLoadState::Failed) => container(
+            column![
+                text(markdown_image_alt(&image_item))
+                    .size(11)
+                    .color(colors.text),
+                row![
+                    text("图片暂时无法显示").size(10).color(colors.muted),
+                    button(text("重试").size(10))
+                        .on_press(Message::RetryMarkdownImage(image_item.source.clone()))
+                        .style(button_style(tokens, ButtonKind::Ghost)),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(2),
+        )
+        .padding(Padding::from([8, 10]))
+        .style(canvas_style(tokens))
+        .into(),
+        Some(MarkdownImageLoadState::Loading)
+        | Some(MarkdownImageLoadState::Pending { requested: true }) => container(
+            row![
+                icon(Icon::File, 14.0, colors.muted),
+                text("正在加载图片…").size(10).color(colors.muted),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding(Padding::from([8, 10]))
+        .style(canvas_style(tokens))
+        .into(),
+        Some(MarkdownImageLoadState::Pending { requested: false }) | None => container(
+            row![
+                text(markdown_image_alt(&image_item))
+                    .size(10)
+                    .width(Length::Fill)
+                    .color(colors.muted),
+                button(text("加载图片").size(10))
+                    .on_press(Message::RetryMarkdownImage(image_item.source.clone()))
+                    .style(button_style(tokens, ButtonKind::Ghost)),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding(Padding::from([8, 10]))
+        .style(canvas_style(tokens))
+        .into(),
+    }
+}
+
+fn loaded_markdown_image_visual(
+    image_data: &LoadedMarkdownImage,
+    height: Length,
+) -> Element<'static, Message> {
+    let bytes = image_data.bytes().as_ref().to_vec();
+    if image_data.is_svg() {
+        svg(iced::widget::svg::Handle::from_memory(bytes))
+            .width(Length::Fill)
+            .height(height)
+            .content_fit(ContentFit::Contain)
+            .into()
+    } else {
+        image(iced::widget::image::Handle::from_bytes(bytes))
+            .width(Length::Fill)
+            .height(height)
+            .content_fit(ContentFit::Contain)
+            .into()
+    }
+}
+
+fn markdown_image_alt(image: &MarkdownImage) -> String {
+    let alt = image.alt.trim();
+    if alt.is_empty() {
+        "图片".to_owned()
+    } else {
+        alt.to_owned()
+    }
+}
+
+fn markdown_image_label(preview: &MarkdownImagePreview) -> String {
+    let alt = preview.alt.trim();
+    if !alt.is_empty() {
+        return alt.to_owned();
+    }
+    if !preview.source.starts_with("data:") {
+        if let Some(name) = preview
+            .source
+            .rsplit(['/', '\\'])
+            .find(|part| !part.is_empty())
+        {
+            return name.to_owned();
+        }
+    }
+    "图片".to_owned()
+}
+
+fn markdown_image_format_label(media_type: &str) -> &'static str {
+    match media_type {
+        "image/png" => "PNG",
+        "image/jpeg" => "JPEG",
+        "image/gif" => "GIF",
+        "image/webp" => "WebP",
+        "image/bmp" => "BMP",
+        "image/svg+xml" => "SVG",
+        _ => "图片",
+    }
 }
 
 fn attachment_icon(attachment: &ChatAttachment) -> Icon {
@@ -26353,7 +37920,7 @@ fn load_native_hooks(
     })
 }
 
-fn hook_document_draft(document: &DesktopHookDocumentView) -> Result<String, serde_json::Error> {
+fn hook_document_draft(document: &DesktopHookDocumentView) -> String {
     let handlers = document
         .handlers
         .iter()
@@ -26368,7 +37935,246 @@ fn hook_document_draft(document: &DesktopHookDocumentView) -> Result<String, ser
             status_message: handler.status_message.clone(),
         })
         .collect::<Vec<_>>();
-    serde_json::to_string(&handlers)
+    hook_handlers_draft(&handlers)
+}
+
+fn empty_hook_handler_draft() -> DesktopHookHandlerUpdate {
+    DesktopHookHandlerUpdate {
+        id: None,
+        event: String::new(),
+        matcher: None,
+        handler_type: "command".to_owned(),
+        command: None,
+        command_windows: None,
+        timeout_seconds: None,
+        status_message: None,
+    }
+}
+
+fn hook_handlers_draft(handlers: &[DesktopHookHandlerUpdate]) -> String {
+    let handlers = if handlers.is_empty() {
+        vec![empty_hook_handler_draft()]
+    } else {
+        handlers.to_vec()
+    };
+    serde_json::to_string(&handlers).expect("Hook handler drafts are serializable")
+}
+
+fn parse_hook_handlers_draft(draft: &str) -> Result<Vec<DesktopHookHandlerUpdate>, String> {
+    serde_json::from_str(draft).map_err(|error| format!("Handlers 格式无效：{error}"))
+}
+
+fn edit_hook_handler_draft(
+    draft: &str,
+    index: usize,
+    field: HookHandlerDraftField,
+    value: String,
+) -> Result<String, String> {
+    let mut handlers = parse_hook_handlers_draft(draft)?;
+    let handler = handlers
+        .get_mut(index)
+        .ok_or_else(|| "要编辑的 Handler 已不存在，请刷新后重试。".to_owned())?;
+    match field {
+        HookHandlerDraftField::Event => handler.event = value,
+        HookHandlerDraftField::Matcher => handler.matcher = optional_hook_text(value),
+        HookHandlerDraftField::Type => handler.handler_type = value,
+        HookHandlerDraftField::TimeoutSeconds => {
+            let value = value.trim();
+            handler.timeout_seconds = if value.is_empty() {
+                None
+            } else {
+                let timeout = value
+                    .parse::<u64>()
+                    .map_err(|_| "Timeout 必须是 1 到 300 秒之间的整数。".to_owned())?;
+                if !(1..=300).contains(&timeout) {
+                    return Err("Timeout 必须是 1 到 300 秒之间的整数。".to_owned());
+                }
+                Some(timeout)
+            };
+        }
+        HookHandlerDraftField::Command => handler.command = optional_hook_text(value),
+        HookHandlerDraftField::CommandWindows => {
+            handler.command_windows = optional_hook_text(value);
+        }
+        HookHandlerDraftField::StatusMessage => {
+            handler.status_message = optional_hook_text(value);
+        }
+    }
+    Ok(hook_handlers_draft(&handlers))
+}
+
+fn add_hook_handler_to_draft(draft: &str) -> Result<String, String> {
+    let mut handlers = parse_hook_handlers_draft(draft)?;
+    handlers.push(empty_hook_handler_draft());
+    Ok(hook_handlers_draft(&handlers))
+}
+
+fn remove_hook_handler_from_draft(draft: &str, index: usize) -> Result<String, String> {
+    let mut handlers = parse_hook_handlers_draft(draft)?;
+    if index >= handlers.len() {
+        return Err("要删除的 Handler 已不存在，请刷新后重试。".to_owned());
+    }
+    handlers.remove(index);
+    Ok(hook_handlers_draft(&handlers))
+}
+
+fn validated_hook_handlers(draft: &str) -> Result<Vec<DesktopHookHandlerUpdate>, String> {
+    parse_hook_handlers_draft(draft)?
+        .into_iter()
+        .map(|mut handler| {
+            handler.event = handler.event.trim().to_owned();
+            if handler.event.is_empty() {
+                return Err("每条 Hook 都需要事件。".to_owned());
+            }
+            handler.handler_type = handler.handler_type.trim().to_owned();
+            if handler.handler_type.is_empty() {
+                return Err("每条 Hook 都需要类型。".to_owned());
+            }
+            if handler
+                .timeout_seconds
+                .is_some_and(|timeout| !(1..=300).contains(&timeout))
+            {
+                return Err("Timeout 必须是 1 到 300 秒之间的整数。".to_owned());
+            }
+            handler.matcher = handler.matcher.and_then(optional_hook_text);
+            handler.command = handler.command.and_then(optional_hook_text);
+            handler.command_windows = handler.command_windows.and_then(optional_hook_text);
+            handler.status_message = handler.status_message.and_then(optional_hook_text);
+            Ok(handler)
+        })
+        .collect()
+}
+
+fn optional_hook_text(value: String) -> Option<String> {
+    let value = value.trim().to_owned();
+    (!value.is_empty()).then_some(value)
+}
+
+fn hook_handler_editor(
+    source_id: String,
+    index: usize,
+    handler: &DesktopHookHandlerUpdate,
+    disabled: bool,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    let remove_source = source_id.clone();
+    let remove = button(text("删除 Handler").size(10))
+        .on_press_maybe((!disabled).then(move || Message::RemoveHookHandler {
+            source_id: remove_source,
+            index,
+        }))
+        .style(button_style(tokens, ButtonKind::Danger));
+    let content = column![
+        row![
+            text(format!("Handler {}", index + 1))
+                .size(11)
+                .width(Length::Fill)
+                .color(tokens.colors.text),
+            remove,
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+        row![
+            hook_handler_input(
+                "事件",
+                handler.event.clone(),
+                source_id.clone(),
+                index,
+                HookHandlerDraftField::Event,
+                disabled,
+                tokens,
+            ),
+            hook_handler_input(
+                "匹配器（可选）",
+                handler.matcher.clone().unwrap_or_default(),
+                source_id.clone(),
+                index,
+                HookHandlerDraftField::Matcher,
+                disabled,
+                tokens,
+            ),
+        ]
+        .spacing(6),
+        row![
+            hook_handler_input(
+                "类型",
+                handler.handler_type.clone(),
+                source_id.clone(),
+                index,
+                HookHandlerDraftField::Type,
+                disabled,
+                tokens,
+            ),
+            hook_handler_input(
+                "超时（秒）",
+                handler
+                    .timeout_seconds
+                    .map(|timeout| timeout.to_string())
+                    .unwrap_or_default(),
+                source_id.clone(),
+                index,
+                HookHandlerDraftField::TimeoutSeconds,
+                disabled,
+                tokens,
+            ),
+        ]
+        .spacing(6),
+        hook_handler_input(
+            "命令",
+            handler.command.clone().unwrap_or_default(),
+            source_id.clone(),
+            index,
+            HookHandlerDraftField::Command,
+            disabled,
+            tokens,
+        ),
+        hook_handler_input(
+            "Windows 命令（可选）",
+            handler.command_windows.clone().unwrap_or_default(),
+            source_id.clone(),
+            index,
+            HookHandlerDraftField::CommandWindows,
+            disabled,
+            tokens,
+        ),
+        hook_handler_input(
+            "运行状态文案（可选）",
+            handler.status_message.clone().unwrap_or_default(),
+            source_id,
+            index,
+            HookHandlerDraftField::StatusMessage,
+            disabled,
+            tokens,
+        ),
+    ]
+    .spacing(6);
+    Card::new(content).view(tokens)
+}
+
+fn hook_handler_input(
+    label: &'static str,
+    value: String,
+    source_id: String,
+    index: usize,
+    field: HookHandlerDraftField,
+    disabled: bool,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    column![
+        text(label).size(9).color(tokens.colors.faint),
+        Input::new(label, value)
+            .on_input(move |value| Message::HookHandlerDraftChanged {
+                source_id: source_id.clone(),
+                index,
+                field,
+                value,
+            })
+            .disabled(disabled)
+            .view(tokens),
+    ]
+    .spacing(2)
+    .width(Length::Fill)
+    .into()
 }
 
 fn mcp_transport_label(transport: DesktopMcpTransport) -> &'static str {
@@ -26488,6 +38294,18 @@ fn format_token_count(value: i64) -> String {
     }
 }
 
+fn dashboard_metric(label: &'static str, value: i64, colors: Colors) -> Element<'static, Message> {
+    column![
+        text(value)
+            .size(14)
+            .font(ui_font(font::Weight::Semibold))
+            .color(colors.text),
+        text(label).size(10).color(colors.muted),
+    ]
+    .spacing(1)
+    .into()
+}
+
 fn status_label(status: ProductTaskStatus) -> &'static str {
     match status {
         ProductTaskStatus::Draft => "草稿",
@@ -26496,6 +38314,28 @@ fn status_label(status: ProductTaskStatus) -> &'static str {
         ProductTaskStatus::Blocked => "已阻塞",
         ProductTaskStatus::Done => "已完成",
         ProductTaskStatus::Cancelled => "已取消",
+    }
+}
+
+fn worktree_selection_mode_label(mode: DesktopWorktreeSelectionMode) -> &'static str {
+    match mode {
+        DesktopWorktreeSelectionMode::Current => "当前仓库",
+        DesktopWorktreeSelectionMode::Create => "新建工作树",
+        DesktopWorktreeSelectionMode::Existing => "已有工作树",
+    }
+}
+
+fn draft_worktree_label(selection: &DraftWorktreeSelection) -> String {
+    match selection {
+        DraftWorktreeSelection::Current => "当前仓库".to_owned(),
+        DraftWorktreeSelection::Create => "新建工作树".to_owned(),
+        DraftWorktreeSelection::Existing(None) => "已有工作树 · 未选择".to_owned(),
+        DraftWorktreeSelection::Existing(Some(path)) => format!(
+            "已有工作树 · {}",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("已选择")
+        ),
     }
 }
 
@@ -26607,11 +38447,34 @@ fn product_task_is_descendant_of(
     false
 }
 
-fn task_matches_search(task: &DesktopWorkspaceTask, search: &str) -> bool {
-    let query = search.trim().to_ascii_lowercase();
-    query.is_empty()
-        || task.title.to_ascii_lowercase().contains(&query)
-        || task.id.as_str().to_ascii_lowercase().contains(&query)
+fn session_search_hit_ids(application: &DesktopApplication, search: &str) -> BTreeSet<TaskId> {
+    let query = search.trim();
+    if query.is_empty() {
+        return BTreeSet::new();
+    }
+    application
+        .search_sessions(query, 100)
+        .ok()
+        .map(|results| results.into_iter().map(|result| result.task_id).collect())
+        .unwrap_or_default()
+}
+
+fn task_matches_search(
+    task: &DesktopWorkspaceTask,
+    search: &str,
+    session_hits: &BTreeSet<TaskId>,
+) -> bool {
+    let query = search.trim();
+    if query.is_empty() {
+        return true;
+    }
+    let lower = query.to_ascii_lowercase();
+    if task.title.to_ascii_lowercase().contains(&lower)
+        || task.id.as_str().to_ascii_lowercase().contains(&lower)
+    {
+        return true;
+    }
+    session_hits.contains(&task.id)
 }
 
 fn next_task_status(status: ProductTaskStatus) -> ProductTaskStatus {
@@ -26644,28 +38507,97 @@ fn next_task_product_priority(priority: ProductTaskPriority) -> ProductTaskPrior
 }
 
 #[cfg(any(debug_assertions, test))]
+fn ask_user_debug_targets(
+    pending: &PendingActionView,
+    draft: Option<&AskUserDraft>,
+) -> Vec<String> {
+    let Some(spec) = AskUserSpec::from_payload(&pending.payload) else {
+        return Vec::new();
+    };
+    let draft = draft.cloned().unwrap_or_default();
+    let Some(question) = draft.question(&spec) else {
+        return Vec::new();
+    };
+    let mut targets = (0..question.options.len())
+        .map(|index| target_ids::interaction_option(&pending.request_id, index))
+        .collect::<Vec<_>>();
+    if question.allow_other {
+        targets.push(target_ids::interaction_option(
+            &pending.request_id,
+            question.options.len(),
+        ));
+        if draft.other_selected() {
+            targets.push(target_ids::interaction_input(&pending.request_id));
+        }
+    }
+    if draft.can_submit(&spec) {
+        targets.push(target_ids::interaction_submit(&pending.request_id));
+    }
+    if question.mode == AskUserMode::Confirm {
+        targets.push(target_ids::interaction_reject(&pending.request_id));
+    }
+    if draft.question_index() > 0 {
+        targets.push(target_ids::interaction_back(&pending.request_id));
+    }
+    if spec.questions.len() > 1 && question.skippable != Some(false) {
+        targets.push(target_ids::interaction_skip(&pending.request_id));
+    }
+    if spec.is_dismissable() {
+        targets.push(target_ids::interaction_cancel(&pending.request_id));
+    }
+    targets
+}
+
+#[cfg(any(debug_assertions, test))]
+fn ask_user_debug_action(
+    pending: &PendingActionView,
+    draft: Option<&AskUserDraft>,
+    target_id: &str,
+) -> Option<AskUserAction> {
+    let spec = AskUserSpec::from_payload(&pending.payload)?;
+    let draft = draft.cloned().unwrap_or_default();
+    let question = draft.question(&spec)?;
+    if target_ids::interaction_submit(&pending.request_id) == target_id && draft.can_submit(&spec) {
+        return Some(AskUserAction::Submit);
+    }
+    if target_ids::interaction_cancel(&pending.request_id) == target_id && spec.is_dismissable() {
+        return Some(AskUserAction::Cancel);
+    }
+    if target_ids::interaction_reject(&pending.request_id) == target_id
+        && question.mode == AskUserMode::Confirm
+    {
+        return Some(AskUserAction::Reject);
+    }
+    if target_ids::interaction_back(&pending.request_id) == target_id && draft.question_index() > 0
+    {
+        return Some(AskUserAction::Back);
+    }
+    if target_ids::interaction_skip(&pending.request_id) == target_id
+        && spec.questions.len() > 1
+        && question.skippable != Some(false)
+    {
+        return Some(AskUserAction::Skip);
+    }
+    question
+        .options
+        .iter()
+        .enumerate()
+        .map(|(index, option)| (index, option.id(index)))
+        .chain(
+            question
+                .allow_other
+                .then(|| (question.options.len(), "other".to_owned())),
+        )
+        .find(|(index, _)| target_ids::interaction_option(&pending.request_id, *index) == target_id)
+        .map(|(_, option_id)| AskUserAction::Select(option_id))
+}
+
+#[cfg(any(debug_assertions, test))]
 fn pending_debug_response(
     pending: &PendingActionView,
     target_id: &str,
     draft: &str,
 ) -> Option<(bool, Value)> {
-    if pending.kind == "ask_user" {
-        if target_ids::interaction_submit(&pending.request_id) == target_id
-            && !draft.trim().is_empty()
-        {
-            return Some((true, json!({ "answer": draft })));
-        }
-        if target_ids::interaction_cancel(&pending.request_id) == target_id {
-            return Some((false, json!({ "cancelled": true })));
-        }
-        return interaction_choices(pending)
-            .into_iter()
-            .enumerate()
-            .find(|(index, _)| {
-                target_ids::interaction_option(&pending.request_id, *index) == target_id
-            })
-            .map(|(_, choice)| (true, json!({ "answer": choice.value })));
-    }
     if target_ids::plan_approve(&pending.request_id) == target_id {
         return Some((true, json!({ "action": "approve" })));
     }
@@ -26703,6 +38635,215 @@ fn pending_architecture_debug_decision(
 #[cfg(any(debug_assertions, test))]
 fn pending_debug_cancels_turn(pending: &PendingActionView, target_id: &str) -> bool {
     pending.kind == "plan_approval" && target_ids::plan_cancel(&pending.request_id) == target_id
+}
+
+fn ask_user_action_view(
+    pending: &PendingActionView,
+    draft: Option<&AskUserDraft>,
+    window_id: HostedWindowId,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    let colors = tokens.colors;
+    let Some(spec) = AskUserSpec::from_payload(&pending.payload) else {
+        return text("提问内容暂时无法读取。")
+            .size(11)
+            .color(colors.danger)
+            .into();
+    };
+    let draft = draft.cloned().unwrap_or_default();
+    let Some(question) = draft.question(&spec).cloned() else {
+        return text("提问内容暂时无法读取。")
+            .size(11)
+            .color(colors.danger)
+            .into();
+    };
+    let request_id = pending.request_id.clone();
+    let mut header = row![text(spec.title())
+        .size(12)
+        .font(ui_font(font::Weight::Semibold))
+        .color(colors.text)]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    if let Some(source) = spec
+        .source
+        .clone()
+        .filter(|source| !source.trim().is_empty())
+    {
+        header = header.push(text(source).size(10).color(colors.muted));
+    }
+    if spec.questions.len() > 1 {
+        header = header.push(
+            text(format!(
+                "{} / {}",
+                draft.question_index() + 1,
+                spec.questions.len()
+            ))
+            .size(10)
+            .color(colors.muted),
+        );
+    }
+    let mut content = column![header].spacing(7);
+    let mut prompt = row![].spacing(6).align_y(Alignment::Center);
+    if let Some(label) = question.header.filter(|label| !label.trim().is_empty()) {
+        prompt = prompt.push(text(label).size(10).color(colors.warning));
+    }
+    prompt = prompt.push(text(question.question).size(11).color(if question.danger {
+        colors.danger
+    } else {
+        colors.text
+    }));
+    content = content.push(prompt);
+
+    if question.mode != AskUserMode::Confirm {
+        let mut options = column![].spacing(5);
+        for (index, option) in question.options.iter().enumerate() {
+            let option_id = option.id(index);
+            let selected = draft.selected(&option_id);
+            let mut label = if selected {
+                format!("✓ {}", option.label)
+            } else {
+                option.label.clone()
+            };
+            if option.recommended {
+                label.push_str(" · 推荐");
+            }
+            let mut option_content = column![text(label).size(11)].spacing(2);
+            if let Some(description) = option
+                .description
+                .clone()
+                .filter(|description| !description.trim().is_empty())
+            {
+                option_content =
+                    option_content.push(text(description).size(10).color(colors.muted));
+            }
+            options = options.push(
+                button(option_content)
+                    .width(Length::Fill)
+                    .on_press(Message::AskUserDraftAction {
+                        window_id,
+                        request_id: request_id.clone(),
+                        action: AskUserAction::Select(option_id),
+                    })
+                    .style(button_style(
+                        tokens,
+                        if selected {
+                            ButtonKind::Primary
+                        } else if option.danger {
+                            ButtonKind::Danger
+                        } else {
+                            ButtonKind::Ghost
+                        },
+                    )),
+            );
+        }
+        if question.allow_other {
+            let selected = draft.other_selected();
+            options = options.push(
+                button(text(if selected { "✓ 其他" } else { "其他" }).size(11))
+                    .width(Length::Fill)
+                    .on_press(Message::AskUserDraftAction {
+                        window_id,
+                        request_id: request_id.clone(),
+                        action: AskUserAction::Select("other".to_owned()),
+                    })
+                    .style(button_style(
+                        tokens,
+                        if selected {
+                            ButtonKind::Primary
+                        } else {
+                            ButtonKind::Ghost
+                        },
+                    )),
+            );
+        }
+        content = content.push(options);
+        if let Some(preview) = draft.selected_preview(&spec) {
+            content = content.push(
+                container(text(preview.to_owned()).size(10).color(colors.muted))
+                    .width(Length::Fill)
+                    .padding(Padding::from([7, 8]))
+                    .style(canvas_style(tokens)),
+            );
+        }
+        if question.allow_other && draft.other_selected() {
+            let input_request_id = request_id.clone();
+            content = content.push(
+                Input::new("自定义回答", draft.freeform().to_owned())
+                    .on_input(move |value| Message::AskUserDraftAction {
+                        window_id,
+                        request_id: input_request_id.clone(),
+                        action: AskUserAction::SetFreeform(value),
+                    })
+                    .view(tokens),
+            );
+        }
+    }
+
+    let mut actions = row![].spacing(6).align_y(Alignment::Center);
+    if spec.questions.len() > 1 && question.skippable != Some(false) {
+        actions = actions.push(
+            button(text("跳过").size(11))
+                .on_press(Message::AskUserDraftAction {
+                    window_id,
+                    request_id: request_id.clone(),
+                    action: AskUserAction::Skip,
+                })
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        );
+    }
+    actions = actions.push(space().width(Length::Fill));
+    if draft.question_index() > 0 {
+        actions = actions.push(
+            button(text("上一题").size(11))
+                .on_press(Message::AskUserDraftAction {
+                    window_id,
+                    request_id: request_id.clone(),
+                    action: AskUserAction::Back,
+                })
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        );
+    }
+    if spec.is_dismissable() {
+        actions = actions.push(
+            button(text("关闭").size(11))
+                .on_press(Message::AskUserDraftAction {
+                    window_id,
+                    request_id: request_id.clone(),
+                    action: AskUserAction::Cancel,
+                })
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        );
+    }
+    if question.mode == AskUserMode::Confirm {
+        actions = actions.push(
+            button(text(question.cancel_label.unwrap_or_else(|| "不要".to_owned())).size(11))
+                .on_press(Message::AskUserDraftAction {
+                    window_id,
+                    request_id: request_id.clone(),
+                    action: AskUserAction::Reject,
+                })
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        );
+    }
+    let submit_label = if question.mode == AskUserMode::Confirm {
+        question.confirm_label.unwrap_or_else(|| "好的".to_owned())
+    } else if draft.question_index() + 1 == spec.questions.len() {
+        "完成".to_owned()
+    } else {
+        "继续".to_owned()
+    };
+    let submit =
+        button(text(submit_label).size(11)).style(button_style(tokens, ButtonKind::Primary));
+    actions = actions.push(if draft.can_submit(&spec) {
+        submit.on_press(Message::AskUserDraftAction {
+            window_id,
+            request_id,
+            action: AskUserAction::Submit,
+        })
+    } else {
+        submit
+    });
+    content.push(actions).into()
 }
 
 #[cfg(any(debug_assertions, test))]
@@ -26885,6 +39026,113 @@ fn pending_interaction_response_message(
             response,
         }
     }
+}
+
+fn tool_consent_draft(
+    pending: &PendingActionView,
+    stored: Option<&ToolConsentDraft>,
+) -> ToolConsentDraft {
+    let mut draft = ToolConsentDraft {
+        command: DesktopToolConsent::from_payload(&pending.payload)
+            .ok()
+            .and_then(|consent| consent.editable_command())
+            .unwrap_or_default(),
+        message: String::new(),
+    };
+    if let Some(stored) = stored {
+        draft = stored.clone();
+    }
+    draft
+}
+
+fn tool_consent_action_view(
+    pending: &PendingActionView,
+    stored: Option<&ToolConsentDraft>,
+    window_id: HostedWindowId,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    let colors = tokens.colors;
+    let request_id = pending.request_id.clone();
+    let Ok(consent) = DesktopToolConsent::from_payload(&pending.payload) else {
+        return text("无法读取工具授权请求，请刷新任务状态。")
+            .size(11)
+            .color(colors.danger)
+            .into();
+    };
+    let draft = tool_consent_draft(pending, stored);
+    let headline = consent
+        .display_name
+        .clone()
+        .or_else(|| consent.title.clone())
+        .unwrap_or_else(|| consent.tool_name.clone());
+    let mut content = column![row![
+        text(consent.tool_name.clone())
+            .size(11)
+            .font(ui_font(font::Weight::Semibold))
+            .color(colors.text),
+        text(headline).size(11).color(colors.muted),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)]
+    .spacing(6)
+    .width(Length::Fill);
+    if let Some(detail) = consent
+        .description
+        .clone()
+        .or(consent.reason.clone())
+        .or(consent.decision_reason.clone())
+    {
+        content = content.push(text(detail).size(10).color(colors.muted));
+    }
+    if let Some(path) = consent.blocked_path.clone().or(consent.cwd.clone()) {
+        content = content.push(text(path).size(10).color(colors.faint));
+    }
+    if consent.editable_command().is_some() {
+        let denial_message = draft.message.clone();
+        let input_request_id = request_id.clone();
+        content = content.push(
+            Input::new("确认执行的命令", draft.command.clone())
+                .on_input(move |command| Message::ToolConsentDraftChanged {
+                    window_id,
+                    request_id: input_request_id.clone(),
+                    command,
+                    message: denial_message.clone(),
+                })
+                .view(tokens),
+        );
+    } else if !consent.input.is_empty() {
+        let input = serde_json::to_string_pretty(&consent.input).unwrap_or_default();
+        content = content.push(text(input).size(10).color(colors.muted));
+    }
+    let command = draft.command.clone();
+    let message_request_id = request_id.clone();
+    content = content.push(
+        Input::new("拒绝理由", draft.message.clone())
+            .on_input(move |message| Message::ToolConsentDraftChanged {
+                window_id,
+                request_id: message_request_id.clone(),
+                command: command.clone(),
+                message,
+            })
+            .view(tokens),
+    );
+    let mut allow = button(text("允许").size(11)).style(button_style(tokens, ButtonKind::Primary));
+    if consent.editable_command().is_none() || !draft.command.trim().is_empty() {
+        allow = allow.on_press(Message::RespondToolConsent {
+            window_id,
+            request_id: request_id.clone(),
+            decision: DesktopToolConsentDecision::Allow,
+        });
+    }
+    let mut deny = button(text("拒绝").size(11)).style(button_style(tokens, ButtonKind::Ghost));
+    if !draft.message.trim().is_empty() {
+        deny = deny.on_press(Message::RespondToolConsent {
+            window_id,
+            request_id,
+            decision: DesktopToolConsentDecision::Deny,
+        });
+    }
+    content.push(row![allow, deny].spacing(6)).into()
 }
 
 fn mcp_elicitation_action_view(
@@ -27285,8 +39533,10 @@ fn pending_action_label(kind: &str) -> &'static str {
         "permission_approval" => "确认权限后继续",
         "ask_user" => "等待回答",
         "plan_approval" => "等待确认计划",
+        "tool_consent" => "等待工具授权",
         "mcp_elicitation" => "等待 MCP 输入",
         "architecture_change" => "等待确认架构变更",
+        TITLE_UPDATE_ACTION_KIND => "可选标题建议",
         _ => "等待处理",
     }
 }
@@ -27389,12 +39639,93 @@ fn permission_label(permission: DesktopExecutionPermission) -> &'static str {
     }
 }
 
+fn prompt_route_suggestion_view(
+    route: &DesktopPromptRoute,
+    applied: bool,
+    window_id: HostedWindowId,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    let colors = tokens.colors;
+    let workflow_label = route
+        .workflow
+        .as_ref()
+        .map(prompt_route_workflow_label)
+        .unwrap_or("工作流");
+    let apply = button(text(if applied { "已应用" } else { "应用" }).size(10))
+        .style(button_style(tokens, ButtonKind::Ghost));
+    let apply = if applied {
+        apply
+    } else {
+        apply.on_press(Message::ApplyPromptRouteWorkflow(window_id))
+    };
+    Card::new(
+        row![
+            text(format!("建议作为 {workflow_label} 发送"))
+                .size(10)
+                .width(Length::Fill)
+                .color(colors.muted),
+            apply,
+            button(text("忽略").size(10))
+                .on_press(Message::DismissPromptRouteWorkflow(window_id))
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .view(tokens)
+}
+
+fn applied_prompt_workflow_view(
+    workflow: &LiliaAgentWorkflow,
+    window_id: HostedWindowId,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    let colors = tokens.colors;
+    Card::new(
+        row![
+            text(format!(
+                "将作为 {} 发送",
+                prompt_route_workflow_label(workflow)
+            ))
+            .size(10)
+            .width(Length::Fill)
+            .color(colors.muted),
+            button(text("取消").size(10))
+                .on_press(Message::DismissPromptRouteWorkflow(window_id))
+                .style(button_style(tokens, ButtonKind::Ghost)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .view(tokens)
+}
+
+fn prompt_route_workflow_label(workflow: &LiliaAgentWorkflow) -> &'static str {
+    match workflow {
+        LiliaAgentWorkflow::LiliaTaskWorkflow { .. } => "任务工作流",
+        LiliaAgentWorkflow::LiliaReview { .. } => "代码审查",
+        LiliaAgentWorkflow::LiliaFixSuggestion { .. } => "修复建议",
+        LiliaAgentWorkflow::LiliaBatchApply { .. } => "批量应用",
+        LiliaAgentWorkflow::LiliaCompact => "压缩上下文",
+        LiliaAgentWorkflow::LiliaConfigDiagnostics { .. } => "配置诊断",
+        LiliaAgentWorkflow::LiliaGoal { .. } => "长期目标",
+        _ => "工作流",
+    }
+}
+
 fn composer_slash_query(content: &str) -> Option<String> {
     let token = content.trim_start().strip_prefix('/')?;
     if token.chars().any(char::is_whitespace) {
         return None;
     }
     Some(token.to_ascii_lowercase())
+}
+
+fn composer_has_turn_payload(composer: &DesktopComposerState) -> bool {
+    !composer.content.trim().is_empty()
+        || !composer.attachments.is_empty()
+        || !composer.conversation_references.is_empty()
+        || composer.workflow.is_some()
 }
 
 fn composer_conversation_query(content: &str) -> Option<String> {
@@ -27450,6 +39781,114 @@ fn slash_command_source_label(source: DesktopSlashCommandSource) -> &'static str
         DesktopSlashCommandSource::Native => "内置",
         DesktopSlashCommandSource::Project => "项目",
     }
+}
+
+fn review_slash_workflow_view(
+    pending: &PendingReviewSlashWorkflow,
+    window_id: HostedWindowId,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    let colors = tokens.colors;
+    let title = match pending.workflow_kind {
+        PendingReviewWorkflowKind::Review => "选择代码审查范围",
+        PendingReviewWorkflowKind::FixSuggestion => "选择修复建议范围",
+    };
+    let mut targets = row![].spacing(6);
+    for (kind, label) in [
+        (PendingReviewTargetKind::UncommittedChanges, "未提交改动"),
+        (PendingReviewTargetKind::BaseBranch, "对比分支"),
+        (PendingReviewTargetKind::Commit, "指定提交"),
+    ] {
+        targets = targets.push(
+            button(text(label).size(10))
+                .on_press(Message::SelectReviewWorkflowTarget { window_id, kind })
+                .style(button_style(
+                    tokens,
+                    if pending.target_kind == kind {
+                        ButtonKind::Selected
+                    } else {
+                        ButtonKind::Ghost
+                    },
+                )),
+        );
+    }
+    let mut form = column![
+        text(title).size(11).color(colors.text),
+        text("审查与修复建议只读取所选范围；应用修改仍由后续明确操作决定。")
+            .size(10)
+            .color(colors.muted),
+        targets,
+    ]
+    .spacing(7)
+    .width(Length::Fill);
+    if pending.target_kind != PendingReviewTargetKind::UncommittedChanges {
+        let placeholder = match pending.target_kind {
+            PendingReviewTargetKind::BaseBranch => "例如 main",
+            PendingReviewTargetKind::Commit => "提交 SHA",
+            PendingReviewTargetKind::UncommittedChanges => "",
+        };
+        form = form.push(
+            Input::new(placeholder, pending.target_value.clone())
+                .on_input(move |value| Message::ReviewWorkflowTargetChanged { window_id, value })
+                .view(tokens),
+        );
+    }
+    let can_submit = pending.target_kind == PendingReviewTargetKind::UncommittedChanges
+        || !pending.target_value.trim().is_empty();
+    let mut submit = button(text("开始").size(10)).style(button_style(
+        tokens,
+        if can_submit {
+            ButtonKind::Primary
+        } else {
+            ButtonKind::Ghost
+        },
+    ));
+    if can_submit {
+        submit = submit.on_press(Message::SubmitReviewWorkflow(window_id));
+    }
+    form = form.push(
+        row![
+            submit,
+            button(text("取消").size(10))
+                .on_press(Message::CancelReviewWorkflow(window_id))
+                .style(button_style(tokens, ButtonKind::Text)),
+        ]
+        .spacing(6),
+    );
+    Card::new(form).view(tokens)
+}
+
+fn pending_review_target_id(kind: PendingReviewTargetKind) -> &'static str {
+    match kind {
+        PendingReviewTargetKind::UncommittedChanges => "uncommitted",
+        PendingReviewTargetKind::BaseBranch => "branch",
+        PendingReviewTargetKind::Commit => "commit",
+    }
+}
+
+#[cfg(debug_assertions)]
+fn review_workflow_target_ids(
+    window_id: HostedWindowId,
+    pending: &PendingReviewSlashWorkflow,
+) -> Vec<String> {
+    let mut targets = [
+        PendingReviewTargetKind::UncommittedChanges,
+        PendingReviewTargetKind::BaseBranch,
+        PendingReviewTargetKind::Commit,
+    ]
+    .into_iter()
+    .map(|kind| target_ids::review_workflow_target(window_id.0, pending_review_target_id(kind)))
+    .collect::<Vec<_>>();
+    targets.push(target_ids::review_workflow_cancel(window_id.0));
+    if pending.target_kind != PendingReviewTargetKind::UncommittedChanges {
+        targets.push(target_ids::review_workflow_target_input(window_id.0));
+    }
+    if pending.target_kind == PendingReviewTargetKind::UncommittedChanges
+        || !pending.target_value.trim().is_empty()
+    {
+        targets.push(target_ids::review_workflow_submit(window_id.0));
+    }
+    targets
 }
 
 fn next_todo_priority(priority: DesktopTodoPriority) -> DesktopTodoPriority {
@@ -27783,6 +40222,20 @@ fn update_operation_error_message(error: &DesktopApplicationError) -> String {
     }
 }
 
+fn update_download_percent(progress: Option<f32>) -> Option<u8> {
+    progress
+        .filter(|progress| progress.is_finite())
+        .map(|progress| (progress.clamp(0.0, 1.0) * 100.0).round() as u8)
+}
+
+fn remove_abandoned_iab_snapshot(path: &std::path::Path) {
+    if let Err(error) = std::fs::remove_file(path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            eprintln!("failed to remove abandoned Native IAB snapshot: {error}");
+        }
+    }
+}
+
 #[cfg(debug_assertions)]
 fn update_state_key(state: &DesktopUpdateState) -> &'static str {
     match state {
@@ -27899,7 +40352,14 @@ fn restored_turn_state(
         "waiting_interaction" => {
             let interaction = pending.iter().rev().find(|pending| {
                 pending.status == PendingProjectionStatus::Open
-                    && matches!(pending.kind.as_str(), "ask_user" | "plan_approval")
+                    && matches!(
+                        pending.kind.as_str(),
+                        "ask_user"
+                            | "plan_approval"
+                            | "tool_consent"
+                            | "mcp_elicitation"
+                            | "architecture_change"
+                    )
             });
             DesktopTurnState::WaitingInteraction {
                 request_id: interaction.map(|pending| pending.request_id.clone()),
@@ -27975,6 +40435,61 @@ fn turn_state_label(state: &DesktopTurnState) -> String {
         DesktopTurnState::Cancelled => "已停止".to_owned(),
         DesktopTurnState::Failed { message } => format!("运行失败：{message}"),
     }
+}
+
+fn session_branch_mode_label(mode: DesktopSessionBranchMode) -> &'static str {
+    match mode {
+        DesktopSessionBranchMode::Continue => "从这里继续",
+        DesktopSessionBranchMode::Fork => "从这里分叉",
+    }
+}
+
+fn quote_timeline_text(text: &str) -> String {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = normalized.trim();
+    if normalized.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{}\n\n",
+        normalized
+            .lines()
+            .map(|line| format!("> {line}"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    )
+}
+
+fn popup_question_text(text: &str) -> String {
+    format!(
+        "请基于这段 Agent 回复继续提问：\n\n{}",
+        quote_timeline_text(text)
+    )
+}
+
+fn composer_draft_title(composer: &DesktopComposerState) -> String {
+    let normalized = composer
+        .content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let source = if normalized.is_empty() {
+        composer
+            .attachments
+            .first()
+            .map(|attachment| attachment.name.trim())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("附件")
+            .to_owned()
+    } else {
+        normalized
+    };
+    let mut characters = source.chars();
+    let mut title = characters.by_ref().take(30).collect::<String>();
+    if characters.next().is_some() {
+        title.push('…');
+    }
+    title
 }
 
 fn turn_state_color(state: &DesktopTurnState, colors: Colors) -> iced::Color {
@@ -28559,6 +41074,36 @@ fn architecture_status_label(status: ArchitectureChangeStatus) -> &'static str {
     }
 }
 
+fn project_task_error_message(error: &DesktopApplicationError) -> String {
+    match error {
+        DesktopApplicationError::ProjectTask(DesktopProjectTaskError::AlreadyRunning {
+            ..
+        }) => "该项目任务已在运行。".to_owned(),
+        DesktopApplicationError::ProjectTask(DesktopProjectTaskError::TaskNotFound { .. }) => {
+            "项目任务已发生变化，请刷新后重试。".to_owned()
+        }
+        DesktopApplicationError::ProjectTask(
+            DesktopProjectTaskError::InvalidTaskId(_)
+            | DesktopProjectTaskError::DuplicateTaskId(_)
+            | DesktopProjectTaskError::InvalidField { .. }
+            | DesktopProjectTaskError::InvalidEnvironmentKey(_)
+            | DesktopProjectTaskError::UnsupportedVersion(_)
+            | DesktopProjectTaskError::TooManyTasks(_)
+            | DesktopProjectTaskError::TooManyArguments { .. }
+            | DesktopProjectTaskError::TooManyEnvironmentEntries { .. }
+            | DesktopProjectTaskError::ConfigTooLarge(_)
+            | DesktopProjectTaskError::InvalidConfig { .. },
+        ) => "项目任务配置无效，请检查 .lilia/tasks.json。".to_owned(),
+        DesktopApplicationError::ProjectTask(DesktopProjectTaskError::ConfigEscapesWorkspace(
+            _,
+        )) => "项目任务配置必须位于当前工作区。".to_owned(),
+        DesktopApplicationError::ProjectTask(DesktopProjectTaskError::ArchivedProject(_)) => {
+            "归档项目不能运行任务。".to_owned()
+        }
+        _ => "暂时无法读取或运行项目任务。".to_owned(),
+    }
+}
+
 fn git_file_status_label(status: DesktopGitFileStatus) -> &'static str {
     match status {
         DesktopGitFileStatus::Untracked => "未跟踪",
@@ -28633,10 +41178,28 @@ fn collect_workspace_split_specs(
     }
 }
 
-fn split_ratio_portions(ratio: f32) -> (u16, u16) {
-    let ratio = if ratio.is_finite() { ratio } else { 0.5 };
-    let first = (ratio.clamp(0.001, 0.999) * 1_000.0).round() as u16;
-    (first, 1_000 - first)
+fn nana_pane_tree_node(node: &PaneNode) -> PaneTreeNode<PaneId, WorkspaceSplitKey> {
+    match node {
+        PaneNode::Leaf { id, .. } => PaneTreeNode::leaf(id.clone()),
+        PaneNode::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } => PaneTreeNode::split(
+            WorkspaceSplitKey {
+                first_pane_id: first_workspace_pane_id(first).clone(),
+                second_pane_id: first_workspace_pane_id(second).clone(),
+            },
+            match axis {
+                SplitAxis::Horizontal => NanaSplitAxis::Horizontal,
+                SplitAxis::Vertical => NanaSplitAxis::Vertical,
+            },
+            *ratio,
+            nana_pane_tree_node(first),
+            nana_pane_tree_node(second),
+        ),
+    }
 }
 
 fn reordered_before<T>(values: &[T], source: &T, before: Option<&T>) -> Option<Vec<T>>
@@ -28663,6 +41226,42 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_registry_scopes_document_actions_and_dispatches_the_keymap() {
+        let registry = native_action_registry().unwrap();
+        let keymap = native_command_keymap();
+        let document_context =
+            KeyContext::new(["workspace", "primary_window", "project", "document"]);
+        let workspace_context = KeyContext::new(["workspace", "primary_window", "project"]);
+        let save = ActionId::new(SAVE_DOCUMENT_ACTION);
+
+        assert_eq!(
+            registry.search("保存", &document_context)[0].action.id,
+            save
+        );
+        assert!(!registry.is_available(&save, &workspace_context));
+
+        let mut state = KeymapState::default();
+        assert_eq!(
+            keymap.resolve(
+                &mut state,
+                KeyStroke::new("s", KeyModifiers::primary()),
+                &document_context,
+                &registry,
+            ),
+            KeymapMatch::Dispatch(save)
+        );
+        assert_eq!(
+            keymap.resolve(
+                &mut state,
+                KeyStroke::new("s", KeyModifiers::primary()),
+                &workspace_context,
+                &registry,
+            ),
+            KeymapMatch::NoMatch
+        );
+    }
 
     #[test]
     fn startup_restores_registered_mcp_after_the_first_frame() {
@@ -28785,10 +41384,25 @@ mod tests {
     }
 
     #[test]
-    fn split_ratio_portions_preserve_the_persisted_layout_ratio() {
-        assert_eq!(split_ratio_portions(0.5), (500, 500));
-        assert_eq!(split_ratio_portions(0.25), (250, 750));
-        assert_eq!(split_ratio_portions(f32::NAN), (500, 500));
+    fn nana_pane_tree_preserves_workspace_identity_axis_and_ratio() {
+        let mut layout = PanelLayoutSnapshot::default();
+        let primary = PaneId::new("primary").unwrap();
+        let secondary = PaneId::new("secondary").unwrap();
+        layout
+            .split_pane(&primary, secondary.clone(), SplitAxis::Vertical, 0.25)
+            .unwrap();
+
+        let tree = nana_pane_tree_node(&layout.panes);
+        let mut panes = Vec::new();
+        tree.visit_leaves(|pane_id| panes.push(pane_id.clone()));
+        assert_eq!(panes, vec![primary.clone(), secondary.clone()]);
+        let mut splits = Vec::new();
+        tree.visit_splits(|key, axis, ratio| splits.push((key.clone(), axis, ratio)));
+        assert_eq!(splits.len(), 1);
+        assert_eq!(splits[0].0.first_pane_id, primary);
+        assert_eq!(splits[0].0.second_pane_id, secondary);
+        assert_eq!(splits[0].1, NanaSplitAxis::Vertical);
+        assert_eq!(splits[0].2, 0.25);
     }
 
     #[test]
@@ -28858,6 +41472,16 @@ mod tests {
     fn byte_size_uses_binary_units() {
         assert_eq!(format_byte_size(1_536), "1.5 KiB");
         assert_eq!(format_byte_size(3 * 1024 * 1024), "3.0 MiB");
+    }
+
+    #[test]
+    fn selected_reply_actions_preserve_multiline_quote_and_popup_prompt_contract() {
+        assert_eq!(quote_timeline_text(" A\r\nB "), "> A\n> B\n\n");
+        assert_eq!(
+            popup_question_text("A\nB"),
+            "请基于这段 Agent 回复继续提问：\n\n> A\n> B\n\n"
+        );
+        assert!(quote_timeline_text(" \n ").is_empty());
     }
 
     #[test]
@@ -29207,6 +41831,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn native_tool_consent_draft_starts_from_the_real_command_and_keeps_edits() {
+        let pending = PendingActionView {
+            request_id: "request-tool".to_owned(),
+            kind: "tool_consent".to_owned(),
+            prompt: "运行命令？".to_owned(),
+            status: PendingProjectionStatus::Open,
+            payload: json!({
+                "toolName": "shell",
+                "input": {"parsedCmd": ["cargo", "test", "--locked"]}
+            }),
+        };
+
+        let initial = tool_consent_draft(&pending, None);
+        assert_eq!(initial.command, "cargo test --locked");
+        assert!(initial.message.is_empty());
+
+        let edited = ToolConsentDraft {
+            command: "cargo test -p lilia-native-preview --locked".to_owned(),
+            message: "不要运行整个工作区".to_owned(),
+        };
+        assert_eq!(tool_consent_draft(&pending, Some(&edited)), edited);
+
+        let runtime = DesktopTaskRuntimeSnapshot {
+            phase: "waiting_interaction".to_owned(),
+            turn_id: Some("turn-tool".to_owned()),
+            session_id: Some("session-tool".to_owned()),
+            queued_turns: 0,
+            queued_turn_ids: Vec::new(),
+        };
+        assert_eq!(
+            restored_turn_state(&runtime, &[pending]),
+            Some((
+                "turn-tool".to_owned(),
+                DesktopTurnState::WaitingInteraction {
+                    request_id: Some("request-tool".to_owned()),
+                    kind: Some("tool_consent".to_owned()),
+                    error: None,
+                },
+            ))
+        );
+    }
+
     #[cfg(debug_assertions)]
     #[test]
     fn debug_turn_state_prefers_the_active_runtime_over_a_later_queued_event() {
@@ -29441,5 +42108,60 @@ mod tests {
             context_usage_label(&exact),
             "上下文：4096 / 8192 tokens（50%）"
         );
+    }
+
+    #[test]
+    fn hook_handler_editor_adds_edits_and_removes_typed_handlers() {
+        let existing = DesktopHookHandlerUpdate {
+            id: Some("handler-existing".to_owned()),
+            event: "Stop".to_owned(),
+            matcher: None,
+            handler_type: "command".to_owned(),
+            command: Some("echo stop".to_owned()),
+            command_windows: None,
+            timeout_seconds: Some(30),
+            status_message: None,
+        };
+        let draft = add_hook_handler_to_draft(&hook_handlers_draft(&[existing])).unwrap();
+        let draft = edit_hook_handler_draft(
+            &draft,
+            1,
+            HookHandlerDraftField::Event,
+            "UserPromptSubmit".to_owned(),
+        )
+        .unwrap();
+        let draft = edit_hook_handler_draft(
+            &draft,
+            1,
+            HookHandlerDraftField::CommandWindows,
+            "powershell -File hook.ps1".to_owned(),
+        )
+        .unwrap();
+        let draft = edit_hook_handler_draft(
+            &draft,
+            1,
+            HookHandlerDraftField::TimeoutSeconds,
+            "45".to_owned(),
+        )
+        .unwrap();
+        let draft = remove_hook_handler_from_draft(&draft, 0).unwrap();
+        let handlers = validated_hook_handlers(&draft).unwrap();
+
+        assert_eq!(handlers.len(), 1);
+        assert_eq!(handlers[0].id, None);
+        assert_eq!(handlers[0].event, "UserPromptSubmit");
+        assert_eq!(handlers[0].handler_type, "command");
+        assert_eq!(handlers[0].timeout_seconds, Some(45));
+        assert_eq!(
+            handlers[0].command_windows.as_deref(),
+            Some("powershell -File hook.ps1")
+        );
+        assert!(edit_hook_handler_draft(
+            &draft,
+            0,
+            HookHandlerDraftField::TimeoutSeconds,
+            "301".to_owned(),
+        )
+        .is_err());
     }
 }

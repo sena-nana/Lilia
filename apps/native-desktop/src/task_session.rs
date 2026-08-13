@@ -3,8 +3,9 @@ use lilia_contracts::{
     TimelineProjectionPage,
 };
 use lilia_desktop_application::{
-    ChatAttachment, ChatContextUsage, DesktopGoalSnapshot, DesktopTaskSessionSnapshot,
-    DesktopTaskTodo, DesktopTaskWorktree,
+    timeline_retry_context, ChatAttachment, ChatContextUsage, DesktopGoalSnapshot,
+    DesktopTaskRunBlock, DesktopTaskSessionSnapshot, DesktopTaskTodo, DesktopTaskWorktree,
+    TITLE_UPDATE_ACTION_KIND,
 };
 use nana_ui::{MarkdownBlock, NativeMarkdown, VirtualListLayout};
 use serde_json::Value;
@@ -22,6 +23,17 @@ pub(crate) struct TaskTimelineItem {
     pub(crate) markdown_table_count: usize,
     pub(crate) attachments: Vec<ChatAttachment>,
     pub(crate) status: String,
+    pub(crate) batch_apply: Option<TaskTimelineBatchApply>,
+    pub(crate) session_branch_turn_id: Option<String>,
+    pub(crate) selectable_reply: bool,
+    pub(crate) can_retry: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TaskTimelineBatchApply {
+    pub(crate) source_turn_id: String,
+    pub(crate) source_kind: String,
+    pub(crate) source_summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +48,7 @@ pub(crate) struct TaskArtifactView {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TaskSessionView {
     pub(crate) task_title: String,
+    pub(crate) run_block: Option<DesktopTaskRunBlock>,
     pub(crate) goal: Option<DesktopGoalSnapshot>,
     pub(crate) context_usage: Option<ChatContextUsage>,
     pub(crate) timeline: Vec<TaskTimelineItem>,
@@ -49,6 +62,7 @@ pub(crate) struct TaskSessionView {
     pub(crate) worktree: Option<DesktopTaskWorktree>,
     pub(crate) pending_count: usize,
     pub(crate) open_pending_count: usize,
+    pub(crate) blocking_pending_count: usize,
     pub(crate) pending: Vec<PendingActionView>,
 }
 
@@ -62,6 +76,44 @@ pub(crate) struct PendingActionView {
 }
 
 impl TaskSessionView {
+    pub(crate) fn with_ephemeral_debug_overlay(
+        &self,
+        events: &[TaskTimelineItem],
+        pending: &[PendingActionView],
+    ) -> Self {
+        let mut view = self.clone();
+        view.timeline.extend_from_slice(events);
+        view.timeline
+            .sort_by_key(|event| (event.sequence, event.id.clone()));
+        view.pending.extend_from_slice(pending);
+        view.pending_count = view.pending.len();
+        view.open_pending_count = view
+            .pending
+            .iter()
+            .filter(|item| item.status == PendingProjectionStatus::Open)
+            .count();
+        view.blocking_pending_count = view
+            .pending
+            .iter()
+            .filter(|item| {
+                item.status == PendingProjectionStatus::Open
+                    && item.kind != TITLE_UPDATE_ACTION_KIND
+            })
+            .count();
+        view.sync_timeline_layout();
+        view
+    }
+
+    pub(crate) fn has_open_composer_interaction(&self) -> bool {
+        self.pending.iter().any(|pending| {
+            pending.status == PendingProjectionStatus::Open
+                && matches!(
+                    pending.kind.as_str(),
+                    "ask_user" | "plan_approval" | "tool_consent"
+                )
+        })
+    }
+
     pub(crate) fn from_snapshot(snapshot: DesktopTaskSessionSnapshot) -> Self {
         let pending = snapshot
             .pending
@@ -77,11 +129,7 @@ impl TaskSessionView {
                 payload: item.payload.clone(),
             })
             .collect();
-        let timeline = snapshot
-            .timeline
-            .into_iter()
-            .map(task_timeline_item)
-            .collect();
+        let timeline = task_timeline_items(snapshot.timeline);
         let artifacts = snapshot
             .artifacts
             .iter()
@@ -109,6 +157,7 @@ impl TaskSessionView {
         );
         view.timeline_before_cursor = snapshot.timeline_before_cursor;
         view.timeline_has_more_before = snapshot.timeline_has_more_before;
+        view.run_block = snapshot.run_block;
         view.goal = snapshot.goal;
         view.context_usage = snapshot.context_usage;
         view.artifacts = artifacts;
@@ -159,9 +208,8 @@ impl TaskSessionView {
             .map(|event| (event.id.clone(), event))
             .collect::<std::collections::BTreeMap<_, _>>();
         timeline.extend(
-            page.events
+            task_timeline_items(page.events)
                 .into_iter()
-                .map(task_timeline_item)
                 .map(|event| (event.id.clone(), event)),
         );
         self.timeline = timeline.into_values().collect();
@@ -189,8 +237,16 @@ impl TaskSessionView {
             .iter()
             .filter(|status| **status == PendingProjectionStatus::Open)
             .count();
+        let blocking_pending_count = pending
+            .iter()
+            .filter(|pending| {
+                pending.status == PendingProjectionStatus::Open
+                    && pending.kind != TITLE_UPDATE_ACTION_KIND
+            })
+            .count();
         let mut view = Self {
             task_title,
+            run_block: None,
             goal: None,
             context_usage: None,
             timeline,
@@ -204,6 +260,7 @@ impl TaskSessionView {
             worktree: None,
             pending_count: pending_statuses.len(),
             open_pending_count,
+            blocking_pending_count,
             pending,
         };
         view.sync_timeline_layout();
@@ -239,7 +296,28 @@ fn estimate_timeline_item_extent(event: &TaskTimelineItem) -> f32 {
         + ITEM_SPACING
 }
 
+#[cfg(test)]
 fn task_timeline_item(event: TimelineProjectionEvent) -> TaskTimelineItem {
+    let can_retry = timeline_retry_context(&event, std::slice::from_ref(&event)).is_some();
+    task_timeline_item_with_retry(event, can_retry)
+}
+
+fn task_timeline_items(events: Vec<TimelineProjectionEvent>) -> Vec<TaskTimelineItem> {
+    let retryable = events
+        .iter()
+        .map(|event| timeline_retry_context(event, &events).is_some())
+        .collect::<Vec<_>>();
+    events
+        .into_iter()
+        .zip(retryable)
+        .map(|(event, can_retry)| task_timeline_item_with_retry(event, can_retry))
+        .collect()
+}
+
+fn task_timeline_item_with_retry(
+    event: TimelineProjectionEvent,
+    can_retry: bool,
+) -> TaskTimelineItem {
     let markdown = timeline_markdown(&event.kind, &event.payload, event.summary.as_deref());
     let markdown_document = markdown.as_deref().map(NativeMarkdown::parse);
     let markdown_plain_text = markdown_document.as_ref().map(NativeMarkdown::plain_text);
@@ -253,6 +331,9 @@ fn task_timeline_item(event: TimelineProjectionEvent) -> TaskTimelineItem {
                 .count()
         })
         .unwrap_or_default();
+    let batch_apply = timeline_batch_apply(&event);
+    let session_branch_turn_id = timeline_session_branch_turn_id(&event);
+    let selectable_reply = timeline_selectable_reply(&event);
     TaskTimelineItem {
         id: event.id.as_str().to_owned(),
         sequence: event.sequence,
@@ -265,7 +346,62 @@ fn task_timeline_item(event: TimelineProjectionEvent) -> TaskTimelineItem {
         attachments: timeline_attachments(&event.payload),
         summary: event.summary,
         status: event.status,
+        batch_apply,
+        session_branch_turn_id,
+        selectable_reply,
+        can_retry,
     }
+}
+
+fn timeline_selectable_reply(event: &TimelineProjectionEvent) -> bool {
+    event.kind == "message"
+        && event.payload.get("role").and_then(Value::as_str) == Some("assistant")
+        && event
+            .payload
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| !content.trim().is_empty())
+}
+
+fn timeline_session_branch_turn_id(event: &TimelineProjectionEvent) -> Option<String> {
+    if event.kind != "message"
+        || !matches!(event.status.as_str(), "success" | "completed" | "done")
+        || event.payload.get("role")?.as_str()? != "assistant"
+    {
+        return None;
+    }
+    event
+        .turn_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|turn_id| !turn_id.is_empty())
+        .map(str::to_owned)
+}
+
+fn timeline_batch_apply(event: &TimelineProjectionEvent) -> Option<TaskTimelineBatchApply> {
+    if event.kind != "message" || event.status != "success" {
+        return None;
+    }
+    let source_turn_id = event.turn_id.as_deref()?.trim();
+    if event.payload.get("role")?.as_str()? != "assistant" {
+        return None;
+    }
+    let source_summary = event.payload.get("content")?.as_str()?.trim();
+    if source_turn_id.is_empty() || source_summary.is_empty() {
+        return None;
+    }
+    let source_kind = event
+        .payload
+        .pointer("/workflowSource/sourceKind")?
+        .as_str()?;
+    if !matches!(source_kind, "review" | "fix_suggestion") {
+        return None;
+    }
+    Some(TaskTimelineBatchApply {
+        source_turn_id: source_turn_id.to_owned(),
+        source_kind: source_kind.to_owned(),
+        source_summary: source_summary.to_owned(),
+    })
 }
 
 fn timeline_item_cursor(event: &TaskTimelineItem) -> TimelineProjectionCursor {
@@ -298,46 +434,6 @@ fn timeline_attachments(payload: &Value) -> Vec<ChatAttachment> {
     .flatten()
     .find_map(|attachments| serde_json::from_value(attachments.clone()).ok())
     .unwrap_or_default()
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct InteractionChoice {
-    pub(crate) label: String,
-    pub(crate) value: Value,
-}
-
-pub(crate) fn interaction_choices(pending: &PendingActionView) -> Vec<InteractionChoice> {
-    let options = pending.payload.get("options").unwrap_or(&Value::Null);
-    let values = options
-        .as_array()
-        .or_else(|| options.get("choices").and_then(Value::as_array))
-        .or_else(|| options.get("options").and_then(Value::as_array));
-    values
-        .into_iter()
-        .flatten()
-        .filter_map(|option| {
-            if let Some(label) = option.as_str() {
-                return Some(InteractionChoice {
-                    label: label.to_owned(),
-                    value: Value::String(label.to_owned()),
-                });
-            }
-            let object = option.as_object()?;
-            let value = object
-                .get("value")
-                .or_else(|| object.get("id"))
-                .cloned()
-                .unwrap_or_else(|| option.clone());
-            let label = object
-                .get("label")
-                .or_else(|| object.get("title"))
-                .or_else(|| object.get("name"))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .or_else(|| value.as_str().map(str::to_owned))?;
-            Some(InteractionChoice { label, value })
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -381,6 +477,10 @@ mod tests {
                     markdown_table_count: 0,
                     attachments: Vec::new(),
                     status: "completed".to_owned(),
+                    batch_apply: None,
+                    session_branch_turn_id: None,
+                    selectable_reply: false,
+                    can_retry: false,
                 },
                 TaskTimelineItem {
                     id: "event-1".to_owned(),
@@ -394,6 +494,10 @@ mod tests {
                     markdown_table_count: 0,
                     attachments: Vec::new(),
                     status: "running".to_owned(),
+                    batch_apply: None,
+                    session_branch_turn_id: None,
+                    selectable_reply: false,
+                    can_retry: false,
                 },
             ],
             3,
@@ -424,7 +528,55 @@ mod tests {
         assert_eq!(state.todo_count, 4);
         assert_eq!(state.pending_count, 3);
         assert_eq!(state.open_pending_count, 1);
+        assert_eq!(state.blocking_pending_count, 1);
         assert_eq!(state.pending[0].request_id, "approval-1");
+    }
+
+    #[test]
+    fn title_review_is_visible_without_blocking_the_composer() {
+        let state = TaskSessionView::from_facts(
+            "Manual title".to_owned(),
+            Vec::new(),
+            0,
+            0,
+            vec![PendingProjectionStatus::Open],
+            vec![PendingActionView {
+                request_id: "title-review-1".to_owned(),
+                kind: TITLE_UPDATE_ACTION_KIND.to_owned(),
+                prompt: "建议更新标题".to_owned(),
+                status: PendingProjectionStatus::Open,
+                payload: json!({ "proposedTitle": "新的建议标题" }),
+            }],
+        );
+
+        assert_eq!(state.open_pending_count, 1);
+        assert_eq!(state.blocking_pending_count, 0);
+    }
+
+    #[test]
+    fn composer_interaction_tracks_only_open_composer_bound_requests() {
+        let mut state = TaskSessionView::from_facts(
+            "Task".to_owned(),
+            Vec::new(),
+            0,
+            0,
+            vec![PendingProjectionStatus::Open],
+            vec![PendingActionView {
+                request_id: "ask-open".to_owned(),
+                kind: "ask_user".to_owned(),
+                prompt: "Choose".to_owned(),
+                status: PendingProjectionStatus::Open,
+                payload: Value::Null,
+            }],
+        );
+        assert!(state.has_open_composer_interaction());
+
+        state.pending[0].status = PendingProjectionStatus::Resolved;
+        assert!(!state.has_open_composer_interaction());
+
+        state.pending[0].status = PendingProjectionStatus::Open;
+        state.pending[0].kind = "permission_approval".to_owned();
+        assert!(!state.has_open_composer_interaction());
     }
 
     #[test]
@@ -458,6 +610,65 @@ mod tests {
             item.markdown_plain_text.as_deref(),
             Some("名称\t数量\nAlpha\t42")
         );
+    }
+
+    #[test]
+    fn successful_review_reply_exposes_a_typed_batch_apply_source() {
+        let mut event = projection_event(1);
+        event.status = "success".to_owned();
+        event.turn_id = Some("turn-review".to_owned());
+        event.payload = json!({
+            "role": "assistant",
+            "content": "## 建议\n\n修复权限边界",
+            "workflowSource": { "sourceKind": "fix_suggestion" }
+        });
+
+        let item = task_timeline_item(event.clone());
+        assert_eq!(
+            item.batch_apply,
+            Some(TaskTimelineBatchApply {
+                source_turn_id: "turn-review".to_owned(),
+                source_kind: "fix_suggestion".to_owned(),
+                source_summary: "## 建议\n\n修复权限边界".to_owned(),
+            })
+        );
+
+        event.status = "completed".to_owned();
+        assert!(task_timeline_item(event).batch_apply.is_none());
+    }
+
+    #[test]
+    fn completed_assistant_reply_exposes_a_session_branch_anchor() {
+        let mut event = projection_event(1);
+        event.status = "done".to_owned();
+        event.turn_id = Some("turn-anchor".to_owned());
+        event.payload = json!({ "role": "assistant", "content": "完成" });
+
+        let reply = task_timeline_item(event.clone());
+        assert_eq!(reply.session_branch_turn_id.as_deref(), Some("turn-anchor"));
+        assert!(reply.selectable_reply);
+
+        event.payload["role"] = json!("user");
+        let user = task_timeline_item(event);
+        assert!(user.session_branch_turn_id.is_none());
+        assert!(!user.selectable_reply);
+    }
+
+    #[test]
+    fn failed_event_recovers_retry_context_from_its_turn_user_message() {
+        let mut source = projection_event(1);
+        source.turn_id = Some("turn-retry".to_owned());
+        source.payload = json!({ "role": "user", "content": "retry this request" });
+        let mut error = projection_event(2);
+        error.kind = "error".to_owned();
+        error.status = "failed".to_owned();
+        error.turn_id = Some("turn-retry".to_owned());
+        error.payload = json!({});
+
+        let timeline = task_timeline_items(vec![source, error]);
+
+        assert!(!timeline[0].can_retry);
+        assert!(timeline[1].can_retry);
     }
 
     #[test]

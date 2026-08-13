@@ -2,19 +2,29 @@
 
 #[cfg(debug_assertions)]
 mod agent_debug;
+mod ask_user;
 mod cli_import;
+mod conversation_suggestions;
 mod data_import;
 #[cfg(debug_assertions)]
 mod debug_fixture;
+mod debug_timeline;
+mod document_editor;
 mod host;
+mod iab_panel;
+mod iab_window;
+mod markdown_images;
 mod pending_import;
 mod preview;
+mod project_files_panel;
+mod provider_ai_settings;
 mod shell_integration;
 mod single_instance;
 mod startup_window;
 mod storage;
 pub mod target_ids;
 mod task_session;
+mod terminal_view;
 mod updater;
 mod windows_identity;
 
@@ -118,9 +128,7 @@ fn run() -> i32 {
         .minimum_size(780.0, 560.0)
         .transparent(true);
     if let Some(state) = storage::load_window_state(&home) {
-        settings = settings
-            .physical_geometry(state.x, state.y, state.width, state.height)
-            .maximized(state.maximized);
+        settings = settings.placement(state.hosted_placement());
     }
 
     match run_hosted::<NativePreviewProgram>(settings) {

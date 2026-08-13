@@ -1,5 +1,8 @@
 use lilia_agent_integration::ProductCredentialLoginInput;
-use lilia_contracts::{ExpectedRevision, ProductEntity, ProjectId, TaskId};
+use lilia_contracts::{
+    AgentSessionRef, ExpectedRevision, ProductEntity, ProjectId, ProjectionEventId, TaskId,
+    TimelineProjectionCommand, TimelineProjectionEvent,
+};
 use lilia_desktop_application::{
     ArchitectureBackend, ArchitecturePermission, DesktopApplication, ProjectArchitectureApplyInput,
     ProjectArchitectureChange, ProjectArchitectureEdge, ProjectArchitectureNode,
@@ -62,6 +65,32 @@ pub fn prepare(application: &DesktopApplication) -> Result<(), String> {
             )
             .map_err(|error| error.to_string())?;
     }
+    application
+        .authority()
+        .apply_projection(TimelineProjectionCommand::UpsertTimelineEvent {
+            event: TimelineProjectionEvent {
+                id: ProjectionEventId::new("native-agent-debug-markdown-image"),
+                task_id: task_id.clone(),
+                agent_session: AgentSessionRef::new("native-agent-debug-media-session")
+                    .map_err(|error| error.to_string())?,
+                sequence: 1,
+                turn_id: Some("native-agent-debug-media-turn".to_owned()),
+                kind: "message".to_owned(),
+                status: "completed".to_owned(),
+                title: "图片回复".to_owned(),
+                summary: None,
+                payload: json!({
+                    "role": "assistant",
+                    "content": concat!(
+                        "Native Markdown 图片\n\n",
+                        "![Native 图片](data:image/png;base64,",
+                        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=)"
+                    )
+                }),
+                projected: true,
+            },
+        })
+        .map_err(|error| error.to_string())?;
     for (id, title) in [
         (PLAN_REPLAY_TASK_ID, "验证 Native 计划重启回放"),
         (PLAN_CANCEL_TASK_ID, "验证 Native 计划取消"),

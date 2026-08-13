@@ -249,6 +249,18 @@ pub struct DebugObservation {
     pub inspector_region_extent: Option<f32>,
     pub coding_tools_dock_open: bool,
     pub coding_tools_panel_extent: Option<f32>,
+    pub iab_dock_open: bool,
+    pub iab_browser_attached: bool,
+    pub iab_browser_ready: bool,
+    pub iab_url: String,
+    pub iab_error: Option<String>,
+    pub iab_window_count: usize,
+    pub iab_window_ready_count: usize,
+    pub iab_window_task_ids: Vec<String>,
+    pub iab_window_urls: Vec<String>,
+    pub iab_window_capture_pending_count: usize,
+    pub iab_window_notice: Option<String>,
+    pub iab_window_error: Option<String>,
     pub coding_tools_busy: bool,
     pub coding_tools_shared_identity: bool,
     pub coding_tools_mcp_servers: usize,
@@ -281,6 +293,7 @@ pub struct DebugObservation {
     pub pending_interaction_kinds: Vec<String>,
     pub task_action_error: Option<String>,
     pub theme: &'static str,
+    pub sidebar_display_mode: &'static str,
     pub settings_tab: String,
     pub provider_id: Option<String>,
     pub provider_ids: Vec<String>,
@@ -296,6 +309,8 @@ pub struct DebugObservation {
     pub provider_busy: bool,
     pub provider_error: Option<String>,
     pub agent_interaction_revision: u64,
+    pub agent_non_interrupt_mode: bool,
+    pub agent_debug_enabled: bool,
     pub agent_subagents_enabled: bool,
     pub agent_auto_turn_enabled: bool,
     pub agent_auto_model_tier: bool,
@@ -369,6 +384,7 @@ pub struct DebugObservation {
     pub tray_active: bool,
     pub shell_shortcut: Option<String>,
     pub shell_shortcut_active: bool,
+    pub shell_shortcut_capturing: bool,
     pub shell_error: Option<String>,
     pub update_configured: bool,
     pub update_state: &'static str,
@@ -555,6 +571,13 @@ impl DebugObservation {
             .as_object_mut()
             .expect("debug observation is an object")
             .insert(
+                "sidebarDisplayMode".to_owned(),
+                serde_json::json!(self.sidebar_display_mode),
+            );
+        observation
+            .as_object_mut()
+            .expect("debug observation is an object")
+            .insert(
                 "providerIds".to_owned(),
                 serde_json::json!(&self.provider_ids),
             );
@@ -618,6 +641,8 @@ impl DebugObservation {
             );
         let agent_interaction = serde_json::json!({
             "agentInteractionRevision": self.agent_interaction_revision,
+            "agentNonInterruptMode": self.agent_non_interrupt_mode,
+            "agentDebugEnabled": self.agent_debug_enabled,
             "agentSubagentsEnabled": self.agent_subagents_enabled,
             "agentAutoTurnEnabled": self.agent_auto_turn_enabled,
             "agentAutoModelTier": self.agent_auto_model_tier,
@@ -655,6 +680,28 @@ impl DebugObservation {
                 coding_dock
                     .as_object()
                     .expect("coding Dock observation is an object")
+                    .clone(),
+            );
+        let iab = serde_json::json!({
+            "iabDockOpen": self.iab_dock_open,
+            "iabBrowserAttached": self.iab_browser_attached,
+            "iabBrowserReady": self.iab_browser_ready,
+            "iabUrl": &self.iab_url,
+            "iabError": self.iab_error.as_deref(),
+            "iabWindowCount": self.iab_window_count,
+            "iabWindowReadyCount": self.iab_window_ready_count,
+            "iabWindowTaskIds": &self.iab_window_task_ids,
+            "iabWindowUrls": &self.iab_window_urls,
+            "iabWindowCapturePendingCount": self.iab_window_capture_pending_count,
+            "iabWindowNotice": self.iab_window_notice.as_deref(),
+            "iabWindowError": self.iab_window_error.as_deref(),
+        });
+        observation
+            .as_object_mut()
+            .expect("debug observation is an object")
+            .extend(
+                iab.as_object()
+                    .expect("IAB observation is an object")
                     .clone(),
             );
         let markdown = serde_json::json!({
@@ -907,6 +954,7 @@ impl DebugObservation {
             "trayActive": self.tray_active,
             "shellShortcut": self.shell_shortcut.as_deref(),
             "shellShortcutActive": self.shell_shortcut_active,
+            "shellShortcutCapturing": self.shell_shortcut_capturing,
             "shellError": self.shell_error.as_deref(),
             "updateConfigured": self.update_configured,
             "updateState": self.update_state,
@@ -1570,6 +1618,18 @@ mod tests {
             inspector_region_extent: Some(352.0),
             coding_tools_dock_open: true,
             coding_tools_panel_extent: Some(360.0),
+            iab_dock_open: false,
+            iab_browser_attached: false,
+            iab_browser_ready: false,
+            iab_url: "about:blank".to_owned(),
+            iab_error: None,
+            iab_window_count: 0,
+            iab_window_ready_count: 0,
+            iab_window_task_ids: Vec::new(),
+            iab_window_urls: Vec::new(),
+            iab_window_capture_pending_count: 0,
+            iab_window_notice: None,
+            iab_window_error: None,
             coding_tools_busy: false,
             coding_tools_shared_identity: true,
             coding_tools_mcp_servers: 0,
@@ -1617,6 +1677,7 @@ mod tests {
             pending_interaction_kinds: vec!["agent_interaction".to_owned()],
             task_action_error: None,
             theme: "dark",
+            sidebar_display_mode: "grouped",
             settings_tab: "provider".to_owned(),
             provider_id: Some("mutsuki.credential.openai".to_owned()),
             provider_ids: vec!["mutsuki.credential.openai".to_owned()],
@@ -1632,6 +1693,8 @@ mod tests {
             provider_busy: false,
             provider_error: None,
             agent_interaction_revision: 3,
+            agent_non_interrupt_mode: false,
+            agent_debug_enabled: false,
             agent_subagents_enabled: true,
             agent_auto_turn_enabled: true,
             agent_auto_model_tier: true,
@@ -1705,6 +1768,7 @@ mod tests {
             tray_active: true,
             shell_shortcut: Some("Ctrl+Shift+L".to_owned()),
             shell_shortcut_active: true,
+            shell_shortcut_capturing: false,
             shell_error: None,
             update_configured: true,
             update_state: "up_to_date",
