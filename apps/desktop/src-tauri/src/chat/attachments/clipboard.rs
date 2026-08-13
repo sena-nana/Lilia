@@ -127,32 +127,6 @@ pub(super) fn save_clipboard_text_to_cache(
     Ok(attachment)
 }
 
-#[cfg(windows)]
-pub(super) fn read_windows_clipboard_file_paths() -> Result<Vec<String>, String> {
-    use clipboard_win::{formats::FileList, Clipboard, Getter};
-
-    let _clipboard = Clipboard::new_attempts(10).map_err(|e| format!("打开剪贴板失败：{e}"))?;
-    let mut paths = Vec::<String>::new();
-    match FileList.read_clipboard(&mut paths) {
-        Ok(_) => Ok(paths),
-        Err(_) => Ok(Vec::new()),
-    }
-}
-
-#[cfg(not(windows))]
-pub(super) fn read_windows_clipboard_file_paths() -> Result<Vec<String>, String> {
-    Ok(Vec::new())
-}
-
-pub(super) fn read_clipboard_file_paths() -> Result<Vec<String>, String> {
-    read_windows_clipboard_file_paths().map(|paths| {
-        paths
-            .into_iter()
-            .filter(|path| !path.trim().is_empty())
-            .collect()
-    })
-}
-
 pub(super) fn save_clipboard_image(input: ClipboardImageInput) -> Result<ChatAttachment, String> {
     let home = store::resolve_lilia_home();
     let display_seq = CLIPBOARD_IMAGE_DISPLAY_SEQ.fetch_add(1, Ordering::Relaxed) + 1;

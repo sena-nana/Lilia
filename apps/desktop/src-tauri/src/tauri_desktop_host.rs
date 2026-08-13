@@ -30,6 +30,7 @@ impl DesktopHost for TauriDesktopHost {
             DesktopHostAction::FileDialog(request) => self.file_dialog(request),
             DesktopHostAction::Credential(action) => credential(context, action),
             DesktopHostAction::ReadClipboardText => read_clipboard_text(),
+            DesktopHostAction::ReadClipboardFilePaths => read_clipboard_file_paths(),
             DesktopHostAction::WriteClipboardText(value) => write_clipboard_text(value),
             DesktopHostAction::OpenPath(path) => self.open_path(path),
             DesktopHostAction::OpenExternal(uri) => self.open_external(uri),
@@ -225,6 +226,26 @@ fn read_clipboard_text() -> Result<DesktopHostResult, DesktopHostError> {
     let value = clipboard_win::get_clipboard(clipboard_win::formats::Unicode)
         .map_err(|error| host_error("clipboard_read_failed", error.to_string(), true))?;
     Ok(DesktopHostResult::ClipboardText(Some(value)))
+}
+
+#[cfg(windows)]
+fn read_clipboard_file_paths() -> Result<DesktopHostResult, DesktopHostError> {
+    use clipboard_win::{formats::FileList, Clipboard, Getter};
+
+    let _clipboard = Clipboard::new_attempts(10)
+        .map_err(|error| host_error("clipboard_open_failed", error.to_string(), true))?;
+    let mut paths = Vec::<String>::new();
+    if FileList.read_clipboard(&mut paths).is_err() {
+        return Ok(DesktopHostResult::ClipboardFilePaths(Vec::new()));
+    }
+    Ok(DesktopHostResult::ClipboardFilePaths(
+        paths.into_iter().map(PathBuf::from).collect(),
+    ))
+}
+
+#[cfg(not(windows))]
+fn read_clipboard_file_paths() -> Result<DesktopHostResult, DesktopHostError> {
+    Ok(DesktopHostResult::ClipboardFilePaths(Vec::new()))
 }
 
 #[cfg(not(windows))]

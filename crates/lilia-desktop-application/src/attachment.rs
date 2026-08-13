@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -37,6 +37,30 @@ pub enum DesktopAttachmentError {
 }
 
 impl DesktopApplication {
+    pub fn read_clipboard_file_paths(&self) -> Result<Vec<PathBuf>, DesktopAttachmentError> {
+        match self.inner.host.execute(
+            &self.inner.host_context,
+            DesktopHostAction::ReadClipboardFilePaths,
+        )? {
+            DesktopHostResult::ClipboardFilePaths(paths) => {
+                let mut seen = HashSet::new();
+                Ok(paths
+                    .into_iter()
+                    .filter(|path| !path.as_os_str().is_empty())
+                    .filter(|path| seen.insert(path.clone()))
+                    .collect())
+            }
+            _ => Err(DesktopAttachmentError::UnexpectedHostResult),
+        }
+    }
+
+    pub fn capture_clipboard_file_attachments(
+        &self,
+    ) -> Result<Vec<ChatAttachment>, DesktopAttachmentError> {
+        self.read_clipboard_file_paths()
+            .map(describe_attachment_paths)
+    }
+
     pub fn capture_clipboard_image_attachment(
         &self,
     ) -> Result<Option<ChatAttachment>, DesktopAttachmentError> {
@@ -267,6 +291,25 @@ fn scan_directory_meta(path: &Path) -> ChatAttachmentDirectoryMeta {
 mod tests {
     use super::*;
     use std::io::Write;
+    use std::sync::Arc;
+
+    struct ClipboardFileHost {
+        paths: Vec<PathBuf>,
+    }
+
+    impl crate::DesktopHost for ClipboardFileHost {
+        fn execute(
+            &self,
+            _context: &crate::DesktopHostContext,
+            action: DesktopHostAction,
+        ) -> Result<DesktopHostResult, DesktopHostError> {
+            if action == DesktopHostAction::ReadClipboardFilePaths {
+                Ok(DesktopHostResult::ClipboardFilePaths(self.paths.clone()))
+            } else {
+                Ok(DesktopHostResult::Completed)
+            }
+        }
+    }
 
     #[test]
     fn describes_files_with_frontend_compatible_metadata() {
@@ -331,5 +374,34 @@ mod tests {
             DesktopAttachmentError::InvalidClipboardImage { .. }
         ));
         assert!(!home.path().join("cache").exists());
+    }
+
+    #[test]
+    fn clipboard_file_paths_are_deduplicated_and_described_by_the_application() {
+        let home = tempfile::tempdir().unwrap();
+        let file = home.path().join("notes.md");
+        fs::write(&file, "context").unwrap();
+        let directory = home.path().join("sources");
+        fs::create_dir(&directory).unwrap();
+        let application = DesktopApplication::bootstrap(
+            crate::DesktopApplicationConfig::new(home.path(), "attachment-test").unwrap(),
+            Arc::new(ClipboardFileHost {
+                paths: vec![
+                    file.clone(),
+                    PathBuf::new(),
+                    file.clone(),
+                    directory.clone(),
+                ],
+            }),
+        )
+        .unwrap();
+
+        let attachments = application.capture_clipboard_file_attachments().unwrap();
+
+        assert_eq!(attachments.len(), 2);
+        assert_eq!(attachments[0].path, file.to_string_lossy());
+        assert_eq!(attachments[0].kind, ChatAttachmentKind::File);
+        assert_eq!(attachments[1].path, directory.to_string_lossy());
+        assert_eq!(attachments[1].kind, ChatAttachmentKind::Directory);
     }
 }

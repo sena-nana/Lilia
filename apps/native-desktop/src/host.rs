@@ -68,6 +68,18 @@ impl DesktopHost for PreviewHost {
                     Err(error) => Err(host_error("clipboard_read_failed", error.to_string(), true)),
                 }
             }
+            DesktopHostAction::ReadClipboardFilePaths => {
+                let mut clipboard = arboard::Clipboard::new().map_err(|error| {
+                    host_error("clipboard_open_failed", error.to_string(), true)
+                })?;
+                match clipboard.get().file_list() {
+                    Ok(paths) => Ok(DesktopHostResult::ClipboardFilePaths(paths)),
+                    Err(arboard::Error::ContentNotAvailable) => {
+                        Ok(DesktopHostResult::ClipboardFilePaths(Vec::new()))
+                    }
+                    Err(error) => Err(host_error("clipboard_read_failed", error.to_string(), true)),
+                }
+            }
             DesktopHostAction::WriteClipboardText(value) => {
                 let mut clipboard = arboard::Clipboard::new().map_err(|error| {
                     host_error("clipboard_open_failed", error.to_string(), true)

@@ -1,6 +1,7 @@
-use crate::chat::attachments::clipboard::{
-    read_clipboard_file_paths, save_clipboard_image, save_clipboard_text,
-};
+use lilia_desktop_application::DesktopApplication;
+use tauri::State;
+
+use crate::chat::attachments::clipboard::{save_clipboard_image, save_clipboard_text};
 use crate::chat::attachments::context_search::search_context_attachments;
 use crate::chat::attachments::describe::describe_attachment_path;
 use crate::chat::types::{
@@ -17,8 +18,18 @@ pub fn chat_describe_attachments(paths: Vec<String>) -> Result<Vec<ChatAttachmen
 }
 
 #[tauri::command]
-pub fn chat_read_clipboard_file_paths() -> Result<Vec<String>, String> {
-    read_clipboard_file_paths()
+pub fn chat_read_clipboard_file_paths(
+    application: State<'_, DesktopApplication>,
+) -> Result<Vec<String>, String> {
+    application
+        .read_clipboard_file_paths()
+        .map(|paths| {
+            paths
+                .into_iter()
+                .map(|path| path.to_string_lossy().into_owned())
+                .collect()
+        })
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
