@@ -13,6 +13,7 @@ const readyPath = path.join(runDir, "ready.txt");
 const transcriptPath = path.join(runDir, "protocol.jsonl");
 const summaryPath = path.join(runDir, "summary.json");
 const screenshotPath = path.join(runDir, "window.png");
+const markdownImageScreenshotPath = path.join(runDir, "markdown-image.png");
 const providerScreenshotPath = path.join(runDir, "provider.png");
 const agentScreenshotPath = path.join(runDir, "agent.png");
 const automationScreenshotPath = path.join(runDir, "automation.png");
@@ -20,6 +21,7 @@ const roadmapScreenshotPath = path.join(runDir, "roadmap.png");
 const memoryScreenshotPath = path.join(runDir, "memory.png");
 const githubScreenshotPath = path.join(runDir, "github-repositories.png");
 const codingToolsScreenshotPath = path.join(runDir, "coding-tools.png");
+const iabScreenshotPath = path.join(runDir, "iab.png");
 const architectureScreenshotPath = path.join(runDir, "architecture.png");
 const architectureApprovalScreenshotPath = path.join(runDir, "architecture-approval.png");
 const quotaScreenshotPath = path.join(runDir, "quota.png");
@@ -35,11 +37,20 @@ const stderrPath = path.join(runDir, "stderr.log");
 const buildLogPath = path.join(runDir, "build.log");
 const previewHome = path.join(runDir, "home");
 const mainWindowStatePath = path.join(previewHome, "main-window-state.json");
+const conversationStatusStatePath = path.join(
+  previewHome,
+  "conversation-status-window.json",
+);
 const workspaceTopologyPath = path.join(previewHome, "workspace-topology-state.json");
 const previewWorkspace = path.join(runDir, "workspace");
 const cloneParent = path.join(runDir, "clone-parent");
 const importSource = path.join(runDir, "legacy-import-source");
-const executable = path.join(repoRoot, "target", "debug", "lilia-native-preview.exe");
+const executable = path.join(
+  repoRoot,
+  "target",
+  "debug",
+  process.platform === "win32" ? "lilia-native-preview.exe" : "lilia-native-preview",
+);
 const providerSecretCanary = "sk-native-provider-debug-secret-0123456789abcdef";
 const mcpSecretCanary = "native-mcp-keyring-secret-0123456789abcdef";
 const githubTokenCanary = "native-github-keyring-token-0123456789abcdef";
@@ -58,6 +69,8 @@ const debugMcpElicitationTaskId = "native-agent-debug-mcp-elicitation-task";
 const debugArchitectureApprovalTaskId = "native-agent-debug-architecture-approval-task";
 const architectureApprovalPrompt = "native-architecture-approval";
 const composerRestartDraft = "native-composer-draft-restart";
+const workflowReviewBranch = "native-debug-review-base";
+const retryFailurePrompt = "native-retry-failure";
 const fifoActivePrompt = "native-fifo-active-approval";
 const fifoFirstPrompt = "native-fifo-queued-first";
 const fifoSecondPrompt = "native-fifo-queued-second";
@@ -157,6 +170,7 @@ const summary = {
   transcriptPath,
   workspaceTopologyPath,
   screenshotPath,
+  markdownImageScreenshotPath,
   providerScreenshotPath,
   agentScreenshotPath,
   automationScreenshotPath,
@@ -164,6 +178,7 @@ const summary = {
   memoryScreenshotPath,
   githubScreenshotPath,
   codingToolsScreenshotPath,
+  iabScreenshotPath,
   architectureScreenshotPath,
   architectureApprovalScreenshotPath,
   quotaScreenshotPath,
@@ -295,6 +310,45 @@ try {
   );
   const mainWindowStateBeforeToolWindow = await waitForJsonFile(mainWindowStatePath, 10_000);
 
+  const mainTaskCountBeforeDraft = initial.observation.taskCount;
+  const mainDraftOpened = await request(address, {
+    command: "click",
+    targetId: "native-preview.new-conversation",
+  });
+  assertSuccess(mainDraftOpened, "open a transient conversation draft in the main window");
+  assertTarget(mainDraftOpened, "native-preview.new-conversation.close");
+  assertTarget(mainDraftOpened, "native-preview.task-session.composer.input");
+  assertEqual(
+    mainDraftOpened.observation.taskCount,
+    mainTaskCountBeforeDraft,
+    "main draft task count before input",
+  );
+  const mainDraftEdited = await request(address, {
+    command: "input",
+    targetId: "native-preview.task-session.composer.input",
+    text: "关闭前不应保存的主窗口草稿",
+  });
+  assertSuccess(mainDraftEdited, "edit the transient main-window draft");
+  assertTarget(mainDraftEdited, "native-preview.task-session.composer.send");
+  assertSuccess(
+    await request(address, {
+      command: "click",
+      targetId: "native-preview.new-conversation.close",
+    }),
+    "close the unsent main-window draft",
+  );
+  const mainDraftDiscarded = await waitForObservation(
+    address,
+    (observation) =>
+      !observation.visibleTargetIds.includes("native-preview.new-conversation.close") &&
+      observation.taskCount === mainTaskCountBeforeDraft,
+    10_000,
+  );
+  assertTarget(mainDraftDiscarded, "native-preview.new-conversation");
+  summary.checks.push(
+    "the main new-conversation entry kept typed content transient and closing it created no task",
+  );
+
   const statusOpening = await request(address, {
     command: "click",
     targetId: "native-preview.conversation-status.open",
@@ -310,13 +364,190 @@ try {
   );
   assertTarget(statusReady, "native-preview.conversation-status.window");
   assertTarget(statusReady, `native-preview.conversation-status.task.${debugTaskId}`);
-  const statusTaskFocused = await request(address, {
+  assertTarget(statusReady, "native-preview.conversation-status.pin");
+  assertTarget(statusReady, "native-preview.conversation-status.opacity");
+  assertTarget(statusReady, "native-preview.conversation-status.new-chat");
+  const statusPinned = await request(address, {
+    command: "click",
+    targetId: "native-preview.conversation-status.pin",
+  });
+  assertSuccess(statusPinned, "pin the Native conversation-status window");
+  const statusOpacity = await request(address, {
+    command: "input",
+    targetId: "native-preview.conversation-status.opacity",
+    text: "0.72",
+  });
+  assertSuccess(statusOpacity, "change the Native conversation-status opacity");
+  const persistedStatusState = await waitForJsonFile(conversationStatusStatePath, 10_000);
+  assertEqual(persistedStatusState.alwaysOnTop, true, "persisted status-window pin");
+  assertEqual(persistedStatusState.opacity, 0.72, "persisted status-window opacity");
+
+  const taskCountBeforeDraft = statusReady.observation.conversationStatusTaskCount;
+  const draftOpened = await request(address, {
+    command: "click",
+    targetId: "native-preview.conversation-status.new-chat",
+  });
+  assertSuccess(draftOpened, "open a transient Native conversation draft");
+  const draftReady = await waitForObservation(
+    address,
+    (observation) =>
+      observation.taskPopupWindowCount === 1 &&
+      observation.taskPopupReadyCount === 1 &&
+      observation.taskPopupTaskIds?.[0] === "" &&
+      observation.conversationStatusTaskCount === taskCountBeforeDraft,
+    10_000,
+  );
+  const firstDraftComposer = draftReady.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".composer.input"),
+  );
+  const firstDraftClose = draftReady.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".close"),
+  );
+  if (!firstDraftComposer || !firstDraftClose) {
+    throw new Error("transient Native conversation draft did not expose its composer and close action");
+  }
+  const draftClosed = await request(address, {
+    command: "click",
+    targetId: firstDraftClose,
+  });
+  assertSuccess(draftClosed, "close the unsent Native conversation draft");
+  await waitForObservation(
+    address,
+    (observation) =>
+      observation.taskPopupWindowCount === 0 &&
+      observation.conversationStatusTaskCount === taskCountBeforeDraft,
+    10_000,
+  );
+
+  const promotedDraftOpened = await request(address, {
+    command: "click",
+    targetId: "native-preview.conversation-status.new-chat",
+  });
+  assertSuccess(promotedDraftOpened, "open a second transient Native conversation draft");
+  const promotedDraftReady = await waitForObservation(
+    address,
+    (observation) =>
+      observation.taskPopupWindowCount === 1 && observation.taskPopupTaskIds?.[0] === "",
+    10_000,
+  );
+  const promotedComposer = promotedDraftReady.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".composer.input"),
+  );
+  if (!promotedComposer) throw new Error("second Native conversation draft has no composer");
+  const drafted = await request(address, {
+    command: "input",
+    targetId: promotedComposer,
+    text: "验证首次发送才保存对话",
+  });
+  assertSuccess(drafted, "edit the transient Native conversation draft");
+  const promotedSend = drafted.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".composer.send"),
+  );
+  if (!promotedSend) throw new Error("send action is unavailable for the transient conversation draft");
+  const promoted = await request(address, {
+    command: "click",
+    targetId: promotedSend,
+  });
+  assertSuccess(promoted, "materialize the Native conversation on first send");
+  const promotedReady = await waitForObservation(
+    address,
+    (observation) =>
+      observation.taskPopupWindowCount === 1 &&
+      Boolean(observation.taskPopupTaskIds?.[0]) &&
+      observation.conversationStatusTaskCount === taskCountBeforeDraft + 1,
+    10_000,
+  );
+  const promotedClose = promotedReady.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".close"),
+  );
+  if (!promotedClose) throw new Error("materialized Native conversation has no close action");
+  assertSuccess(
+    await request(address, { command: "click", targetId: promotedClose }),
+    "close the materialized Native conversation window",
+  );
+  await waitForObservation(
+    address,
+    (observation) => observation.taskPopupWindowCount === 0,
+    10_000,
+  );
+  summary.checks.push(
+    "conversation-status pin and opacity persisted; closing an unsent Native draft created no task, while first send materialized exactly one task",
+  );
+  const statusTaskOpened = await request(address, {
     command: "click",
     targetId: `native-preview.conversation-status.task.${debugTaskId}`,
   });
-  assertSuccess(statusTaskFocused, "focus a task from the conversation-status window");
-  assertEqual(statusTaskFocused.observation.selectedTask, debugTaskId, "status task selection");
-  assertTarget(statusTaskFocused, "native-preview.conversation-status.close");
+  assertSuccess(statusTaskOpened, "open a task window from the conversation-status window");
+  const statusTaskWindowReady = await waitForObservation(
+    address,
+    (observation) =>
+      observation.taskPopupWindowCount === 1 &&
+      observation.taskPopupReadyCount === 1 &&
+      observation.taskPopupTaskIds?.[0] === debugTaskId,
+    10_000,
+  );
+  const statusTaskClose = statusTaskWindowReady.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".close"),
+  );
+  const statusTaskFocusMain = statusTaskWindowReady.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".focus-main"),
+  );
+  const statusTaskNewChat = statusTaskWindowReady.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".new-chat"),
+  );
+  if (!statusTaskClose || !statusTaskFocusMain || !statusTaskNewChat) {
+    throw new Error("conversation-status task popup has incomplete titlebar actions");
+  }
+  assertSuccess(
+    await request(address, { command: "click", targetId: statusTaskNewChat }),
+    "replace the task popup with a transient new conversation",
+  );
+  const titlebarDraftReady = await waitForObservation(
+    address,
+    (observation) =>
+      observation.taskPopupWindowCount === 1 &&
+      observation.taskPopupTaskIds?.[0] === "" &&
+      observation.conversationStatusTaskCount === taskCountBeforeDraft + 1,
+    10_000,
+  );
+  const titlebarDraftClose = titlebarDraftReady.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".close"),
+  );
+  if (!titlebarDraftClose) throw new Error("titlebar conversation draft has no close action");
+  assertSuccess(
+    await request(address, { command: "click", targetId: titlebarDraftClose }),
+    "close the unsent titlebar conversation draft",
+  );
+  await waitForObservation(address, (observation) => observation.taskPopupWindowCount === 0, 10_000);
+
+  assertSuccess(
+    await request(address, {
+      command: "click",
+      targetId: `native-preview.conversation-status.task.${debugTaskId}`,
+    }),
+    "reopen a task window to verify return-to-main",
+  );
+  const reopenedTaskWindow = await waitForObservation(
+    address,
+    (observation) =>
+      observation.taskPopupWindowCount === 1 && observation.taskPopupTaskIds?.[0] === debugTaskId,
+    10_000,
+  );
+  const reopenedFocusMain = reopenedTaskWindow.observation.visibleTargetIds.find(
+    (target) => target.startsWith("native-preview.task-popup.") && target.endsWith(".focus-main"),
+  );
+  if (!reopenedFocusMain) throw new Error("reopened task popup has no return-to-main action");
+  assertSuccess(
+    await request(address, { command: "click", targetId: reopenedFocusMain }),
+    "return from the task popup to the existing main-window task view",
+  );
+  await waitForObservation(
+    address,
+    (observation) =>
+      observation.taskPopupWindowCount === 0 && observation.selectedTask === debugTaskId,
+    10_000,
+  );
+  assertTarget(statusTaskOpened, "native-preview.conversation-status.close");
   closeWindowByTitle(child.pid, "LiliaCode 会话状态");
   const afterStatusClose = await waitForObservation(
     address,
@@ -333,7 +564,7 @@ try {
     "auxiliary window must not overwrite main-window geometry",
   );
   summary.checks.push(
-    "a real NanaUI tool window opened, reported readiness, focused a task in the main window, and closed without exiting or overwriting main-window state",
+    "a real NanaUI status window opened a task independently; its titlebar created an unsaved transient conversation and returned to the existing main task view without duplicating Product state",
   );
 
   const mcpTaskList = await request(address, {
@@ -433,6 +664,42 @@ try {
     targetId: `native-preview.task.${debugTaskId}`,
   });
   assertSuccess(mainTaskReady, "restore the primary seeded task after MCP elicitation");
+  const markdownImageReady = await waitForObservation(
+    address,
+    (observation) =>
+      observation.visibleTargets?.some(
+        (target) =>
+          target.startsWith("native-preview.task-window.0.markdown-image.") &&
+          !target.endsWith(".close"),
+      ),
+    10_000,
+  );
+  const markdownImageTarget = markdownImageReady.observation.visibleTargets.find(
+    (target) =>
+      target.startsWith("native-preview.task-window.0.markdown-image.") &&
+      !target.endsWith(".close"),
+  );
+  const markdownImageOpened = await request(address, {
+    command: "click",
+    targetId: markdownImageTarget,
+  });
+  assertSuccess(markdownImageOpened, "open a real Native Markdown image");
+  assertTarget(markdownImageOpened, "native-preview.task-window.0.markdown-image.close");
+  await recordRenderedWindow(
+    child.pid,
+    markdownImageScreenshotPath,
+    "Markdown image viewer",
+    "markdownImageWindowBounds",
+    "markdownImagePngSize",
+  );
+  const markdownImageClosed = await request(address, {
+    command: "click",
+    targetId: "native-preview.task-window.0.markdown-image.close",
+  });
+  assertSuccess(markdownImageClosed, "close the Native Markdown image viewer");
+  summary.checks.push(
+    "Native Markdown loaded an in-memory image, opened the NanaUI zoom and pan viewer, and produced a real GPU screenshot",
+  );
   const mcpWorkspaceTab =
     `native-preview.workspace.tab.task:${debugMcpElicitationTaskId}`;
   assertTarget(mainTaskReady, mcpWorkspaceTab);
@@ -1575,7 +1842,33 @@ try {
     targetId: "native-preview.workspace.tab.overview",
   });
   assertSuccess(projectOverviewAfterTaskReorder, "return to project overview after task reorder");
+  assertTarget(projectOverviewAfterTaskReorder, "native-preview.projects");
+  const allProjectsOverview = await request(address, {
+    command: "click",
+    targetId: "native-preview.projects",
+  });
+  assertSuccess(allProjectsOverview, "open the aggregate Native projects overview");
+  assertEqual(allProjectsOverview.observation.page, "projects/overview", "projects overview page");
+  assertApplicationWorkspaceItem(
+    allProjectsOverview,
+    "projects-workspace",
+    "application:projects",
+  );
+  assertTarget(allProjectsOverview, `native-preview.project.${seededProjectId}`);
+  const selectedProjectFromOverview = await request(address, {
+    command: "click",
+    targetId: `native-preview.project.${seededProjectId}`,
+  });
+  assertSuccess(selectedProjectFromOverview, "open a project from the aggregate overview");
+  assertEqual(
+    selectedProjectFromOverview.observation.selectedProject,
+    seededProjectId,
+    "project selected from aggregate overview",
+  );
   summary.checks.push("task ordering persisted through the shared Product Core sort order");
+  summary.checks.push(
+    "the projects overview used a persistent Application Workspace Item and shared Product Core status, session, activity, and usage aggregation",
+  );
   summary.checks.push(
     "task hierarchy used Product Core parent ids, rejected descendant targets, and restored the selected task to root",
   );
@@ -1596,6 +1889,8 @@ try {
   );
   assertTarget(settings, "native-preview.settings.appearance.theme.light");
   assertTarget(settings, "native-preview.settings.appearance.theme.dark");
+  assertTarget(settings, "native-preview.settings.appearance.sidebar.grouped");
+  assertTarget(settings, "native-preview.settings.appearance.sidebar.unified");
   summary.checks.push("settings click entered the real settings state");
 
   const targetTheme = settings.observation.theme === "dark" ? "light" : "dark";
@@ -1607,7 +1902,31 @@ try {
   assertEqual(theme.observation.theme, targetTheme, "theme state");
   summary.checks.push("theme click changed the real theme state");
 
-  const settingsWindowCount = theme.observation.taskPopupWindowCount;
+  const unifiedSidebar = await request(address, {
+    command: "click",
+    targetId: "native-preview.settings.appearance.sidebar.unified",
+  });
+  assertSuccess(unifiedSidebar, "switch to unified sidebar");
+  assertEqual(
+    unifiedSidebar.observation.sidebarDisplayMode,
+    "unified",
+    "unified sidebar preference",
+  );
+  const groupedSidebar = await request(address, {
+    command: "click",
+    targetId: "native-preview.settings.appearance.sidebar.grouped",
+  });
+  assertSuccess(groupedSidebar, "restore grouped sidebar");
+  assertEqual(
+    groupedSidebar.observation.sidebarDisplayMode,
+    "grouped",
+    "grouped sidebar preference",
+  );
+  summary.checks.push(
+    "sidebar appearance switched between the persisted grouped project tree and the global conversation list",
+  );
+
+  const settingsWindowCount = groupedSidebar.observation.taskPopupWindowCount;
   const moveSettingsToWindowTarget =
     `native-preview.workspace.tab.${settingsWorkspaceItemId}.move-to-new-window`;
   assertTarget(theme, moveSettingsToWindowTarget);
@@ -1699,12 +2018,23 @@ try {
     assertTarget(desktopSettings, "native-preview.settings.desktop.update.check");
   }
   assertEqual(desktopSettings.observation.trayActive, true, "Native tray registration");
+  const shortcutCapture = await request(address, {
+    command: "click",
+    targetId: "native-preview.settings.desktop.shortcut",
+  });
+  assertSuccess(shortcutCapture, "begin Native global shortcut capture");
+  assertEqual(
+    shortcutCapture.observation.shellShortcutCapturing,
+    true,
+    "shortcut capture state",
+  );
   const shortcutInput = await request(address, {
     command: "input",
     targetId: "native-preview.settings.desktop.shortcut",
     text: "Ctrl+Shift+F24",
   });
   assertSuccess(shortcutInput, "enter Native global shortcut");
+  assertEqual(shortcutInput.observation.shellShortcutCapturing, false, "captured shortcut state");
   const shortcutSaved = await request(address, {
     command: "click",
     targetId: "native-preview.settings.desktop.shortcut.save",
@@ -1779,6 +2109,17 @@ try {
   assertEqual(dataImportReset.observation.dataImportPlanStatus, null, "reset import plan");
   summary.checks.push(
     "Native data migration used stable debug targets to select, plan, execute, report, and reset a real isolated import without touching the source",
+  );
+
+  const aboutSettings = await request(address, {
+    command: "click",
+    targetId: "native-preview.settings.about",
+  });
+  assertSuccess(aboutSettings, "open Native about settings");
+  assertEqual(aboutSettings.observation.page, "settings/about", "about settings page");
+  assertTarget(aboutSettings, "native-preview.settings.about");
+  summary.checks.push(
+    "Native About settings exposed the application version and generated third-party license manifest",
   );
 
   const providerSettings = await request(address, {
@@ -1931,6 +2272,8 @@ try {
   assertSuccess(agentSettings, "open Agent settings");
   assertEqual(agentSettings.observation.page, "settings/agent", "Agent settings page");
   assertTarget(agentSettings, "native-preview.settings.agent.subagents");
+  assertTarget(agentSettings, "native-preview.settings.agent.non-interrupt");
+  assertTarget(agentSettings, "native-preview.settings.agent.debug");
   assertTarget(agentSettings, "native-preview.settings.agent.auto-turn");
   assertTarget(agentSettings, "native-preview.settings.agent.custom.new");
   const initialAgentRevision = agentSettings.observation.agentInteractionRevision;
@@ -1942,7 +2285,37 @@ try {
     ),
   );
   const initialSubagentsEnabled = agentSettings.observation.agentSubagentsEnabled;
+  const initialNonInterruptMode = agentSettings.observation.agentNonInterruptMode;
+  const initialAgentDebugEnabled = agentSettings.observation.agentDebugEnabled;
   const initialAutoTurnEnabled = agentSettings.observation.agentAutoTurnEnabled;
+  if (!initialAgentDebugEnabled) {
+    const debugEnabled = await request(address, {
+      command: "click",
+      targetId: "native-preview.settings.agent.debug",
+    });
+    assertSuccess(debugEnabled, "enable Native Debug timeline panel");
+    assertEqual(debugEnabled.observation.agentDebugEnabled, true, "Debug panel enabled");
+  }
+  const nonInterruptToggled = await request(address, {
+    command: "click",
+    targetId: "native-preview.settings.agent.non-interrupt",
+  });
+  assertSuccess(nonInterruptToggled, "toggle Native non-interrupt mode");
+  assertEqual(
+    nonInterruptToggled.observation.agentNonInterruptMode,
+    !initialNonInterruptMode,
+    "toggled Native non-interrupt mode",
+  );
+  const nonInterruptRestored = await request(address, {
+    command: "click",
+    targetId: "native-preview.settings.agent.non-interrupt",
+  });
+  assertSuccess(nonInterruptRestored, "restore Native non-interrupt mode");
+  assertEqual(
+    nonInterruptRestored.observation.agentNonInterruptMode,
+    initialNonInterruptMode,
+    "restored Native non-interrupt mode",
+  );
   const subagentModeToggled = await request(address, {
     command: "click",
     targetId: "native-preview.settings.agent.subagents",
@@ -2110,6 +2483,215 @@ try {
     targetId: "native-preview.task.native-agent-debug-task",
   });
   assertSuccess(approvalTask, "open seeded task for restart recovery");
+  for (const action of [
+    "plan",
+    "ask-user",
+    "ask-user-multi",
+    "ask-user-preview",
+    "ask-user-flow",
+    "permission",
+    "todo-tool",
+    "todo",
+    "command",
+    "file-read",
+    "file-change",
+  ]) {
+    assertTarget(approvalTask, `native-preview.debug.timeline.${action}`);
+  }
+  const timelineCountBeforeDebug = approvalTask.observation.timelineEventCount;
+  const debugCommand = await request(address, {
+    command: "click",
+    targetId: "native-preview.debug.timeline.command",
+  });
+  assertSuccess(debugCommand, "inject Native Debug command card");
+  assertEqual(
+    debugCommand.observation.timelineEventCount,
+    timelineCountBeforeDebug + 1,
+    "Debug command card visible in timeline",
+  );
+  const debugPlan = await request(address, {
+    command: "click",
+    targetId: "native-preview.debug.timeline.plan",
+  });
+  assertSuccess(debugPlan, "inject Native Debug plan interaction");
+  const debugPlanRequestId = debugPlan.observation.pendingInteractionIds.find((requestId) =>
+    requestId.startsWith("native-debug:request:"),
+  );
+  if (!debugPlanRequestId) {
+    throw new Error("Debug plan did not enter the real pending interaction surface");
+  }
+  const debugPlanApproved = await request(address, {
+    command: "click",
+    targetId: `native-preview.task-session.plan.${debugPlanRequestId}.approve`,
+  });
+  assertSuccess(debugPlanApproved, "approve Native Debug plan interaction");
+  assertNotIncludes(
+    debugPlanApproved.observation.pendingInteractionIds,
+    debugPlanRequestId,
+    "resolved Debug plan interaction",
+  );
+  const debugAskFlow = await request(address, {
+    command: "click",
+    targetId: "native-preview.debug.timeline.ask-user-flow",
+  });
+  assertSuccess(debugAskFlow, "inject Native Debug multi-question interaction");
+  const debugAskRequestId = debugAskFlow.observation.pendingInteractionIds.find((requestId) =>
+    requestId.startsWith("native-debug:request:"),
+  );
+  if (!debugAskRequestId) {
+    throw new Error("Debug multi-question interaction did not enter the pending surface");
+  }
+  const debugAskFirstChoice = await request(address, {
+    command: "click",
+    targetId: `native-preview.task-session.interaction.${debugAskRequestId}.option.1`,
+  });
+  assertSuccess(debugAskFirstChoice, "select the first Debug AskUser answer");
+  assertTarget(
+    debugAskFirstChoice,
+    `native-preview.task-session.interaction.${debugAskRequestId}.submit`,
+  );
+  const debugAskNext = await request(address, {
+    command: "click",
+    targetId: `native-preview.task-session.interaction.${debugAskRequestId}.submit`,
+  });
+  assertSuccess(debugAskNext, "advance the Native Debug AskUser flow");
+  assertIncludes(
+    debugAskNext.observation.pendingInteractionIds,
+    debugAskRequestId,
+    "pending Debug AskUser second question",
+  );
+  assertTarget(
+    debugAskNext,
+    `native-preview.task-session.interaction.${debugAskRequestId}.back`,
+  );
+  const debugAskMultiChoice = await request(address, {
+    command: "click",
+    targetId: `native-preview.task-session.interaction.${debugAskRequestId}.option.0`,
+  });
+  assertSuccess(debugAskMultiChoice, "select a multi-choice Debug AskUser answer");
+  const debugAskCompleted = await request(address, {
+    command: "click",
+    targetId: `native-preview.task-session.interaction.${debugAskRequestId}.submit`,
+  });
+  assertSuccess(debugAskCompleted, "complete the Native Debug AskUser flow");
+  assertNotIncludes(
+    debugAskCompleted.observation.pendingInteractionIds,
+    debugAskRequestId,
+    "resolved Debug AskUser interaction",
+  );
+  summary.checks.push(
+    "the persisted Debug setting exposed all 11 Native timeline fixtures, injected a real ephemeral command card, and completed plan plus structured multi-question AskUser interactions through the shared pending-action surface",
+  );
+  assertTarget(approvalTask, "native-preview.task-session.iab.open");
+  const iabOpened = await request(address, {
+    command: "click",
+    targetId: "native-preview.task-session.iab.open",
+  });
+  assertSuccess(iabOpened, "open Native IAB Dock");
+  assertTarget(iabOpened, "native-preview.task-session.iab.url");
+  assertTarget(iabOpened, "native-preview.task-session.iab.navigate");
+  const iabUrl = await request(address, {
+    command: "input",
+    targetId: "native-preview.task-session.iab.url",
+    text: modelFixture.endpoint,
+  });
+  assertSuccess(iabUrl, "enter Native IAB fixture URL");
+  assertSuccess(
+    await request(address, {
+      command: "click",
+      targetId: "native-preview.task-session.iab.navigate",
+    }),
+    "navigate the Native IAB",
+  );
+  const iabReady = await waitForObservation(
+    address,
+    (observation) =>
+      observation.iabDockOpen &&
+      observation.iabBrowserAttached &&
+      observation.iabBrowserReady &&
+      observation.iabUrl === modelFixture.endpoint &&
+      observation.iabError === null,
+    30_000,
+  );
+  assertTarget(iabReady, "native-preview.task-session.iab.close");
+  assertTarget(iabReady, "native-preview.task-session.iab.open-window");
+  await recordRenderedWindow(
+    child.pid,
+    iabScreenshotPath,
+    "IAB",
+    "iabWindowBounds",
+    "iabPngSize",
+  );
+  const iabWindowOpening = await request(address, {
+    command: "click",
+    targetId: "native-preview.task-session.iab.open-window",
+  });
+  assertSuccess(iabWindowOpening, "open the Native IAB task window");
+  const iabWindowReady = await waitForObservation(
+    address,
+    (observation) =>
+      observation.iabWindowCount === 1 &&
+      observation.iabWindowReadyCount === 1 &&
+      observation.iabWindowTaskIds?.[0] === debugTaskId &&
+      observation.iabWindowUrls?.[0] === modelFixture.endpoint &&
+      observation.iabWindowError === null,
+    30_000,
+  );
+  const iabWindowTarget = iabWindowReady.observation.visibleTargetIds.find((target) =>
+    /^native-preview\.iab-window\.\d+$/.test(target),
+  );
+  if (!iabWindowTarget) {
+    throw new Error("ready Native IAB task window did not expose its structured target");
+  }
+  assertSuccess(
+    await request(address, {
+      command: "input",
+      targetId: `${iabWindowTarget}.note`,
+      text: "确认本地页面状态",
+    }),
+    "enter the Native IAB result note",
+  );
+  assertTarget(iabWindowReady, `${iabWindowTarget}.submit`);
+  const iabSubmitted = await request(address, {
+    command: "click",
+    targetId: `${iabWindowTarget}.submit`,
+  });
+  assertSuccess(iabSubmitted, "capture and submit the Native IAB result");
+  const iabSubmissionComplete = await waitForObservation(
+    address,
+    (observation) =>
+      observation.iabWindowCapturePendingCount === 0 &&
+      typeof observation.iabWindowNotice === "string" &&
+      observation.iabWindowNotice.length > 0 &&
+      observation.iabWindowError === null,
+    30_000,
+  );
+  const submittedIabSnapshot = await waitForFirstPng(
+    path.join(previewHome, "cache", "iab-snapshots"),
+    10_000,
+  );
+  summary.iabSnapshotPath = submittedIabSnapshot;
+  summary.iabSnapshotPngSize = fs.statSync(submittedIabSnapshot).size;
+  assertTarget(iabSubmissionComplete, `${iabWindowTarget}.close`);
+  assertSuccess(
+    await request(address, {
+      command: "click",
+      targetId: `${iabWindowTarget}.close`,
+    }),
+    "close the Native IAB task window",
+  );
+  await waitForObservation(address, (observation) => observation.iabWindowCount === 0, 10_000);
+  const iabClosed = await request(address, {
+    command: "click",
+    targetId: "native-preview.task-session.iab.close",
+  });
+  assertSuccess(iabClosed, "close Native IAB Dock");
+  if (iabClosed.observation.iabDockOpen) {
+    throw new Error("Native IAB Dock remained open after close");
+  }
+  summary.checks.push(
+    "the Native IAB Dock and task window navigated a local fixture, captured a PNG, submitted durable Agent context and closed without losing the task",
+  );
   const draftBeforeRestart = await request(address, {
     command: "input",
     targetId: "native-preview.task-session.composer.input",
@@ -2192,6 +2774,129 @@ try {
   }
   summary.checks.push(
     "slash command search, stable selection, revisioned Composer clear and Product timeline projection used the real Native application path",
+  );
+  const frontendSlash = await request(address, {
+    command: "input",
+    targetId: "native-preview.task-session.composer.input",
+    text: "/front",
+  });
+  assertSuccess(frontendSlash, "enter Native frontend workflow slash query");
+  const frontendSlashTarget = "native-preview.task-session.composer.slash.frontend";
+  const frontendSlashReady = await waitForObservation(
+    address,
+    (observation) => observation.visibleTargetIds.includes(frontendSlashTarget),
+    10_000,
+  );
+  assertTarget(frontendSlashReady, frontendSlashTarget);
+  assertSuccess(
+    await request(address, { command: "click", targetId: frontendSlashTarget }),
+    "start the Native frontend workflow from its slash command",
+  );
+  await waitForObservation(
+    address,
+    (observation) =>
+      observation.turnState === "completed" &&
+      observation.composerLength === 0 &&
+      observation.taskActionError === null,
+    30_000,
+  );
+  const reviewSlash = await request(address, {
+    command: "input",
+    targetId: "native-preview.task-session.composer.input",
+    text: "/review",
+  });
+  assertSuccess(reviewSlash, "enter Native review workflow slash query");
+  const reviewSlashTarget = "native-preview.task-session.composer.slash.review";
+  const reviewSlashReady = await waitForObservation(
+    address,
+    (observation) => observation.visibleTargetIds.includes(reviewSlashTarget),
+    10_000,
+  );
+  assertTarget(reviewSlashReady, reviewSlashTarget);
+  const reviewTargetReady = await request(address, {
+    command: "click",
+    targetId: reviewSlashTarget,
+  });
+  assertSuccess(reviewTargetReady, "open the Native review target selector");
+  const reviewBranchTarget = "native-preview.task-window.0.review-workflow.target.branch";
+  assertTarget(reviewTargetReady, reviewBranchTarget);
+  const reviewBranchSelected = await request(address, {
+    command: "click",
+    targetId: reviewBranchTarget,
+  });
+  assertSuccess(reviewBranchSelected, "select the Native review base-branch target");
+  const reviewTargetInput = "native-preview.task-window.0.review-workflow.target-input";
+  assertTarget(reviewBranchSelected, reviewTargetInput);
+  const reviewBranchEntered = await request(address, {
+    command: "input",
+    targetId: reviewTargetInput,
+    text: workflowReviewBranch,
+  });
+  assertSuccess(reviewBranchEntered, "enter the Native review base branch");
+  const reviewSubmitTarget = "native-preview.task-window.0.review-workflow.submit";
+  assertTarget(reviewBranchEntered, reviewSubmitTarget);
+  assertSuccess(
+    await request(address, { command: "click", targetId: reviewSubmitTarget }),
+    "start the Native base-branch review workflow",
+  );
+  await waitForObservation(
+    address,
+    (observation) =>
+      observation.turnState === "completed" &&
+      observation.composerLength === 0 &&
+      observation.taskActionError === null,
+    30_000,
+  );
+  if (!summary.modelFixtureRequests?.some((entry) => entry.reviewBranchSeen)) {
+    throw new Error("Native review workflow did not carry the selected base branch to the model request");
+  }
+  const retryFailureEntered = await request(address, {
+    command: "input",
+    targetId: "native-preview.task-session.composer.input",
+    text: retryFailurePrompt,
+  });
+  assertSuccess(retryFailureEntered, "enter the Native retry failure fixture prompt");
+  assertSuccess(
+    await request(address, {
+      command: "click",
+      targetId: "native-preview.task-session.composer.send",
+    }),
+    "send the Native retry failure fixture prompt",
+  );
+  const retryReady = await waitForObservation(
+    address,
+    (observation) =>
+      observation.turnState === "failed" &&
+      observation.visibleTargetIds.some(
+        (target) =>
+          target.startsWith("native-preview.task-window.0.timeline.") &&
+          target.endsWith(".retry"),
+      ),
+    30_000,
+  );
+  const retryTarget = retryReady.observation.visibleTargetIds.find(
+    (target) =>
+      target.startsWith("native-preview.task-window.0.timeline.") && target.endsWith(".retry"),
+  );
+  if (!retryTarget) throw new Error("Native failed turn did not expose its retry target");
+  assertSuccess(
+    await request(address, { command: "click", targetId: retryTarget }),
+    "retry the failed Native timeline event",
+  );
+  await waitForObservation(
+    address,
+    (observation) =>
+      observation.turnState === "completed" && observation.taskActionError === null,
+    30_000,
+  );
+  const retryRequests = summary.modelFixtureRequests?.filter(
+    (entry) => entry.retryFailurePromptSeen,
+  ).length ?? 0;
+  if (retryRequests < 2) {
+    throw new Error(`Native retry sent ${retryRequests} matching model requests instead of two`);
+  }
+  summary.checks.push(
+    "Native workflow slash commands submitted typed task/review workflows with a real review target, and failed timeline events retried their original durable message without replacing the Composer draft",
   );
   const conversationQuery = await request(address, {
     command: "input",
@@ -4245,6 +4950,55 @@ try {
     (observation) => !observation.codingToolsBusy && observation.codingToolsHasSearch,
     30_000,
   );
+  const codingSearchHitTarget = codingSearchReady.observation.visibleTargetIds.find((target) =>
+    target.startsWith("native-preview.coding-tools.search-hit."),
+  );
+  if (!codingSearchHitTarget) {
+    throw new Error("Native Code Index search did not expose a structured result target");
+  }
+  const codingDocumentOpened = await request(address, {
+    command: "click",
+    targetId: codingSearchHitTarget,
+  });
+  assertSuccess(codingDocumentOpened, "open Native Code Index result in the document editor");
+  if (
+    !codingDocumentOpened.observation.visibleTargetIds.some((target) =>
+      /^native-preview\.document-editor\.[0-9a-f]+\.definition$/.test(target),
+    )
+  ) {
+    throw new Error("Native document editor did not expose its real definition action");
+  }
+  assertTarget(codingDocumentOpened, "native-preview.command-palette.open");
+  const commandPaletteOpened = await request(address, {
+    command: "click",
+    targetId: "native-preview.command-palette.open",
+  });
+  assertSuccess(commandPaletteOpened, "open Native command palette");
+  assertTarget(commandPaletteOpened, "native-preview.command-palette.input");
+  assertTarget(
+    commandPaletteOpened,
+    "native-preview.command-palette.action.document.save",
+  );
+  const commandPaletteFiltered = await request(address, {
+    command: "input",
+    targetId: "native-preview.command-palette.input",
+    text: "保存",
+  });
+  assertSuccess(commandPaletteFiltered, "filter Native document commands");
+  assertTarget(
+    commandPaletteFiltered,
+    "native-preview.command-palette.action.document.save",
+  );
+  const commandPaletteSaved = await request(address, {
+    command: "click",
+    targetId: "native-preview.command-palette.action.document.save",
+  });
+  assertSuccess(commandPaletteSaved, "dispatch Native document save command");
+  if (commandPaletteSaved.observation.visibleTargetIds.includes(
+    "native-preview.command-palette.input",
+  )) {
+    throw new Error("Native command palette remained open after dispatch");
+  }
   assertTarget(codingSearchReady, "native-preview.coding-tools.save-memory");
   const codingMemorySaved = await request(address, {
     command: "click",
@@ -4301,7 +5055,7 @@ try {
     "Code Index Memory cleanup count",
   );
   summary.checks.push(
-    "Workspace tools used a persistent right Dock, shared Native AgentKit services and a real project Memory write path",
+    "Workspace tools used a persistent right Dock, shared Native AgentKit services, opened a Code Index hit in the syntax-highlighted document editor, dispatched its context-scoped save action through the NanaUI command palette, exposed a real definition action, and persisted project Memory",
   );
 
   const architectureOpened = await request(address, {
@@ -5390,24 +6144,23 @@ try {
     30_000,
   );
   assertTarget(hookCreated, `${hookTargetPrefix}.draft`);
-  const hookHandlers = [{
-    id: "native-debug-prompt",
-    event: "UserPromptSubmit",
-    matcher: "*",
-    type: "command",
-    command: "printf 'hook-ran\\n' >> native-agent-debug-hook.txt",
-    commandWindows: "echo hook-ran>>native-agent-debug-hook.txt",
-    timeoutSeconds: 5,
-    statusMessage: "Checking prompt",
-  }];
-  assertSuccess(
-    await request(address, {
-      command: "input",
-      targetId: `${hookTargetPrefix}.draft`,
-      text: JSON.stringify(hookHandlers),
-    }),
-    "input Native Hook handlers",
-  );
+  const hookHandlerFields = [
+    ["event", "UserPromptSubmit"],
+    ["matcher", "*"],
+    ["type", "command"],
+    ["command", "printf 'hook-ran\\n' >> native-agent-debug-hook.txt"],
+    ["command-windows", "echo hook-ran>>native-agent-debug-hook.txt"],
+    ["timeout", "5"],
+    ["status-message", "Checking prompt"],
+  ];
+  for (const [field, text] of hookHandlerFields) {
+    const targetId = `${hookTargetPrefix}.handler.0.${field}`;
+    assertTarget(hookCreated, targetId);
+    assertSuccess(
+      await request(address, { command: "input", targetId, text }),
+      `input Native Hook handler ${field}`,
+    );
+  }
   assertSuccess(
     await request(address, {
       command: "click",
@@ -5427,7 +6180,12 @@ try {
   const persistedHookDocument = JSON.parse(fs.readFileSync(hookDocumentPath, "utf8"));
   assertEqual(persistedHookDocument.revision, 2, "persisted Hook revision");
   assertEqual(persistedHookDocument.enabled, false, "Hook source defaults disabled");
-  assertEqual(persistedHookDocument.handlers?.[0]?.id, "native-debug-prompt", "persisted Hook handler");
+  assertEqual(persistedHookDocument.handlers?.[0]?.event, "UserPromptSubmit", "persisted Hook event");
+  assertEqual(persistedHookDocument.handlers?.[0]?.type, "command", "persisted Hook type");
+  assertEqual(persistedHookDocument.handlers?.[0]?.timeoutSeconds, 5, "persisted Hook timeout");
+  if (!persistedHookDocument.handlers?.[0]?.id) {
+    throw new Error("persisted Hook handler did not receive a stable id");
+  }
   assertSuccess(
     await request(address, {
       command: "click",
@@ -6425,6 +7183,28 @@ async function waitForPathAbsent(target, timeoutMs) {
   throw new Error(`timed out waiting for cancelled clone target cleanup: ${target}`);
 }
 
+async function waitForFirstPng(directory, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (fs.existsSync(directory)) {
+      const candidate = fs
+        .readdirSync(directory)
+        .filter((entry) => entry.toLowerCase().endsWith(".png"))
+        .map((entry) => path.join(directory, entry))
+        .find((entry) => {
+          const bytes = fs.readFileSync(entry);
+          return (
+            bytes.length > 1_000 &&
+            bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+          );
+        });
+      if (candidate) return candidate;
+    }
+    await delay(100);
+  }
+  throw new Error(`timed out waiting for a captured PNG in ${directory}`);
+}
+
 function request(address, payload) {
   appendTranscript("request", redactDebugPayload(payload));
   const separator = address.lastIndexOf(":");
@@ -6758,6 +7538,7 @@ async function startModelFixture() {
   let questionReplayIssued = false;
   let architectureApprovalIssued = false;
   let mcpToolIssued = false;
+  let retryFailureIssued = false;
   let awaitingQuestionResolution = false;
   const server = http.createServer((request, response) => {
     let requestBody = "";
@@ -6832,6 +7613,7 @@ async function startModelFixture() {
       const shouldRequestArchitectureApproval =
         latestUserText.includes(architectureApprovalPrompt) && !architectureApprovalIssued;
       const shouldRequestMcpTool = latestUserText.includes(mcpToolPrompt) && !mcpToolIssued;
+      const shouldFailRetry = latestUserText.includes(retryFailurePrompt) && !retryFailureIssued;
       const questionAnswerSeen = requestBody.includes("native-choice-b");
       const fifoFirstPromptSeen = latestUserText.includes(fifoFirstPrompt);
       const fifoSecondPromptSeen = latestUserText.includes(fifoSecondPrompt);
@@ -6867,6 +7649,8 @@ async function startModelFixture() {
           latestUserText.includes(previewWorkspace),
         guideCancelActivePromptSeen: latestUserText.includes(guideCancelActivePrompt),
         guideCancelQueuedPromptSeen: latestUserText.includes(guideCancelQueuedPrompt),
+        reviewBranchSeen: requestBody.includes(workflowReviewBranch),
+        retryFailurePromptSeen: latestUserText.includes(retryFailurePrompt),
         issuedToolCall:
           shouldRequestApproval ||
           shouldRequestFifoApproval ||
@@ -6887,6 +7671,17 @@ async function startModelFixture() {
       if (shouldRequestPlanCancel) planCancelIssued = true;
       if (shouldRequestArchitectureApproval) architectureApprovalIssued = true;
       if (shouldRequestMcpTool) mcpToolIssued = true;
+      if (shouldFailRetry) {
+        retryFailureIssued = true;
+        const body = JSON.stringify({ error: "native retry fixture failure" });
+        response.writeHead(500, {
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+          Connection: "close",
+        });
+        response.end(body);
+        return;
+      }
       if (awaitingQuestionResolution && !questionAnswerSeen) {
         const body = JSON.stringify({ error: "restored question answer was not forwarded" });
         response.writeHead(409, {

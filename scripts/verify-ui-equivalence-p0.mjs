@@ -30,6 +30,7 @@ const todoInteraction = fixture.interactions.todo;
 const roadmapInteraction = fixture.interactions.roadmap;
 const memoryInteraction = fixture.interactions.memory;
 const memorySettingsInteraction = fixture.interactions.memorySettings;
+const conversationSuggestionsInteraction = fixture.interactions.conversationSuggestions;
 const automationInteraction = fixture.interactions.automation;
 const skillInteraction = fixture.interactions.skill;
 const pluginInteraction = fixture.interactions.plugin;
@@ -37,6 +38,7 @@ const hookInteraction = fixture.interactions.hook;
 const mcpInteraction = fixture.interactions.mcp;
 const memoryTagsText = memoryInteraction.tags.join(", ");
 const draft = "同语料 Composer 草稿：中文 IME / markdown **fixed**";
+const discardedConversationDraft = "同语料未发送新对话草稿：关闭后不得落库";
 const expectedDraftBytes = Buffer.byteLength(draft, "utf8");
 const tauriHome = path.join(runDir, "tauri-home");
 const nativeHome = path.join(runDir, "native-home");
@@ -307,6 +309,23 @@ function hasMemorySettingsFacts(snapshot) {
     snapshot.memorySettings?.cooldownTurns === memorySettingsInteraction.cooldownTurns;
 }
 
+function hasInitialConversationSuggestionSettingsFacts(snapshot) {
+  return snapshot.conversationSuggestions?.enabled !==
+      conversationSuggestionsInteraction.enabled &&
+    snapshot.conversationSuggestions?.source === conversationSuggestionsInteraction.source;
+}
+
+function hasConversationSuggestionSettingsFacts(snapshot) {
+  return snapshot.conversationSuggestions?.enabled ===
+      conversationSuggestionsInteraction.enabled &&
+    snapshot.conversationSuggestions?.source === conversationSuggestionsInteraction.source;
+}
+
+function hasSameConversationAuthority(left, right) {
+  return JSON.stringify(left.tasks) === JSON.stringify(right.tasks) &&
+    JSON.stringify(left.conversations) === JSON.stringify(right.conversations);
+}
+
 function hasAutomationDraftFacts(snapshot, { published = false, enabled = false } = {}) {
   const workflow = snapshot.automations.find(
     (item) => item.name === automationInteraction.name,
@@ -432,6 +451,7 @@ function hasFinalEquivalenceFacts(snapshot) {
   return hasClearedGoalTodoFacts(snapshot) &&
     hasRoadmapAndMemoryFacts(snapshot) &&
     hasMemorySettingsFacts(snapshot) &&
+    hasConversationSuggestionSettingsFacts(snapshot) &&
     hasAutomationDraftFacts(snapshot, { published: true, enabled: true }) &&
     hasUpdatedSkillFacts(snapshot) &&
     hasUpdatedPluginFacts(snapshot) &&
@@ -521,11 +541,34 @@ async function runTauri(devServerPlan) {
     await writeJson("tauri-initial.json", initial);
 
     const projectTarget = `sidebar.project.${projectId}.row`;
+    await waitUntil("Tauri new conversation entry", 20_000, async () => {
+      const observation = await tauriObserve(driverUrl, sessionId);
+      return hasEnabledTauriTarget(observation, "sidebar.new-chat") ? observation : null;
+    });
+    await tauriAct(driverUrl, sessionId, { type: "click", target: "sidebar.new-chat" });
+    await waitUntil("Tauri transient conversation draft", 20_000, async () => {
+      const observation = await tauriObserve(driverUrl, sessionId);
+      return hasEnabledTauriTarget(observation, "chat.composer.input") ? observation : null;
+    });
+    await tauriAct(driverUrl, sessionId, {
+      type: "type",
+      target: "chat.composer.input",
+      text: discardedConversationDraft,
+      clear: true,
+    });
+    const tauriDraftSnapshot = await tauriSnapshot(driverUrl, sessionId);
+    if (!hasSameConversationAuthority(initial, tauriDraftSnapshot)) {
+      throw new Error("Tauri unsent conversation draft changed Product authority");
+    }
     await waitUntil("Tauri fixture project", 20_000, async () => {
       const observation = await tauriObserve(driverUrl, sessionId);
       return hasTauriTarget(observation, projectTarget) ? observation : null;
     });
     await tauriAct(driverUrl, sessionId, { type: "click", target: projectTarget });
+    const tauriDiscardedDraftSnapshot = await tauriSnapshot(driverUrl, sessionId);
+    if (!hasSameConversationAuthority(initial, tauriDiscardedDraftSnapshot)) {
+      throw new Error("Tauri discarded conversation draft changed Product authority");
+    }
     const taskTarget = `sidebar.task.${taskId}`;
     await waitUntil("Tauri fixture task", 20_000, async () => {
       const observation = await tauriObserve(driverUrl, sessionId);
@@ -759,6 +802,23 @@ async function runTauri(devServerPlan) {
       return hasMemorySettingsFacts(snapshot) ? snapshot : null;
     });
 
+    await tauriNavigate(driverUrl, sessionId, "/settings?tab=model-config");
+    const tauriSuggestionTarget = conversationSuggestionsInteraction.enabled
+      ? "settings.suggestions.enabled.on"
+      : "settings.suggestions.enabled.off";
+    await waitUntil("Tauri conversation suggestion setting", 20_000, async () => {
+      const observation = await tauriObserve(driverUrl, sessionId);
+      return hasEnabledTauriTarget(observation, tauriSuggestionTarget) ? observation : null;
+    });
+    await tauriAct(driverUrl, sessionId, {
+      type: "click",
+      target: tauriSuggestionTarget,
+    });
+    await waitUntil("Tauri conversation suggestion authority", 20_000, async () => {
+      const snapshot = await tauriSnapshot(driverUrl, sessionId);
+      return hasConversationSuggestionSettingsFacts(snapshot) ? snapshot : null;
+    });
+
     await tauriAct(driverUrl, sessionId, {
       type: "click",
       target: "sidebar.footer.automations",
@@ -964,7 +1024,7 @@ async function runTauri(devServerPlan) {
     await writeJson("tauri-final.json", final);
     summary.artifacts.tauriScreenshot = screenshot;
     summary.checks.push(
-      "Tauri real UI cleared Goal/Todo and persisted the fixed Composer, Roadmap, Memory settings, published Automation, disabled the live AgentKit Skill, Plugin and Hook source, and edited Native AgentKit MCP",
+      "Tauri real UI cleared Goal/Todo and persisted the fixed Composer, Roadmap, Memory and conversation suggestion settings, published Automation, disabled the live AgentKit Skill, Plugin and Hook source, and edited Native AgentKit MCP",
     );
     return { initial, final };
   } finally {
@@ -1130,6 +1190,42 @@ async function runNative() {
     });
     const initial = initialResponse.snapshot;
     await writeJson("native-initial.json", initial);
+
+    await requestNativeDebug(address, {
+      command: "click",
+      targetId: "native-preview.new-conversation",
+    });
+    await waitUntil("Native transient conversation draft", 20_000, async () => {
+      const response = await requestNativeDebug(address, { command: "observe" });
+      const ids = response.observation.visibleTargetIds;
+      return ids.includes("native-preview.new-conversation.close") &&
+        ids.includes("native-preview.task-session.composer.input")
+        ? response.observation
+        : null;
+    });
+    await requestNativeDebug(address, {
+      command: "input",
+      targetId: "native-preview.task-session.composer.input",
+      text: discardedConversationDraft,
+    });
+    const nativeDraftSnapshot = (await requestNativeDebug(address, {
+      command: "equivalence-snapshot",
+      fixtureId,
+    })).snapshot;
+    if (!hasSameConversationAuthority(initial, nativeDraftSnapshot)) {
+      throw new Error("Native unsent conversation draft changed Product authority");
+    }
+    await requestNativeDebug(address, {
+      command: "click",
+      targetId: "native-preview.new-conversation.close",
+    });
+    const nativeDiscardedDraftSnapshot = (await requestNativeDebug(address, {
+      command: "equivalence-snapshot",
+      fixtureId,
+    })).snapshot;
+    if (!hasSameConversationAuthority(initial, nativeDiscardedDraftSnapshot)) {
+      throw new Error("Native discarded conversation draft changed Product authority");
+    }
 
     await requestNativeDebug(address, {
       command: "click",
@@ -1400,6 +1496,37 @@ async function runNative() {
 
     await requestNativeDebug(address, {
       command: "click",
+      targetId: "native-preview.settings.open",
+    });
+    await requestNativeDebug(address, {
+      command: "click",
+      targetId: "native-preview.settings.provider",
+    });
+    const nativeSuggestionTarget = conversationSuggestionsInteraction.enabled
+      ? "native-preview.settings.provider.conversation-suggestions.enable"
+      : "native-preview.settings.provider.conversation-suggestions.disable";
+    await waitUntil("Native conversation suggestion setting", 20_000, async () => {
+      const response = await requestNativeDebug(address, { command: "observe" });
+      return response.observation.visibleTargetIds.includes(nativeSuggestionTarget)
+        ? response.observation
+        : null;
+    });
+    await requestNativeDebug(address, {
+      command: "click",
+      targetId: nativeSuggestionTarget,
+    });
+    await waitUntil("Native conversation suggestion authority", 20_000, async () => {
+      const response = await requestNativeDebug(address, {
+        command: "equivalence-snapshot",
+        fixtureId,
+      });
+      return hasConversationSuggestionSettingsFacts(response.snapshot)
+        ? response.snapshot
+        : null;
+    });
+
+    await requestNativeDebug(address, {
+      command: "click",
       targetId: "native-preview.automations.open",
     });
     await waitUntil("Native Automation workspace", 20_000, async () => {
@@ -1604,7 +1731,7 @@ async function runNative() {
     });
     await writeJson("native-final.json", final);
     summary.checks.push(
-      "Native real UI cleared Goal/Todo and persisted the fixed Composer, Roadmap, Memory settings, published Automation, disabled the live AgentKit Skill, Plugin and Hook source, and edited Native AgentKit MCP",
+      "Native real UI cleared Goal/Todo and persisted the fixed Composer, Roadmap, Memory and conversation suggestion settings, published Automation, disabled the live AgentKit Skill, Plugin and Hook source, and edited Native AgentKit MCP",
     );
     let screenshot = null;
     let screenshotError = null;
@@ -1648,12 +1775,15 @@ async function main() {
   if (!hasSeededHookFacts(tauriSeed.snapshot)) {
     throw new Error("seed snapshot is missing the fixed Native AgentKit Hook facts");
   }
+  if (!hasInitialConversationSuggestionSettingsFacts(tauriSeed.snapshot)) {
+    throw new Error("seed snapshot is missing the default conversation suggestion settings");
+  }
   seededMcpConfigurationSha256 = tauriSeed.snapshot.mcpServers.find(
     (item) => item.serverId === mcpInteraction.serverId,
   ).configurationSha256;
   summary.manifestSha256 = tauriSeed.manifestSha256;
   summary.checks.push(
-    "isolated Tauri and Native homes were seeded through typed APIs from one manifest, including Goal/Todo, exact-package Skill, revisioned Hook and secret-free Native AgentKit MCP facts",
+    "isolated Tauri and Native homes were seeded through typed APIs from one manifest, including Goal/Todo, default conversation suggestion settings, exact-package Skill, revisioned Hook and secret-free Native AgentKit MCP facts",
   );
 
   const devServerPlan = await createAgentDebugDevServerPlan(process.env);
@@ -1667,7 +1797,7 @@ async function main() {
   assertEquivalent(tauri.initial, native.initial, "initial UI authority snapshots");
   assertEquivalent(tauri.final, native.final, "final UI authority snapshots");
   summary.checks.push(
-    "both real UIs produced identical normalized authority snapshots before and after input, including the same Skill runtime state, Hook revision and MCP registry revision with hashed configuration",
+    "both real UIs kept an edited but unsent new conversation out of Product authority and produced identical normalized snapshots before and after the remaining input, including conversation suggestion settings, Skill runtime state, Hook revision and MCP registry revision with hashed configuration",
   );
   summary.businessEquivalence = "passed";
   if (native.screenshotError) {

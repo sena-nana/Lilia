@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 6,
+  "schemaVersion": 7,
   "fixtureId": "equivalence-p0-v1",
   "projects": [
     {
@@ -200,6 +200,10 @@
       "enabled": false,
       "baselineInjectionEnabled": false,
       "cooldownTurns": 37
+    },
+    "conversationSuggestions": {
+      "enabled": false,
+      "source": "assistant-ai"
     },
     "automation": {
       "name": "equivalence-p0-v1-automation",
