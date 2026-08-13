@@ -9,9 +9,10 @@ use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use lilia_contracts::{
-    AgentSessionRef, PendingProjection, PendingProjectionStatus, TaskId, TimelineProjectionCommand,
-    TimelineProjectionEvent,
+    AgentSessionRef, PendingProjection, PendingProjectionStatus, ProjectionEventId, TaskId,
+    TimelineProjectionCommand, TimelineProjectionEvent,
 };
+use lilia_storage::ProjectionApplyResult;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -360,12 +361,18 @@ impl DesktopApplication {
         let decision = coordinator.decide_proposal(job, proposed, current);
         match &decision {
             DesktopTitleUpdateDecision::Success(current) => {
-                self.persist_task_title(
+                if !self.persist_task_title(
                     &job.task.id,
                     proposed,
                     DesktopTaskTitleSource::Auto,
                     &current.title,
-                )?;
+                )? {
+                    return Ok(DesktopTitleUpdateDecision::Stale(
+                        self.task_title_state(&job.task.id)?
+                            .unwrap_or_else(|| job.task.clone()),
+                    ));
+                }
+                self.persist_title_update_success(job, current, proposed)?;
             }
             DesktopTitleUpdateDecision::RequiresAction(review) => {
                 self.persist_title_update_review(job, review)?;
@@ -604,16 +611,16 @@ impl DesktopApplication {
         title: &str,
         source: DesktopTaskTitleSource,
         expected_title: &str,
-    ) -> Result<(), DesktopApplicationError> {
+    ) -> Result<bool, DesktopApplicationError> {
         let current = match self.get_task(task_id) {
             Ok(task) => task,
             Err(DesktopApplicationError::Product(lilia_contracts::ProductError::NotFound {
                 ..
-            })) => return Ok(()),
+            })) => return Ok(false),
             Err(error) => return Err(error),
         };
         if current.title != expected_title && source == DesktopTaskTitleSource::Auto {
-            return Ok(());
+            return Ok(false);
         }
         self.update_task(
             task_id,
@@ -632,6 +639,59 @@ impl DesktopApplication {
             project_id: current.project_id,
             task_id: Some(task_id.clone()),
         });
+        Ok(true)
+    }
+
+    fn persist_title_update_success(
+        &self,
+        job: &DesktopTitleUpdateJob,
+        previous: &DesktopTaskTitleState,
+        proposed: &str,
+    ) -> Result<(), DesktopApplicationError> {
+        let sequence = self
+            .authority()
+            .projection_timeline_for_task(&job.task.id)
+            .into_iter()
+            .map(|event| event.sequence)
+            .max()
+            .unwrap_or_default()
+            .saturating_add(1);
+        let request_id = job.turn_id.clone().unwrap_or_else(|| {
+            format!(
+                "{}-{}-{}",
+                job.version.upper_bound.turn_seq,
+                job.version.upper_bound.intra_turn_order,
+                job.version.generation
+            )
+        });
+        let session =
+            AgentSessionRef::new(format!("desktop-title-update:{}", job.task.id.as_str()))?;
+        let event = TimelineProjectionEvent {
+            id: ProjectionEventId::new(title_event_id(job.task.id.as_str(), &request_id)),
+            task_id: job.task.id.clone(),
+            agent_session: session,
+            sequence,
+            turn_id: job.turn_id.clone(),
+            kind: TITLE_UPDATE_ACTION_KIND.to_owned(),
+            status: "success".to_owned(),
+            title: "标题已更新".to_owned(),
+            summary: Some(proposed.to_owned()),
+            payload: serde_json::json!({
+                "proposedTitle": proposed,
+                "previousTitle": previous.title,
+                "requestId": request_id,
+            }),
+            projected: true,
+        };
+        let applied = self
+            .authority()
+            .apply_projection(TimelineProjectionCommand::UpsertTimelineEvent { event })?;
+        if applied != ProjectionApplyResult::DuplicateIgnored {
+            self.emit_event(DesktopEventKind::TimelineChanged {
+                task_id: job.task.id.clone(),
+                cursor: Some(sequence),
+            });
+        }
         Ok(())
     }
 
@@ -1074,6 +1134,67 @@ mod tests {
         assert_eq!(review.task.title, "手动标题");
         assert_eq!(review.proposed_title, "建议标题");
         assert!(!review.request_id.is_empty());
+    }
+
+    #[test]
+    fn automatic_title_update_persists_one_success_event() {
+        let (_home, application) = temp_app();
+        let task = application
+            .create_task(DesktopTaskCreate::new(None, "初始标题"))
+            .unwrap();
+        let job = application
+            .title_update_coordinator()
+            .schedule(
+                application.task_title_state(&task.id).unwrap().unwrap(),
+                Some("turn-auto-title".to_owned()),
+                DesktopTimelineUpperBound {
+                    turn_seq: 1,
+                    intra_turn_order: 0,
+                },
+            )
+            .unwrap()
+            .unwrap();
+
+        let decision = application
+            .apply_title_proposal(&job, "新的自动标题")
+            .unwrap();
+        assert!(matches!(decision, DesktopTitleUpdateDecision::Success(_)));
+        let current = application.task_title_state(&task.id).unwrap().unwrap();
+        assert_eq!(current.title, "新的自动标题");
+        assert_eq!(current.title_source, DesktopTaskTitleSource::Auto);
+
+        let title_events = application
+            .authority()
+            .projection_timeline_for_task(&task.id)
+            .into_iter()
+            .filter(|event| event.kind == TITLE_UPDATE_ACTION_KIND)
+            .collect::<Vec<_>>();
+        assert_eq!(title_events.len(), 1);
+        assert_eq!(title_events[0].status, "success");
+        assert_eq!(title_events[0].summary.as_deref(), Some("新的自动标题"));
+        assert_eq!(
+            title_events[0]
+                .payload
+                .get("previousTitle")
+                .and_then(JsonValue::as_str),
+            Some("初始标题")
+        );
+
+        assert!(matches!(
+            application
+                .apply_title_proposal(&job, "新的自动标题")
+                .unwrap(),
+            DesktopTitleUpdateDecision::Stale(_)
+        ));
+        assert_eq!(
+            application
+                .authority()
+                .projection_timeline_for_task(&task.id)
+                .into_iter()
+                .filter(|event| event.kind == TITLE_UPDATE_ACTION_KIND)
+                .count(),
+            1
+        );
     }
 
     #[test]
