@@ -26,7 +26,7 @@ LiliaCode 以 Lilia 产品协议与 Mutsuki AgentKit 为 Agent 核心。唯一�
 安装稳定版 Rust 工具链后，从仓库根目录运行：
 
 ```bash
-cargo run --locked -p lilia-desktop
+cargo run
 cargo xtask verify
 cargo xtask agent-debug
 cargo xtask performance

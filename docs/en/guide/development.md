@@ -25,7 +25,7 @@ LiliaCode/
 Install the stable Rust toolchain and run from the repository root:
 
 ```bash
-cargo run --locked -p lilia-desktop
+cargo run
 cargo check --locked -p lilia-desktop
 cargo test --locked -p lilia-desktop-application -p lilia-desktop
 cargo xtask verify

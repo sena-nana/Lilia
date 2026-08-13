@@ -26,7 +26,7 @@ LiliaCode uses the Lilia product protocol implemented by Mutsuki AgentKit. Its N
 Install the stable Rust toolchain, then run commands from the repository root:
 
 ```bash
-cargo run --locked -p lilia-desktop
+cargo run
 cargo xtask verify
 cargo xtask agent-debug
 cargo xtask performance

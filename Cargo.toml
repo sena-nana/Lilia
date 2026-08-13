@@ -13,18 +13,7 @@ members = [
     "apps/desktop",
     "xtask",
 ]
-default-members = [
-    "crates/lilia-contracts",
-    "crates/lilia-core",
-    "crates/lilia-client",
-    "crates/lilia-storage",
-    "crates/lilia-agent-integration",
-    "crates/lilia-service",
-    "crates/lilia-desktop-application",
-    "apps/service",
-    "apps/cli",
-    "apps/desktop",
-]
+default-members = ["apps/desktop"]
 
 [workspace.package]
 edition = "2021"

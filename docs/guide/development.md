@@ -25,7 +25,7 @@ LiliaCode/
 安装 stable Rust 工具链，并从仓库根目录运行：
 
 ```bash
-cargo run --locked -p lilia-desktop
+cargo run
 cargo check --locked -p lilia-desktop
 cargo test --locked -p lilia-desktop-application -p lilia-desktop
 ```

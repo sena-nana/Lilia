@@ -23,7 +23,7 @@
 从仓库根目录执行：
 
 ```bash
-cargo run --locked -p lilia-desktop
+cargo run
 cargo xtask verify
 cargo xtask agent-debug
 cargo xtask performance
