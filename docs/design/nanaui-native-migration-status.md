@@ -188,6 +188,14 @@ macOS 宿主随后在 ready 前被 Windows 11 门禁拒绝，因此本快照只�
   返回、跳过、dismissable 约束和选项说明/预览，最终提交与 Tauri 相同的 `answers` / `cancelled` 结果。功能测试
   覆盖多题、多选上限、Other、返回恢复与不可关闭；Agent Debug 脚本已加入真实两题流程，但本机仍在 Windows ready
   前停止，尚无可见回放。
+- [x] **剪贴板附件权威与显式 Native 粘贴**：文件路径描述、原始编码图片和长文本缓存已收口到共享
+  `DesktopApplication`；Tauri 命令只解码 DTO 后薄调用共享权威。Native 主窗口与任务弹窗均可显式粘贴文件、图片和
+  文本；短文本进入 Composer，达到旧版 2000 个 UTF-16 单元阈值的文本写入有界 `.txt` 附件。共享功能测试覆盖格式、
+  字节内容、阈值与空载荷；Native 119 项、严格 Clippy 和 Tauri locked check 通过。
+- [ ] **焦点感知 Ctrl/Cmd+V**：NanaUI owner `c789695` 已让稳定 ID 的焦点控件随 `HostedWindowEvent::KeyPressed`
+  投影，避免任务页其它输入框获得焦点时误写 Composer；该 revision 尚未发布，Lilia 继续固定已发布的
+  `c0a4404b327bcd27ba7a55657437180459a9b346`。发布后只需在三个 Composer Input 复用同一 ID 和剪贴板分流，显式
+  粘贴入口在此期间保持可用。
 - [x] **更新下载进度与不可中断状态**：共享 `DesktopHost::execute_update` 以可选进度回调保留旧 Host 默认实现，
   Native Host 对更新包做有界流式读取并发布单调进度；设置页和全局更新框持续显示下载/安装/重启状态。NanaUI
   `ConfirmDialog` busy 合同会禁用确认、取消、关闭与 outside dismiss，失败后恢复真实重试。共享应用层测试覆盖乱序/
