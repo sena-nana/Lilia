@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lilia_contracts::{ExpectedRevision, ProductEntity, ProjectId, TaskId};
+use lilia_contracts::{ProjectId, TaskId};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -693,20 +693,10 @@ impl DesktopApplication {
             .lock()
             .map_err(|_| DesktopApplicationError::StateUnavailable("worktrees"))?
             .mark_status(task_id, status)?;
-        let mut task = self.get_task(task_id)?;
+        let task = self.get_task(task_id)?;
         let archived = !task.archived;
         if archived {
-            task.archived = true;
-            task.updated_at = now_millis();
-            let expected = ExpectedRevision::new(task.revision.get())?;
-            self.authority()
-                .client()?
-                .products()
-                .update_entity(ProductEntity::Task(task.clone()), expected)?;
-            self.emit_event(DesktopEventKind::TasksChanged {
-                project_id: task.project_id.clone(),
-                task_id: Some(task_id.clone()),
-            });
+            self.set_task_archived(task_id, true)?;
         }
         self.emit_event(DesktopEventKind::WorktreeChanged {
             task_id: task_id.clone(),
@@ -1090,7 +1080,7 @@ mod tests {
     use std::fs;
     use std::sync::Arc;
 
-    use lilia_contracts::{ProductTask, Project};
+    use lilia_contracts::{ProductEntity, ProductTask, Project};
     use lilia_service::ServiceAuthority;
     use tempfile::TempDir;
 

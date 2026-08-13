@@ -6,10 +6,11 @@ use lilia_contracts::{
     ProductCommandResult, ProductConversationStatus, ProductEntity, ProductEntityKind,
     ProductError, ProductEvent, ProductEventSequence, ProductProjectArchiveInput,
     ProductProjectArchiveOutcome, ProductProjectRemovalOutcome, ProductProjectReorderEntry,
-    ProductProjectReorderOutcome, ProductResult, ProductTask, ProductTaskHandoffImport,
-    ProductTaskHandoffRecord, ProductTaskMoveInput, ProductTaskMoveOutcome,
-    ProductTaskReorderEntry, ProductTaskReorderOutcome, Project, ProjectArchiveState, ProjectId,
-    TaskDependencyGraph, TaskId,
+    ProductProjectReorderOutcome, ProductResult, ProductTask, ProductTaskArchiveInput,
+    ProductTaskArchiveOutcome, ProductTaskHandoffImport, ProductTaskHandoffRecord,
+    ProductTaskMoveInput, ProductTaskMoveOutcome, ProductTaskReorderEntry,
+    ProductTaskReorderOutcome, Project, ProjectArchiveState, ProjectId, TaskDependencyGraph,
+    TaskId,
 };
 
 use crate::domain::ensure_expected_revision;
@@ -50,6 +51,11 @@ pub trait ProductRepository: Send + Sync {
         meta: &ProductCommandMeta,
         input: &ProductProjectArchiveInput,
     ) -> ProductResult<ProductCommandResult<ProductProjectArchiveOutcome>>;
+    fn set_task_archived_command(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskArchiveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskArchiveOutcome>>;
     fn reorder_projects_command(
         &self,
         meta: &ProductCommandMeta,
@@ -106,6 +112,7 @@ pub struct InMemoryProductStore {
     command_results: HashMap<String, ProductCommandResult<ProductEntity>>,
     project_removal_results: HashMap<String, ProductCommandResult<ProductProjectRemovalOutcome>>,
     project_archive_results: HashMap<String, ProductCommandResult<ProductProjectArchiveOutcome>>,
+    task_archive_results: HashMap<String, ProductCommandResult<ProductTaskArchiveOutcome>>,
     project_reorder_results: HashMap<String, ProductCommandResult<ProductProjectReorderOutcome>>,
     task_reorder_results: HashMap<String, ProductCommandResult<ProductTaskReorderOutcome>>,
     task_move_results: HashMap<String, ProductCommandResult<ProductTaskMoveOutcome>>,
@@ -133,6 +140,7 @@ impl InMemoryProductStore {
         self.command_results.clear();
         self.project_removal_results.clear();
         self.project_archive_results.clear();
+        self.task_archive_results.clear();
         self.project_reorder_results.clear();
         self.task_reorder_results.clear();
         self.task_move_results.clear();
@@ -541,6 +549,118 @@ impl ProductRepository for Mutex<InMemoryProductStore> {
             ProductProjectArchiveOutcome {
                 archived_tasks,
                 archived_conversations,
+            },
+        )
+    }
+
+    fn set_task_archived_command(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskArchiveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskArchiveOutcome>> {
+        let mut store = lock_store(self)?;
+        if let Some(result) = store
+            .task_archive_results
+            .get(meta.idempotency_key.as_str())
+            .cloned()
+        {
+            return duplicate_command_result(meta, result);
+        }
+        validate_task_archive_input(input)?;
+        let mut task = store
+            .tasks
+            .get(input.task_id.as_str())
+            .cloned()
+            .ok_or_else(|| ProductError::NotFound {
+                entity: "task".into(),
+                id: input.task_id.as_str().into(),
+            })?;
+        ensure_expected_revision(input.expected_revision, task.revision)?;
+        let mut conversations = store
+            .entities
+            .values()
+            .filter_map(|entity| match entity {
+                ProductEntity::Conversation(conversation)
+                    if conversation.task_id.as_ref() == Some(&input.task_id) =>
+                {
+                    Some(conversation.clone())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        conversations.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut requested_ids = input
+            .conversations
+            .iter()
+            .map(|entry| entry.conversation_id.clone())
+            .collect::<Vec<_>>();
+        requested_ids.sort();
+        if conversations
+            .iter()
+            .map(|conversation| &conversation.id)
+            .ne(requested_ids.iter())
+        {
+            return Err(stale_task_archive("bound conversation set changed"));
+        }
+        for entry in &input.conversations {
+            let conversation = conversations
+                .iter()
+                .find(|conversation| conversation.id == entry.conversation_id)
+                .expect("task conversation set was validated");
+            ensure_expected_revision(entry.expected_revision, conversation.revision)?;
+        }
+
+        let action = if input.archived {
+            "archived"
+        } else {
+            "restored"
+        };
+        let mut changed = false;
+        if task.archived != input.archived {
+            task.archived = input.archived;
+            task.updated_at = task.updated_at.max(input.updated_at);
+            task.revision = task.revision.next();
+            store_entity(&mut store, ProductEntity::Task(task.clone()));
+            append_product_event(&mut store, meta, &ProductEntity::Task(task.clone()), action);
+            changed = true;
+        }
+        let desired_status = if input.archived {
+            ProductConversationStatus::Closed
+        } else {
+            ProductConversationStatus::Active
+        };
+        for conversation in &mut conversations {
+            if conversation.archived == input.archived && conversation.status == desired_status {
+                continue;
+            }
+            conversation.archived = input.archived;
+            conversation.status = desired_status;
+            conversation.updated_at = conversation.updated_at.max(input.updated_at);
+            conversation.revision = conversation.revision.next();
+            store_entity(
+                &mut store,
+                ProductEntity::Conversation(conversation.clone()),
+            );
+            append_product_event(
+                &mut store,
+                meta,
+                &ProductEntity::Conversation(conversation.clone()),
+                action,
+            );
+            changed = true;
+        }
+        if !changed {
+            return Err(ProductError::InvalidState {
+                message: "task archive state already matches the requested value".into(),
+            });
+        }
+        store.rebuild_graph();
+        append_task_archive_result(
+            &mut store,
+            meta,
+            ProductTaskArchiveOutcome {
+                task,
+                conversations,
             },
         )
     }
@@ -1224,6 +1344,14 @@ impl ProductServices {
         self.repository.archive_project_command(meta, input)
     }
 
+    pub fn set_task_archived_command(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskArchiveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskArchiveOutcome>> {
+        self.repository.set_task_archived_command(meta, input)
+    }
+
     pub fn reorder_projects_command(
         &self,
         meta: &ProductCommandMeta,
@@ -1456,6 +1584,56 @@ fn validate_project_archive_input(input: &ProductProjectArchiveInput) -> Product
         });
     }
     Ok(())
+}
+
+fn append_task_archive_result(
+    store: &mut InMemoryProductStore,
+    meta: &ProductCommandMeta,
+    outcome: ProductTaskArchiveOutcome,
+) -> ProductResult<ProductCommandResult<ProductTaskArchiveOutcome>> {
+    let sequence = store
+        .product_events
+        .last()
+        .map(|event| event.sequence)
+        .ok_or_else(|| ProductError::InvalidState {
+            message: "task archive command did not publish an event".into(),
+        })?;
+    let result = ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value: outcome,
+        duplicate: false,
+    };
+    store
+        .task_archive_results
+        .insert(meta.idempotency_key.as_str().into(), result.clone());
+    Ok(result)
+}
+
+fn validate_task_archive_input(input: &ProductTaskArchiveInput) -> ProductResult<()> {
+    if input
+        .conversations
+        .iter()
+        .enumerate()
+        .any(|(index, entry)| {
+            input.conversations[..index]
+                .iter()
+                .any(|candidate| candidate.conversation_id == entry.conversation_id)
+        })
+    {
+        return Err(ProductError::InvalidInput {
+            field: "conversations".into(),
+            message: "task archive conversations must not contain duplicate ids".into(),
+        });
+    }
+    Ok(())
+}
+
+fn stale_task_archive(message: &str) -> ProductError {
+    ProductError::Conflict {
+        conflict: ConflictKind::StaleRevision,
+        message: message.into(),
+    }
 }
 
 fn stale_project_archive(message: &str) -> ProductError {

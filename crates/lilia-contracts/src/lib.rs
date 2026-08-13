@@ -77,7 +77,8 @@ pub use projection::{
 };
 pub use revision::{ExpectedRevision, ProductRevision};
 pub use task::{
-    ProductTask, ProductTaskMoveInput, ProductTaskMoveOutcome, ProductTaskPriority,
+    ProductTask, ProductTaskArchiveConversationEntry, ProductTaskArchiveInput,
+    ProductTaskArchiveOutcome, ProductTaskMoveInput, ProductTaskMoveOutcome, ProductTaskPriority,
     ProductTaskReorderEntry, ProductTaskReorderOutcome, ProductTaskStatus, TaskDependencyGraph,
     TaskDependencyRule, AGENT_TODO_PROMOTION_REQUIRED,
 };

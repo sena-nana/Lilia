@@ -3,11 +3,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lilia_contracts::{
     ConversationId, ExpectedRevision, IdempotencyKey, ProductCommandMeta, ProductConversation,
-    ProductEntity, ProductEntityKind, ProductProjectArchiveConversationEntry,
-    ProductProjectArchiveInput, ProductProjectArchiveOutcome, ProductProjectArchiveTaskEntry,
-    ProductProjectRemovalOutcome, ProductProjectReorderEntry, ProductRevision, ProductTask,
-    ProductTaskMoveInput, ProductTaskPriority, ProductTaskReorderEntry, ProductTaskStatus, Project,
-    ProjectArchiveState, ProjectId, TaskId,
+    ProductConversationStatus, ProductEntity, ProductEntityKind,
+    ProductProjectArchiveConversationEntry, ProductProjectArchiveInput,
+    ProductProjectArchiveOutcome, ProductProjectArchiveTaskEntry, ProductProjectRemovalOutcome,
+    ProductProjectReorderEntry, ProductRevision, ProductTask, ProductTaskArchiveConversationEntry,
+    ProductTaskArchiveInput, ProductTaskArchiveOutcome, ProductTaskMoveInput, ProductTaskPriority,
+    ProductTaskReorderEntry, ProductTaskStatus, Project, ProjectArchiveState, ProjectId, TaskId,
 };
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -578,6 +579,84 @@ impl DesktopApplication {
         Ok(task)
     }
 
+    pub fn set_task_archived(
+        &self,
+        task_id: &TaskId,
+        archived: bool,
+    ) -> Result<ProductTaskArchiveOutcome, DesktopApplicationError> {
+        let task = self.get_task(task_id)?;
+        let mut conversations = self
+            .authority()
+            .client()?
+            .products()
+            .list_entities(ProductEntityKind::Conversation)?
+            .into_iter()
+            .filter_map(|entity| match entity {
+                ProductEntity::Conversation(conversation)
+                    if conversation.task_id.as_ref() == Some(task_id) =>
+                {
+                    Some(conversation)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        conversations.sort_by(|left, right| left.id.cmp(&right.id));
+        let desired_status = if archived {
+            ProductConversationStatus::Closed
+        } else {
+            ProductConversationStatus::Active
+        };
+        if task.archived == archived
+            && conversations.iter().all(|conversation| {
+                conversation.archived == archived && conversation.status == desired_status
+            })
+        {
+            return Ok(ProductTaskArchiveOutcome {
+                task,
+                conversations,
+            });
+        }
+
+        let mut fingerprint = Sha256::new();
+        fingerprint.update(task.id.as_str().as_bytes());
+        fingerprint.update(task.revision.get().to_le_bytes());
+        fingerprint.update([u8::from(archived)]);
+        for conversation in &conversations {
+            fingerprint.update(conversation.id.as_str().as_bytes());
+            fingerprint.update(conversation.revision.get().to_le_bytes());
+        }
+        let key = format!(
+            "desktop:set-task-archived:{}:{:x}",
+            task.id,
+            fingerprint.finalize()
+        );
+        let result = self.authority().client()?.set_task_archived(
+            &create_meta(&key)?,
+            &ProductTaskArchiveInput {
+                task_id: task.id.clone(),
+                expected_revision: ExpectedRevision::new(task.revision.get())?,
+                conversations: conversations
+                    .iter()
+                    .map(|conversation| {
+                        Ok(ProductTaskArchiveConversationEntry {
+                            conversation_id: conversation.id.clone(),
+                            expected_revision: ExpectedRevision::new(conversation.revision.get())?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DesktopApplicationError>>()?,
+                archived,
+                updated_at: now_millis(),
+            },
+        )?;
+        if !result.duplicate {
+            self.emit_event(DesktopEventKind::TasksChanged {
+                project_id: result.value.task.project_id.clone(),
+                task_id: Some(result.value.task.id.clone()),
+            });
+        }
+        Ok(result.value)
+    }
+
     pub fn update_task_dependencies(
         &self,
         task_id: &TaskId,
@@ -1053,16 +1132,11 @@ mod tests {
         let task = app
             .create_task(DesktopTaskCreate::new(Some(project.id.clone()), "Task"))
             .unwrap();
-        let archived = app
-            .update_task(
-                &task.id,
-                DesktopTaskPatch {
-                    archived: Some(true),
-                    ..DesktopTaskPatch::default()
-                },
-            )
-            .unwrap();
-        assert!(archived.archived);
+        let archived = app.set_task_archived(&task.id, true).unwrap();
+        assert!(archived.task.archived);
+        assert!(archived.conversations.iter().all(|conversation| {
+            conversation.archived && conversation.status == ProductConversationStatus::Closed
+        }));
         assert!(app
             .query_tasks(TaskQuery::for_project(project.id.clone()))
             .unwrap()
@@ -1141,6 +1215,12 @@ mod tests {
         let replay = app.archive_project_conversations(&project.id).unwrap();
         assert!(replay.archived_tasks.is_empty());
         assert!(replay.archived_conversations.is_empty());
+
+        let restored = app.set_task_archived(&first.id, false).unwrap();
+        assert!(!restored.task.archived);
+        assert!(restored.conversations.iter().all(|conversation| {
+            !conversation.archived && conversation.status == ProductConversationStatus::Active
+        }));
     }
 
     #[test]

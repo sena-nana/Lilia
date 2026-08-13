@@ -12,10 +12,10 @@ use lilia_contracts::{
     ProductError, ProductEvent, ProductEventSequence, ProductProjectArchiveInput,
     ProductProjectArchiveOutcome, ProductProjectRemovalOutcome, ProductProjectReorderEntry,
     ProductProjectReorderOutcome, ProductResult, ProductRevision, ProductTask,
-    ProductTaskHandoffImport, ProductTaskHandoffRecord, ProductTaskMoveInput,
-    ProductTaskMoveOutcome, ProductTaskPriority, ProductTaskReorderEntry,
-    ProductTaskReorderOutcome, ProductTaskStatus, Project, ProjectArchiveState, ProjectId,
-    TaskDependencyGraph, TaskId, WorkflowId,
+    ProductTaskArchiveInput, ProductTaskArchiveOutcome, ProductTaskHandoffImport,
+    ProductTaskHandoffRecord, ProductTaskMoveInput, ProductTaskMoveOutcome, ProductTaskPriority,
+    ProductTaskReorderEntry, ProductTaskReorderOutcome, ProductTaskStatus, Project,
+    ProjectArchiveState, ProjectId, TaskDependencyGraph, TaskId, WorkflowId,
 };
 use lilia_core::{ensure_expected_revision, ProductRepository};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -1113,6 +1113,146 @@ impl ProductRepository for SqliteProductStore {
         })
     }
 
+    fn set_task_archived_command(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskArchiveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskArchiveOutcome>> {
+        validate_task_archive_input(input)?;
+        let _mutation = self.lock_mutation()?;
+        self.with_conn(|conn| {
+            let transaction = conn.unchecked_transaction().map_err(db_err)?;
+            if let Some(result) = load_command_result_on::<ProductTaskArchiveOutcome>(
+                &transaction,
+                meta.idempotency_key.as_str(),
+            )? {
+                return duplicate_sqlite_command_result(meta, result);
+            }
+            let mut task = load_task_on(&transaction, &input.task_id)?.ok_or_else(|| {
+                ProductError::NotFound {
+                    entity: "task".into(),
+                    id: input.task_id.as_str().into(),
+                }
+            })?;
+            ensure_expected_revision(input.expected_revision, task.revision)?;
+
+            let conversation_payloads = {
+                let mut statement = transaction
+                    .prepare(
+                        "SELECT payload_json FROM product_entities WHERE kind = 'conversation' ORDER BY id ASC",
+                    )
+                    .map_err(db_err)?;
+                let rows = statement
+                    .query_map([], |row| row.get::<_, String>(0))
+                    .map_err(db_err)?;
+                let mut payloads = Vec::new();
+                for row in rows {
+                    payloads.push(row.map_err(db_err)?);
+                }
+                payloads
+            };
+            let mut conversations = Vec::new();
+            for payload in conversation_payloads {
+                let ProductEntity::Conversation(conversation) =
+                    decode_json::<ProductEntity>(&payload).map_err(db_err)?
+                else {
+                    continue;
+                };
+                if conversation.task_id.as_ref() == Some(&input.task_id) {
+                    conversations.push(conversation);
+                }
+            }
+            conversations.sort_by(|left, right| left.id.cmp(&right.id));
+            let mut requested_ids = input
+                .conversations
+                .iter()
+                .map(|entry| entry.conversation_id.clone())
+                .collect::<Vec<_>>();
+            requested_ids.sort();
+            if conversations
+                .iter()
+                .map(|conversation| &conversation.id)
+                .ne(requested_ids.iter())
+            {
+                return Err(stale_task_archive("bound conversation set changed"));
+            }
+            for entry in &input.conversations {
+                let conversation = conversations
+                    .iter()
+                    .find(|conversation| conversation.id == entry.conversation_id)
+                    .expect("task conversation set was validated");
+                ensure_expected_revision(entry.expected_revision, conversation.revision)?;
+            }
+
+            let action = if input.archived {
+                "archived"
+            } else {
+                "restored"
+            };
+            let mut last_sequence = None;
+            if task.archived != input.archived {
+                let revision = task.revision;
+                task.archived = input.archived;
+                task.updated_at = task.updated_at.max(input.updated_at);
+                task.revision = revision.next();
+                let entity = ProductEntity::Task(task.clone());
+                update_entity_on(
+                    &transaction,
+                    &entity,
+                    ExpectedRevision::new(revision.get())?,
+                )?;
+                last_sequence = Some(record_product_event_on(
+                    &transaction,
+                    meta,
+                    &entity,
+                    action,
+                )?);
+            }
+            let desired_status = if input.archived {
+                ProductConversationStatus::Closed
+            } else {
+                ProductConversationStatus::Active
+            };
+            for conversation in &mut conversations {
+                if conversation.archived == input.archived && conversation.status == desired_status
+                {
+                    continue;
+                }
+                let revision = conversation.revision;
+                conversation.archived = input.archived;
+                conversation.status = desired_status;
+                conversation.updated_at = conversation.updated_at.max(input.updated_at);
+                conversation.revision = revision.next();
+                let entity = ProductEntity::Conversation(conversation.clone());
+                update_entity_on(
+                    &transaction,
+                    &entity,
+                    ExpectedRevision::new(revision.get())?,
+                )?;
+                last_sequence = Some(record_product_event_on(
+                    &transaction,
+                    meta,
+                    &entity,
+                    action,
+                )?);
+            }
+            let sequence = last_sequence.ok_or_else(|| ProductError::InvalidState {
+                message: "task archive state already matches the requested value".into(),
+            })?;
+            let result = record_task_archive_result_on(
+                &transaction,
+                meta,
+                ProductTaskArchiveOutcome {
+                    task,
+                    conversations,
+                },
+                sequence,
+            )?;
+            transaction.commit().map_err(db_err)?;
+            Ok(result)
+        })
+    }
+
     fn reorder_projects_command(
         &self,
         meta: &ProductCommandMeta,
@@ -1909,6 +2049,58 @@ fn record_project_archive_result_on(
         value,
         duplicate: false,
     })
+}
+
+fn record_task_archive_result_on(
+    conn: &Connection,
+    meta: &ProductCommandMeta,
+    value: ProductTaskArchiveOutcome,
+    sequence: ProductEventSequence,
+) -> ProductResult<ProductCommandResult<ProductTaskArchiveOutcome>> {
+    conn.execute(
+        r#"INSERT INTO product_command_results(
+             idempotency_key, command_id, event_sequence, result_json
+           ) VALUES (?1, ?2, ?3, ?4)"#,
+        params![
+            meta.idempotency_key.as_str(),
+            meta.command_id,
+            sequence.get() as i64,
+            encode_json(&value)?,
+        ],
+    )
+    .map_err(db_err)?;
+    Ok(ProductCommandResult {
+        command_id: meta.command_id.clone(),
+        event_sequence: sequence,
+        value,
+        duplicate: false,
+    })
+}
+
+fn validate_task_archive_input(input: &ProductTaskArchiveInput) -> ProductResult<()> {
+    if input
+        .conversations
+        .iter()
+        .enumerate()
+        .any(|(index, entry)| {
+            input.conversations[..index]
+                .iter()
+                .any(|candidate| candidate.conversation_id == entry.conversation_id)
+        })
+    {
+        return Err(ProductError::InvalidInput {
+            field: "conversations".into(),
+            message: "task archive conversations must not contain duplicate ids".into(),
+        });
+    }
+    Ok(())
+}
+
+fn stale_task_archive(message: &str) -> ProductError {
+    ProductError::Conflict {
+        conflict: ConflictKind::StaleRevision,
+        message: message.into(),
+    }
 }
 
 fn validate_project_archive_input(input: &ProductProjectArchiveInput) -> ProductResult<()> {
@@ -2800,8 +2992,8 @@ mod tests {
     use super::*;
     use lilia_contracts::{
         GitWorkspaceRef, IdempotencyKey, LiliaCodeTaskHandoff, ProductConversation, ProductEntity,
-        ProductProjectArchiveConversationEntry, ProductProjectArchiveTaskEntry, ProjectAssetId,
-        ProjectSettings,
+        ProductProjectArchiveConversationEntry, ProductProjectArchiveTaskEntry,
+        ProductTaskArchiveConversationEntry, ProjectAssetId, ProjectSettings,
     };
 
     fn handoff_import(
@@ -3130,6 +3322,140 @@ mod tests {
                 .collect(),
             archived_at,
         }
+    }
+
+    fn task_archive_fixture(
+        store: &SqliteProductStore,
+        suffix: &str,
+    ) -> (ProductTask, ProductConversation) {
+        let task = ProductTask::new(
+            TaskId::new(format!("task-archive-{suffix}")).unwrap(),
+            None,
+            "Task archive",
+        )
+        .unwrap();
+        store
+            .create_entity(ProductEntity::Task(task.clone()))
+            .unwrap();
+        let conversation = ProductConversation::new(
+            ConversationId::new(format!("conversation:task-archive-{suffix}")).unwrap(),
+            None,
+            Some(task.id.clone()),
+            "Task archive",
+        )
+        .unwrap();
+        store
+            .create_entity(ProductEntity::Conversation(conversation.clone()))
+            .unwrap();
+        (task, conversation)
+    }
+
+    fn task_archive_input(
+        task: &ProductTask,
+        conversation: &ProductConversation,
+        archived: bool,
+        updated_at: i64,
+    ) -> ProductTaskArchiveInput {
+        ProductTaskArchiveInput {
+            task_id: task.id.clone(),
+            expected_revision: ExpectedRevision::new(task.revision.get()).unwrap(),
+            conversations: vec![ProductTaskArchiveConversationEntry {
+                conversation_id: conversation.id.clone(),
+                expected_revision: ExpectedRevision::new(conversation.revision.get()).unwrap(),
+            }],
+            archived,
+            updated_at,
+        }
+    }
+
+    #[test]
+    fn task_archive_and_restore_are_atomic_and_exactly_idempotent() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let (task, conversation) = task_archive_fixture(&store, "lifecycle");
+        let archive_input = task_archive_input(&task, &conversation, true, 130);
+        let archive_meta = ProductCommandMeta::create(
+            "archive-task",
+            IdempotencyKey::new("archive-task-key").unwrap(),
+        )
+        .unwrap();
+
+        let archived = store
+            .set_task_archived_command(&archive_meta, &archive_input)
+            .unwrap();
+        assert!(archived.value.task.archived);
+        assert!(archived.value.conversations[0].archived);
+        assert_eq!(
+            archived.value.conversations[0].status,
+            ProductConversationStatus::Closed
+        );
+        let duplicate = store
+            .set_task_archived_command(&archive_meta, &archive_input)
+            .unwrap();
+        assert!(duplicate.duplicate);
+        assert_eq!(duplicate.value, archived.value);
+
+        let restore_input = task_archive_input(
+            &archived.value.task,
+            &archived.value.conversations[0],
+            false,
+            140,
+        );
+        let restore_meta = ProductCommandMeta::create(
+            "restore-task",
+            IdempotencyKey::new("restore-task-key").unwrap(),
+        )
+        .unwrap();
+        let restored = store
+            .set_task_archived_command(&restore_meta, &restore_input)
+            .unwrap();
+        assert!(!restored.value.task.archived);
+        assert!(!restored.value.conversations[0].archived);
+        assert_eq!(
+            restored.value.conversations[0].status,
+            ProductConversationStatus::Active
+        );
+    }
+
+    #[test]
+    fn task_archive_rolls_back_the_task_when_a_conversation_write_fails() {
+        let store = SqliteProductStore::open_in_memory().unwrap();
+        let (task, conversation) = task_archive_fixture(&store, "rollback");
+        let input = task_archive_input(&task, &conversation, true, 150);
+        store
+            .with_conn(|conn| {
+                conn.execute_batch(
+                    r#"CREATE TRIGGER fail_task_archive_conversation
+                       BEFORE UPDATE ON product_entities
+                       WHEN OLD.kind = 'conversation'
+                       BEGIN
+                         SELECT RAISE(ABORT, 'injected conversation archive failure');
+                       END;"#,
+                )
+                .map_err(db_err)
+            })
+            .unwrap();
+        let meta = ProductCommandMeta::create(
+            "archive-task-rollback",
+            IdempotencyKey::new("archive-task-rollback-key").unwrap(),
+        )
+        .unwrap();
+
+        assert!(store.set_task_archived_command(&meta, &input).is_err());
+        assert_eq!(store.get_task(&task.id).unwrap(), task);
+        assert_eq!(
+            store
+                .get_entity(ProductEntityKind::Conversation, conversation.id.as_str())
+                .unwrap(),
+            ProductEntity::Conversation(conversation)
+        );
+        assert!(store
+            .product_events(&PageRequest {
+                after: None,
+                limit: 100,
+            })
+            .unwrap()
+            .items
+            .is_empty());
     }
 
     #[test]

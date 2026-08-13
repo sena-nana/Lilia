@@ -16,9 +16,9 @@ use lilia_contracts::{
     ProductApprovalDecision, ProductCommandMeta, ProductCommandResult, ProductEntity, ProductEvent,
     ProductProjectArchiveInput, ProductProjectArchiveOutcome, ProductProjectRemovalOutcome,
     ProductProjectReorderEntry, ProductProjectReorderOutcome, ProductResult, ProductTask,
-    ProductTaskMoveInput, ProductTaskMoveOutcome, ProductTaskReorderEntry,
-    ProductTaskReorderOutcome, Project, ProjectId, TaskId, TimelineProjectionCommand,
-    TimelineProjectionEvent,
+    ProductTaskArchiveInput, ProductTaskArchiveOutcome, ProductTaskMoveInput,
+    ProductTaskMoveOutcome, ProductTaskReorderEntry, ProductTaskReorderOutcome, Project, ProjectId,
+    TaskId, TimelineProjectionCommand, TimelineProjectionEvent,
 };
 use lilia_core::{
     AgentKitClientPort, InMemoryProductStore, NativeAgentCapabilitySnapshot, ProductRepository,
@@ -163,6 +163,14 @@ impl<P: AgentKitClientPort> LiliaClient<P> {
         input: &ProductProjectArchiveInput,
     ) -> ProductResult<ProductCommandResult<ProductProjectArchiveOutcome>> {
         self.products.archive_project_command(meta, input)
+    }
+
+    pub fn set_task_archived(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductTaskArchiveInput,
+    ) -> ProductResult<ProductCommandResult<ProductTaskArchiveOutcome>> {
+        self.products.set_task_archived_command(meta, input)
     }
 
     pub fn reorder_projects(

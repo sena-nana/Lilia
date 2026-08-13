@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AssignmentId, ConflictKind, ConversationId, MilestoneId, ProductError, ProductResult,
-    ProductRevision, ProjectId, TaskId, WorkflowId,
+    AssignmentId, ConflictKind, ConversationId, ExpectedRevision, MilestoneId, ProductConversation,
+    ProductError, ProductResult, ProductRevision, ProjectId, TaskId, WorkflowId,
 };
 
 /// Product Task is not an Agent Todo. Agent todos must be explicitly promoted.
@@ -73,6 +73,30 @@ pub struct ProductTaskReorderEntry {
 #[serde(rename_all = "camelCase")]
 pub struct ProductTaskReorderOutcome {
     pub tasks: Vec<ProductTask>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductTaskArchiveConversationEntry {
+    pub conversation_id: ConversationId,
+    pub expected_revision: ExpectedRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductTaskArchiveInput {
+    pub task_id: TaskId,
+    pub expected_revision: ExpectedRevision,
+    pub conversations: Vec<ProductTaskArchiveConversationEntry>,
+    pub archived: bool,
+    pub updated_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductTaskArchiveOutcome {
+    pub task: ProductTask,
+    pub conversations: Vec<ProductConversation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
