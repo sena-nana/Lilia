@@ -1,7 +1,7 @@
 # NanaUI Native IDE 架构边界
 
-本文约束 Native Preview 的功能迁移方式，并为后续 IDE 能力保留稳定扩展点。它不是新增
-编辑器、文件树或 PTY 的产品承诺；这些能力仍需各自立项和验收。
+本文约束 Native Preview 的功能迁移方式，并为后续 IDE 能力保留稳定扩展点。文件树、编辑器、LSP
+诊断和 PTY/Terminal 已进入第一阶段纵切；增量语法、完整编辑器能力、远程进程会话真机门禁和调试器仍需独立验收。
 
 ## 分层
 
@@ -50,7 +50,9 @@ DesktopApplication（产品事实与用例）
 - NanaUI view 只持有窗口内短生命周期状态，例如当前选中项、焦点、滚动位置、图画布
   viewport 和尚未保存的输入。它通过类型化 command 修改应用事实，并由 snapshot 重绘。
 - `DesktopEvent` 是失效通知和实时反馈，不是事实源。订阅队列允许丢弃时，消费者必须用 ID
-  重新读取 SQLite/应用 snapshot；事件不得成为唯一恢复路径。
+重新读取 SQLite/应用 snapshot；事件不得成为唯一恢复路径。跨实例/外部 Product 写入通过
+`product_events` durable change feed 轮询映射为同一 `DesktopEvent` 合同（源标识
+`product-change-feed`），仍不得把 feed 当作事实源。
 - `DesktopHost` 只封装 OS 能力。任务、Todo、时间线、Agent 和 Automation 通过专用应用端口
   接入，不能塞入 Host 以绕过领域边界。
 
@@ -157,8 +159,28 @@ Right、Bottom 保存多个 `PanelState`；同一 slot 只允许一个可见活�
 Right slot，选择任务激活 Task Inspector，工具入口激活 Coding Tools；NanaUI `WorkspaceController` 只负责
 实际 resize/动画，结束时把 extent 通过应用命令写回 topology。Coding Tools 又把 AgentKit Git、Computer Use
 和 Code Index 响应归一化为 Lilia 自己的类型化快照，原始 JSON 不进入 View；搜索结果通过
-`DesktopMemoryService` 写项目 Memory。`DesktopHost::OpenTerminal` 当前仅启动工作区外部终端，是未来 PTY
-Item 之前的真实宿主动作，不能被描述为内嵌 Terminal 能力。
+`DesktopMemoryService` 写项目 Memory。只读 Git working-tree/staged diff 也沿同一共享服务取得并可切换；小 patch 直接内联，大 patch
+从 AgentKit 的不可变资源引用恢复完整内容，Native 只绘制有界预览。stage/commit 仍须复用 Mutsuki 的审批、
+完整 worktree state 与 write context，不由 View 或宿主直接执行 `git`。Mutsuki owner 工作树现有
+`GitWorktreeState` 候选实现：canonical worktree 身份、HEAD/index/working files 的重启稳定摘要、同 service
+写入串行栅栏，以及外部 HEAD/index/worktree 变化的 typed conflict；macOS 定向测试与严格 Clippy 已通过，
+但尚未发布为 Lilia 可固定的完整 revision，Native 因而仍不开放 Git 写入口。
+LSP definition 也保持相同分层：Mutsuki 共享 session 返回的三种合法位置形态先在 integration 层归一，
+`DesktopApplication` 再以 source Buffer revision、canonical project root 和 DocumentStore 解析目标；View 只负责从
+NanaUI retained cursor 发起后台查询并激活返回的 Item/range。单目标直接跳转，多目标保留真实选择列表；目标已在
+其它 Workspace Window 时聚焦既有 owner，不复制同一 Item。范围定位使用 O(1) cursor/selection，不再逐动作猜光标。
+`DesktopHost::OpenTerminal` 继续表示启动工作区外部终端，与内嵌 Terminal Item 是两个不同动作。内嵌实现由
+`DesktopApplication` 持有 `portable-pty` 会话、独立阻塞 reader/waiter、`vt100` 屏幕与有界 scrollback；View
+只消费类型化行、样式、光标、尺寸和进程终态。启动目录只能来自活动项目根或任务 worktree，Workspace 恢复只重建
+`Restored` 终态标签，绝不自动重放命令。关闭 Item 仅释放视图，显式“终止”才杀进程；仍在运行但已关标签的会话可从
+Coding Tools 重新打开。终端可发送 Ctrl+C/Ctrl+D 原始控制字节，并通过宿主剪贴板复制当前类型化屏幕文本；
+session 登记栅栏保证极短命令的输出/退出事件不会早于 session 可见性。
+Android legacy `process_session` 现在只作为这套 Terminal 服务的远控适配：`spawn` 在 task worktree/项目根内创建
+真实 PTY，`write_stdin` 和 `kill` 只操作该 task 当前登记的 session，`tasks.get.runtime.processSessionId` 仅在进程
+仍活动时返回。客户端传入的 cwd 必须与服务端解析出的任务工作区相同；若传 permission profile，仅接受旧协议的
+`:workspace` 兼容标记。服务端还会按 Product 任务状态和依赖图拒绝不可运行任务。该 PTY 是已配对可信设备触发的
+用户 Shell，不是文件系统沙箱，命令仍具有当前用户权限；能力协商在实现落地后返回
+`supportsProcessSession=true`。进程不会随远控或 Workspace topology 持久化、重启或自动重放。
 
 Composer 与可执行 turn 队列现在也遵循同一权威边界：按 task 的 revisioned 草稿与完整
 `DesktopTurnRequest` 分别持久化在 Preview 独立 SQLite 中，UI 只缓存当前快照。活动 turn 期间的新发送先分配
@@ -185,8 +207,14 @@ Product 时间线后再清空草稿，因此跨 Product/legacy SQLite 边界失�
 上下文用量也由应用层从绑定 AgentKit session 的持久化事件恢复，并随 `DesktopTaskSessionSnapshot` 提供给两套
 宿主。`ContextUsageUpdated` 能提供真实 input、reserved 与 limit 时才计算百分比；当前 AgentKit 只产生普通
 `Usage` 时，Native 仅显示实际 total tokens，明确不从模型名称或静态能力表推测上下文上限。Mutsuki 已有内部
-`ContextCompactionCoordinator`，但尚未接入 Lilia 的实时任务运行链路；在提交真实压缩、可恢复状态和失败语义前，
-Native 不展示“压缩”操作，也不把 Tauri 的 workflow/profile 后缀请求描述为已完成上下文压缩。
+`TranscriptContextWindow`，普通回合会在不修改完整 durable transcript 的前提下生成确定性模型输入窗口。用户主动
+“压缩上下文”则是另一条应用层控制事务：共享 `DesktopApplication` 先从当前绑定 session 获取有界转录，调用真实
+control model 生成持久摘要，再创建含摘要与完成事件的新 AgentKit session；只有新 session 持久化和投影均成功后才
+原子替换 Product binding，失败或取消继续绑定旧 session。Tauri、Native 主窗口与辅助任务窗口均调用同一事务，workflow
+不再通过 profile 后缀伪装成普通空消息 turn。Mutsuki owner 工作树已让高层
+`ContextCompactionCoordinator` 通过 profile policy 和正常 ModelGateway 进入实时运行链路，并为失败 fallback、
+usage/cost、相同 snapshot 缓存及 resume 时机建立合同；但它尚未发布并固定到 Lilia，产品 profile 也还没有消费
+该 policy，所以不能用当前手动产品动作或 owner 本地候选冒充应用侧已完成。
 
 `WorkspaceItemId` 现在只标识可重复的 view instance，`WorkspaceResourceId` 独立标识 task、document 或
 buffer 等稳定资源；恢复数据同时保存两者，旧版只含 Item ID 的 schema v1 状态会安全补齐资源身份并回写。
@@ -226,7 +254,8 @@ Todo/Milestone/Memory/Automation/node ID、节点位置、当前时间和绝对�
 优先级、顺序和哈希事实；Roadmap 比较项目、顺序、状态、截止日和已排序任务关联，Memory 设置比较归一化值，
 Automation 比较名称、scope、语义节点/边、发布与启用状态；Plugin 比较包 ID、版本、启用/运行时状态、
 整包 SHA-256 与 contribution 计数，不记录绝对路径或凭据。等价 fixture 会话让 Tauri 临时
-选择 Product domain 并使用隔离的内存 Memory 设置，普通开发和正式构建仍保持 legacy 数据与宿主设置兼容。
+选择 Product domain 并使用隔离的内存 Memory 设置；普通开发与正式构建各自使用本进程数据目录，
+不要求与另一宿主目录双向兼容。
 `yarn verify:ui-equivalence:p0` 先比较业务快照，再独立执行 GPU 截图门禁；锁屏、黑屏或不含 Native 中性色
 surface 时必须保持 blocked，不能用 UI 文案匹配或历史截图代替。
 
@@ -294,16 +323,44 @@ Automation Canvas 是第一个按应用级合同实现的复杂 Item。未来 Ed
   Workspace Pane 的所有权或尺寸合同。
 - 块内选择由 NanaUI `SelectableRichText` 管理，完整文档复制由 `NativeMarkdown::plain_text` 交给
   `DesktopHost::WriteClipboardText`。因此选择绘制、应用消息和 OS 权限仍是三个独立边界。
-- 未来可编辑 IDE 文档继续使用 revisioned `DocumentStore`/buffer，不复用 Markdown 只读状态；预览、Diff、
-  Hover 和诊断可消费相同富文本原语，但保存、撤销和 LSP 同步只能经过文档服务。
+- Markdown 图片继续遵循 owner/app 分层：NanaUI 只提供 `view_with_images` 的结构化注入和 ImageViewer 呈现；
+  Lilia 拥有 URL/file/data 获取策略、有界解码、缓存、失败状态和点击预览。网络、文件权限或 Product 时间线事实
+  不进入 NanaUI。总 decoded/GPU 内存与复杂 SVG 仍需独立系统门禁。
+- 可编辑 IDE 文档继续使用 revisioned `DocumentStore`/buffer，不复用 Markdown 只读状态；open/edit/save/
+  冲突与 `document-editor` surface 已接入。真实 LSP 诊断通过应用层 Document↔LSP 绑定、version fence 和
+  DiagnosticStore 进入 Native 问题列表，不由 view 持有语言服务器；问题行会把应用层 byte offsets 转为当前
+  编辑器范围并选中真实文本，选择本身不推进 Buffer revision。预览、Diff、Hover 和编辑器内诊断装饰
+  可继续消费相同富文本原语；增量语法和完整撤销仍待补齐。
 
 ## 后续 IDE 扩展顺序
 
-1. 复用已拆分的 resource/view identity、`DocumentStore`、revisioned buffer 和 `LanguageRegistry`，接入可编辑文本 surface，并由 `WorkspaceItemKind` 选择内容 renderer。
-2. 将 LSP、搜索、Git diff、诊断分别作为应用服务，不让 Editor view 直接拥有进程或数据库。
-3. PTY/Terminal 作为独立 Host 服务和 Workspace Item；关闭面板与终止进程必须是两个动作。
+1. ~~复用已拆分的 resource/view identity、`DocumentStore`、revisioned buffer 和 `LanguageRegistry`，接入可编辑文本 surface，并由 `WorkspaceItemKind` 选择内容 renderer。~~ 已落地 `document-editor` / DocumentStore open-edit-save-冲突 与 Native `HostedTextarea`；项目文件树 + watcher（`project_files` / Left Dock）亦已落地。
+2. ~~将真实 LSP 文档诊断作为应用服务接入，不让 Editor view 直接拥有进程或数据库。~~ 已落地共享
+   AgentKit LSP、revision/version fence、UTF-16 range 映射与 Native 问题列表；增量语法高亮和 definition
+   导航也已消费 NanaUI retained editor API，仍需补齐编辑器内诊断装饰。共享 Code Index 的工作区文本搜索已经接入 Native Coding
+   Tools，结果现在可直接打开受项目根约束的真实 `document-editor` Item，并按 Code Index byte range 转换后
+   选中实际文本；同文件多结果使用 path/range 唯一目标，并通过 `HostedUiCommand::Focus` 把焦点移交到真实窗口。
+   同一索引的 Text/Symbol mode 已由 Native 明确切换；更大规模的多根工作区仍需继续补齐性能与恢复模型。
+   共享 Git 的 working-tree/staged diff 已进入 Coding Tools，只展示真实有界预览；
+   stage/unstage/commit 与冲突工作流仍待带审批和 HEAD 栅栏的应用命令承接。
+3. ~~PTY/Terminal 作为独立 Host 服务和 Workspace Item；关闭面板与终止进程必须是两个动作。~~ 已落地
+   Host-owned 跨平台 PTY、ANSI 屏幕、行输入、Ctrl+C/Ctrl+D、输出复制、resize/scrollback/terminate、可移动
+   `terminal` Item 和安全终态恢复；Android legacy `process_session` 已映射到 task-scoped PTY，并带服务端
+   cwd、活动 session 和任务依赖门禁；后续补齐完整字符级键盘协议、鼠标/链接/选择、任务运行器、真实 Android/LAN 回放与
+   Windows ConPTY 门禁。
 4. 在现有任意 Workspace Window topology 上增加协作和远程工作区；继续用单一 topology writer 承载
    所有权转换，不能重新拆成按窗口独立提交的状态文件。
+
+NanaUI 已发布 `ActionRegistry`/`Keymap`/`CommandPalette`、`TreeView`、capability-driven `PaneTree`/`PaneChrome`、
+`HostedTextareaState` O(1) cursor/selection、增量 syntax highlighter、HostedBrowser 和 HostedWindow PNG capture，并通过
+all-features、no-default-features、Gallery 功能测试、dark/light 离屏 WGPU 快照及相关 Windows 交叉检查。Lilia 固定
+到完整 revision `1965ce627a5245ea05e5383f288abca8a0c150e3`；HostedBrowser/capture 与 retained editor 能力已消费，
+ActionRegistry/KeyContext/Keymap/CommandPalette、TreeView 与 PaneTree 也已在产品路径接入；主/辅助 Workspace 的
+递归 topology traversal 与比例 fallback 统一由 PaneTree 承担，Lilia 继续拥有 Pane 内容、可调整 split controller 和消息。
+主窗口与辅助窗口的活动/非活动 Pane 已统一消费 PaneChrome；辅助窗口的项目身份、移回主窗与关闭窗口动作独立位于 PaneTree 之外，
+文档、终端、应用页、项目页与任务页共享同一套标签、分栏、移动和关闭生命周期。Native 业务动作继续由 Lilia 注册和执行，NanaUI
+只拥有上下文筛选、快捷键解析、搜索与键盘 Picker；`KeymapLayer` 在主/辅助 Workspace Window 根层只捕获当前上下文
+真实匹配的命令，未绑定按键继续交给文本输入与 IME。关闭 Picker 会把焦点还给来源 Document Item。
 
 Zed 参考：
 

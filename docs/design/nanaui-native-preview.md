@@ -3,9 +3,10 @@
 后续 IDE 扩展的所有权、Workspace Item、线程与恢复边界见
 [`nanaui-native-ide-architecture.md`](./nanaui-native-ide-architecture.md)。
 
-LiliaCode Native Preview 是与现有 Tauri/Vue 桌面端并行的 Rust 原生消费者。它以
-NanaUI 作为窗口、Workspace、Dock 和基础控件层，复用 Lilia 的产品、存储与
-Native AgentKit 事实源；迁移期不得让两套桌面端同时写同一个数据目录。
+LiliaCode Native Preview 是与现有 Tauri/Vue 桌面端**独立**的 Rust 原生产品线，完成后替代
+Tauri，而不是长期双端数据共存。它以 NanaUI 作为窗口、Workspace、Dock 和基础控件层，通过
+共享 `DesktopApplication` 消费产品、存储与 Native AgentKit 合同；Preview 使用独立数据目录，
+不为正式 LiliaCode/Tauri 目录做兼容、自动迁移或双写。
 
 ## 运行时边界
 
@@ -17,10 +18,10 @@ NanaUI HostedProgram
         └── DesktopHost ── window / dialog / tray / keyring / updater / single-instance
 ```
 
-`lilia-desktop-application` 不依赖 Tauri、Vue、Iced 或 NanaUI。现有 Tauri command
-逐步收敛为该层的适配器，Native Preview 则直接调用类型化服务，并将后台
-`DesktopEvent` 转发给 NanaUI 事件循环。产品、任务、时间线和 Agent session 仍只
-存在一套事实源。
+`lilia-desktop-application` 不依赖 Tauri、Vue、Iced 或 NanaUI。迁移期 Tauri command
+可薄调用该层（单写共享权威），Native Preview 则直接调用类型化服务，并将后台
+`DesktopEvent` 转发给 NanaUI 事件循环。两端进程各自持有独立 home；不要求、也不实现
+Tauri↔Native 数据双向同步。
 
 Windows 发布入口拆成薄启动器 `lilia-native-preview.exe` 与同目录
 `lilia_native_host.dll`。启动器只负责单实例提示判断、立即显示轻量 Win32 启动窗口并加载
@@ -42,9 +43,9 @@ Host；现有带随机 token 的文件锁/环回 IPC 仍由 Host 作为单实例
 ## 身份与数据
 
 预览期使用独立名称、可执行文件、配置目录、SQLite、Keyring 命名空间、单实例标识、
-CLI 和更新通道。旧版数据只能由用户显式导入：导入先生成计划，再复制到原生目录，
-旧目录始终只读；凭据复制需要单独确认。正式切换后原生数据目录继续作为事实源，
-旧 Tauri 版保留一个发布周期作为回滚资产。
+CLI 和更新通道。开发阶段不必做与正式 Tauri 目录的双向兼容工程。旧版数据只能由用户
+显式导入：导入先生成计划，再复制到原生目录，旧目录始终只读；凭据复制需要单独确认。
+正式切换后原生数据目录成为事实源，旧 Tauri 版可保留一个发布周期作为回滚资产。
 
 当前 Preview 使用 `liliacode.native-preview`、`LiliaCode Native Preview` 和
 `%LOCALAPPDATA%/LiliaCodeNativePreview`；也可以用 `LILIA_NATIVE_PREVIEW_HOME`
@@ -128,10 +129,15 @@ bootstrap SQLite 之前处理同一 pending。两条路径都会再次确认目�
   `TabDragSurface` 进一步使用主/辅助窗口的物理 origin 与 DPI scale 统一坐标；Workspace Window 渲染真实
   多项 Tabs，并接收主窗口或其它窗口的外部 drop。main→window、window→main、window→window 共用原子
   session transfer，非空源保留，最后一个 Item 离开时才关闭；活动项 task 绑定可选，为 document/editor 等
-  `WorkspaceItemKind` 保留窗口所有权。辅助 Workspace Window 也已递归渲染完整 Pane Tree，每个叶 Pane 有独立
+  `WorkspaceItemKind` 保留窗口所有权。`document-editor` 与 Host-owned `terminal` Item 现均可在这些 Pane/窗口
+  中呈现真实内容；Terminal 支持行输入、Ctrl+C/Ctrl+D、输出复制、ANSI 屏幕、scrollback、resize、显式终止和从 Coding Tools 重新打开，
+  恢复 topology 时只显示上次会话已结束，不会重放命令。Android legacy `process_session` 复用同一 task-scoped
+  PTY，服务端固定 task cwd、校验任务依赖并只公布活动 session ID；它是已配对设备触发的用户 Shell，不宣称
+  文件系统沙箱。真实 Android/LAN 和 Windows ConPTY 仍待系统门禁。
+  辅助 Workspace Window 也已递归渲染完整 Pane Tree，每个叶 Pane 有独立
   Tabs、焦点、水平/垂直拆分、跨 Pane/窗口拖放、关闭与空 Pane 折叠；焦点 Pane 提供完整任务交互，非焦点任务
   Pane 从按 task 缓存并随事件刷新的真实 `TaskSessionView` 渲染时间线、Markdown 与状态摘要。当前剩余的是
-  document/editor 等非任务 Item 的对应原生内容 surface，而不是窗口布局合同。
+  更多 IDE Item、完整编辑器/终端交互和系统门禁，而不是窗口布局合同。
 - 多行 Composer 已通过 `DesktopApplication` 调用 Service 持有的 Agent Wire，支持
   真实发送、停止、session binding 复用、流刷新、权限允许/拒绝、最多 8 MiB 的系统剪贴板文字粘贴，以及
   经过维度/RGBA 上限校验并编码到独立 Preview 缓存的剪贴板图片；
@@ -174,7 +180,8 @@ bootstrap SQLite 之前处理同一 pending。两条路径都会再次确认目�
   启停、删除、设置与任务注入状态。Native 新目录中的二者默认扩展 Product Core 的
   `product.db`，以同一 `projects/tasks` 权威关系约束外键；Tauri 显式保留旧库兼容模式。
   Coding Tools 直接复用同一 Native AgentKit Runtime，显示
-  MCP/LSP/registry 状态，并提供真实 Git status、Code Index search 与 Computer Use 工作区列表。
+  MCP/LSP/registry 状态，并提供真实 Git status、working-tree/staged diff、Code Index search 与 Computer Use
+  工作区列表。大 patch 通过共享不可变资源存储恢复，界面只展示标注范围的预览；尚未提供 stage/commit。
 - Quota 已通过共享服务读取 Product Core 本地用量并绘制原生 WGPU 趋势图；Extensions 展示同一
   AgentKit Runtime 的 service/Skill/MCP 状态。MCP 注册表管理已下沉到共享应用服务，以 revision
   冲突检测和 staging/backup/rollback 原子替换支持 Stdio、Streamable HTTP、SSE 的新增、编辑、启停与删除；
@@ -193,7 +200,11 @@ bootstrap SQLite 之前处理同一 pending。两条路径都会再次确认目�
 - Native 薄启动器在加载 Host DLL 期间显示不占任务栏的真实 Win32 启动窗口；Host 的第一个 NanaUI/WGPU
   加载帧 present 后才关闭该窗口并恢复应用状态，因此可见冷启动不等待数据库与 AgentKit 初始化，且不引入第二套
   WGPU 上下文。Native Host 已接入主窗口状态、独立托盘、全局快捷键和带 token 的单实例环回 IPC；会话状态与任务
-  会话均可打开为真实 NanaUI 辅助窗口。每个任务窗口持有独立 Workspace session、共享应用层时间线与
+  会话均可打开为真实 NanaUI 辅助窗口。会话状态窗保留 geometry、置顶与透明度偏好，显示 Provider 真实状态，
+  并可打开未落库的新对话草稿。主侧栏、全局快捷键、子对话和时间线选中文本提问也复用该 transient draft；主/辅窗口
+  共享同一草稿 renderer 和 Composer reducer，关闭草稿或切换项目/任务不创建任务，首次发送才通过共享应用层 materialize
+  并在原 surface 晋升。会话建议只出现在空的项目草稿，不再污染
+  既有会话。每个正式任务窗口持有独立 Workspace session、共享应用层时间线与
   Composer，支持附件、发送/停止、权限/计划/Goal 切换以及审批/提问；重复打开同一任务只聚焦原窗口，
   辅助窗口关闭不退出主进程或覆盖主窗口几何。任务窗口集合、session、Item 布局/所有权和物理 geometry
   已通过真实进程重启恢复。共享 CLI
@@ -218,8 +229,10 @@ bootstrap SQLite 之前处理同一 pending。两条路径都会再次确认目�
 - Tauri 启动也已收敛为单一 `DesktopApplication`/`ServiceAuthority`，不再分别打开 Product Core、
   Runtime 和领域服务；旧 command 合同通过 Tauri Host/Event bridge 保持兼容。
 - NanaUI 依赖当前固定到已推送的完整 revision
-  `3a6d819d3a8d835110a9790231df7172391cc9f3`；该 revision 已通过 workspace 全特性 check/test、严格 Clippy
-  和 UI 快照生成。本仓库 `lilia-native-preview` 仍需独立通过自己的业务与发布门禁。
+  `c0a4404b327bcd27ba7a55657437180459a9b346`；该 release set 包含 HostedBrowser、窗口置顶、KeyCapture、
+  ConfirmDialog busy 与跨显示器/DPI 窗口恢复合同，已通过 workspace 全特性 check/test、严格
+  Clippy、Windows `hosted,browser` 交叉检查和 UI 快照生成。本仓库 `lilia-native-preview` 仍需独立通过自己的
+  业务与发布门禁。
 
 原生调试入口为 `yarn verify:native-agent-debug`。脚本使用隔离 home、真实临时 Git
 仓库、按 home 哈希隔离的 Windows Keyring 命名空间和环回模型 fixture 启动 Debug
@@ -302,6 +315,35 @@ scrollable ID 执行 retained `ScrollBy`，从而保持 prepend 前的可见事�
 `context_window` 分配 80% 输入窗口。旧 turn 被压成带 provenance metadata 的确定性摘要，最新
 user/tool 因果链与 turn-scoped system 上下文保留；模型只接收压缩窗口，Session Runner 继续持久
 完整 transcript。公开 HostRuntime 到 Anthropic HTTP Adapter 的回归测试已同时验证两条路径。
+
+用户主动压缩与上述自动输入窗口不同。Native 主窗口、任务辅助窗口和 Tauri 现在都提交共享
+`lilia_compact` workflow：应用层读取当前绑定的完整 session，以确定性窗口限制 control-model 输入，
+生成包含目标、约束、已完成工作、未决风险与下一步的持久摘要，并把摘要和可见完成回复写入新的
+AgentKit session。Product binding 只在新 session 和时间线投影成功后替换；模型失败、空结果或提交前取消
+保持旧 binding，旧 session 不修改。Mutsuki `ContextCompactionCoordinator` 的自动高层 summarizer 仍是
+独立 owner 缺口。
+
+Native Coding Tools 已消费共享 Code Index 的工作区文本搜索，结果行不再只是只读摘要：选择结果会沿
+项目相对路径门禁打开 DocumentStore 文档，并在当前 Workspace 中激活真实 `document-editor` Item；同一
+路径的多个结果按 path/range 暴露不同 Agent-debug target。Code Index byte range 会转换为编辑器字符位置并
+用 NanaUI O(1) cursor/selection 选中真实文本；Text/Symbol mode 直接调用共享索引，不在 View 中伪造筛选。
+光标移动、选择和滚动只更新 View 状态，不再推进 Buffer revision。导航完成后 `HostedUiCommand::Focus` 将键盘焦点
+交给实际拥有该 Item 的主窗口或辅助窗口。
+共享 LSP 问题列表也消费 DiagnosticStore 的 byte offsets；选择问题行会选中对应文本，同样不制造文档编辑。
+共享 definition 用例现从同一 LSP session 归一 `Location`/`LocationLink`，以 source buffer revision 拒绝陈旧查询，
+并把目标限制在 canonical active project root 内再打开 DocumentStore；UTF-16 range 转为真实 UTF-8 buffer offsets。
+Native 的 F12 与可见按钮从 retained cursor 发起后台查询；单目标直接跳转，多目标显示真实选择列表，已有跨窗口
+Item 会聚焦 owner 而非复制。未找到、陈旧 revision 与 LSP 不可用均显示真实状态。
+Coding Tools 同时通过共享 Git 服务读取 working-tree/staged diff 并可切换，
+包括资源化的大 patch，并明确只展示前 24 行；Native 没有绕过审批/HEAD fence 暴露写操作。
+Document Item 已按 LanguageRegistry token 与当前深浅主题消费 NanaUI 增量 syntax highlighter；高亮复用同一
+hosted editor 状态，不替换 text、cursor、selection、IME 或 undo/redo。编辑器内诊断 decoration 尚未实现。
+Mutsuki owner 工作树现已把仅覆盖 HEAD 的候选栅栏扩展为 canonical worktree 的完整状态令牌，并对同 service
+写请求串行执行状态复核；在 owner 发布不可变 revision、Lilia 更新 pin 并完成 Windows 回放前，stage/commit
+仍保持不可见。NanaUI owner 的 HostedBrowser 与 HostedWindow PNG capture 已发布；Native 右侧 IAB Dock 可把当前
+页面转入按任务复用的独立浏览器窗口，Windows 截图成功时附加 PNG，其它平台生成诚实的 metadata-only 结果；共享
+应用层把 URL、标题、备注和截图作为同任务的持久 Agent turn 提交，运行中进入 durable FIFO，不保留旧 Codex runner
+stdin 特例。当前代码与交叉编译证据不能替代 Windows 11 上的真实 WebView、像素与 Agent Debug 回放。
 
 `native-2026-08-10T02-27-48-957Z` 进一步在首张 GPU 截图前通过了 Workspace Pane Tab
 回放：两个持久化任务 Item 均暴露稳定标签目标，激活旧标签会切换到其真实 Product 项目/任务，关闭活动
@@ -469,7 +511,7 @@ P0 同语料回放由 `yarn verify:ui-equivalence:p0` 单独负责。`tests/equi
 类型化 API 分别写入两个空 home；Tauri/WebDriver 与 Native/WGPU 顺序打开相同项目、根任务及固定时间线，
 输入相同 Composer 草稿，清除固定 Goal、删除固定 Todo，并分别从真实 UI 创建 Roadmap、Memory、Automation、
 Skill、Plugin、Hook 与 MCP 事实。Tauri 仅在 debug 且显式设置 equivalence fixture 时选择 Product domain 与
-隔离 Memory 设置；正式构建和普通开发仍保留 legacy domain 及宿主设置兼容。
+隔离 Memory 设置；正式构建和普通开发各自使用本进程数据目录，不要求跨宿主双向兼容。
 
 `native-2026-08-11T16-03-18-261Z` 已从真实 Native UI 把三行正文写入 NanaUI `HostedTextarea`，将条目切到
 用户作用域、保存精确 37 turn 冷却、停用条目，并在 Workspace Item 重激活后回读相同正文行数。整轮完成
