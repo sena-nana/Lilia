@@ -64,8 +64,10 @@ pub use ids::{
 };
 pub use milestone::{ProductMilestone, ProductMilestoneStatus};
 pub use project::{
-    GitWorkspaceRef, ProductProjectRemovalOutcome, ProductProjectReorderEntry,
-    ProductProjectReorderOutcome, Project, ProjectArchiveState, ProjectSettings,
+    GitWorkspaceRef, ProductProjectArchiveConversationEntry, ProductProjectArchiveInput,
+    ProductProjectArchiveOutcome, ProductProjectArchiveTaskEntry, ProductProjectRemovalOutcome,
+    ProductProjectReorderEntry, ProductProjectReorderOutcome, Project, ProjectArchiveState,
+    ProjectSettings,
 };
 pub use projection::{
     ArtifactProjection, PendingProjection, PendingProjectionStatus, ProductApprovalDecision,

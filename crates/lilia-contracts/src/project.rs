@@ -2,7 +2,10 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ConversationId, ExpectedRevision, ProductRevision, ProjectAssetId, ProjectId, TaskId};
+use crate::{
+    ConversationId, ExpectedRevision, ProductConversation, ProductRevision, ProductTask,
+    ProjectAssetId, ProjectId, TaskId,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -56,6 +59,37 @@ pub struct ProductProjectRemovalOutcome {
     pub moved_task_ids: Vec<TaskId>,
     pub moved_conversation_ids: Vec<ConversationId>,
     pub already_removed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductProjectArchiveTaskEntry {
+    pub task_id: TaskId,
+    pub expected_revision: ExpectedRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductProjectArchiveConversationEntry {
+    pub conversation_id: ConversationId,
+    pub expected_revision: ExpectedRevision,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductProjectArchiveInput {
+    pub project_id: ProjectId,
+    pub expected_project_revision: ExpectedRevision,
+    pub tasks: Vec<ProductProjectArchiveTaskEntry>,
+    pub conversations: Vec<ProductProjectArchiveConversationEntry>,
+    pub archived_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductProjectArchiveOutcome {
+    pub archived_tasks: Vec<ProductTask>,
+    pub archived_conversations: Vec<ProductConversation>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

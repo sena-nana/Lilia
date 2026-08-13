@@ -3,10 +3,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lilia_contracts::{
     ConversationId, ExpectedRevision, IdempotencyKey, ProductCommandMeta, ProductConversation,
-    ProductEntity, ProductEntityKind, ProductProjectRemovalOutcome, ProductProjectReorderEntry,
-    ProductRevision, ProductTask, ProductTaskMoveInput, ProductTaskPriority,
-    ProductTaskReorderEntry, ProductTaskStatus, Project, ProjectArchiveState, ProjectId, TaskId,
+    ProductEntity, ProductEntityKind, ProductProjectArchiveConversationEntry,
+    ProductProjectArchiveInput, ProductProjectArchiveOutcome, ProductProjectArchiveTaskEntry,
+    ProductProjectRemovalOutcome, ProductProjectReorderEntry, ProductRevision, ProductTask,
+    ProductTaskMoveInput, ProductTaskPriority, ProductTaskReorderEntry, ProductTaskStatus, Project,
+    ProjectArchiveState, ProjectId, TaskId,
 };
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::{DesktopApplication, DesktopApplicationError, DesktopEventKind, TaskQuery};
@@ -301,6 +304,99 @@ impl DesktopApplication {
             });
             self.emit_event(DesktopEventKind::TasksChanged {
                 project_id: None,
+                task_id: None,
+            });
+        }
+        Ok(result.value)
+    }
+
+    pub fn archive_project_conversations(
+        &self,
+        project_id: &ProjectId,
+    ) -> Result<ProductProjectArchiveOutcome, DesktopApplicationError> {
+        let project = self.get_project(project_id)?;
+        if project.archive == ProjectArchiveState::Archived {
+            return Err(DesktopApplicationError::InvalidInput {
+                field: "project_id",
+                message: "archived project conversations cannot be archived again".to_owned(),
+            });
+        }
+        let tasks = self.query_tasks(TaskQuery::for_project(project_id.clone()))?;
+        if tasks.is_empty() {
+            return Ok(ProductProjectArchiveOutcome {
+                archived_tasks: Vec::new(),
+                archived_conversations: Vec::new(),
+            });
+        }
+        let task_ids = tasks
+            .iter()
+            .map(|task| task.id.clone())
+            .collect::<BTreeSet<_>>();
+        let mut conversations = self
+            .authority()
+            .client()?
+            .products()
+            .list_entities(ProductEntityKind::Conversation)?
+            .into_iter()
+            .filter_map(|entity| match entity {
+                ProductEntity::Conversation(conversation)
+                    if !conversation.archived
+                        && conversation
+                            .task_id
+                            .as_ref()
+                            .is_some_and(|task_id| task_ids.contains(task_id)) =>
+                {
+                    Some(conversation)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        conversations.sort_by(|left, right| left.id.cmp(&right.id));
+        let mut fingerprint = Sha256::new();
+        fingerprint.update(project.id.as_str().as_bytes());
+        fingerprint.update(project.revision.get().to_le_bytes());
+        for task in &tasks {
+            fingerprint.update(task.id.as_str().as_bytes());
+            fingerprint.update(task.revision.get().to_le_bytes());
+        }
+        for conversation in &conversations {
+            fingerprint.update(conversation.id.as_str().as_bytes());
+            fingerprint.update(conversation.revision.get().to_le_bytes());
+        }
+        let key = format!(
+            "desktop:archive-project-conversations:{}:{:x}",
+            project.id,
+            fingerprint.finalize()
+        );
+        let result = self.authority().client()?.archive_project(
+            &create_meta(&key)?,
+            &ProductProjectArchiveInput {
+                project_id: project.id.clone(),
+                expected_project_revision: ExpectedRevision::new(project.revision.get())?,
+                tasks: tasks
+                    .iter()
+                    .map(|task| {
+                        Ok(ProductProjectArchiveTaskEntry {
+                            task_id: task.id.clone(),
+                            expected_revision: ExpectedRevision::new(task.revision.get())?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DesktopApplicationError>>()?,
+                conversations: conversations
+                    .iter()
+                    .map(|conversation| {
+                        Ok(ProductProjectArchiveConversationEntry {
+                            conversation_id: conversation.id.clone(),
+                            expected_revision: ExpectedRevision::new(conversation.revision.get())?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, DesktopApplicationError>>()?,
+                archived_at: now_millis(),
+            },
+        )?;
+        if !result.duplicate {
+            self.emit_event(DesktopEventKind::TasksChanged {
+                project_id: Some(project_id.clone()),
                 task_id: None,
             });
         }
@@ -851,7 +947,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
-    use lilia_contracts::{ExpectedRevision, ProductEntityKind};
+    use lilia_contracts::{ExpectedRevision, ProductConversationStatus, ProductEntityKind};
     use lilia_service::ServiceAuthority;
     use tempfile::tempdir;
 
@@ -998,6 +1094,53 @@ mod tests {
             .len(),
             1
         );
+    }
+
+    #[test]
+    fn project_conversation_archive_updates_only_the_current_active_fact_set() {
+        let app = application();
+        let project = app
+            .create_project(DesktopProjectCreate::new("Archive conversations"))
+            .unwrap();
+        let first = app
+            .create_task(DesktopTaskCreate::new(Some(project.id.clone()), "First"))
+            .unwrap();
+        let second = app
+            .create_task(DesktopTaskCreate::new(Some(project.id.clone()), "Second"))
+            .unwrap();
+        let other_project = app
+            .create_project(DesktopProjectCreate::new("Keep conversations"))
+            .unwrap();
+        let other = app
+            .create_task(DesktopTaskCreate::new(
+                Some(other_project.id.clone()),
+                "Other",
+            ))
+            .unwrap();
+
+        let outcome = app.archive_project_conversations(&project.id).unwrap();
+
+        assert_eq!(outcome.archived_tasks.len(), 2);
+        assert_eq!(outcome.archived_conversations.len(), 2);
+        assert!(outcome.archived_tasks.iter().all(|task| task.archived));
+        assert!(outcome.archived_conversations.iter().all(|conversation| {
+            conversation.archived && conversation.status == ProductConversationStatus::Closed
+        }));
+        assert!(app
+            .query_tasks(TaskQuery::for_project(project.id.clone()))
+            .unwrap()
+            .is_empty());
+        assert!(app.get_task(&first.id).unwrap().archived);
+        assert!(app.get_task(&second.id).unwrap().archived);
+        assert!(!app.get_task(&other.id).unwrap().archived);
+        assert_eq!(
+            app.get_project(&project.id).unwrap().archive,
+            ProjectArchiveState::Active
+        );
+
+        let replay = app.archive_project_conversations(&project.id).unwrap();
+        assert!(replay.archived_tasks.is_empty());
+        assert!(replay.archived_conversations.is_empty());
     }
 
     #[test]

@@ -14,10 +14,11 @@ use std::sync::{Arc, Mutex};
 use lilia_contracts::{
     AgentSessionBinding, BindingId, ConversationId, ExpectedRevision, Page, PageRequest,
     ProductApprovalDecision, ProductCommandMeta, ProductCommandResult, ProductEntity, ProductEvent,
-    ProductProjectRemovalOutcome, ProductProjectReorderEntry, ProductProjectReorderOutcome,
-    ProductResult, ProductTask, ProductTaskMoveInput, ProductTaskMoveOutcome,
-    ProductTaskReorderEntry, ProductTaskReorderOutcome, Project, ProjectId, TaskId,
-    TimelineProjectionCommand, TimelineProjectionEvent,
+    ProductProjectArchiveInput, ProductProjectArchiveOutcome, ProductProjectRemovalOutcome,
+    ProductProjectReorderEntry, ProductProjectReorderOutcome, ProductResult, ProductTask,
+    ProductTaskMoveInput, ProductTaskMoveOutcome, ProductTaskReorderEntry,
+    ProductTaskReorderOutcome, Project, ProjectId, TaskId, TimelineProjectionCommand,
+    TimelineProjectionEvent,
 };
 use lilia_core::{
     AgentKitClientPort, InMemoryProductStore, NativeAgentCapabilitySnapshot, ProductRepository,
@@ -154,6 +155,14 @@ impl<P: AgentKitClientPort> LiliaClient<P> {
     ) -> ProductResult<ProductCommandResult<ProductProjectRemovalOutcome>> {
         self.products
             .remove_project_command(meta, project_id, removed_at)
+    }
+
+    pub fn archive_project(
+        &self,
+        meta: &ProductCommandMeta,
+        input: &ProductProjectArchiveInput,
+    ) -> ProductResult<ProductCommandResult<ProductProjectArchiveOutcome>> {
+        self.products.archive_project_command(meta, input)
     }
 
     pub fn reorder_projects(
