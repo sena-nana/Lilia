@@ -2,18 +2,10 @@ use std::path::{Path, PathBuf};
 
 use lilia_storage::LiliaDataPaths;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum DesktopDomainDatabase {
-    #[default]
-    Product,
-    LegacyDesktop,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DesktopApplicationConfig {
     home: PathBuf,
     instance_identity: String,
-    domain_database: DesktopDomainDatabase,
 }
 
 impl DesktopApplicationConfig {
@@ -38,13 +30,7 @@ impl DesktopApplicationConfig {
         Ok(Self {
             home,
             instance_identity: instance_identity.to_owned(),
-            domain_database: DesktopDomainDatabase::Product,
         })
-    }
-
-    pub fn with_legacy_desktop_domain_database(mut self) -> Self {
-        self.domain_database = DesktopDomainDatabase::LegacyDesktop;
-        self
     }
 
     pub fn home(&self) -> &Path {
@@ -59,16 +45,8 @@ impl DesktopApplicationConfig {
         LiliaDataPaths::from_home(self.home.clone())
     }
 
-    pub fn domain_database(&self) -> DesktopDomainDatabase {
-        self.domain_database
-    }
-
     pub fn domain_database_path(&self) -> PathBuf {
-        let paths = self.data_paths();
-        match self.domain_database {
-            DesktopDomainDatabase::Product => paths.product_db(),
-            DesktopDomainDatabase::LegacyDesktop => paths.legacy_desktop_db(),
-        }
+        self.data_paths().product_db()
     }
 }
 
@@ -87,26 +65,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_keeps_preview_identity_and_storage_layout_independent() {
+    fn config_keeps_instance_identity_and_storage_layout_independent() {
         let stable = DesktopApplicationConfig::new("C:/lilia/stable", "liliacode").unwrap();
-        let preview =
-            DesktopApplicationConfig::new("C:/lilia/native-preview", "liliacode.native-preview")
-                .unwrap();
+        let imported =
+            DesktopApplicationConfig::new("C:/lilia/import", "liliacode.native-preview").unwrap();
 
-        assert_ne!(stable.home(), preview.home());
-        assert_ne!(stable.instance_identity(), preview.instance_identity());
-        assert_eq!(preview.data_paths().home(), preview.home());
-        assert_eq!(preview.domain_database(), DesktopDomainDatabase::Product);
+        assert_ne!(stable.home(), imported.home());
+        assert_ne!(stable.instance_identity(), imported.instance_identity());
+        assert_eq!(imported.data_paths().home(), imported.home());
         assert_eq!(
-            preview.domain_database_path(),
-            preview.data_paths().product_db()
-        );
-        assert_eq!(
-            stable
-                .clone()
-                .with_legacy_desktop_domain_database()
-                .domain_database_path(),
-            stable.data_paths().legacy_desktop_db()
+            imported.domain_database_path(),
+            imported.data_paths().product_db()
         );
     }
 

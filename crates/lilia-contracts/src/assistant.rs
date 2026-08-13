@@ -3,9 +3,9 @@ use std::sync::OnceLock;
 
 use serde::Deserialize;
 
-const PROMPT_TEXT_JSON: &str = include_str!("../../../packages/contracts/src/prompt-text.json");
+const PROMPT_TEXT_JSON: &str = include_str!("../contracts/prompt-text.json");
 const MODEL_SELECTION_DEFAULTS_JSON: &str =
-    include_str!("../../../packages/contracts/src/model-selection-defaults.json");
+    include_str!("../contracts/model-selection-defaults.json");
 
 static PROMPTS: OnceLock<PromptContract> = OnceLock::new();
 static MODEL_SELECTION: OnceLock<ModelSelectionContract> = OnceLock::new();
@@ -301,14 +301,14 @@ pub fn auto_context_thresholds_for_scale(
 fn prompt_contract() -> &'static PromptContract {
     PROMPTS.get_or_init(|| {
         serde_json::from_str(PROMPT_TEXT_JSON)
-            .expect("packages/contracts prompt-text.json must match the Rust contract")
+            .expect("lilia-contracts prompt-text.json must match the Rust contract")
     })
 }
 
 fn model_selection_contract() -> &'static ModelSelectionContract {
     MODEL_SELECTION.get_or_init(|| {
         serde_json::from_str(MODEL_SELECTION_DEFAULTS_JSON)
-            .expect("packages/contracts model-selection-defaults.json must match the Rust contract")
+            .expect("lilia-contracts model-selection-defaults.json must match the Rust contract")
     })
 }
 

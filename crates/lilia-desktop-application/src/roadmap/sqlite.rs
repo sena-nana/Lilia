@@ -552,7 +552,7 @@ mod tests {
         assert_eq!(json["status"], "in-progress");
         assert_eq!(json["dueDate"], 10);
         let manifest: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../../packages/contracts/src/task-statuses.json"
+            "../../../lilia-contracts/contracts/task-statuses.json"
         ))
         .unwrap();
         let contract_statuses = manifest["milestoneStatuses"]

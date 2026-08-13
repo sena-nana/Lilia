@@ -1,4 +1,4 @@
-//! Shared title-update coordinator for Tauri and Native hosts.
+//! Shared title-update coordinator for desktop hosts.
 //!
 //! Application owns scheduling / freshness / apply decisions. Hosts only
 //! resolve models, spawn workers, and invalidate UI via events.
@@ -979,7 +979,7 @@ pub fn title_system_instruction() -> &'static str {
             title: TitleSection,
         }
         let contract: PromptText = serde_json::from_str(include_str!(
-            "../../../packages/contracts/src/prompt-text.json"
+            "../../lilia-contracts/contracts/prompt-text.json"
         ))
         .expect("prompt-text.json must deserialize");
         contract.title.system_instruction

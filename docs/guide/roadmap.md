@@ -22,7 +22,7 @@ LiliaCode 的路线图围绕一个目标展开：把代码工程中的 Agent 会
 - Memory Layer 1：稳定手动保存、用户级/项目级记忆展示、会话启动基线注入和文档边界。
 - 插件与工具链：收口 MCP、Skill、Plugin、Hook 当前管理面和诊断展示，不在 `v1.0` 扩展完整治理策略。
 - 发布链路：完成 Windows 安装包、release workflow、release notes、安装验证和已知限制说明。
-- Android 远控：作为 `v1.0-beta` experimental companion 能力纳入文档和验证；发布前需跑 `yarn android:verify`，并明确不承诺稳定完整远控产品。
+- Android 远控：作为 `v1.0-beta` experimental companion 能力纳入文档和验证；发布前需跑 `cargo xtask android test` 与 `cargo xtask android build`，真实设备 smoke 单独记录，并明确不承诺稳定完整远控产品。
 
 ## v2.0 会话工作台与团队模式
 

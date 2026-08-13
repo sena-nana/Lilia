@@ -2,11 +2,9 @@ name: CI
 
 on:
   pull_request:
-    branches:
-      - main
+    branches: [main]
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -16,54 +14,62 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  verify-workspace:
-    name: Verify workspace
-    runs-on: windows-latest
-    timeout-minutes: 30
-    env:
-      CARGO_INCREMENTAL: "0"
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
+env:
+  CARGO_INCREMENTAL: "0"
+  RUSTC_WRAPPER: sccache
+  SCCACHE_GHA_ENABLED: "true"
 
+jobs:
+  verify:
+    name: Verify Cargo workspace
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask verify
 
-      - name: Set up Node.js and Yarn
-        uses: sena-nana/LiliaUI/.github/actions/setup-node-yarn@8cdf9fce6f86b903a475ac852bce0627f237baf5
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: . -> target
-
-      - name: Verify workspace
-        run: corepack yarn verify
-
-      - name: Show sccache stats
-        shell: pwsh
-        run: "& $env:SCCACHE_PATH --show-stats"
-
-  build-docs:
-    name: Build docs
+  android:
+    name: Verify Android companion
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 30
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - uses: android-actions/setup-android@v3
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask android doctor
+      - run: cargo xtask android test
+      - run: cargo xtask android build
 
-      - name: Set up Node.js and Yarn
-        uses: sena-nana/LiliaUI/.github/actions/setup-node-yarn@8cdf9fce6f86b903a475ac852bce0627f237baf5
-
-      - name: Build docs
-        run: corepack yarn docs:build
+  native-agent-debug:
+    name: Verify Native Agent Debug
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo xtask agent-debug
+      - name: Upload Agent Debug evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: lilia-agent-debug-${{ github.run_id }}
+          path: agent-debug-runs/lilia-*
+          if-no-files-found: warn

@@ -1,6 +1,6 @@
 //! Product domain SQLite repositories (#56) — Project / Task / Binding.
 //!
-//! Separate from Agent Runtime and from Desktop Tauri UI cache (`lilia.db`).
+//! Separate from Agent Runtime and the unsupported legacy UI cache (`lilia.db`).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;

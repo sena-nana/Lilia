@@ -1,6 +1,6 @@
 //! Host-neutral desktop application boundary for LiliaCode.
 //!
-//! Tauri and native UI hosts depend on this crate instead of owning product,
+//! Desktop UI hosts depend on this crate instead of owning product,
 //! persistence, or AgentKit state themselves.
 
 mod agent;
@@ -143,7 +143,7 @@ pub use command::{DesktopCommand, DesktopCommandOutcome};
 pub use composer::{
     DesktopComposerCommand, DesktopComposerError, DesktopComposerState, DesktopComposerSubmission,
 };
-pub use config::{DesktopApplicationConfig, DesktopApplicationConfigError, DesktopDomainDatabase};
+pub use config::{DesktopApplicationConfig, DesktopApplicationConfigError};
 pub use context_compaction::DesktopContextCompactionResult;
 pub use context_search::search_context_attachments;
 pub use conversation_suggestions::{

@@ -14,7 +14,7 @@ LiliaCode focuses on software engineering. Other applications in the same family
 
 | Layer | Description |
 | --- | --- |
-| **Lilia Protocol** | High-level instructions: `ChatWorkflow`, `ChatRuntimeCommand`, interactions, timeline (`packages/contracts`) |
+| **Lilia Protocol** | High-level instructions: `ChatWorkflow`, `ChatRuntimeCommand`, interactions, timeline (`crates/lilia-contracts`) |
 | **Model** | Catalog, manager, and router; role preset groups / tiers pick the turn model |
 | **Provider** | LLM vendor connection (credentials, endpoints, protocol adapters) — not official agent products |
 | LiliaCore / anticorruption | Task↔session binding, profile assembly, Agent Wire, event projection |

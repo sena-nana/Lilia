@@ -935,12 +935,12 @@ mod tests {
                 provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.to_owned(),
                 kind: DesktopCredentialKind::ApiKey,
                 secret: DesktopSecret::new(b"sk-test-openai-api-key-0123456789abcdef".to_vec()),
-                account_label: Some("  Native Preview  ".to_owned()),
+                account_label: Some("  LiliaCode  ".to_owned()),
                 source: Some("settings".to_owned()),
             })
             .unwrap();
         assert_eq!(credential.status, DesktopCredentialStatus::Active);
-        assert_eq!(credential.account_label.as_deref(), Some("Native Preview"));
+        assert_eq!(credential.account_label.as_deref(), Some("LiliaCode"));
         let credential_event = events.recv().unwrap();
         assert!(matches!(
             credential_event.kind,
@@ -1115,11 +1115,9 @@ mod tests {
     #[test]
     fn desktop_bootstrap_restores_non_secret_runtime_settings_after_restart() {
         let root = tempfile::tempdir().unwrap();
-        let config = DesktopApplicationConfig::new(
-            root.path(),
-            "native-preview.provider-runtime-settings-test",
-        )
-        .unwrap();
+        let config =
+            DesktopApplicationConfig::new(root.path(), "lilia.provider-runtime-settings-test")
+                .unwrap();
         let host = Arc::new(MemoryCredentialHost::default());
         let application = DesktopApplication::bootstrap(config.clone(), host.clone()).unwrap();
         let saved = application
@@ -1150,10 +1148,9 @@ mod tests {
     #[test]
     fn desktop_bootstrap_restores_keyring_backed_credentials_after_restart() {
         let root = tempfile::tempdir().unwrap();
-        let config =
-            DesktopApplicationConfig::new(root.path(), "native-preview.provider-test").unwrap();
+        let config = DesktopApplicationConfig::new(root.path(), "lilia.provider-test").unwrap();
         let host = Arc::new(MemoryCredentialHost::default());
-        let secret = "sk-persisted-native-preview-secret-0123456789abcdef";
+        let secret = "sk-persisted-lilia-secret-0123456789abcdef";
 
         let application = DesktopApplication::bootstrap(config.clone(), host.clone()).unwrap();
         let credential = application

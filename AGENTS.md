@@ -3,70 +3,67 @@
 <!-- CODEGRAPH_START -->
 ## CodeGraph
 
-In repositories indexed by CodeGraph (a `.codegraph/` directory exists at the repo root), reach for it BEFORE grep/find or reading files when you need to understand or locate code:
-
-- MCP tools (when available): `codegraph_explore` answers most code questions in one call, returning relevant source plus call paths. `codegraph_node` returns one symbol's source and callers, or reads a whole file with line numbers. If the tools are deferred, load them by name via tool search.
-- Shell fallback: `codegraph explore "<symbol names or question>"` and `codegraph node <symbol-or-file>` print the same output.
-
-If there is no `.codegraph/` directory, skip CodeGraph entirely.
+仓库根目录存在 `.codegraph/` 时，理解或定位代码应先使用 `codegraph_explore` / `codegraph_node`，或 shell 中的 `codegraph explore` / `codegraph node`，再使用文本搜索。
 <!-- CODEGRAPH_END -->
 
 ## 项目级 Skills
 
-本仓库通过 `.agents/skills` 提供 Agent 能力。处理对应任务时优先使用这些 Skill,不要把细则继续堆进 `AGENTS.md`。
+本仓库通过 `.agents/skills` 提供应用开发、边界、验证、设计、Git 与 Agent Debug 工作流。使用 Skill 前必须完整读取对应 `SKILL.md`；若 Skill 仍描述已删除的旧宿主或工具链，以本文件和当前 Cargo workspace 为准，不恢复旧入口。
 
-- `$lilia-app-design`: 设计、交互、视觉层级、页面样式、侧边栏、卡片、浮层和状态评审。
-- `$lilia-app-coding`: 功能实现、问题修复、重构、路由、命令、业务页面和应用专属 Tauri 代码。
-- `$lilia-app-boundary`: 判断改动属于 Lilia 应用、`packages/contracts` 还是 LiliaUI 公共能力。
-- `$lilia-app-validation`: 选择功能验证、测试、构建、Tauri 检查和结果汇报方式。
-- `$lilia-app-git`: 暂存、提交、推送、合并和依赖更新收口。
-- `$lilia-agent-debug`: Agent 调试入口、`data-agent-id`、`window.__liliaAgentDebug`、`yarn verify:agent-debug` 和 `tauri-driver` 调试验证。
+## 仓库边界
+
+- LiliaCode 是 Cargo-first Native 仓库；`apps/desktop` 是唯一 NanaUI/WGPU 桌面实现。
+- `crates/lilia-desktop-application` 持有宿主无关的桌面应用服务，`crates/lilia-contracts/contracts` 持有 Rust 消费的产品契约。
+- `apps/cli`、`apps/service` 和 `apps/android` 继续保留；Android 平台构建使用 Gradle/JDK，其任务编排仍由 `cargo xtask android ...` 负责。
+- Markdown 是仓库内文档，不构建或发布文档站。
+- 禁止重新引入 Web 桌面宿主、JavaScript 包管理器或编辑器扩展实现。
 
 ## 运行入口
 
-- Lilia 是 monorepo,常用命令从仓库根目录运行:`yarn tauri:dev`、`yarn dev`、`yarn verify:desktop:test`、`yarn verify:agent-debug`。
-- `apps/desktop` 是桌面子包;子包脚本只做本地 Vite/Tauri CLI 或转发根目录脚本,不要把 Tauri-Template 的单包 `@lilia/build` 入口原样覆盖到 Lilia 根脚本。
-- `@lilia/build`、`@lilia/tools` 和 `@lilia/config` 的单包模板能力需要先在 LiliaUI 支持 monorepo 路径后,再替换 Lilia 现有构建、发布、Android 或 release 脚本。
+从仓库根目录执行：
+
+```bash
+cargo run --locked -p lilia-desktop
+cargo xtask verify
+cargo xtask agent-debug
+cargo xtask performance
+cargo xtask android doctor|test|build|smoke
+cargo xtask release windows --tag vX.Y.Z
+cargo xtask installer-smoke --tag vX.Y.Z
+```
+
+需要单独检查时可直接使用标准 Cargo 命令；不要增加第二套任务编排脚本。
 
 ## 硬约束
 
-- 灵活运用子代理任务分派,并行化执行边界清晰的任务;主 Agent 负责整合、验证和收口。
-- 修复问题时先定位根本原因,禁止打补丁式修复。
-- 实现前结合上下文判断代码和设计是否有足够价值,优先选择更简洁优雅的方案。
-- 禁止在 UI 显示技术说明内容。
-- 禁止让 UI 看起来像有功能但实际未接入;所有可见操作必须落地功能或表达真实不可用状态。
-- 禁止添加低价值测试和硬匹配日志或字符串的测试;所有测试必须以功能为准,无功能变动则不添加测试。
-- 不覆盖用户或其他 Agent 的已有改动。
+- 修复问题先定位根本原因，优先选择更简洁且职责清晰的方案。
+- 禁止在 UI 显示技术说明，禁止提供未接入的可见操作。
+- 不添加低价值测试或仅硬匹配日志、字符串的测试；测试必须验证功能行为。
+- 不覆盖用户或其他 Agent 的已有改动，不创建临时分支或工作树。
+- 未经用户明确确认，不提交、不推送、不创建 PR。
+- 通用 Native 控件和窗口基础能力属于 NanaUI；LiliaCode 只维护产品业务、应用服务、宿主装配和应用状态。
+- 跨边界数据先更新 `crates/lilia-contracts/contracts` 及其 Rust API，再同步消费者。
+- 需要长期记录的架构背景与取舍写入 `docs/design/`，代码中不保留复述型注释。
 
-## 代码边界
+## Native 身份与数据
 
-- 先读相关模块、数据契约和现有测试,再动手改代码。
-- 跨端数据先改 `packages/contracts`,再同步前端、后端和测试。
-- 通用 UI、样式、主题、浮层、桌面壳基础能力、构建工具和默认资源优先下落到 `C:\Files\workspace\LiliaUI`;Lilia 消费 `@lilia/ui` 等公共包,不复制维护公共实现。
-- `apps/desktop` 只保留 Lilia 业务编排、业务页面、业务 Tauri 命令、provider、timeline、agent runner 和应用专属状态。
-- 不加冗余注释;需要长期记录的背景、取舍和未决问题写进 `docs/design/`。
-- 新增组件或功能单元时,优先解耦到独立文件/模块,并以异步懒加载方式接入;仅当任务明确是修改现有组件时,才在原组件内调整。
-
-## 样式
-
-- 保持 Lilia 的工程工具气质:克制、清晰、可扫描。
-- 视觉分级明确:主内容 > 当前状态 > 过程信息 / 辅助操作。
-- 优先使用 `@lilia/ui` 的 CSS 变量、基础类和组件语言;深浅主题都要可读。
-- 涉及 UI 设计或交互模式调整时,先询问用户是否需要 IAB 确认交互模式;若需要,实现前先完成确认。
-- 不实现 `prefers-reduced-motion` / 减少动效兼容,不要因系统偏好关闭 Lilia 既有动效。
+- 正式产品名为 LiliaCode，二进制/CLI 为 `liliacode`，凭据身份为 `liliacode`。
+- 统一使用 `LILIA_HOME`，默认目录为 `~/.lilia`。
+- 桌面端只使用共享 Product/Agent 权威数据，不得打开或写入 legacy `db/lilia.db`。
+- 旧数据只能通过显式导入进入正式 home；不得自动合并、双写或删除用户数据。
 
 ## 验证
 
-- 功能实现后根据任务风险和影响范围选择是否验证;可选验证包括 `yarn verify:desktop:test`、`yarn verify:contracts` 或相关定向测试。
-- 文档、注释、配置说明等低风险改动可不跑测试;涉及跨端契约、持久化、调度、权限、构建配置或用户关键路径时,优先运行最小必要验证。
-- 涉及大型 UI、Agent runtime、Tauri command、持久化、权限、构建配置、跨端契约或用户关键路径的大型改动,必须运行 `yarn verify:agent-debug` 做 Agent 调试确认;该脚本会自动准备 `tauri-driver` 与 EdgeDriver,若仍因 cargo、网络、Edge 版本探测或 debug binary 缺失阻塞,最终说明必须写清楚 blocker、`agent-debug-runs/` 产物路径和剩余风险。
-- Agent 调试确认以开发态为准:设置 `LILIA_AGENT_DEBUG=1` / `VITE_LILIA_AGENT_DEBUG=1`,通过 `data-agent-id` 结构化操作,并用截图确认界面表现;调试层不得进入生产功能面。
-- 完整构建或全量验证,如 `yarn verify:desktop:build`、`yarn verify:tauri` 或 `yarn verify`,仅在用户要求、改动范围较大或风险确实需要时运行。
-- 若未运行测试、构建或验证,在最终说明里写清楚原因;若验证无法运行,写清楚阻塞原因和剩余风险。
+- 按风险选择最小有意义验证；文档或注释改动不要求运行桌面系统门禁。
+- 默认仓库门禁为 `cargo xtask verify`。
+- UI 主路径、Agent runtime、持久化、权限、构建配置、跨端契约或用户关键路径的大型改动，需要运行 `cargo xtask agent-debug`；证据位于 `agent-debug-runs/lilia-*`。
+- 性能相关改动运行 `cargo xtask performance`，分别报告绝对阈值与历史基线结果。
+- Android 逻辑运行 `cargo xtask android test`；需要真实设备时显式运行 `cargo xtask android smoke`。
+- Windows 发布运行 `cargo xtask release windows --tag <tag>`，随后运行 `cargo xtask installer-smoke --tag <tag>`。
+- 外部环境阻塞时写清缺失的 NSIS、ADB、Android SDK、GPU/窗口能力或签名配置，以及产物路径与剩余风险。
 
 ## Git 提交
 
-- 提交标题用中文短句概括结果。
-- 提交正文按列表简短写具体改动;无必要不写正文。
-- 提交前按改动范围选择是否检查 diff;涉及多人协作、合并冲突或跨模块改动时,确认 diff 只包含本次改动。
-- 提交前按任务复杂度选择是否做代码自检;涉及逻辑调整、重构或公共模块时,检查是否存在可删除的冗余逻辑、重复分支、无效辅助函数或代码复述型注释。
+- 提交标题使用中文短句概括结果，正文仅列必要改动。
+- 提交前检查本次范围的 diff，确保不夹带用户或其他 Agent 的修改。
+- 涉及重构或公共模块时，检查并删除重复分支、无效辅助函数和代码复述型注释。

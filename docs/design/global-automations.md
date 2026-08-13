@@ -9,7 +9,7 @@ with project, inbox, task status, backend, and event-kind filters.
 The first version is a local MVP:
 
 - `/automations` is the global entry point from the sidebar footer.
-- The page has a workflow list, Vue Flow node canvas, node/scope inspector, run
+- The page has a workflow list, Native graph canvas, node/scope inspector, run
   history, and node-state replay.
 - Editing updates the draft. Running always binds to an immutable published
   workflow version snapshot.
@@ -71,7 +71,7 @@ SQLite stores workflows, immutable versions, runs, and per-node run state in:
 - `automation_runs`
 - `automation_run_nodes`
 
-Tauri commands cover list/get/save draft/publish/enable/run once/resume/list
+`DesktopAutomationService` covers list/get/save draft/publish/enable/run once/resume/list
 runs/get run. UI refreshes through `automation:changed`,
 `automation:run-started`, `automation:run-updated`, and
 `automation:run-finished`.

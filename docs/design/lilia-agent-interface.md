@@ -77,7 +77,7 @@ flowchart TB
 | 层 | 所有者 | 主要落点 |
 | --- | --- | --- |
 | 用户 Task 面 | Lilia 产品 | `apps/desktop` · `apps/service` · `apps/cli` · 产品 SQLite |
-| Lilia Protocol | `packages/contracts` | `ChatWorkflow` · `ChatRuntimeCommand` · Interaction · RuntimeOptions |
+| Lilia Protocol | `crates/lilia-contracts` | `ChatWorkflow` · `ChatRuntimeCommand` · Interaction · RuntimeOptions |
 | 防腐层 | `lilia-core` · `lilia-agent-integration` | profile 装配、Wire 服务、Task↔Session 绑定、事件投影 |
 | Model 管理 / 分流 | 产品配置 + contracts 自动选择 + 运行时 profile | 目录、tier/预设、本轮 model 覆盖 |
 | Provider 连接 | 产品凭据 + Mutsuki adapter/gateway | Provider instance · CredentialRef · HTTP effect |
@@ -88,7 +88,7 @@ flowchart LR
   subgraph product [Lilia 产品]
     TaskUI[Task / Timeline / UI]
     Contracts[contracts 协议]
-    Host[Host / Tauri / Service]
+    Host[Desktop / CLI / Service host]
     Anti[防腐层 integration]
   end
   subgraph mutsuki [Mutsuki]
@@ -109,7 +109,7 @@ flowchart LR
 ```
 
 唯一执行实现是 **Mutsuki AgentKit / Agent Wire**。  
-禁止再引入 Claude Code SDK、Codex CLI/app-server、Node legacy agent-runner 作为默认或可选执行后端。
+禁止再引入 Claude Code SDK、Codex CLI/app-server 或外部 legacy agent-runner 作为默认或可选执行后端。
 
 ---
 
@@ -307,7 +307,7 @@ CLI / 远程路径直接消费**未改动的** Mutsuki Wire envelope；HTTP 只�
 | `automation` | 自动化触发 agent turn | 支持 |
 | `slash_command` | 执行 Lilia native / 项目斜杠命令 | 支持 |
 
-空 prompt 规则由 `packages/contracts/src/liliaAgentProtocol.mjs` 从 workflow / runtime command manifest 生成。
+空 prompt 规则由 `lilia-contracts` 从 workflow / runtime command manifest 派生。
 
 `lilia_task_workflow` 是 Lilia 自己的用户可见工作流，**不是**外部 Skill 管理对象。
 

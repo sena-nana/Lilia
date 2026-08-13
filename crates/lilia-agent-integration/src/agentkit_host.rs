@@ -42,7 +42,7 @@ const SUBAGENT_TOOL_PROTOCOL: &str = "lilia.agent.custom-subagent.tool@1";
 const SUBAGENT_TASK_TIMEOUT: Duration = Duration::from_secs(90);
 const PROJECT_ARCHITECTURE_TOOL_NAME: &str = "update_project_architecture";
 const PROJECT_ARCHITECTURE_CONTRACT_JSON: &str =
-    include_str!("../../../packages/contracts/src/architecture-contract.json");
+    include_str!("../../lilia-contracts/contracts/architecture-contract.json");
 
 #[derive(Clone, Debug)]
 struct NativeSubagentToolProtocol;

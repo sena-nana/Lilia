@@ -7,7 +7,7 @@
 
 Android 版 Lilia 是远端控制面，不是桌面端运行核心的移动移植。
 
-`v1.0-beta` 当前目标是让用户在竖屏手机上连接一台 PC，查看任务和会话状态，继续聊天，处理 AskUser / 权限审批，并对正在运行的任务做中断、重试等关键操作。Android 端不内置 AgentKit runtime、Mutsuki Host、Tauri desktop backend 或本地执行能力。
+`v1.0-beta` 当前目标是让用户在竖屏手机上连接一台 PC，查看任务和会话状态，继续聊天，处理 AskUser / 权限审批，并对正在运行的任务做中断、重试等关键操作。Android 端不内置 AgentKit runtime、Mutsuki Host、桌面后端或本地执行能力。
 
 所有会导致 agent 执行、文件访问、终端操作、凭据 / 模型设置读取或权限变更的操作都必须发送到当前 active PC，由 PC 端沿用既有 Lilia 产品协议 → Mutsuki Agent Wire、timeline、pending turn、permission 和 interaction 路径处理。PC 是项目、任务、会话、timeline、interaction、provider 状态和持久化的唯一权威源。
 
@@ -31,7 +31,7 @@ flowchart LR
   Android["Android Compose UI"] --> Client["Android remote client\nKotlin HTTP client"]
   Client --> Bridge["PC HTTP bridge\nlocalhost/LAN beta transport"]
   Bridge --> Host["PC remote host"]
-  Host --> Commands["existing Tauri commands\nand chat services"]
+  Host --> Commands["DesktopApplication services\nand Agent runtime ports"]
   Commands --> Wire["Lilia protocol → Mutsuki Agent Wire\nturn / workflow / runtimeCommand / runtimeOptions"]
   Wire --> Timeline["timeline / interaction / task store"]
   Timeline --> Host
@@ -107,7 +107,7 @@ LiliaRemote 与 LiliaVoice 共用同一个配对协议：PC 端只生成 `lilia-
 
 ## Remote Protocol
 
-远控协议采用 typed request / response。`packages/contracts/src/remote-control.ts` 定义 request / response / event 形状；`packages/contracts/src/remote-control-command-contract.json` 只保存 Tauri IPC 命令名。
+远控协议采用 typed request / response。canonical JSON contract 位于 `crates/lilia-contracts/contracts/remote-control-command-contract.json`，Rust 类型与校验由 `lilia-contracts` 暴露。
 
 Android 不直接构造 provider 专属 payload，不直接绕过 runner，也不把移动端行为塞进 `ChatWorkflow`。现有 agent 边界仍然是：
 
@@ -120,9 +120,9 @@ Android 不直接构造 provider 专属 payload，不直接绕过 runner，也�
 }
 ```
 
-Android 只是远端发起方。PC remote host 负责把 remote request 映射到现有 Tauri command、task service、chat service 或 runner invocation。
+Android 只是远端发起方。PC remote host 负责把 remote request 映射到 `DesktopApplication`、task service、chat service 或 runner invocation。
 
-远控 contract 已扩展 `packages/contracts`，当前至少覆盖：
+远控 contract 当前至少覆盖：
 
 - `RemotePeerSummary`：已绑定 PC / Android 设备摘要。
 - `RemotePairingTicket`：PC 生成的一次性配对票据。
@@ -203,26 +203,25 @@ PC remote host 应作为桌面端后端能力接入，不作为模型 adapter �
 - 远控 request 不能扩大 `ChatWorkflow` 的职责。
 - session、settings、remote environment、sandbox diagnostics 等控制行为仍走 `ChatRuntimeCommand`。
 - provider 专属字段仍进入 `ProviderRuntimeOptions.provider` 或 `experimentalProviderOptions`。
-- PC 端收到 Android request 后，应尽量复用现有服务函数和 Tauri command 内部逻辑，而不是复制 runner 启动、timeline 持久化或 permission 处理。
+- PC 端收到 Android request 后，必须调用共享应用服务，而不是复制 runner 启动、timeline 持久化或 permission 处理。
 - Android UI 不读取 providerContext 内部字段，只做 round-trip。
 
 ## Current Beta Implementation
 
-Android beta 已建立 `apps/android` 原生工程，不把桌面 Tauri / Vue 壳迁移到移动端。
+Android beta 位于 `apps/android`，通过 Compose 实现独立移动端界面，并复用桌面应用服务定义的远控语义。
 
 当前已经超过空壳阶段，实际链路包括：
 
-- `packages/contracts/src/remote-control.ts` 定义协议版本、能力、request / response / event 类型。
-- `packages/contracts/src/remote-control-command-contract.json` 定义 PC 端 Tauri IPC 命令名。
+- `crates/lilia-contracts/contracts/remote-control-command-contract.json` 定义协议版本、能力与 PC 端命令。
 - PC 端 `remote_control.rs` 提供 HTTP bridge、配对、trusted device、dispatch、任务 / timeline / interaction / provider 查询和关键远控操作。
 - Android 端实现 LiliaRemote Compose 壳、扫码配对、saved PC、active PC、任务收件箱、任务详情、timeline、composer、pending interaction 和关键远控操作；LiliaVoice 复用同一套 `remote-core` 配对和 saved PC 能力。
-- `package.json` 提供 `yarn android:verify`，串联 doctor、smoke lib、unit test、debug / release APK 和 APK inspect。
+- `cargo xtask android doctor|test|build|smoke` 分别负责环境检查、Kotlin 测试、APK 构建和真实设备协议 smoke。
 
 当前仍不应承诺为稳定完整远控产品：
 
 - HTTP bridge 仍是 beta 传输层。
 - timeline subscribe 当前以快照 / 轮询更新为主，push-style event stream 仍需稳定化。
-- Android companion 发布前必须有当前构建的 `yarn android:verify` 记录。
+- Android companion 发布前必须有当前 revision 的 `cargo xtask android test` 与 `cargo xtask android build` 记录；设备能力另附 `cargo xtask android smoke` 记录。
 - Android 不提供本地 agent runner、离线操作队列、多 PC 聚合、PC-PC 路由或完整桌面设置面。
 
 验证应覆盖：

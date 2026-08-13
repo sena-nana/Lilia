@@ -1,6 +1,6 @@
-//! Session title search shared by Tauri and Native hosts.
+//! Session title search shared by desktop consumers.
 //!
-//! Mirrors the Tauri frontend strategy: substring hits first, then character
+//! Substring hits rank first, followed by character
 //! bigram TF-IDF + cosine similarity for near matches. Corpus is always rebuilt
 //! from Product Core task facts — never from UI caches.
 

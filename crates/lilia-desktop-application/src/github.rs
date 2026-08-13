@@ -192,7 +192,7 @@ impl Default for GitHubEndpoints {
 impl GitHubEndpoints {
     fn current() -> Self {
         #[cfg(debug_assertions)]
-        if std::env::var_os("LILIA_NATIVE_AGENT_DEBUG").is_some() {
+        if std::env::var_os("LILIA_AGENT_DEBUG").is_some() {
             if let Ok(base) = std::env::var("LILIA_DESKTOP_GITHUB_FIXTURE_URL") {
                 let base = base.trim().trim_end_matches('/');
                 if base.starts_with("http://127.0.0.1:") || base.starts_with("http://localhost:") {
@@ -814,7 +814,7 @@ mod tests {
     fn binding_metadata_persists_but_token_stays_in_the_instance_keyring() {
         let root = tempfile::tempdir().unwrap();
         let host = Arc::new(MemoryCredentialHost::default());
-        let app = application(root.path(), "liliacode.native-preview", host.clone());
+        let app = application(root.path(), "liliacode", host.clone());
         let binding = DesktopGitHubBindingMetadata {
             login: "native-user".to_owned(),
             avatar_url: Some("https://avatars.example/native-user".to_owned()),
@@ -833,16 +833,13 @@ mod tests {
             host.secrets
                 .lock()
                 .unwrap()
-                .get(&(
-                    "liliacode.native-preview".to_owned(),
-                    GITHUB_TOKEN_KEY.to_owned()
-                ))
+                .get(&("liliacode".to_owned(), GITHUB_TOKEN_KEY.to_owned()))
                 .cloned(),
             Some(b"github-token-canary".to_vec())
         );
         assert_tree_excludes(root.path(), b"github-token-canary");
 
-        let restored = application(root.path(), "liliacode.native-preview", host.clone());
+        let restored = application(root.path(), "liliacode", host.clone());
         assert_eq!(
             restored.github_binding_status().unwrap().binding,
             Some(binding)

@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 /// Frontend and non-Rust clients consume this checked-in authority manifest.
 pub const PRODUCT_CORE_FRONTEND_CONTRACT_JSON: &str =
-    include_str!("../../../packages/contracts/src/product-core-contract.json");
+    include_str!("../contracts/product-core-contract.json");
 
 #[derive(Deserialize)]
 struct FrontendContract {

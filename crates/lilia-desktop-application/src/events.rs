@@ -342,14 +342,14 @@ mod tests {
         let first = bus.subscribe();
         let second = bus.subscribe();
 
-        let published = bus.publish("native-preview", DesktopEventKind::ProjectsChanged);
+        let published = bus.publish("lilia", DesktopEventKind::ProjectsChanged);
         assert_eq!(published.sequence, 1);
         assert_eq!(first.recv().unwrap(), published);
         assert_eq!(second.recv().unwrap(), published);
 
         drop(first);
         let next = bus.publish(
-            "native-preview",
+            "lilia",
             DesktopEventKind::NavigationRequested {
                 target: DesktopNavigationTarget::Settings,
             },
@@ -363,11 +363,11 @@ mod tests {
         let bus = DesktopEventBus::with_capacity(1);
         let slow = bus.subscribe();
 
-        bus.publish("native-preview", DesktopEventKind::ProjectsChanged);
+        bus.publish("lilia", DesktopEventKind::ProjectsChanged);
         let publisher = bus.clone();
         let (completed_tx, completed_rx) = std::sync::mpsc::channel();
         let publisher_thread = std::thread::spawn(move || {
-            let dropped = publisher.publish("native-preview", DesktopEventKind::ProjectsChanged);
+            let dropped = publisher.publish("lilia", DesktopEventKind::ProjectsChanged);
             completed_tx.send(dropped).unwrap();
         });
         let dropped = match completed_rx.recv_timeout(Duration::from_secs(1)) {
@@ -389,11 +389,11 @@ mod tests {
         let bus = DesktopEventBus::with_capacity(1);
         let subscription = bus.subscribe();
 
-        let first = bus.publish("native-preview", DesktopEventKind::ProjectsChanged);
-        let dropped = bus.publish("native-preview", DesktopEventKind::ProjectsChanged);
+        let first = bus.publish("lilia", DesktopEventKind::ProjectsChanged);
+        let dropped = bus.publish("lilia", DesktopEventKind::ProjectsChanged);
         assert_eq!(subscription.recv().unwrap(), first);
 
-        let resumed = bus.publish("native-preview", DesktopEventKind::ProjectsChanged);
+        let resumed = bus.publish("lilia", DesktopEventKind::ProjectsChanged);
         assert_eq!(resumed.sequence, dropped.sequence + 1);
         assert_eq!(subscription.recv().unwrap(), resumed);
         assert_eq!(bus.dropped_events(), 1);
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(bus.state().subscribers.len(), 1);
 
         drop(subscription);
-        bus.publish("native-preview", DesktopEventKind::ProjectsChanged);
+        bus.publish("lilia", DesktopEventKind::ProjectsChanged);
 
         assert!(bus.state().subscribers.is_empty());
         assert_eq!(bus.dropped_events(), 0);
@@ -417,7 +417,7 @@ mod tests {
         let bus = DesktopEventBus::with_capacity(0);
         let subscription = bus.subscribe();
 
-        let published = bus.publish("native-preview", DesktopEventKind::ProjectsChanged);
+        let published = bus.publish("lilia", DesktopEventKind::ProjectsChanged);
 
         assert_eq!(subscription.try_recv().unwrap(), published);
     }

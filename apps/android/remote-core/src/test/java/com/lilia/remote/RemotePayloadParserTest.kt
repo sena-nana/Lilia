@@ -390,7 +390,7 @@ class RemotePayloadParserTest {
                       "backend": "codex",
                       "payload": {
                         "toolName": "shell",
-                        "input": { "cmd": "yarn android:verify" }
+                        "input": { "cmd": "cargo xtask android test" }
                       }
                     }
                   ]
@@ -400,7 +400,7 @@ class RemotePayloadParserTest {
         )
 
         assertEquals("shell", detail.pendingInteraction?.title)
-        assertEquals("工具输入：yarn android:verify", detail.pendingInteraction?.body)
+        assertEquals("工具输入：cargo xtask android test", detail.pendingInteraction?.body)
         assertEquals("允许", detail.pendingInteraction?.approveLabel)
         assertEquals("拒绝", detail.pendingInteraction?.declineLabel)
     }
@@ -543,7 +543,7 @@ class RemotePayloadParserTest {
                       "status": "success",
                       "payload": {
                         "toolName": "shell",
-                        "input": { "cmd": "yarn test" },
+                        "input": { "cmd": "cargo test --workspace" },
                         "output": "passed"
                       }
                     },
@@ -570,7 +570,7 @@ class RemotePayloadParserTest {
         assertEquals("turn-1", detail.timeline[0].details.single().value)
         assertEquals(listOf("工具", "输入", "输出"), detail.timeline[1].details.map { it.label })
         assertEquals("shell", detail.timeline[1].details[0].value)
-        assertEquals("""{"cmd":"yarn test"}""", detail.timeline[1].details[1].value)
+        assertEquals("""{"cmd":"cargo test --workspace"}""", detail.timeline[1].details[1].value)
         assertEquals("passed", detail.timeline[1].details[2].value)
         assertEquals(listOf("错误", "代码"), detail.timeline[2].details.map { it.label })
         assertEquals("boom", detail.timeline[2].details[0].value)

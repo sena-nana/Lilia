@@ -22,7 +22,7 @@ LiliaCode's roadmap is organized around one goal: turning agent sessions in soft
 - Memory Layer 1: stabilize manual save, user/project memory display, session-start baseline injection, and docs boundaries.
 - Plugins and tools: close the current MCP, Skill, Plugin, and Hook management surfaces plus diagnostics without expanding to full governance.
 - Release workflow: complete the Windows installer, release workflow, release notes, installation checks, and known-limitations documentation.
-- Android remote control: document and verify it as an experimental `v1.0-beta` companion capability. Before shipping an Android companion asset, run `yarn android:verify`, and avoid promises for a stable full remote-control product.
+- Android remote control: document and verify it as an experimental `v1.0-beta` companion capability. Before shipping an Android asset, run `cargo xtask android test` and `cargo xtask android build`, record real-device smoke separately, and avoid promises for a stable full remote-control product.
 
 ## v2.0 Conversation Workspace And Team Mode
 

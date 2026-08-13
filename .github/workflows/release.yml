@@ -2,16 +2,15 @@ name: Publish Windows Release
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: 要发布的 tag，例如 v0.1.0-alpha.1。
+        description: Release tag, for example v1.0.0.
         required: true
         type: string
       ref:
-        description: 要发布的 branch、tag 或 commit。留空时使用 tag。
+        description: Branch, tag, or commit to build; defaults to the tag.
         required: false
         type: string
 
@@ -19,254 +18,81 @@ permissions:
   contents: write
 
 jobs:
-  verify:
-    name: Verify release
+  windows:
+    name: Build, publish, and smoke Windows release
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       CARGO_INCREMENTAL: "0"
       RUSTC_WRAPPER: sccache
       SCCACHE_GHA_ENABLED: "true"
-      TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
+      LILIA_UPDATER_PUBKEY: ${{ vars.LILIA_UPDATER_PUBKEY }}
+      LILIA_UPDATER_BASE_URL: ${{ vars.LILIA_UPDATER_BASE_URL }}
+      LILIA_SIGNING_PRIVATE_KEY: ${{ secrets.LILIA_SIGNING_PRIVATE_KEY }}
+      LILIA_SIGNING_PASSWORD: ${{ secrets.LILIA_SIGNING_PASSWORD }}
 
     steps:
-      - name: Resolve ref
-        id: release_ref
+      - name: Resolve release input
+        id: release
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
+          $ref = $tag
           if ("${{ github.event_name }}" -eq "workflow_dispatch") {
             $tag = "${{ inputs.tag }}"
             $ref = "${{ inputs.ref }}"
-          } else {
-            $ref = $tag
           }
-          if (-not $ref) {
-            $ref = $tag
-          }
-          if (-not $tag) {
-            throw "Release tag is required."
-          }
+          if (-not $ref) { $ref = $tag }
+          if ($tag -notmatch '^v.+') { throw "Release tag must start with v." }
           "tag=$tag" >> $env:GITHUB_OUTPUT
-          if ($ref) {
-            "ref=$ref" >> $env:GITHUB_OUTPUT
-          }
+          "ref=$ref" >> $env:GITHUB_OUTPUT
 
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
-          ref: ${{ steps.release_ref.outputs.ref || github.ref }}
+          ref: ${{ steps.release.outputs.ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: mozilla-actions/sccache-action@v0.0.10
+      - uses: Swatinem/rust-cache@v2
 
-      - name: Set up Node.js and Yarn
-        uses: sena-nana/LiliaUI/.github/actions/setup-node-yarn@8cdf9fce6f86b903a475ac852bce0627f237baf5
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-
-      - name: Verify workspace
-        run: corepack yarn verify
-
-      - name: Verify release metadata
-        run: corepack yarn release:check --tag ${{ steps.release_ref.outputs.tag }}
-
-      - name: Show sccache stats
-        shell: pwsh
-        run: "& $env:SCCACHE_PATH --show-stats"
-
-  publish-windows:
-    name: Publish Windows bundle
-    needs: verify
-    runs-on: windows-latest
-    timeout-minutes: 45
-    env:
-      CARGO_INCREMENTAL: "0"
-      RUSTC_WRAPPER: sccache
-      SCCACHE_GHA_ENABLED: "true"
-      TAURI_UPDATER_PUBKEY: ${{ vars.TAURI_UPDATER_PUBKEY }}
-
-    steps:
-      - name: Resolve ref
-        id: release_ref
+      - name: Validate signing configuration
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "${{ inputs.tag }}"
-            $ref = "${{ inputs.ref }}"
+          if (-not $env:LILIA_UPDATER_PUBKEY) { throw "Set LILIA_UPDATER_PUBKEY." }
+          if (-not $env:LILIA_UPDATER_BASE_URL) { throw "Set LILIA_UPDATER_BASE_URL." }
+          if (-not $env:LILIA_SIGNING_PRIVATE_KEY) { throw "Set LILIA_SIGNING_PRIVATE_KEY." }
+
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis --no-progress -y
+
+      - run: cargo xtask verify
+      - run: cargo xtask agent-debug
+      - run: cargo xtask release windows --tag "${{ steps.release.outputs.tag }}"
+
+      - name: Create draft GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = "${{ steps.release.outputs.tag }}"
+          $assets = Get-ChildItem artifacts/windows -Recurse -File | ForEach-Object { $_.FullName }
+          if (-not $assets) { throw "Windows release produced no assets." }
+          $existing = gh release view $tag --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            $release = $existing | ConvertFrom-Json
+            if (-not $release.isDraft) { throw "Refusing to replace assets on published release $tag." }
+            gh release upload $tag @assets --clobber
           } else {
-            $ref = $tag
-          }
-          if (-not $ref) {
-            $ref = $tag
-          }
-          if (-not $tag) {
-            throw "Release tag is required."
-          }
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-          if ($ref) {
-            "ref=$ref" >> $env:GITHUB_OUTPUT
+            gh release create $tag @assets --draft --generate-notes --title "LiliaCode $tag"
           }
 
-      - name: Checkout
-        uses: actions/checkout@v6
+      - run: cargo xtask installer-smoke --tag "${{ steps.release.outputs.tag }}"
+
+      - name: Upload Agent Debug evidence
+        if: always()
+        uses: actions/upload-artifact@v6
         with:
-          submodules: recursive
-          ref: ${{ steps.release_ref.outputs.ref || github.ref }}
-
-      - name: Set up Node.js and Yarn
-        uses: sena-nana/LiliaUI/.github/actions/setup-node-yarn@8cdf9fce6f86b903a475ac852bce0627f237baf5
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Set up sccache
-        uses: mozilla-actions/sccache-action@v0.0.10
-
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apps/desktop/src-tauri -> target
-
-      - name: 配置 Tauri 签名密钥
-        shell: pwsh
-        run: |
-          if (-not $env:TAURI_UPDATER_PUBKEY) {
-            throw "No Tauri updater public key is configured. Set repository variable TAURI_UPDATER_PUBKEY."
-          }
-
-          $localSigningKeyPath = Join-Path $env:GITHUB_WORKSPACE "..\\tauri-signing.key"
-          $hasLocalSigningKey = Test-Path $localSigningKeyPath
-          if ($hasLocalSigningKey) {
-            $signingKey = (Get-Content -Raw $localSigningKeyPath).Trim()
-            if (-not $signingKey) {
-              throw "Signing key file is empty: $localSigningKeyPath"
-            }
-            "TAURI_SIGNING_PRIVATE_KEY=$signingKey" >> $env:GITHUB_ENV
-          } elseif (-not "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}") {
-            throw "No Tauri signing key is configured. Set secret TAURI_SIGNING_PRIVATE_KEY or keep ../tauri-signing.key in workspace parent dir."
-          }
-
-          if (-not "${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}") {
-            throw "No Tauri signing key password is configured. Set secret TAURI_SIGNING_PRIVATE_KEY_PASSWORD."
-          }
-          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}" >> $env:GITHUB_ENV
-
-      - name: Build and publish Windows bundle
-        uses: tauri-apps/tauri-action@action-v0.6.2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: apps/desktop
-          tauriScript: corepack yarn tauri
-          tagName: ${{ steps.release_ref.outputs.tag }}
-          releaseName: LiliaCode ${{ steps.release_ref.outputs.tag }}
-          releaseDraft: true
-          generateReleaseNotes: true
-          assetNamePattern: LiliaCode_[version]_[arch][setup][ext]
-          uploadUpdaterJson: true
-          updaterJsonPreferNsis: true
-          uploadUpdaterSignatures: true
-          releaseBody: |
-            ## 首发发布检查清单
-
-            - [ ] 已确认本 Release 仍是 draft，完成检查前不要正式发布。
-            - [ ] 已确认 tag、根 package、desktop package、Cargo 和 Tauri 配置版本一致。
-            - [ ] 已确认 Windows 安装包文件名符合 `LiliaCode_<version>_x64-setup.*`。
-            - [ ] 已确认 Release 说明已写明当前安装包使用 `tauri-signing.key` 完成 Tauri 签名，且未走 PFX 流程。
-            - [ ] 已确认 `yarn release:smoke:windows --tag <tag>` 或本地 `yarn release:smoke:windows --installer <安装包路径>` 通过。
-            - [ ] smoke 已覆盖安装包安装、启动 LiliaCode、通过 `liliacode <测试项目路径>` 打开项目。
-            - [ ] 已确认基础窗口操作正常。
-            - [ ] smoke 已覆盖卸载流程，并确认卸载后新的 PowerShell 或 cmd 中 `liliacode` 不再可用。
-            - [ ] 已在 Release 说明中保留签名提示：当前安装包使用 `tauri-signing.key` 完成 Tauri 签名。
-            - [ ] 已确认 Release assets 包含 `latest.json`、NSIS updater zip 和对应 `.sig` 签名。
-            - [ ] 已在 Release 说明中保留升级提示：LiliaCode 会在启动后检查应用内自动更新，并在用户确认后安装新版。
-
-            ## Windows 安装验证记录
-
-            - 验证人：
-            - 验证日期：
-            - Windows 环境：
-            - 安装包文件名：
-            - 安装：
-            - 启动：
-            - CLI 入口：
-            - 卸载：
-
-            ## 已知限制
-
-            - 当前只发布 Windows 安装包。
-            - 当前安装包使用 `tauri-signing.key` 完成 Tauri 签名。
-            - 当前不发布 macOS 公证包、macOS 安装包或 Linux 安装包。
-
-      - name: Verify updater release assets
-        shell: pwsh
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          $release = gh release view "${{ steps.release_ref.outputs.tag }}" --json assets | ConvertFrom-Json
-          $assetNames = @($release.assets | ForEach-Object { $_.name })
-          if ($assetNames -notcontains "latest.json") {
-            throw "Release is missing latest.json for Tauri updater."
-          }
-          if (-not ($assetNames | Where-Object { $_ -like "*.nsis.zip" })) {
-            throw "Release is missing the NSIS updater zip."
-          }
-          if (-not ($assetNames | Where-Object { $_ -like "*.nsis.zip.sig" })) {
-            throw "Release is missing the NSIS updater signature."
-          }
-
-      - name: Show sccache stats
-        shell: pwsh
-        run: "& $env:SCCACHE_PATH --show-stats"
-
-  smoke-windows-installer:
-    name: Smoke Windows installer
-    needs: publish-windows
-    runs-on: windows-latest
-    timeout-minutes: 20
-
-    steps:
-      - name: Resolve ref
-        id: release_ref
-        shell: pwsh
-        run: |
-          $tag = "${{ github.ref_name }}"
-          if ("${{ github.event_name }}" -eq "workflow_dispatch") {
-            $tag = "${{ inputs.tag }}"
-            $ref = "${{ inputs.ref }}"
-          } else {
-            $ref = $tag
-          }
-          if (-not $ref) {
-            $ref = $tag
-          }
-          if (-not $tag) {
-            throw "Release tag is required."
-          }
-          "tag=$tag" >> $env:GITHUB_OUTPUT
-          if ($ref) {
-            "ref=$ref" >> $env:GITHUB_OUTPUT
-          }
-
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          submodules: recursive
-          ref: ${{ steps.release_ref.outputs.ref || github.ref }}
-
-      - name: Set up Node.js and Yarn
-        uses: sena-nana/LiliaUI/.github/actions/setup-node-yarn@8cdf9fce6f86b903a475ac852bce0627f237baf5
-
-      - name: Smoke draft Windows installer
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: corepack yarn release:smoke:windows --tag ${{ steps.release_ref.outputs.tag }}
+          name: lilia-agent-debug-${{ github.run_id }}
+          path: agent-debug-runs/lilia-*
+          if-no-files-found: warn

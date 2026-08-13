@@ -1,6 +1,6 @@
 //! SQLite-backed product projection store (#56).
 //!
-//! Schema migrations live here — not in Desktop Tauri. Desktop UI SQLite remains
+//! Schema migrations live here, outside the desktop host. Legacy UI SQLite remains
 //! a rebuildable cache only.
 
 use std::path::{Path, PathBuf};

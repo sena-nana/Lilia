@@ -44,7 +44,7 @@ body:
       description: 选择最主要的影响区域。
       options:
         - 桌面端界面
-        - Tauri / Rust 后端
+        - Rust 应用服务
         - 数据契约
         - Agent / 会话调度
         - Roadmap / Milestone

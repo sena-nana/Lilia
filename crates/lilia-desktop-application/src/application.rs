@@ -152,25 +152,25 @@ impl DesktopApplication {
             }
         }
         let host_context = DesktopHostContext::from(&config);
-        let legacy_connection = if authority.data_paths().is_some() {
-            open_shared_legacy_connection(&config.data_paths().legacy_desktop_db())?
+        let domain_connection = if authority.data_paths().is_some() {
+            open_shared_legacy_connection(&config.domain_database_path())?
         } else {
             in_memory_shared_legacy_connection()?
         };
-        let composers = DesktopComposerStore::from_shared(legacy_connection.clone())?;
-        let todos = DesktopTodoStore::from_shared(legacy_connection.clone())?;
-        let pending_turns = DesktopTurnQueueStore::from_shared(legacy_connection.clone())?;
+        let composers = DesktopComposerStore::from_shared(domain_connection.clone())?;
+        let todos = DesktopTodoStore::from_shared(domain_connection.clone())?;
+        let pending_turns = DesktopTurnQueueStore::from_shared(domain_connection.clone())?;
         let hook_executions =
-            crate::hooks::DesktopHookExecutionStore::from_shared(legacy_connection.clone())?;
-        let submissions = DesktopSubmissionStore::new(legacy_connection);
+            crate::hooks::DesktopHookExecutionStore::from_shared(domain_connection.clone())?;
+        let submissions = DesktopSubmissionStore::new(domain_connection);
         let worktrees = if authority.data_paths().is_some() {
-            DesktopWorktreeStore::open(&config.data_paths().legacy_desktop_db())?
+            DesktopWorktreeStore::open(&config.domain_database_path())?
         } else {
             DesktopWorktreeStore::in_memory()?
         };
         let events = DesktopEventBus::new();
         let automation_store = if authority.data_paths().is_some() {
-            SqliteAutomationStore::open(config.data_paths().legacy_desktop_db())
+            SqliteAutomationStore::open(config.domain_database_path())
                 .map_err(crate::DesktopAutomationError::from)?
         } else {
             SqliteAutomationStore::in_memory().map_err(crate::DesktopAutomationError::from)?
@@ -197,13 +197,13 @@ impl DesktopApplication {
             DesktopRoadmapService::in_memory()?
         };
         let architecture = if authority.data_paths().is_some() {
-            DesktopArchitectureService::open(config.data_paths().legacy_desktop_db())?
+            DesktopArchitectureService::open(config.domain_database_path())?
         } else {
             DesktopArchitectureService::in_memory()?
         };
         let remote = if authority.data_paths().is_some() {
             DesktopRemoteControlService::open(
-                config.data_paths().legacy_desktop_db(),
+                config.domain_database_path(),
                 host.clone(),
                 host_context.clone(),
             )?
@@ -301,7 +301,7 @@ impl DesktopApplication {
     }
 
     #[cfg(debug_assertions)]
-    pub fn hold_legacy_database_writer_for_debug(
+    pub fn hold_domain_database_writer_for_debug(
         &self,
         duration_ms: u64,
     ) -> Result<(), DesktopApplicationError> {
@@ -311,7 +311,7 @@ impl DesktopApplication {
                 message: "debug database writer duration must be between 100 and 10000".to_owned(),
             });
         }
-        let path = self.config().data_paths().legacy_desktop_db();
+        let path = self.config().domain_database_path();
         let (ready_sender, ready_receiver) = std::sync::mpsc::sync_channel(1);
         std::thread::Builder::new()
             .name("lilia-debug-database-writer".to_owned())
@@ -645,9 +645,7 @@ mod tests {
             format!("desktop-application-test:{application_id}"),
         )
         .unwrap();
-        let config =
-            DesktopApplicationConfig::new("C:/lilia/native-preview", "liliacode.native-preview")
-                .unwrap();
+        let config = DesktopApplicationConfig::new("C:/lilia/lilia", "liliacode").unwrap();
         DesktopApplication::from_authority(config, authority, host).unwrap()
     }
 
@@ -663,6 +661,9 @@ mod tests {
             format!("liliacode.native-bootstrap-test.{application_id}"),
         )
         .unwrap();
+        let legacy_sentinel = b"legacy-database-must-remain-untouched";
+        config.data_paths().ensure_layout().unwrap();
+        std::fs::write(config.data_paths().legacy_desktop_db(), legacy_sentinel).unwrap();
 
         {
             let app =
@@ -710,6 +711,11 @@ mod tests {
             );
             assert!(config.data_paths().product_db().exists());
         }
+
+        assert_eq!(
+            std::fs::read(config.data_paths().legacy_desktop_db()).unwrap(),
+            legacy_sentinel
+        );
 
         if home.exists() {
             std::fs::remove_dir_all(&home).unwrap();
@@ -867,7 +873,7 @@ mod tests {
         );
         let calls = host.calls.lock().unwrap();
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0.instance_identity, "liliacode.native-preview");
+        assert_eq!(calls[0].0.instance_identity, "liliacode");
         assert_eq!(calls[0].0.home, app.config().home());
         assert_eq!(calls[0].1, action);
     }
@@ -878,7 +884,7 @@ mod tests {
         let events = app.subscribe_events();
 
         let published = app.emit_event(DesktopEventKind::ProjectsChanged);
-        assert_eq!(published.source_instance, "liliacode.native-preview");
+        assert_eq!(published.source_instance, "liliacode");
         assert_eq!(events.recv().unwrap(), published);
     }
 

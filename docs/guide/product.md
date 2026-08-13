@@ -14,7 +14,7 @@ LiliaCode 聚焦代码工程场景。同系列应用可以继续围绕其他高�
 
 | 层 | 说明 |
 | --- | --- |
-| **Lilia Protocol** | 高层对话指令：`ChatWorkflow`、`ChatRuntimeCommand`、交互与 timeline（`packages/contracts`） |
+| **Lilia Protocol** | 高层对话指令：`ChatWorkflow`、`ChatRuntimeCommand`、交互与 timeline（`crates/lilia-contracts`） |
 | **Model** | 模型目录、管理器与分流器；按角色预设组 / tier 路由本轮模型 |
 | **Provider** | LLM 提供方与连接实现（凭据、端点、协议 Adapter）；不是官方 Agent 产品 |
 | LiliaCore / 防腐层 | Task↔Session 绑定、profile 装配、Agent Wire、事件投影 |

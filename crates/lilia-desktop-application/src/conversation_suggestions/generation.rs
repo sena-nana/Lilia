@@ -27,7 +27,7 @@ fn prompt_suggestion() -> &'static PromptSuggestionSection {
     static CONTRACT: OnceLock<PromptSuggestionSection> = OnceLock::new();
     CONTRACT.get_or_init(|| {
         let contract: PromptTextContract = serde_json::from_str(include_str!(
-            "../../../../packages/contracts/src/prompt-text.json"
+            "../../../lilia-contracts/contracts/prompt-text.json"
         ))
         .expect("prompt-text.json must deserialize");
         contract.suggestion

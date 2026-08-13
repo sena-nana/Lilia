@@ -1,54 +1,26 @@
-# LiliaCode RuntimeDomain 参考装配
+# LiliaCode RuntimeDomain 边界
 
-LiliaCode 为 MutsukiCore Issue #43 提供一个可运行、无 Tauri/Vue 依赖的三运行域参考装配：
+LiliaCode 使用 MutsukiCore RuntimeDomain 隔离三类工作：
 
-- `lilia-product-domain`：产品命令和 projection，保留独立交互线程；
-- `lilia-agent-domain`：Agent event 和脚本执行；
-- `lilia-workspace-domain`：文件、Git、扫描和索引工作。
+- `lilia-product-domain`：产品命令和 projection；
+- `lilia-agent-domain`：Agent event 与执行；
+- `lilia-workspace-domain`：文件、Git、扫描和索引。
 
-参考装配位于 `apps/desktop/src-tauri/src/runtime_domains.rs`。它使用
-`RuntimeGroupHost`、typed cross-domain request、共享 Host services 和独立 domain
-abort，不共享 Core 内部 TaskPool、lease、ResourceManager 或 StateStore。
+运行域装配属于 Rust 应用服务和宿主装配，不得由 UI 控件持有事实，也不得建立第二套产品、Agent 或 workspace 权威。跨域请求必须类型化，取消与 terminal outcome 必须可观察。
 
-## 性能场景
+## 性能门禁
 
 运行：
 
-```powershell
-cargo run --release --locked --features runtime-domain-reference `
-  --manifest-path apps/desktop/src-tauri/Cargo.toml `
-  --bin lilia-runtime-domain-bench -- `
-  --samples 100 `
-  --min-background-ms 20 `
-  --output artifacts/perf/issue43-liliacode-runtime-domains.json
+```bash
+cargo xtask performance
 ```
 
-单域和三域使用相同协议、Runner、payload、实际业务函数和总计三个 worker：
+固定 corpus 在相同协议、Runner、payload、业务函数和 worker 数量下比较当前实现与历史基线。样本应交错执行并报告 p50/p95/p99、CPU、RSS 与冷启动；绝对门禁和相对回归分别判断。孤立路径改善只证明受控并发下的隔离效果，不等同于整机端到端收益。
 
-- 单域：三个 worker 共享一个 RuntimeDomain；
-- 三域：product、agent、workspace 各一个 worker；
-- 压力：两个真实 Agent stdin payload 构建与一次真实
-  `git worktree list --porcelain` 检查同时运行；基准先自动校准迭代次数，使两类后台工作
-  各自至少持续 20 ms；
-- 测量：生产 handoff 合约解析和 prompt 构建从 submit 到 terminal outcome 的延迟；
-- 方法：每种拓扑复用一个预热后的长生命周期 Runtime，单双域按样本交替先后顺序，
-  使用至少 100 个样本和 nearest-rank 计算 p99，避免把小样本最大值误称为 p99；
-- 门槛：三域 p99 至少降低 50%。
+## 生产约束
 
-## 与生产迁移的边界
-
-该模块是可执行 reference profile 和性能门禁，不会把空 RuntimeDomain 注入桌面进程，
-也不宣称桌面产品数据库或全部 workspace command 已迁入多 RuntimeDomain。生产
-Embedded/Service 共用 bootstrap、LiliaCore、Mutsuki AgentKit 和 workspace authority。
-迁移时复用这里验证过的 domain ID、路由语义和性能场景，不建立第二套产品或 Agent 事实源。
-
-## 生产切片状态（诚实 partial）
-
-| 面 | 状态 |
-| --- | --- |
-| `lilia-workspace-domain` | **已**在 Desktop 生产路径挂载：`worktree_list` 经 `production_workspace_domain` 提交真实 `git worktree list` |
-| AgentKit turns | 仍为单 `HostRuntime`（`native_agent` / AgentKitHost），**未**迁入 agent domain |
-| Product SQLite / LiliaCore | 仍为 Embedded/Service bootstrap，**未**迁入 product domain |
-| 空域注入 | **禁止**：不在 setup 里插入无 runner 的 product/agent domain |
-
-生产协议 ID：`lilia.workspace.worktree.list.v1`（与 reference 的 `lilia.reference.workspace.*` 区分）。
+- 每个桌面进程只 bootstrap 一个 `ServiceAuthority`。
+- Product SQLite、AgentKit 与 workspace authority 仍各自只有一个事实源。
+- 不在进程中挂载没有真实 runner 的空 RuntimeDomain。
+- 引入或调整运行域前，必须用相同真实工作流证明调度收益，并检查取消、失败与进程退出行为。

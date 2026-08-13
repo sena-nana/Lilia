@@ -5,7 +5,7 @@ use serde::Deserialize;
 use super::MemorySettings;
 
 const TASK_STATUS_MANIFEST_JSON: &str =
-    include_str!("../../../../packages/contracts/src/task-statuses.json");
+    include_str!("../../../lilia-contracts/contracts/task-statuses.json");
 
 static DEFAULT_MEMORY_SETTINGS: OnceLock<MemorySettings> = OnceLock::new();
 

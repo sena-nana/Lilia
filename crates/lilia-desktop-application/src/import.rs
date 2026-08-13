@@ -2031,7 +2031,7 @@ mod tests {
         host: Arc<TestHost>,
     ) -> (DesktopDataImportService, DesktopApplicationConfig) {
         let source = config(root.child("source"), "liliacode");
-        let target = config(root.child("target"), "liliacode.native-preview");
+        let target = config(root.child("target"), "liliacode");
         (DesktopDataImportService::new(target, host), source)
     }
 
@@ -2410,7 +2410,7 @@ mod tests {
         };
         let source_relative = relative_root.join("source");
         let source = config(source_relative.clone(), "liliacode");
-        let target = config(root.child("target"), "liliacode.native-preview");
+        let target = config(root.child("target"), "liliacode");
         write_database(&source_relative, DesktopDatabaseKind::Product, 3);
         let service = DesktopDataImportService::new(target, Arc::new(TestHost::default()));
 
@@ -2864,7 +2864,7 @@ mod tests {
     #[test]
     fn imported_legacy_metadata_never_overwrites_native_settings() {
         let root = TestDirectory::new("legacy-metadata-no-overwrite");
-        let target = config(root.child("target"), "liliacode.native-preview");
+        let target = config(root.child("target"), "liliacode");
         target.data_paths().ensure_layout().unwrap();
         let store =
             SqliteAgentRuntimeStateStore::open(target.data_paths().agent_runtime_db()).unwrap();

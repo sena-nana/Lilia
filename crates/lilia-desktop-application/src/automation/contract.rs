@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 
 const CONTRACT_JSON: &str =
-    include_str!("../../../../packages/contracts/src/automation-contract.json");
+    include_str!("../../../lilia-contracts/contracts/automation-contract.json");
 
 static CONTRACT: OnceLock<AutomationContract> = OnceLock::new();
 

@@ -1,0 +1,231 @@
+{
+  "schemaVersion": 7,
+  "fixtureId": "equivalence-p0-v1",
+  "projects": [
+    {
+      "id": "equivalence-p0-v1-project-alpha",
+      "name": "等价项目 Alpha",
+      "pinned": false,
+      "sortOrder": 0
+    },
+    {
+      "id": "equivalence-p0-v1-project-beta",
+      "name": "Equivalence Beta",
+      "pinned": false,
+      "sortOrder": 1
+    }
+  ],
+  "tasks": [
+    {
+      "id": "equivalence-p0-v1-task-root",
+      "projectId": "equivalence-p0-v1-project-alpha",
+      "parentId": null,
+      "title": "根任务 中文 IME",
+      "description": "固定父任务",
+      "status": "waiting",
+      "priority": "high",
+      "pinned": false,
+      "sortOrder": 0
+    },
+    {
+      "id": "equivalence-p0-v1-task-child",
+      "projectId": "equivalence-p0-v1-project-alpha",
+      "parentId": "equivalence-p0-v1-task-root",
+      "title": "嵌套子任务",
+      "description": null,
+      "status": "draft",
+      "priority": "normal",
+      "pinned": false,
+      "sortOrder": 1
+    },
+    {
+      "id": "equivalence-p0-v1-task-secondary",
+      "projectId": "equivalence-p0-v1-project-alpha",
+      "parentId": null,
+      "title": "排序对照任务",
+      "description": null,
+      "status": "running",
+      "priority": "urgent",
+      "pinned": false,
+      "sortOrder": 2
+    },
+    {
+      "id": "equivalence-p0-v1-task-beta",
+      "projectId": "equivalence-p0-v1-project-beta",
+      "parentId": null,
+      "title": "跨项目落点",
+      "description": null,
+      "status": "waiting",
+      "priority": "low",
+      "pinned": false,
+      "sortOrder": 0
+    },
+    {
+      "id": "equivalence-p0-v1-task-inbox",
+      "projectId": null,
+      "parentId": null,
+      "title": "Inbox 固定任务",
+      "description": null,
+      "status": "waiting",
+      "priority": "normal",
+      "pinned": false,
+      "sortOrder": 0
+    }
+  ],
+  "timeline": [
+    {
+      "id": "equivalence-p0-v1-event-user",
+      "taskId": "equivalence-p0-v1-task-root",
+      "agentSession": "equivalence-p0-v1-session",
+      "sequence": 1,
+      "turnId": "equivalence-p0-v1-turn",
+      "kind": "user_message",
+      "status": "completed",
+      "title": "用户输入",
+      "summary": "请验证同语料渲染",
+      "payload": {
+        "content": "请验证同语料渲染"
+      },
+      "projected": true
+    },
+    {
+      "id": "equivalence-p0-v1-event-assistant",
+      "taskId": "equivalence-p0-v1-task-root",
+      "agentSession": "equivalence-p0-v1-session",
+      "sequence": 2,
+      "turnId": "equivalence-p0-v1-turn",
+      "kind": "assistant_message",
+      "status": "completed",
+      "title": "原生富文本",
+      "summary": "Markdown、公式与 Mermaid 固定语料",
+      "payload": {
+        "content": "# 同语料\n\n| 左 | 右 |\n| --- | ---: |\n| 中文 | 42 |\n\n$E = mc^2$\n\n```mermaid\ngraph LR\nA --> B\n```"
+      },
+      "projected": true
+    },
+    {
+      "id": "equivalence-p0-v1-event-completed",
+      "taskId": "equivalence-p0-v1-task-root",
+      "agentSession": "equivalence-p0-v1-session",
+      "sequence": 3,
+      "turnId": "equivalence-p0-v1-turn",
+      "kind": "turn_completed",
+      "status": "completed",
+      "title": "完成",
+      "summary": null,
+      "payload": {},
+      "projected": true
+    }
+  ],
+  "goals": [
+    {
+      "taskId": "equivalence-p0-v1-task-root",
+      "objective": "验证 Native Goal 同语料",
+      "tokenBudget": 4096
+    }
+  ],
+  "todos": [
+    {
+      "taskId": "equivalence-p0-v1-task-root",
+      "text": "删除同语料 Todo 引导",
+      "priority": "high"
+    }
+  ],
+  "skills": [
+    {
+      "skillId": "equivalence-p0-v1-skill-primary",
+      "description": "LiliaCode 同语料 Skill",
+      "enabled": true
+    }
+  ],
+  "plugins": [
+    {
+      "pluginId": "equivalence-p0-v1-plugin-primary",
+      "name": "同语料 Plugin",
+      "version": "1.0.0",
+      "description": "LiliaCode 同语料 Plugin",
+      "enabled": true,
+      "skillId": "equivalence-p0-v1-plugin-skill",
+      "skillDescription": "由 Plugin 提供的同语料 Skill"
+    }
+  ],
+  "hooks": [
+    {
+      "enabled": true,
+      "handlers": [
+        {
+          "id": "equivalence-p0-v1-hook-prompt",
+          "event": "UserPromptSubmit",
+          "matcher": "*equivalence*",
+          "command": "true",
+          "commandWindows": "exit /B 0",
+          "timeoutSeconds": 5,
+          "statusMessage": "Equivalence hook"
+        }
+      ]
+    }
+  ],
+  "mcpServers": [
+    {
+      "serverId": "equivalence-p0-v1-mcp-primary",
+      "transport": "stdio",
+      "command": "node",
+      "args": ["equivalence-mcp-fixture.mjs"],
+      "url": null,
+      "envSecretNames": [],
+      "headerSecretNames": [],
+      "enabled": false
+    }
+  ],
+  "interactions": {
+    "goal": {
+      "action": "clear",
+      "taskId": "equivalence-p0-v1-task-root"
+    },
+    "todo": {
+      "action": "delete",
+      "taskId": "equivalence-p0-v1-task-root"
+    },
+    "roadmap": {
+      "title": "新里程碑",
+      "taskId": "equivalence-p0-v1-task-root"
+    },
+    "memory": {
+      "scope": "user",
+      "title": "同语料项目记忆",
+      "body": "LiliaCode 同语料 Memory\n原生多行编辑器保留换行\n用户作用域可跨项目复用",
+      "tags": ["equivalence", "中文"]
+    },
+    "memorySettings": {
+      "enabled": false,
+      "baselineInjectionEnabled": false,
+      "cooldownTurns": 37
+    },
+    "conversationSuggestions": {
+      "enabled": false,
+      "source": "assistant-ai"
+    },
+    "automation": {
+      "name": "equivalence-p0-v1-automation",
+      "nodeTitle": "同语料触发",
+      "includeInbox": true
+    },
+    "skill": {
+      "skillId": "equivalence-p0-v1-skill-primary",
+      "enabled": false
+    },
+    "plugin": {
+      "pluginId": "equivalence-p0-v1-plugin-primary",
+      "enabled": false
+    },
+    "hook": {
+      "scope": "user",
+      "enabled": false
+    },
+    "mcp": {
+      "serverId": "equivalence-p0-v1-mcp-primary",
+      "command": "node",
+      "args": ["--no-warnings", "equivalence-mcp-updated.mjs"]
+    }
+  }
+}

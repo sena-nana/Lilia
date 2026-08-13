@@ -18,7 +18,7 @@ impl DesktopApplication {
         }
         let arguments = normalized_arguments(request.arguments);
         if arguments.is_empty() {
-            return Ok(cli_accepted("Native Preview is already running"));
+            return Ok(cli_accepted("LiliaCode is already running"));
         }
         if let [flag, handoff_path] = arguments.as_slice() {
             if flag == "--task-handoff" {
@@ -40,7 +40,7 @@ impl DesktopApplication {
         }
         if arguments.len() != 1 {
             return Ok(cli_rejected(
-                "usage: lilia-native-preview [project-directory] | --task-handoff <handoff.json>",
+                "usage: liliacode [project-directory] | --task-handoff <handoff.json>",
             ));
         }
         let path = match resolve_project_path(&arguments[0], request.working_directory.as_deref()) {
@@ -120,7 +120,7 @@ fn looks_like_executable(value: &str) -> bool {
         .and_then(|name| name.to_str())
         .is_some_and(|name| {
             let name = name.to_ascii_lowercase();
-            name == "lilia-native-preview" || name == "lilia-native-preview.exe"
+            name == "liliacode" || name == "liliacode.exe"
         })
 }
 

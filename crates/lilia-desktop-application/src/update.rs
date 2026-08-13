@@ -245,11 +245,9 @@ mod tests {
             format!("desktop-update-test-client-{id}"),
         )
         .unwrap();
-        let config = DesktopApplicationConfig::new(
-            "C:/lilia/native-preview-update-test",
-            "liliacode.native-preview.update-test",
-        )
-        .unwrap();
+        let config =
+            DesktopApplicationConfig::new("C:/lilia/lilia-update-test", "liliacode.update-test")
+                .unwrap();
         DesktopApplication::from_authority(
             config,
             authority,

@@ -1331,7 +1331,7 @@ private fun ProcessSessionPanel(
                 enabled = startBlockReason == null,
                 minLines = 1,
                 label = { Text("命令") },
-                placeholder = { Text("npm test -- --watch") },
+                placeholder = { Text("cargo test --workspace") },
             )
             Button(
                 onClick = onStart,

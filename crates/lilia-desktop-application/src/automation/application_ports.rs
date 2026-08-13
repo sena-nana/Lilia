@@ -599,7 +599,7 @@ mod tests {
         let request = AutomationCreateTaskRequest {
             context: context("run:1", "node/1"),
             project_id: None,
-            title: "Ship Native preview".to_owned(),
+            title: "Ship desktop release".to_owned(),
             status: "running".to_owned(),
         };
 
@@ -609,7 +609,7 @@ mod tests {
         assert_eq!(replay, first);
         let tasks = application.query_tasks(TaskQuery::default()).unwrap();
         assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].title, "Ship Native preview");
+        assert_eq!(tasks[0].title, "Ship desktop release");
         assert!(matches!(
             events.recv().unwrap().kind,
             DesktopEventKind::TasksChanged { .. }

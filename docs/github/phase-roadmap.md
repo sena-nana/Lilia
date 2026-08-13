@@ -42,14 +42,14 @@ labels: release,area: docs
 
 #### 当前准入落点
 
-- `yarn release:check --tag <tag>` 自动核对版本号、Tauri Windows 打包配置、NSIS CLI 安装 hook、release notes 已知限制、安装包命名预期和 Windows 安装验证记录入口。
-- `yarn release:smoke:windows --tag <tag>` 可对 Windows draft Release 安装包重复执行安装、启动、`liliacode <测试项目路径>` 和卸载后的 CLI 清理 smoke，结果写入 Release 正文的 Windows 安装验证记录。
+- `cargo xtask verify` 与 `cargo xtask release windows --tag <tag>` 自动核对版本号、Native Windows 打包配置、NSIS CLI 安装 hook、release notes 已知限制、安装包命名预期和 Windows 安装验证记录入口。
+- `cargo xtask installer-smoke --tag <tag>` 可对 Windows draft Release 安装包重复执行安装、启动、`liliacode <测试项目路径>` 和卸载后的 CLI 清理 smoke，结果写入 Release 正文的 Windows 安装验证记录。
 <!-- /issue -->
 
 <!-- issue
 milestone: v1.0 稳定化收尾
 title: [v1.0] 核心对话链路稳定化
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v1.0] 核心对话链路稳定化
 
@@ -70,13 +70,13 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 
 #### 当前回归落点
 
-- Agent Debug v1.0 核心对话回归覆盖普通发送、继续历史会话、任务恢复、plan pending action 和 permission pending action；运行 `yarn verify:agent-debug` 后查看 `agent-debug-runs/<timestamp>/scenario-results.json` 与对应截图。
+- Agent Debug v1.0 核心对话回归覆盖普通发送、继续历史会话、任务恢复、plan pending action 和 permission pending action；运行 `cargo xtask agent-debug` 后查看 `agent-debug-runs/<timestamp>/scenario-results.json` 与对应截图。
 <!-- /issue -->
 
 <!-- issue
 milestone: v1.0 稳定化收尾
 title: [v1.0] 当前侧边栏与任务列表稳定化
-labels: enhancement,area: desktop,area: tauri
+labels: enhancement,area: desktop,area: native
 -->
 ### [v1.0] 当前侧边栏与任务列表稳定化
 
@@ -99,7 +99,7 @@ labels: enhancement,area: desktop,area: tauri
 <!-- issue
 milestone: v1.0 稳定化收尾
 title: [v1.0] Roadmap/Milestone 当前链路稳定化
-labels: enhancement,area: desktop,area: tauri,area: docs
+labels: enhancement,area: desktop,area: native,area: docs
 -->
 ### [v1.0] Roadmap/Milestone 当前链路稳定化
 
@@ -122,7 +122,7 @@ labels: enhancement,area: desktop,area: tauri,area: docs
 <!-- issue
 milestone: v1.0 稳定化收尾
 title: [v1.0] Memory Layer 1 基线稳定化
-labels: enhancement,area: desktop,area: tauri,area: docs
+labels: enhancement,area: desktop,area: native,area: docs
 -->
 ### [v1.0] Memory Layer 1 基线稳定化
 
@@ -145,7 +145,7 @@ labels: enhancement,area: desktop,area: tauri,area: docs
 <!-- issue
 milestone: v1.0 稳定化收尾
 title: [v1.0] 插件/Hook/MCP 管理面稳定化
-labels: enhancement,area: desktop,area: tauri
+labels: enhancement,area: desktop,area: native
 -->
 ### [v1.0] 插件/Hook/MCP 管理面稳定化
 
@@ -202,14 +202,14 @@ labels: enhancement,area: android,area: contracts,area: docs
 #### 任务清单
 
 - [ ] 同步 Android 设计文档、README、roadmap 和 release 口径。
-- [ ] 确认 `packages/contracts` 的 typed remote-control 类型和 IPC command manifest 是当前权威契约。
-- [ ] 发布 Android companion beta 前运行 `yarn android:verify`。
+- [ ] 确认 `crates/lilia-contracts/contracts` 的 typed remote-control contract 是当前权威契约。
+- [ ] 发布 Android companion beta 前运行 `cargo xtask android test`、`cargo xtask android build` 与真实设备 `cargo xtask android smoke`。
 - [ ] 在发布说明中标明 Android remote 仍为 experimental，不承诺离线队列、PC-PC、多设备协作、Android 本地 runner 或完整设置面。
 
 #### 完成条件
 
 - [ ] beta 发布不会同时出现“空壳冻结”和“完整远控已稳定”的冲突描述。
-- [ ] Android remote 如进入发布资产，必须带 experimental 标识和 `yarn android:verify` 验证记录。
+- [ ] Android remote 如进入发布资产，必须带 experimental 标识和 `cargo xtask android test`、`cargo xtask android build` 与真实设备 `cargo xtask android smoke` 验证记录。
 - [ ] v2.0 / v3.0 的远控稳定化、多设备和 PC-PC 演进边界清楚。
 <!-- /issue -->
 
@@ -285,7 +285,7 @@ labels: enhancement,area: desktop
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] 侧边栏产物面板
-labels: enhancement,area: desktop,area: tauri
+labels: enhancement,area: desktop,area: native
 -->
 ### [v2.0] 侧边栏产物面板
 
@@ -308,7 +308,7 @@ labels: enhancement,area: desktop,area: tauri
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] Memory 浏览与 Layer 2 机会窗口
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v2.0] Memory 浏览与 Layer 2 机会窗口
 
@@ -331,7 +331,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] 文件树浏览与上下文发送
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v2.0] 文件树浏览与上下文发送
 
@@ -354,7 +354,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] 简单 Git 操作
-labels: enhancement,area: desktop,area: tauri
+labels: enhancement,area: desktop,area: native
 -->
 ### [v2.0] 简单 Git 操作
 
@@ -377,7 +377,7 @@ labels: enhancement,area: desktop,area: tauri
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] 任务创建与生命周期
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v2.0] 任务创建与生命周期
 
@@ -400,7 +400,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] 任务依赖/阻塞闭环
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v2.0] 任务依赖/阻塞闭环
 
@@ -423,7 +423,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] 任务分配与团队模式
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v2.0] 任务分配与团队模式
 
@@ -446,7 +446,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] 多 Agent 写作与调度
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v2.0] 多 Agent 写作与调度
 
@@ -469,7 +469,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] 自动编排进入会话主链路
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v2.0] 自动编排进入会话主链路
 
@@ -492,7 +492,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] AgentKit 原生插件完整管理
-labels: enhancement,area: desktop,area: tauri
+labels: enhancement,area: desktop,area: native
 -->
 ### [v2.0] AgentKit 原生插件完整管理
 
@@ -515,7 +515,7 @@ labels: enhancement,area: desktop,area: tauri
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] Subagents / 辅助 Agent 接入
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v2.0] Subagents / 辅助 Agent 接入
 
@@ -538,7 +538,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v2.0 会话工作台与团队模式
 title: [v2.0] 对话级搜索/分叉/继续/重生成补全
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v2.0] 对话级搜索/分叉/继续/重生成补全
 
@@ -585,7 +585,7 @@ labels: enhancement,area: contracts,area: docs
 <!-- issue
 milestone: v3.0 项目级知识资产
 title: [v3.0] 项目级总览与高级度量
-labels: enhancement,area: desktop,area: tauri
+labels: enhancement,area: desktop,area: native
 -->
 ### [v3.0] 项目级总览与高级度量
 
@@ -608,7 +608,7 @@ labels: enhancement,area: desktop,area: tauri
 <!-- issue
 milestone: v3.0 项目级知识资产
 title: [v3.0] 架构图一等资产
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v3.0] 架构图一等资产
 
@@ -654,7 +654,7 @@ labels: enhancement,area: desktop,area: docs
 <!-- issue
 milestone: v3.0 项目级知识资产
 title: [v3.0] 项目 Memory 高级检索与质量评估
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v3.0] 项目 Memory 高级检索与质量评估
 
@@ -677,7 +677,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v3.0 项目级知识资产
 title: [v3.0] Roadmap/Milestone 高级解释视图
-labels: enhancement,area: desktop,area: tauri
+labels: enhancement,area: desktop,area: native
 -->
 ### [v3.0] Roadmap/Milestone 高级解释视图
 
@@ -700,7 +700,7 @@ labels: enhancement,area: desktop,area: tauri
 <!-- issue
 milestone: v3.0 项目级知识资产
 title: [v3.0] 自动化高级能力
-labels: enhancement,area: desktop,area: tauri,area: contracts
+labels: enhancement,area: desktop,area: native,area: contracts
 -->
 ### [v3.0] 自动化高级能力
 
@@ -723,7 +723,7 @@ labels: enhancement,area: desktop,area: tauri,area: contracts
 <!-- issue
 milestone: v3.0 项目级知识资产
 title: [v3.0] 插件/工作流市场化能力
-labels: enhancement,area: desktop,area: tauri,area: docs
+labels: enhancement,area: desktop,area: native,area: docs
 -->
 ### [v3.0] 插件/工作流市场化能力
 

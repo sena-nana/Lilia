@@ -282,8 +282,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    const AGENT_WORKFLOW_CONTRACT: &str =
-        include_str!("../../../packages/contracts/src/lilia-workflow-contract.json");
+    const AGENT_WORKFLOW_CONTRACT: &str = include_str!("../contracts/lilia-workflow-contract.json");
 
     #[test]
     fn workflow_run_requires_published_workflow_and_does_not_require_agent_session() {

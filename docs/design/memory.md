@@ -164,5 +164,5 @@ v1 上线时必须埋的硬指标(没有这些,这套架构是否 work 无法被
 ## 9. 关联
 
 - 对外摘要:[README.md](../../README.md) Memory 小节
-- 数据契约:[packages/contracts/src/index.ts](../../packages/contracts/src/index.ts)
+- 数据契约：[`crates/lilia-contracts/contracts`](../../crates/lilia-contracts/contracts)
 - 项目核心意图:`session = task`,Memory 是横向叠加,不能改变这条根

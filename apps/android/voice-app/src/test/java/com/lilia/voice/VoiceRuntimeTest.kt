@@ -31,7 +31,7 @@ class VoiceRuntimeTest {
 
         assertFalse(runtime.isActionAllowed(hub, VoiceAction.OpenTask("task-1")))
         assertTrue(runtime.isActionAllowed(selection, VoiceAction.OpenTask("task-1")))
-        assertTrue(runtime.isActionAllowed(detail, VoiceAction.StartProcess("task-1", "npm test")))
+        assertTrue(runtime.isActionAllowed(detail, VoiceAction.StartProcess("task-1", "cargo test --workspace")))
     }
 
     @Test
