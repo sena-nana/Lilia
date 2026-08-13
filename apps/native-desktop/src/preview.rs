@@ -731,6 +731,12 @@ struct MainConversationDraft {
     error: Option<String>,
 }
 
+#[derive(Clone, Debug)]
+struct ProjectArchiveConfirmation {
+    project_id: ProjectId,
+    project_name: String,
+}
+
 struct ConversationDraftSurface<'a> {
     task: &'a DesktopTaskCreate,
     worktree: &'a DraftWorktreeSelection,
@@ -880,6 +886,10 @@ pub enum Message {
     ConfirmProjectRemoval,
     CancelProjectRemoval,
     ProjectRemovalDialogInteraction,
+    RequestProjectConversationArchive,
+    ConfirmProjectConversationArchive,
+    CancelProjectConversationArchive,
+    ProjectConversationArchiveDialogInteraction,
     RestoreProject(ProjectId),
     TaskSearchChanged(String),
     NewTaskTitleChanged(String),
@@ -1717,6 +1727,7 @@ pub struct PreviewProgram {
     project_workspace_edit: String,
     project_action_error: Option<String>,
     project_removal: Option<DesktopProjectRemovalPreview>,
+    project_archive_confirmation: Option<ProjectArchiveConfirmation>,
     project_clone_repository: String,
     project_clone_parent: String,
     project_clone_busy: bool,
@@ -2024,7 +2035,10 @@ impl PreviewProgram {
         window_id: HostedWindowId,
         item_id: Option<WorkspaceItemId>,
     ) {
-        if self.project_removal.is_some() || self.update_prompt_is_visible() {
+        if self.project_removal.is_some()
+            || self.project_archive_confirmation.is_some()
+            || self.update_prompt_is_visible()
+        {
             return;
         }
         let restore_focus = item_id
@@ -3051,6 +3065,77 @@ impl PreviewProgram {
             }
             Err(error) => {
                 self.project_action_error = Some(format!("无法移除项目：{error}"));
+            }
+        }
+    }
+
+    fn request_project_conversation_archive(&mut self) {
+        let Some(project_id) = self.selected_project.clone() else {
+            return;
+        };
+        let project = match self.application.get_project(&project_id) {
+            Ok(project) => project,
+            Err(error) => {
+                self.project_action_error = Some(format!("无法读取项目：{error}"));
+                return;
+            }
+        };
+        let active_task_count = match self
+            .application
+            .query_tasks(TaskQuery::for_project(project_id.clone()))
+        {
+            Ok(tasks) => tasks.len(),
+            Err(error) => {
+                self.project_action_error = Some(format!("无法读取项目任务：{error}"));
+                return;
+            }
+        };
+        if active_task_count == 0 {
+            self.project_action_error = Some("当前项目没有可归档的对话。".to_owned());
+            return;
+        }
+        self.project_archive_confirmation = Some(ProjectArchiveConfirmation {
+            project_id,
+            project_name: project.name,
+        });
+        self.project_action_error = None;
+    }
+
+    fn confirm_project_conversation_archive(&mut self) {
+        let Some(confirmation) = self.project_archive_confirmation.take() else {
+            return;
+        };
+        match self
+            .application
+            .archive_project_conversations(&confirmation.project_id)
+        {
+            Ok(_) => {
+                self.project_action_error = None;
+                if self.main_conversation_draft.as_ref().is_some_and(|draft| {
+                    draft.task.project_id.as_ref() == Some(&confirmation.project_id)
+                }) {
+                    self.main_conversation_draft = None;
+                }
+                let popup_drafts = self
+                    .task_popups
+                    .iter()
+                    .filter_map(|(window_id, popup)| {
+                        popup
+                            .draft
+                            .as_ref()
+                            .is_some_and(|draft| {
+                                draft.project_id.as_ref() == Some(&confirmation.project_id)
+                            })
+                            .then_some(*window_id)
+                    })
+                    .collect::<Vec<_>>();
+                for window_id in popup_drafts {
+                    self.close_task_popup(window_id);
+                }
+                self.refresh_tasks();
+            }
+            Err(error) => {
+                self.project_action_error = Some(format!("无法归档项目对话：{error}"));
             }
         }
     }
@@ -7507,6 +7592,14 @@ impl PreviewProgram {
             Message::ConfirmProjectRemoval => self.confirm_project_removal(),
             Message::CancelProjectRemoval => self.project_removal = None,
             Message::ProjectRemovalDialogInteraction => {}
+            Message::RequestProjectConversationArchive => {
+                self.request_project_conversation_archive()
+            }
+            Message::ConfirmProjectConversationArchive => {
+                self.confirm_project_conversation_archive()
+            }
+            Message::CancelProjectConversationArchive => self.project_archive_confirmation = None,
+            Message::ProjectConversationArchiveDialogInteraction => {}
             Message::RestoreProject(project_id) => self.restore_project(project_id),
             Message::TaskSearchChanged(value) => self.task_search = value,
             Message::NewTaskTitleChanged(value) => {
@@ -14249,6 +14342,7 @@ impl PreviewProgram {
 
     fn update_prompt_is_visible(&self) -> bool {
         self.project_removal.is_none()
+            && self.project_archive_confirmation.is_none()
             && match &self.update_state {
                 DesktopUpdateState::Available { version, .. } => {
                     !self.dismissed_update_versions.contains(version)
@@ -17015,6 +17109,20 @@ impl PreviewProgram {
             {
                 self.move_selected_project(1);
             }
+            target_ids::PROJECT_ARCHIVE_CONVERSATIONS
+                if self.project_surface == ProjectSurface::Tasks
+                    && self.selected_project.is_some()
+                    && self.selected_task.is_none() =>
+            {
+                self.request_project_conversation_archive();
+            }
+            target_ids::PROJECT_ARCHIVE_DIALOG if self.project_archive_confirmation.is_some() => {}
+            target_ids::PROJECT_ARCHIVE_CONFIRM if self.project_archive_confirmation.is_some() => {
+                self.confirm_project_conversation_archive();
+            }
+            target_ids::PROJECT_ARCHIVE_CANCEL if self.project_archive_confirmation.is_some() => {
+                self.project_archive_confirmation = None;
+            }
             target_ids::PROJECT_REMOVE
                 if self.project_surface == ProjectSurface::Tasks
                     && self.selected_project.is_some()
@@ -19198,6 +19306,10 @@ impl PreviewProgram {
                 .project_removal
                 .as_ref()
                 .map(|removal| removal.project_id.as_str().to_owned()),
+            pending_project_archive: self
+                .project_archive_confirmation
+                .as_ref()
+                .map(|archive| archive.project_id.as_str().to_owned()),
             project_order: self
                 .projects
                 .iter()
@@ -21467,6 +21579,7 @@ impl PreviewProgram {
                     target_ids::PROJECT_WORKSPACE.to_owned(),
                     target_ids::PROJECT_WORKSPACE_PICK.to_owned(),
                     target_ids::PROJECT_PIN.to_owned(),
+                    target_ids::PROJECT_ARCHIVE_CONVERSATIONS.to_owned(),
                     target_ids::PROJECT_REMOVE.to_owned(),
                 ]);
                 if !self.project_name_edit.trim().is_empty() {
@@ -21487,6 +21600,13 @@ impl PreviewProgram {
                     target_ids::PROJECT_REMOVE_DIALOG.to_owned(),
                     target_ids::PROJECT_REMOVE_CONFIRM.to_owned(),
                     target_ids::PROJECT_REMOVE_CANCEL.to_owned(),
+                ]);
+            }
+            if self.project_archive_confirmation.is_some() {
+                targets.extend([
+                    target_ids::PROJECT_ARCHIVE_DIALOG.to_owned(),
+                    target_ids::PROJECT_ARCHIVE_CONFIRM.to_owned(),
+                    target_ids::PROJECT_ARCHIVE_CANCEL.to_owned(),
                 ]);
             }
             if self.selected_project.is_some() || self.inbox_selected {
@@ -31306,28 +31426,38 @@ impl PreviewProgram {
                 project_editor_content.push(text(error.clone()).size(11).color(colors.danger));
         }
         let project_editor = Card::new(
-            project_editor_content.push(
-                row![
-                    save_project,
-                    button(
-                        text(if project.pinned {
-                            "取消固定"
-                        } else {
-                            "固定"
-                        })
-                        .size(11)
-                    )
-                    .on_press(Message::ToggleProjectPinned)
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                    move_up,
-                    move_down,
-                    button(text("移除项目").size(11))
-                        .on_press(Message::RequestProjectRemoval)
-                        .style(button_style(tokens, ButtonKind::Danger)),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            ),
+            project_editor_content
+                .push(
+                    row![
+                        save_project,
+                        button(
+                            text(if project.pinned {
+                                "取消固定"
+                            } else {
+                                "固定"
+                            })
+                            .size(11)
+                        )
+                        .on_press(Message::ToggleProjectPinned)
+                        .style(button_style(tokens, ButtonKind::Ghost)),
+                        move_up,
+                        move_down,
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                )
+                .push(
+                    row![
+                        button(text("归档全部对话").size(11))
+                            .on_press(Message::RequestProjectConversationArchive)
+                            .style(button_style(tokens, ButtonKind::Ghost)),
+                        button(text("移除项目").size(11))
+                            .on_press(Message::RequestProjectRemoval)
+                            .style(button_style(tokens, ButtonKind::Danger)),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                ),
         )
         .title("项目")
         .view(tokens);
@@ -36305,7 +36435,23 @@ impl PreviewProgram {
             )),
             _ => None,
         };
-        let base = if let Some(removal) = &self.project_removal {
+        let base = if let Some(archive) = &self.project_archive_confirmation {
+            stack![
+                shell,
+                ConfirmDialog::new(
+                    "归档全部对话",
+                    format!("确认归档“{}”中的全部对话？", archive.project_name),
+                    Message::ConfirmProjectConversationArchive,
+                    Message::CancelProjectConversationArchive,
+                    Message::ProjectConversationArchiveDialogInteraction,
+                )
+                .description("项目和磁盘工作区会保留；对话可从已归档列表恢复。")
+                .danger(true)
+                .on_outside(Message::CancelProjectConversationArchive)
+                .view(tokens),
+            ]
+            .into()
+        } else if let Some(removal) = &self.project_removal {
             let summary = format!(
                 "{} 个任务和 {} 个会话将移入收集箱。",
                 removal.active_task_count, removal.active_conversation_count
@@ -36846,6 +36992,7 @@ impl HostedProgram for PreviewProgram {
             project_workspace_edit: String::new(),
             project_action_error: None,
             project_removal: None,
+            project_archive_confirmation: None,
             project_clone_repository: String::new(),
             project_clone_parent,
             project_clone_busy: false,

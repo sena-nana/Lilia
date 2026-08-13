@@ -180,6 +180,7 @@ pub struct DebugObservation {
     pub last_copied_markdown_bytes: Option<usize>,
     pub selected_project: Option<String>,
     pub pending_project_removal: Option<String>,
+    pub pending_project_archive: Option<String>,
     pub project_order: Vec<String>,
     pub inbox_selected: bool,
     pub selected_task: Option<String>,
@@ -567,6 +568,13 @@ impl DebugObservation {
             "todoPriorities": &self.todo_priorities,
             "todoEditing": self.todo_editing,
         });
+        observation
+            .as_object_mut()
+            .expect("debug observation is an object")
+            .insert(
+                "pendingProjectArchive".to_owned(),
+                serde_json::json!(self.pending_project_archive.as_deref()),
+            );
         observation
             .as_object_mut()
             .expect("debug observation is an object")
@@ -1548,6 +1556,7 @@ mod tests {
             last_copied_markdown_bytes: Some(42),
             selected_project: Some("project\n1".to_owned()),
             pending_project_removal: Some("project-remove".to_owned()),
+            pending_project_archive: None,
             project_order: vec!["project\n1".to_owned()],
             selected_task: None,
             selected_task_parent: None,

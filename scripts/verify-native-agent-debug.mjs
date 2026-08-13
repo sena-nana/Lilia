@@ -28,6 +28,7 @@ const quotaScreenshotPath = path.join(runDir, "quota.png");
 const extensionsScreenshotPath = path.join(runDir, "extensions.png");
 const remoteScreenshotPath = path.join(runDir, "remote.png");
 const mcpElicitationScreenshotPath = path.join(runDir, "mcp-elicitation.png");
+const projectArchiveScreenshotPath = path.join(runDir, "project-archive-confirmation.png");
 const projectRemovalScreenshotPath = path.join(runDir, "project-removal-confirmation.png");
 const projectOrderingScreenshotPath = path.join(runDir, "project-ordering.png");
 const taskOrderingScreenshotPath = path.join(runDir, "task-ordering.png");
@@ -185,6 +186,7 @@ const summary = {
   extensionsScreenshotPath,
   remoteScreenshotPath,
   mcpElicitationScreenshotPath,
+  projectArchiveScreenshotPath,
   projectRemovalScreenshotPath,
   projectOrderingScreenshotPath,
   taskOrderingScreenshotPath,
@@ -4785,6 +4787,90 @@ try {
   });
   assertSuccess(taskRestored, "restore Native task");
   assertEqual(taskRestored.observation.archivedTaskCount, 0, "restored task count");
+
+  const projectArchiveRequested = await request(address, {
+    command: "click",
+    targetId: "native-preview.project.archive-conversations",
+  });
+  assertSuccess(projectArchiveRequested, "request Native project conversation archive");
+  assertEqual(
+    projectArchiveRequested.observation.pendingProjectArchive,
+    createdProjectId,
+    "pending project archive id",
+  );
+  assertEqual(
+    projectArchiveRequested.observation.archivedTaskCount,
+    0,
+    "project conversations remain active before archive confirmation",
+  );
+  assertTarget(
+    projectArchiveRequested,
+    "native-preview.project.archive-conversations.dialog",
+  );
+  assertTarget(
+    projectArchiveRequested,
+    "native-preview.project.archive-conversations.confirm",
+  );
+  assertTarget(
+    projectArchiveRequested,
+    "native-preview.project.archive-conversations.cancel",
+  );
+  await recordRenderedWindow(
+    child.pid,
+    projectArchiveScreenshotPath,
+    "project conversation archive confirmation",
+    "projectArchiveWindowBounds",
+    "projectArchivePngSize",
+  );
+  const projectArchiveCancelled = await request(address, {
+    command: "click",
+    targetId: "native-preview.project.archive-conversations.cancel",
+  });
+  assertSuccess(projectArchiveCancelled, "cancel Native project conversation archive");
+  assertEqual(
+    projectArchiveCancelled.observation.pendingProjectArchive,
+    null,
+    "cancelled project archive state",
+  );
+  assertEqual(
+    projectArchiveCancelled.observation.archivedTaskCount,
+    0,
+    "cancelled project conversations remain active",
+  );
+  assertSuccess(
+    await request(address, {
+      command: "click",
+      targetId: "native-preview.project.archive-conversations",
+    }),
+    "request Native project conversation archive again",
+  );
+  const projectArchived = await request(address, {
+    command: "click",
+    targetId: "native-preview.project.archive-conversations.confirm",
+  });
+  assertSuccess(projectArchived, "confirm Native project conversation archive");
+  assertEqual(projectArchived.observation.pendingProjectArchive, null, "completed archive state");
+  assertEqual(projectArchived.observation.taskCount, 0, "active task count after project archive");
+  assertEqual(
+    projectArchived.observation.archivedTaskCount,
+    1,
+    "archived task count after project archive",
+  );
+  assertTarget(projectArchived, restoreTaskTarget);
+  const projectArchiveRestored = await request(address, {
+    command: "click",
+    targetId: restoreTaskTarget,
+  });
+  assertSuccess(projectArchiveRestored, "restore project-archived Native task");
+  assertEqual(projectArchiveRestored.observation.taskCount, 1, "restored project task count");
+  assertEqual(
+    projectArchiveRestored.observation.archivedTaskCount,
+    0,
+    "restored project archive count",
+  );
+  summary.checks.push(
+    "Project conversation archive required a real NanaUI confirmation, cancelled without writes, atomically archived the active task and conversation fact set, and restored through the archived list",
+  );
 
   const projectRemovalRequested = await request(address, {
     command: "click",

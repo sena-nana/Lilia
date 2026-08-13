@@ -384,23 +384,14 @@ pub fn task_update_dependencies(
 #[tauri::command]
 pub fn task_archive_project(
     project_id: String,
-    store: State<'_, LiliaStore>,
-    _app: AppHandle,
+    application: State<'_, DesktopApplication>,
 ) -> Result<i64, String> {
-    let conn = store.conn()?;
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM tasks WHERE project_id = ?1 AND archived = 0",
-            params![project_id],
-            |row| row.get(0),
-        )
-        .map_err(|e| format!("task_archive_project: count 失败：{e}"))?;
-    conn.execute(
-        "UPDATE tasks SET archived = 1 WHERE project_id = ?1 AND archived = 0",
-        params![project_id],
-    )
-    .map_err(|e| format!("task_archive_project: update 失败：{e}"))?;
-    Ok(count)
+    let project_id = lilia_contracts::ProjectId::new(project_id)
+        .map_err(|error| format!("task_archive_project: project_id 无效：{error}"))?;
+    application
+        .archive_project_conversations(&project_id)
+        .map(|outcome| outcome.archived_tasks.len() as i64)
+        .map_err(|error| format!("task_archive_project: {error}"))
 }
 
 #[tauri::command]

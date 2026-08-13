@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   PRODUCT_UPDATE_ENTITY_COMMAND,
+  TASK_ARCHIVE_PROJECT_COMMAND,
   TASK_REORDER_COMMAND,
   TASK_REPARENT_COMMAND,
 } from "@lilia/contracts";
 import {
+  archiveProjectConversations,
   ensureProjectTasksLoaded,
   listProjectConversations,
   reparentTask,
@@ -60,6 +62,21 @@ describe("task mutation application boundary", () => {
       newProjectId: "tools",
       newParentId: null,
     });
+    expect(mockInvoke.mock.calls.some(([command]) => command === PRODUCT_UPDATE_ENTITY_COMMAND))
+      .toBe(false);
+  });
+
+  it("archives one project fact set through a single shared desktop command", async () => {
+    await ensureProjectTasksLoaded("lilia", true);
+    mockInvoke.mockClear();
+
+    const archived = await archiveProjectConversations("lilia");
+
+    expect(archived).toBe(2);
+    expect(listProjectConversations("lilia")).toEqual([]);
+    expect(mockInvoke.mock.calls.filter(([command]) =>
+      command === TASK_ARCHIVE_PROJECT_COMMAND
+    )).toEqual([[TASK_ARCHIVE_PROJECT_COMMAND, { projectId: "lilia" }, undefined]]);
     expect(mockInvoke.mock.calls.some(([command]) => command === PRODUCT_UPDATE_ENTITY_COMMAND))
       .toBe(false);
   });

@@ -483,6 +483,13 @@ Coding Tools、Architecture、Quota、Extensions、Remote 与最终 Workspace �
 退出码为 0，是当前最新的完整 Native Agent Debug 证据；`project-removal-confirmation.png` 已人工确认文案、数量、
 危险操作层级和未删除磁盘目录说明完整可见。该证据不替代 Tauri/Native 同 corpus、并发竞态和 Windows 11 人工门禁。
 
+项目级“归档全部对话”也已改为共享 Product aggregate command。命令以项目 revision、完整活动任务集和绑定会话集
+作为并发栅栏，在一个 SQLite 事务内关闭并归档会话、归档任务并记录类型化幂等结果；任一实体、事件或结果写入
+失败都会整体回滚。Tauri 数据层只调用一次共享命令，Native 使用真实 NanaUI 确认框，取消时零写入，确认后清理
+同项目的 transient draft 并从权威快照刷新。Native Agent Debug 已加入取消、确认、归档列表恢复及确认框截图回放；
+`native-2026-08-13T04-08-26-149Z` 在当前 macOS 环境完成最新 Debug 构建，但程序按平台门禁在 ready 前退出，故
+Windows 11 可见交互和截图仍待真机执行，不能以该产物宣称完成系统验收。
+
 `native-2026-08-10T17-24-49-172Z` 又将项目侧栏接入 NanaUI 公共 `ReorderList`。该控件以 4px 鼠标/触摸阈值、
 Grab/Grabbing 指针、横向插入线和 moved/before 值发出纵向重排意图，不持有 Product 项目或持久化；Native 将
 pinned/unpinned 映射为两个不可串组的列表，并把完整组顺序交给共享 `reorder_projects`。回放通过开发态稳定

@@ -7,6 +7,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { ref } from "vue";
 import {
+  TASK_ARCHIVE_PROJECT_COMMAND,
   TASK_REORDER_COMMAND,
   TASK_REPARENT_COMMAND,
   type ProductConversation,
@@ -511,30 +512,8 @@ export function removeArchivedTaskFromLists(taskId: string): void {
 }
 
 export async function archiveProjectConversations(projectId: string): Promise<number> {
+  const archived = await invoke<number>(TASK_ARCHIVE_PROJECT_COMMAND, { projectId });
   await loadProductTasks();
-  const tasks = [...PRODUCT_TASKS.values()]
-    .filter((task) => task.projectId === projectId && !task.archived);
-  for (const task of tasks) {
-    await updateTaskConversations(
-      task.id,
-      (conversation) => ({
-        ...conversation,
-        archived: true,
-        status: "closed",
-        updatedAt: Date.now(),
-      }),
-      "archived",
-    );
-    const result = await updateProductEntity(
-      newProductCommandMeta("archive-project-task", task.revision),
-      {
-        kind: "task",
-        value: { ...task, archived: true, updatedAt: Date.now() },
-      },
-      "archived",
-    );
-    if (result.value.kind === "task") rememberProductTask(result.value.value);
-  }
   const next = { ...TASKS.value };
   delete next[projectId];
   TASKS.value = next;
@@ -545,7 +524,7 @@ export async function archiveProjectConversations(projectId: string): Promise<nu
       draftCleared += 1;
     }
   }
-  return tasks.length + draftCleared;
+  return archived + draftCleared;
 }
 
 export async function toggleTaskPin(taskId: string): Promise<boolean> {
