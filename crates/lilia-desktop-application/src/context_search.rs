@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use ignore::WalkBuilder;
-use lilia_contracts::{ChatContextSearchMatch, ChatContextSearchResult, TaskId};
+use lilia_contracts::{ChatContextSearchMatch, ChatContextSearchResult, ProjectId, TaskId};
 
 use crate::{describe_attachment_path, DesktopApplication, DesktopApplicationError};
 
@@ -49,7 +49,16 @@ impl DesktopApplication {
                     task_id.as_str()
                 ),
             })?;
-        let context = self.project_context(&project_id)?;
+        self.search_project_context_attachments(&project_id, query, limit)
+    }
+
+    pub fn search_project_context_attachments(
+        &self,
+        project_id: &ProjectId,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ChatContextSearchResult>, DesktopApplicationError> {
+        let context = self.project_context(project_id)?;
         Ok(search_context_attachments(
             context.active_root(),
             query,

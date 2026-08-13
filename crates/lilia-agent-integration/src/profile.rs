@@ -3,6 +3,7 @@
 //! Lilia workflow kinds stay product-only and never enter AgentKit public enums.
 //! Provider instances bind CredentialRef only; secrets stay in Credential Broker.
 
+use lilia_contracts::main_agent_system_instruction;
 use mutsuki_agent_contracts::{
     AgentProtocolAdapterSelection, AgentProviderInstance, AgentRuntimeMode, AgentRuntimeProfile,
     CredentialRef,
@@ -20,14 +21,8 @@ pub const OPENAI_COMPATIBLE_PROTOCOL_FAMILY: &str = "openai.chat-completions";
 pub const ANTHROPIC_MESSAGES_ADAPTER_ID: &str = "anthropic-messages";
 pub const ANTHROPIC_MESSAGES_PROTOCOL_FAMILY: &str = "anthropic.messages";
 
-pub fn build_product_coding_profile_id(workflow_kind: Option<&str>) -> String {
-    match workflow_kind
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        Some(kind) => format!("{PRODUCT_NATIVE_CODING_PROFILE_HINT}.{kind}"),
-        None => PRODUCT_NATIVE_CODING_PROFILE_HINT.to_string(),
-    }
+pub fn build_product_coding_profile_id(_workflow_kind: Option<&str>) -> String {
+    PRODUCT_NATIVE_CODING_PROFILE_HINT.to_string()
 }
 
 /// Build a product Native Coding profile with Provider/CredentialRef bindings.
@@ -46,7 +41,8 @@ pub fn build_product_coding_profile(
         .mode(AgentRuntimeMode::Production)
         .system_instruction(
             "Lilia product Native Coding Agent on Mutsuki AgentKit. Use Lilia product protocol and model protocol adapters only; never official Agent Server or brand CLI runners.",
-        );
+        )
+        .system_instruction(main_agent_system_instruction());
 
     let mut providers: Vec<(String, CredentialRef)> = openai_bindings;
     // Guarantee at least two openai-compatible provider slots when ≥1 credential exists,
@@ -157,15 +153,24 @@ mod tests {
     use mutsuki_agent_contracts::{CredentialKind, OPENAI_CREDENTIAL_PROVIDER_ID};
 
     #[test]
-    fn profile_id_keeps_workflow_as_product_suffix_only() {
+    fn profile_id_stays_stable_across_turn_workflows() {
         assert_eq!(
             build_product_coding_profile_id(None),
-            PRODUCT_NATIVE_CODING_PROFILE_HINT
+            PRODUCT_NATIVE_CODING_PROFILE_HINT,
         );
         assert_eq!(
             build_product_coding_profile_id(Some("fix")),
-            "lilia.product.native-coding.fix"
+            PRODUCT_NATIVE_CODING_PROFILE_HINT,
         );
+    }
+
+    #[test]
+    fn product_profile_carries_the_shared_main_agent_instruction() {
+        let profile = build_product_coding_profile(&ProductCredentialBridge::new(), None).unwrap();
+        assert!(profile
+            .system_instructions
+            .iter()
+            .any(|instruction| instruction == &main_agent_system_instruction()));
     }
 
     #[test]

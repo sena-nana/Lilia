@@ -19,6 +19,7 @@ arboard = "3.6.1"
 base64 = "0.22.1"
 fs2 = "0.4.3"
 iced = { git = "https://github.com/sena-nana/iced.git", rev = "31bde4e4bac6de08f5ba581a8ea9c55ad0031e67", default-features = false, features = ["wgpu", "canvas", "image", "svg", "advanced", "smol", "thread-pool", "x11", "wayland"] }
+image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 keyring = "4.1.2"
 lilia-contracts = { workspace = true }
 lilia-desktop-application = { workspace = true }
@@ -26,7 +27,7 @@ lilia-agent-integration = { workspace = true }
 lilia-storage = { workspace = true }
 minisign-verify = "0.2.5"
 mutsuki-agent-contracts = { workspace = true }
-nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "3a6d819d3a8d835110a9790231df7172391cc9f3", features = ["bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "math", "overlays", "qr-code", "rich-text", "settings-components", "surfaces"] }
+nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "c0a4404b327bcd27ba7a55657437180459a9b346", features = ["browser", "bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "image-viewer", "math", "overlays", "qr-code", "rich-text", "selects", "settings-components", "surfaces", "syntax-highlighting"] }
 rfd = "0.17.2"
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
@@ -35,6 +36,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 uuid = { workspace = true }
+url = { workspace = true }
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 
 # The pinned Iced runtime fixes this Web API generation as one unit. Keeping the
@@ -45,7 +47,6 @@ web-sys = "=0.3.85"
 
 [target.'cfg(windows)'.dependencies]
 global-hotkey = "0.8.0"
-image = { version = "0.25.10", default-features = false, features = ["png"] }
 libloading = "0.9.0"
 tray-icon = { version = "0.24.2", default-features = false }
 windows = { version = "0.62.2", features = [

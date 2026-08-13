@@ -6,6 +6,7 @@ export const TASK_COMMANDS_CONTRACT = manifest;
 export const TASK_LIST_COMMAND = manifest.commands.list;
 export const TASK_LIST_SIDEBAR_CONVERSATIONS_COMMAND =
   manifest.commands.listSidebarConversations;
+export const SEARCH_SESSIONS_COMMAND = manifest.commands.searchSessions;
 export const TASK_GET_COMMAND = manifest.commands.get;
 export const TASK_HANDOFF_GET_COMMAND = manifest.commands.handoffGet;
 export const TASK_CREATE_COMMAND = manifest.commands.create;

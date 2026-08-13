@@ -41,13 +41,14 @@ pub struct DesktopApplication {
 
 pub(crate) struct DesktopApplicationInner {
     config: DesktopApplicationConfig,
-    authority: ServiceAuthority,
+    pub(crate) authority: ServiceAuthority,
     pub(crate) host: Arc<dyn DesktopHost>,
     pub(crate) host_context: DesktopHostContext,
-    events: DesktopEventBus,
+    pub(crate) events: DesktopEventBus,
     pub(crate) workspace: Arc<Mutex<DesktopWorkspaceState>>,
     pub(crate) composers: Mutex<DesktopComposerStore>,
     pub(crate) submissions: Mutex<DesktopSubmissionStore>,
+    pub(crate) terminals: crate::terminal::DesktopTerminalService,
     pub(crate) pending_turns: Mutex<DesktopTurnQueueStore>,
     pub(crate) turn_submission: Mutex<()>,
     pub(crate) turn_claim_epoch: String,
@@ -66,6 +67,17 @@ pub(crate) struct DesktopApplicationInner {
     pub(crate) agent_interaction: Mutex<crate::agent_interaction::DesktopAgentInteractionState>,
     pub(crate) documents: Mutex<DocumentStore>,
     pub(crate) languages: RwLock<LanguageRegistry>,
+    pub(crate) language_services: Mutex<crate::language_service::DesktopLanguageServiceState>,
+    pub(crate) language_service_operations: Mutex<()>,
+    pub(crate) project_files_watchers:
+        Mutex<std::collections::BTreeMap<String, crate::project_files::ProjectFilesWatcher>>,
+    pub(crate) project_files_revisions: Arc<Mutex<std::collections::BTreeMap<String, AtomicU64>>>,
+    pub(crate) project_task_runs:
+        Mutex<std::collections::BTreeMap<(String, String), crate::DesktopTerminalSessionId>>,
+    pub(crate) conversation_suggestion_generation: Mutex<()>,
+    pub(crate) product_change_feed: crate::change_feed::ProductChangeFeed,
+    pub(crate) registry_file_watch: crate::registry_watch::RegistryFileWatch,
+    pub(crate) title_update: std::sync::Arc<crate::title_update::DesktopTitleUpdateCoordinator>,
     pub(crate) agent: DesktopAgentRuntime,
     pub(crate) cli_requests: Mutex<()>,
     pub(crate) extension_registry: Mutex<()>,
@@ -76,6 +88,8 @@ pub(crate) struct DesktopApplicationInner {
 #[serde(rename_all = "camelCase")]
 pub struct DesktopTaskSessionSnapshot {
     pub task: ProductTask,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_block: Option<crate::DesktopTaskRunBlock>,
     pub goal: Option<crate::DesktopGoalSnapshot>,
     pub context_usage: Option<ChatContextUsage>,
     pub timeline: Vec<TimelineProjectionEvent>,
@@ -244,6 +258,7 @@ impl DesktopApplication {
                 workspace: Arc::new(Mutex::new(DesktopWorkspaceState::default())),
                 composers: Mutex::new(composers),
                 submissions: Mutex::new(submissions),
+                terminals: crate::terminal::DesktopTerminalService::default(),
                 pending_turns: Mutex::new(pending_turns),
                 turn_submission: Mutex::new(()),
                 turn_claim_epoch: format!("desktop-epoch-{}", uuid::Uuid::new_v4()),
@@ -261,7 +276,18 @@ impl DesktopApplication {
                 provider_settings: Mutex::new(provider_settings),
                 agent_interaction: Mutex::new(agent_interaction),
                 documents: Mutex::new(DocumentStore::default()),
-                languages: RwLock::new(LanguageRegistry::default()),
+                languages: RwLock::new(LanguageRegistry::with_builtins()),
+                language_services: Mutex::new(Default::default()),
+                language_service_operations: Mutex::new(()),
+                project_files_watchers: Mutex::new(std::collections::BTreeMap::new()),
+                project_files_revisions: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
+                project_task_runs: Mutex::new(std::collections::BTreeMap::new()),
+                conversation_suggestion_generation: Mutex::new(()),
+                product_change_feed: crate::change_feed::ProductChangeFeed::default(),
+                registry_file_watch: crate::registry_watch::RegistryFileWatch::default(),
+                title_update: std::sync::Arc::new(
+                    crate::title_update::DesktopTitleUpdateCoordinator::default(),
+                ),
                 agent: DesktopAgentRuntime::default(),
                 cli_requests: Mutex::new(()),
                 extension_registry: Mutex::new(()),
@@ -381,9 +407,11 @@ impl DesktopApplication {
     ) -> Result<DesktopTaskSessionSnapshot, DesktopApplicationError> {
         let client = self.inner.authority.client()?;
         let task = client.products().get_task(task_id)?;
+        let run_block = self.task_run_block(task_id)?;
         let runtime = self.inner.authority.shared_runtime();
         Ok(DesktopTaskSessionSnapshot {
             task,
+            run_block,
             goal: self.task_goal(task_id)?,
             context_usage: self.task_context_usage(task_id)?,
             timeline: runtime.inner().product_timeline_for_task(task_id),
@@ -491,6 +519,10 @@ pub enum DesktopApplicationError {
     #[error(transparent)]
     ProjectContext(#[from] crate::ProjectContextError),
     #[error(transparent)]
+    ProjectFiles(#[from] crate::ProjectFilesError),
+    #[error(transparent)]
+    ProjectTask(#[from] crate::DesktopProjectTaskError),
+    #[error(transparent)]
     Todo(#[from] crate::DesktopTodoError),
     #[error(transparent)]
     Composer(#[from] crate::DesktopComposerError),
@@ -502,6 +534,8 @@ pub enum DesktopApplicationError {
     LegacyDatabase(#[from] DesktopLegacyDatabaseError),
     #[error(transparent)]
     Submission(#[from] crate::DesktopSubmissionError),
+    #[error(transparent)]
+    Terminal(#[from] crate::DesktopTerminalError),
     #[error(transparent)]
     Worktree(#[from] crate::DesktopWorktreeError),
     #[error(transparent)]
@@ -851,11 +885,6 @@ mod tests {
     #[test]
     fn application_owns_one_document_and_language_model_across_host_clones() {
         let app = application(Arc::new(RecordingHost::default()));
-        app.register_language(
-            crate::LanguageDefinition::new(crate::LanguageId::new("rust").unwrap(), "Rust", ["rs"])
-                .unwrap(),
-        )
-        .unwrap();
         let path = std::env::current_dir().unwrap().join("src/main.rs");
         let (document, created) = app
             .open_document(&path, "fn main() {}", None, false)
@@ -865,7 +894,11 @@ mod tests {
         assert_eq!(document.language.unwrap().as_str(), "rust");
         let clone = app.clone();
         let revision = clone
-            .edit_document(document.id, vec![crate::TextEdit::new(3..7, "entry")])
+            .edit_document(
+                document.id,
+                document.buffer.revision,
+                vec![crate::TextEdit::new(3..7, "entry")],
+            )
             .unwrap();
         assert_eq!(
             app.document_snapshot(document.id).unwrap().buffer.text,

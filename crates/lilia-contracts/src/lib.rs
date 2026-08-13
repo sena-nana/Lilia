@@ -28,9 +28,16 @@ pub use artifact::{
     ProjectAssetKind, ProjectAssetProposalStatus,
 };
 pub use assistant::{
-    auto_model_for_provider_family_tier, auto_reasoning_effort_for_tier,
-    auto_turn_decision_request_instruction, auto_turn_decision_system_instruction,
-    auto_turn_decision_tier_policy, AutoTurnDecisionTierPolicy,
+    auto_context_thresholds_for_scale, auto_model_for_provider_family_tier,
+    auto_preset_for_context_scale, auto_preset_for_workflow_type, auto_reasoning_effort_for_preset,
+    auto_reasoning_effort_for_tier, auto_turn_decision_request_instruction,
+    auto_turn_decision_system_instruction, auto_turn_decision_tier_policy, builtin_preset_label,
+    context_compaction_request_instruction, context_compaction_success_message,
+    context_compaction_system_instruction, main_agent_system_instruction, plan_mode_preset,
+    prompt_optimize_request_instruction, prompt_optimize_requirements,
+    prompt_optimize_system_instruction, prompt_router_request_instruction,
+    prompt_router_requirements, prompt_router_scenarios, prompt_router_system_instruction,
+    tier_for_preset, AutoTurnDecisionTierPolicy, ModelSelectionContextThresholds,
 };
 pub use attachment::{
     ChatAttachment, ChatAttachmentDirectoryMeta, ChatAttachmentKind, ChatContextSearchMatch,
@@ -73,6 +80,6 @@ pub use task::{
     TaskDependencyRule, AGENT_TODO_PROMOTION_REQUIRED,
 };
 pub use workflow::{
-    AssignmentStatus, ProductAssignment, ProductWorkflow, ProductWorkflowRun,
-    ProductWorkflowRunStatus, ProductWorkflowStatus,
+    AssignmentStatus, LiliaAgentWorkflow, LiliaReviewTarget, ProductAssignment, ProductWorkflow,
+    ProductWorkflowRun, ProductWorkflowRunStatus, ProductWorkflowStatus,
 };

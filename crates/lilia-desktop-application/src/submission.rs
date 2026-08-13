@@ -150,6 +150,7 @@ impl DesktopSubmissionStore {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 queue.request.conversation_references = selected.conversation_references.clone();
+                queue.request.workflow = selected.workflow.clone();
                 queue.request.guide_id = Some(selected.id.clone());
                 queue.request.content = turn_content_with_references(&queue.request);
                 DesktopTurnQueueStore::enqueue_in(&transaction, &queue.turn_id, &queue.request)?;
@@ -256,6 +257,7 @@ mod tests {
             content: content.to_owned(),
             attachments: Vec::new(),
             conversation_references: Vec::new(),
+            workflow: None,
             model: Some("native-model".to_owned()),
             reasoning_effort: Some("high".to_owned()),
             permission: DesktopExecutionPermission::Ask,
@@ -415,6 +417,7 @@ mod tests {
                     priority: DesktopTodoPriority::Normal,
                     attachments: Vec::new(),
                     conversation_references: Vec::new(),
+                    workflow: None,
                 },
                 None,
             )
@@ -454,6 +457,7 @@ mod tests {
                     priority: DesktopTodoPriority::Normal,
                     attachments: Vec::new(),
                     conversation_references: Vec::new(),
+                    workflow: Some(lilia_contracts::LiliaAgentWorkflow::LiliaCompact),
                 },
                 DesktopTodoSource::Lilia,
                 Some(DesktopTodoGuideStatus::Pending),
@@ -473,6 +477,7 @@ mod tests {
                     priority: DesktopTodoPriority::Normal,
                     attachments: Vec::new(),
                     conversation_references: Vec::new(),
+                    workflow: None,
                 },
                 Some(DesktopGuideQueueInput {
                     turn_id: "turn-guide".to_owned(),
@@ -493,6 +498,10 @@ mod tests {
             Some(DesktopTodoGuideStatus::Queued)
         );
         assert_eq!(queued.request.guide_id.as_deref(), Some("guide-existing"));
+        assert_eq!(
+            queued.request.workflow,
+            Some(lilia_contracts::LiliaAgentWorkflow::LiliaCompact)
+        );
         assert_eq!(queue.list(&task_id).unwrap()[0].request, queued.request);
         assert!(committed.cleared.unwrap().content.is_empty());
     }

@@ -50,7 +50,7 @@ class RemoteBridgeStatusParserTest {
                       "supportsInteractionResponse": false,
                       "supportsInterrupt": false,
                       "supportsSessionFork": true,
-                      "supportsProcessSession": false
+                      "supportsProcessSession": true
                     }
                   }
                 }
@@ -64,7 +64,7 @@ class RemoteBridgeStatusParserTest {
         assertFalse(status.capabilities.supportsInteractionResponse)
         assertFalse(status.capabilities.supportsInterrupt)
         assertTrue(status.capabilities.supportsSessionFork)
-        assertFalse(status.capabilities.supportsProcessSession)
+        assertTrue(status.capabilities.supportsProcessSession)
     }
 
     @Test
@@ -110,7 +110,7 @@ class RemoteBridgeStatusParserTest {
                       "supportsInteractionResponse": true,
                       "supportsInterrupt": true,
                       "supportsSessionFork": true,
-                      "supportsProcessSession": false
+                      "supportsProcessSession": true
                     }
                   }
                 }
@@ -128,7 +128,7 @@ class RemoteBridgeStatusParserTest {
         assertTrue(status.capabilities.supportsInteractionResponse)
         assertTrue(status.capabilities.supportsInterrupt)
         assertTrue(status.capabilities.supportsSessionFork)
-        assertFalse(status.capabilities.supportsProcessSession)
+        assertTrue(status.capabilities.supportsProcessSession)
     }
 
     @Test

@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lilia_contracts::{
@@ -58,6 +59,7 @@ pub struct DesktopProjectRemovalPreview {
 pub struct DesktopTaskCreate {
     pub id: TaskId,
     pub project_id: Option<ProjectId>,
+    pub parent_id: Option<TaskId>,
     pub title: String,
 }
 
@@ -67,8 +69,14 @@ impl DesktopTaskCreate {
             id: TaskId::new(format!("task-{}", Uuid::new_v4()))
                 .expect("UUID-backed task ids are valid"),
             project_id,
+            parent_id: None,
             title: title.into(),
         }
+    }
+
+    pub fn with_parent(mut self, parent_id: TaskId) -> Self {
+        self.parent_id = Some(parent_id);
+        self
     }
 }
 
@@ -89,7 +97,83 @@ pub struct DesktopTaskMove {
     pub target_parent_id: Option<TaskId>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum DesktopTaskRunBlock {
+    Archived {
+        task_id: TaskId,
+    },
+    Blocked {
+        task_id: TaskId,
+        title: String,
+    },
+    DependencyIncomplete {
+        task_id: TaskId,
+        title: String,
+        status: ProductTaskStatus,
+    },
+    DependencyCycle {
+        task_id: TaskId,
+    },
+}
+
+impl std::fmt::Display for DesktopTaskRunBlock {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Archived { .. } => formatter.write_str("任务已归档，暂不能启动会话"),
+            Self::Blocked { title, .. } => {
+                write!(formatter, "任务已标记为阻塞，暂不能启动会话：{title}")
+            }
+            Self::DependencyIncomplete { title, status, .. } => write!(
+                formatter,
+                "任务依赖未完成，暂不能启动会话：{title}（{}）",
+                task_status_label(*status)
+            ),
+            Self::DependencyCycle { .. } => formatter.write_str("任务依赖存在循环，暂不能启动会话"),
+        }
+    }
+}
+
 impl DesktopApplication {
+    pub fn task_run_block(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Option<DesktopTaskRunBlock>, DesktopApplicationError> {
+        let task = self.get_task(task_id)?;
+        if task.archived {
+            return Ok(Some(DesktopTaskRunBlock::Archived { task_id: task.id }));
+        }
+        if task.status == ProductTaskStatus::Blocked {
+            return Ok(Some(DesktopTaskRunBlock::Blocked {
+                task_id: task.id,
+                title: task.title,
+            }));
+        }
+        let tasks = self
+            .query_tasks(TaskQuery::default().including_archived())?
+            .into_iter()
+            .map(|task| (task.id.clone(), task))
+            .collect::<BTreeMap<_, _>>();
+        let mut visiting = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        Ok(dependency_run_block(
+            &task,
+            &tasks,
+            &mut visiting,
+            &mut visited,
+        ))
+    }
+
+    pub fn ensure_task_runnable(&self, task_id: &TaskId) -> Result<(), DesktopApplicationError> {
+        if let Some(block) = self.task_run_block(task_id)? {
+            return Err(DesktopApplicationError::InvalidInput {
+                field: "task_id",
+                message: block.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn create_project(
         &self,
         input: DesktopProjectCreate,
@@ -312,11 +396,17 @@ impl DesktopApplication {
         if let Some(project_id) = &input.project_id {
             self.get_project(project_id)?;
         }
+        self.validate_task_parent(
+            &input.id,
+            input.project_id.as_ref(),
+            input.parent_id.as_ref(),
+        )?;
         let mut task = ProductTask::new(
             input.id.clone(),
             input.project_id.clone(),
             input.title.clone(),
         )?;
+        task.parent_id = input.parent_id.clone();
         task.sort_order = self
             .query_tasks(
                 TaskQuery::for_project_or_inbox(input.project_id.clone()).including_archived(),
@@ -389,6 +479,27 @@ impl DesktopApplication {
                 task_id: Some(task.id.clone()),
             });
         }
+        Ok(task)
+    }
+
+    pub fn update_task_dependencies(
+        &self,
+        task_id: &TaskId,
+        depends_on: Vec<TaskId>,
+    ) -> Result<ProductTask, DesktopApplicationError> {
+        let current = self.get_task(task_id)?;
+        if current.depends_on == depends_on {
+            return Ok(current);
+        }
+        let task = self.authority().client()?.update_task_dependencies(
+            task_id,
+            depends_on,
+            ExpectedRevision::new(current.revision.get())?,
+        )?;
+        self.emit_event(DesktopEventKind::TasksChanged {
+            project_id: task.project_id.clone(),
+            task_id: Some(task.id.clone()),
+        });
         Ok(task)
     }
 
@@ -611,6 +722,59 @@ impl DesktopApplication {
     }
 }
 
+fn dependency_run_block(
+    task: &ProductTask,
+    tasks: &BTreeMap<TaskId, ProductTask>,
+    visiting: &mut BTreeSet<TaskId>,
+    visited: &mut BTreeSet<TaskId>,
+) -> Option<DesktopTaskRunBlock> {
+    if visited.contains(&task.id) {
+        return None;
+    }
+    if !visiting.insert(task.id.clone()) {
+        return Some(DesktopTaskRunBlock::DependencyCycle {
+            task_id: task.id.clone(),
+        });
+    }
+    for dependency_id in &task.depends_on {
+        let Some(dependency) = tasks
+            .get(dependency_id)
+            .filter(|dependency| !dependency.archived)
+        else {
+            continue;
+        };
+        if visiting.contains(dependency_id) {
+            return Some(DesktopTaskRunBlock::DependencyCycle {
+                task_id: dependency_id.clone(),
+            });
+        }
+        if dependency.status != ProductTaskStatus::Done {
+            return Some(DesktopTaskRunBlock::DependencyIncomplete {
+                task_id: dependency.id.clone(),
+                title: dependency.title.clone(),
+                status: dependency.status,
+            });
+        }
+        if let Some(block) = dependency_run_block(dependency, tasks, visiting, visited) {
+            return Some(block);
+        }
+    }
+    visiting.remove(&task.id);
+    visited.insert(task.id.clone());
+    None
+}
+
+fn task_status_label(status: ProductTaskStatus) -> &'static str {
+    match status {
+        ProductTaskStatus::Draft => "草稿",
+        ProductTaskStatus::Waiting => "等待中",
+        ProductTaskStatus::Running => "运行中",
+        ProductTaskStatus::Blocked => "阻塞",
+        ProductTaskStatus::Done => "完成",
+        ProductTaskStatus::Cancelled => "已取消",
+    }
+}
+
 fn create_meta(key: &str) -> Result<ProductCommandMeta, DesktopApplicationError> {
     Ok(ProductCommandMeta::create(key, IdempotencyKey::new(key)?)?)
 }
@@ -687,7 +851,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::Arc;
 
-    use lilia_contracts::ProductEntityKind;
+    use lilia_contracts::{ExpectedRevision, ProductEntityKind};
     use lilia_service::ServiceAuthority;
     use tempfile::tempdir;
 
@@ -852,6 +1016,7 @@ mod tests {
             .create_task(DesktopTaskCreate {
                 id: TaskId::new("task-parent").unwrap(),
                 project_id: Some(project.id.clone()),
+                parent_id: None,
                 title: "Parent".to_owned(),
             })
             .unwrap();
@@ -859,6 +1024,7 @@ mod tests {
             .create_task(DesktopTaskCreate {
                 id: TaskId::new("task-child").unwrap(),
                 project_id: Some(project.id.clone()),
+                parent_id: None,
                 title: "Child".to_owned(),
             })
             .unwrap();
@@ -884,6 +1050,7 @@ mod tests {
             .create_task(DesktopTaskCreate {
                 id: TaskId::new("task-archived").unwrap(),
                 project_id: Some(project.id.clone()),
+                parent_id: None,
                 title: "Archived".to_owned(),
             })
             .unwrap();
@@ -1169,6 +1336,66 @@ mod tests {
     }
 
     #[test]
+    fn task_run_gate_uses_product_dependencies_for_every_host() {
+        let app = application();
+        let project = app
+            .create_project(DesktopProjectCreate::new("Run gate"))
+            .unwrap();
+        let dependency = app
+            .create_task(DesktopTaskCreate::new(
+                Some(project.id.clone()),
+                "Dependency",
+            ))
+            .unwrap();
+        let task = app
+            .create_task(DesktopTaskCreate::new(Some(project.id), "Target"))
+            .unwrap();
+        let updated = app
+            .update_task_dependencies(&task.id, vec![dependency.id.clone()])
+            .unwrap();
+        assert_eq!(updated.depends_on, vec![dependency.id.clone()]);
+
+        assert!(matches!(
+            app.task_run_block(&task.id).unwrap(),
+            Some(DesktopTaskRunBlock::DependencyIncomplete {
+                task_id,
+                status: ProductTaskStatus::Draft,
+                ..
+            }) if task_id == dependency.id
+        ));
+        assert!(matches!(
+            app.task_session_snapshot(&task.id).unwrap().run_block,
+            Some(DesktopTaskRunBlock::DependencyIncomplete { task_id, .. })
+                if task_id == dependency.id
+        ));
+        assert!(app.ensure_task_runnable(&task.id).is_err());
+
+        app.update_task(
+            &dependency.id,
+            DesktopTaskPatch {
+                status: Some(ProductTaskStatus::Done),
+                ..DesktopTaskPatch::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(app.task_run_block(&task.id).unwrap(), None);
+        assert_eq!(app.task_session_snapshot(&task.id).unwrap().run_block, None);
+
+        app.update_task(
+            &task.id,
+            DesktopTaskPatch {
+                status: Some(ProductTaskStatus::Blocked),
+                ..DesktopTaskPatch::default()
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            app.task_run_block(&task.id).unwrap(),
+            Some(DesktopTaskRunBlock::Blocked { .. })
+        ));
+    }
+
+    #[test]
     fn task_move_updates_conversation_and_rejects_invalid_or_cyclic_parents() {
         let app = application();
         let source = app
@@ -1244,5 +1471,42 @@ mod tests {
         let conversations = app.task_conversations(&child.id).unwrap();
         assert_eq!(conversations.len(), 1);
         assert_eq!(conversations[0].project_id, Some(target.id));
+    }
+
+    #[test]
+    fn child_task_creation_persists_the_parent_and_rejects_cross_project_parents() {
+        let app = application();
+        let source = app
+            .create_project(DesktopProjectCreate::new("Source"))
+            .unwrap();
+        let target = app
+            .create_project(DesktopProjectCreate::new("Target"))
+            .unwrap();
+        let parent = app
+            .create_task(DesktopTaskCreate::new(Some(source.id.clone()), "Parent"))
+            .unwrap();
+
+        let child = app
+            .create_task(
+                DesktopTaskCreate::new(Some(source.id.clone()), "Child")
+                    .with_parent(parent.id.clone()),
+            )
+            .unwrap();
+        assert_eq!(child.parent_id, Some(parent.id.clone()));
+        assert_eq!(child.project_id, Some(source.id));
+        assert_eq!(app.task_conversations(&child.id).unwrap().len(), 1);
+
+        let invalid = app
+            .create_task(
+                DesktopTaskCreate::new(Some(target.id), "Foreign child").with_parent(parent.id),
+            )
+            .unwrap_err();
+        assert!(matches!(
+            invalid,
+            DesktopApplicationError::InvalidInput {
+                field: "target_parent_id",
+                ..
+            }
+        ));
     }
 }

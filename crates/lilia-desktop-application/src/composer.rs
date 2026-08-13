@@ -2,7 +2,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lilia_contracts::{ChatAttachment, ChatConversationReference, TaskId};
+use lilia_contracts::{
+    ChatAttachment, ChatConversationReference, LiliaAgentWorkflow, ProductTask, ProductTaskStatus,
+    TaskId,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -11,8 +14,8 @@ use crate::legacy_database::SharedLegacyConnection;
 use crate::submission::DesktopGuideQueueInput;
 use crate::{
     DesktopApplication, DesktopApplicationError, DesktopEventKind, DesktopExecutionPermission,
-    DesktopTaskTodo, DesktopTodoCreate, DesktopTodoPriority, DesktopTurnDispatch,
-    DesktopTurnRequest,
+    DesktopSessionBranchAnchor, DesktopTaskPatch, DesktopTaskTodo, DesktopTodoCreate,
+    DesktopTodoPriority, DesktopTurnDispatch, DesktopTurnRequest,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -23,6 +26,7 @@ pub struct DesktopComposerState {
     pub content: String,
     pub attachments: Vec<ChatAttachment>,
     pub conversation_references: Vec<ChatConversationReference>,
+    pub workflow: Option<LiliaAgentWorkflow>,
     pub model: Option<String>,
     pub reasoning_effort: Option<String>,
     pub permission: DesktopExecutionPermission,
@@ -38,6 +42,7 @@ impl DesktopComposerState {
             content: String::new(),
             attachments: Vec::new(),
             conversation_references: Vec::new(),
+            workflow: None,
             model: None,
             reasoning_effort: None,
             permission: DesktopExecutionPermission::Ask,
@@ -46,11 +51,113 @@ impl DesktopComposerState {
         }
     }
 
-    pub(crate) fn turn_request(&self) -> DesktopTurnRequest {
+    /// Creates an in-memory composer for a conversation that has not been
+    /// materialized as a product task yet.
+    pub fn transient(task_id: TaskId) -> Self {
+        Self::new(task_id)
+    }
+
+    /// Applies the canonical composer reducer without writing a draft row.
+    ///
+    /// Native hosts use this while a new-conversation window is still
+    /// transient. Once the user sends, the resulting state can be materialized
+    /// together with the product task.
+    pub fn apply_transient_command(
+        &mut self,
+        command: DesktopComposerCommand,
+    ) -> Result<bool, DesktopComposerError> {
+        let before = self.clone();
+        match command {
+            DesktopComposerCommand::SetContent(content) => self.content = content,
+            DesktopComposerCommand::ApplyPromptOptimization {
+                expected_revision,
+                content,
+            } => {
+                ensure_expected_revision(self, expected_revision)?;
+                self.content = content;
+                self.workflow = None;
+            }
+            DesktopComposerCommand::ApplySlashWorkflow {
+                expected_revision,
+                workflow,
+            } => {
+                ensure_expected_revision(self, expected_revision)?;
+                self.content.clear();
+                self.workflow = Some(workflow);
+            }
+            DesktopComposerCommand::ReplaceAttachments(attachments) => {
+                self.attachments = attachments
+            }
+            DesktopComposerCommand::RemoveAttachment(attachment_id) => {
+                self.attachments
+                    .retain(|attachment| attachment.id != attachment_id);
+            }
+            DesktopComposerCommand::ApplyContextAttachment {
+                expected_revision,
+                content,
+                attachment,
+            } => {
+                ensure_expected_revision(self, expected_revision)?;
+                self.content = content;
+                if !self
+                    .attachments
+                    .iter()
+                    .any(|candidate| candidate.path.eq_ignore_ascii_case(&attachment.path))
+                {
+                    self.attachments.push(attachment);
+                }
+            }
+            DesktopComposerCommand::ApplyConversationReference {
+                expected_revision,
+                content,
+                reference,
+            } => {
+                ensure_expected_revision(self, expected_revision)?;
+                self.content = content;
+                if !self
+                    .conversation_references
+                    .iter()
+                    .any(|candidate| candidate.task_id == reference.task_id)
+                {
+                    self.conversation_references.push(reference);
+                }
+            }
+            DesktopComposerCommand::RemoveConversationReference(task_id) => {
+                self.conversation_references
+                    .retain(|reference| reference.task_id != task_id);
+            }
+            DesktopComposerCommand::SetWorkflow(workflow) => self.workflow = workflow,
+            DesktopComposerCommand::SetModelSelection {
+                model,
+                reasoning_effort,
+            } => {
+                self.model = normalized_option(model);
+                self.reasoning_effort = normalized_option(reasoning_effort);
+            }
+            DesktopComposerCommand::SetModel(model) => self.model = normalized_option(model),
+            DesktopComposerCommand::SetReasoningEffort(effort) => {
+                self.reasoning_effort = normalized_option(effort)
+            }
+            DesktopComposerCommand::SetPermission(permission) => self.permission = permission,
+            DesktopComposerCommand::SetPlanMode(enabled) => self.plan_mode = enabled,
+            DesktopComposerCommand::SetGoalMode(enabled) => self.goal_mode = enabled,
+        }
+        let changed = self != &before;
+        if changed {
+            self.revision = self
+                .revision
+                .checked_add(1)
+                .ok_or(DesktopComposerError::RevisionOverflow)?;
+        }
+        Ok(changed)
+    }
+
+    pub fn turn_request(&self) -> DesktopTurnRequest {
         let mut request = DesktopTurnRequest::new(self.task_id.clone(), self.content.trim())
             .with_attachments(self.attachments.clone())
             .with_conversation_references(self.conversation_references.clone());
         request.model = self.model.clone();
+        request.workflow = self.workflow.clone();
         request.reasoning_effort = self.reasoning_effort.clone();
         request.permission = self.permission;
         request.plan_mode = self.plan_mode;
@@ -73,6 +180,14 @@ pub enum DesktopComposerSubmission {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DesktopComposerCommand {
     SetContent(String),
+    ApplyPromptOptimization {
+        expected_revision: u64,
+        content: String,
+    },
+    ApplySlashWorkflow {
+        expected_revision: u64,
+        workflow: LiliaAgentWorkflow,
+    },
     ReplaceAttachments(Vec<ChatAttachment>),
     RemoveAttachment(String),
     ApplyContextAttachment {
@@ -86,6 +201,11 @@ pub enum DesktopComposerCommand {
         reference: ChatConversationReference,
     },
     RemoveConversationReference(String),
+    SetWorkflow(Option<LiliaAgentWorkflow>),
+    SetModelSelection {
+        model: Option<String>,
+        reasoning_effort: Option<String>,
+    },
     SetModel(Option<String>),
     SetReasoningEffort(Option<String>),
     SetPermission(DesktopExecutionPermission),
@@ -131,6 +251,7 @@ impl DesktopComposerStore {
                   content          TEXT NOT NULL,
                   attachments_json TEXT NOT NULL,
                   conversation_references_json TEXT NOT NULL DEFAULT '[]',
+                  workflow_json    TEXT,
                   model            TEXT,
                   reasoning_effort TEXT,
                   permission       TEXT NOT NULL CHECK (permission IN ('full','ask','readonly')),
@@ -150,6 +271,12 @@ impl DesktopComposerStore {
             "conversation_references_json",
             "ALTER TABLE desktop_composer_drafts ADD COLUMN conversation_references_json TEXT NOT NULL DEFAULT '[]'",
         )?;
+        ensure_column(
+            &locked,
+            "desktop_composer_drafts",
+            "workflow_json",
+            "ALTER TABLE desktop_composer_drafts ADD COLUMN workflow_json TEXT",
+        )?;
         drop(locked);
         Ok(Self { connection })
     }
@@ -167,7 +294,7 @@ impl DesktopComposerStore {
             .query_row(
                 r#"SELECT task_id, revision, content, attachments_json, model,
                           reasoning_effort, permission, plan_mode, goal_mode,
-                          conversation_references_json
+                          conversation_references_json, workflow_json
                    FROM desktop_composer_drafts WHERE task_id = ?1"#,
                 params![task_id.as_str()],
                 row_to_composer,
@@ -185,67 +312,9 @@ impl DesktopComposerStore {
         task_id: &TaskId,
         command: DesktopComposerCommand,
     ) -> Result<(DesktopComposerState, bool), DesktopComposerError> {
-        let before = self.snapshot(task_id)?;
-        let mut state = before.clone();
-        match command {
-            DesktopComposerCommand::SetContent(content) => state.content = content,
-            DesktopComposerCommand::ReplaceAttachments(attachments) => {
-                state.attachments = attachments
-            }
-            DesktopComposerCommand::RemoveAttachment(attachment_id) => {
-                state
-                    .attachments
-                    .retain(|attachment| attachment.id != attachment_id);
-            }
-            DesktopComposerCommand::ApplyContextAttachment {
-                expected_revision,
-                content,
-                attachment,
-            } => {
-                ensure_expected_revision(&state, expected_revision)?;
-                state.content = content;
-                if !state
-                    .attachments
-                    .iter()
-                    .any(|candidate| candidate.path.eq_ignore_ascii_case(&attachment.path))
-                {
-                    state.attachments.push(attachment);
-                }
-            }
-            DesktopComposerCommand::ApplyConversationReference {
-                expected_revision,
-                content,
-                reference,
-            } => {
-                ensure_expected_revision(&state, expected_revision)?;
-                state.content = content;
-                if !state
-                    .conversation_references
-                    .iter()
-                    .any(|candidate| candidate.task_id == reference.task_id)
-                {
-                    state.conversation_references.push(reference);
-                }
-            }
-            DesktopComposerCommand::RemoveConversationReference(task_id) => {
-                state
-                    .conversation_references
-                    .retain(|reference| reference.task_id != task_id);
-            }
-            DesktopComposerCommand::SetModel(model) => state.model = normalized_option(model),
-            DesktopComposerCommand::SetReasoningEffort(effort) => {
-                state.reasoning_effort = normalized_option(effort)
-            }
-            DesktopComposerCommand::SetPermission(permission) => state.permission = permission,
-            DesktopComposerCommand::SetPlanMode(enabled) => state.plan_mode = enabled,
-            DesktopComposerCommand::SetGoalMode(enabled) => state.goal_mode = enabled,
-        }
-        let changed = state != before;
+        let mut state = self.snapshot(task_id)?;
+        let changed = state.apply_transient_command(command)?;
         if changed {
-            state.revision = state
-                .revision
-                .checked_add(1)
-                .ok_or(DesktopComposerError::RevisionOverflow)?;
             self.save(&state)?;
         }
         Ok((state, changed))
@@ -277,6 +346,7 @@ impl DesktopComposerStore {
         state.content.clear();
         state.attachments.clear();
         state.conversation_references.clear();
+        state.workflow = None;
         state.revision = state
             .revision
             .checked_add(1)
@@ -288,6 +358,20 @@ impl DesktopComposerStore {
     fn save(&self, state: &DesktopComposerState) -> Result<(), DesktopComposerError> {
         let connection = self.connection("save composer draft")?;
         Self::save_to(&connection, state)
+    }
+
+    fn remove(&self, task_id: &TaskId) -> Result<(), DesktopComposerError> {
+        let connection = self.connection("remove composer draft")?;
+        connection
+            .execute(
+                "DELETE FROM desktop_composer_drafts WHERE task_id = ?1",
+                params![task_id.as_str()],
+            )
+            .map_err(|error| DesktopComposerError::Storage {
+                operation: "remove composer draft",
+                message: error.to_string(),
+            })?;
+        Ok(())
     }
 
     pub(crate) fn save_to(
@@ -305,12 +389,22 @@ impl DesktopComposerStore {
                 field: "conversationReferences",
                 message: error.to_string(),
             })?;
+        let workflow = state
+            .workflow
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| DesktopComposerError::Serialization {
+                field: "workflow",
+                message: error.to_string(),
+            })?;
         connection
             .execute(
                 r#"INSERT INTO desktop_composer_drafts
                    (task_id, revision, content, attachments_json, model, reasoning_effort,
-                    permission, plan_mode, goal_mode, updated_at, conversation_references_json)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    permission, plan_mode, goal_mode, updated_at, conversation_references_json,
+                    workflow_json)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                    ON CONFLICT(task_id) DO UPDATE SET
                      revision = excluded.revision,
                      content = excluded.content,
@@ -321,7 +415,8 @@ impl DesktopComposerStore {
                      plan_mode = excluded.plan_mode,
                      goal_mode = excluded.goal_mode,
                      updated_at = excluded.updated_at,
-                     conversation_references_json = excluded.conversation_references_json"#,
+                     conversation_references_json = excluded.conversation_references_json,
+                     workflow_json = excluded.workflow_json"#,
                 params![
                     state.task_id.as_str(),
                     i64::try_from(state.revision)
@@ -335,6 +430,7 @@ impl DesktopComposerStore {
                     i64::from(state.goal_mode),
                     now_millis(),
                     conversation_references,
+                    workflow,
                 ],
             )
             .map(|_| ())
@@ -358,6 +454,43 @@ impl DesktopComposerStore {
 }
 
 impl DesktopApplication {
+    /// Materializes a host-owned transient conversation draft as a product
+    /// task and durable composer draft. Until this call succeeds, no task is
+    /// visible to other hosts.
+    pub fn materialize_task_draft(
+        &self,
+        input: crate::DesktopTaskCreate,
+        draft: DesktopComposerState,
+    ) -> Result<ProductTask, DesktopApplicationError> {
+        if input.id != draft.task_id {
+            return Err(DesktopApplicationError::InvalidInput {
+                field: "draft.task_id",
+                message: "must match the task id reserved by the draft".to_owned(),
+            });
+        }
+        self.inner
+            .composers
+            .lock()
+            .map_err(|_| DesktopApplicationError::StateUnavailable("composer"))?
+            .save(&draft)?;
+        let task = match self.create_task(input) {
+            Ok(task) => task,
+            Err(error) => {
+                if self.get_task(&draft.task_id).is_err() {
+                    if let Ok(composers) = self.inner.composers.lock() {
+                        let _ = composers.remove(&draft.task_id);
+                    }
+                }
+                return Err(error);
+            }
+        };
+        self.emit_event(DesktopEventKind::ComposerChanged {
+            task_id: task.id.clone(),
+            revision: draft.revision,
+        });
+        Ok(task)
+    }
+
     pub fn composer_state(
         &self,
         task_id: &TaskId,
@@ -396,10 +529,21 @@ impl DesktopApplication {
         &self,
         task_id: &TaskId,
     ) -> Result<DesktopTurnDispatch, DesktopApplicationError> {
+        self.start_composer_turn_with_session_branch(task_id, None)
+    }
+
+    fn start_composer_turn_with_session_branch(
+        &self,
+        task_id: &TaskId,
+        session_branch: Option<DesktopSessionBranchAnchor>,
+    ) -> Result<DesktopTurnDispatch, DesktopApplicationError> {
+        self.ensure_initial_worktree_ready(task_id)?;
         let composer = self.composer_state(task_id)?;
         let mut request = composer.turn_request();
+        request.session_branch = session_branch;
         request.workspace_path = self.task_workspace_path(task_id)?;
         let request = self.prepare_task_turn_request(request)?;
+        self.promote_composer_task_if_draft(&composer)?;
         let submission = self
             .inner
             .turn_submission
@@ -430,14 +574,35 @@ impl DesktopApplication {
         &self,
         task_id: &TaskId,
     ) -> Result<DesktopComposerSubmission, DesktopApplicationError> {
+        self.submit_composer_with_optional_session_branch(task_id, None)
+    }
+
+    pub fn submit_composer_with_session_branch(
+        &self,
+        task_id: &TaskId,
+        session_branch: DesktopSessionBranchAnchor,
+    ) -> Result<DesktopComposerSubmission, DesktopApplicationError> {
+        self.submit_composer_with_optional_session_branch(task_id, Some(session_branch))
+    }
+
+    fn submit_composer_with_optional_session_branch(
+        &self,
+        task_id: &TaskId,
+        session_branch: Option<DesktopSessionBranchAnchor>,
+    ) -> Result<DesktopComposerSubmission, DesktopApplicationError> {
+        self.ensure_initial_worktree_ready(task_id)?;
         let submission = self
             .inner
             .turn_submission
             .lock()
             .map_err(|_| DesktopApplicationError::StateUnavailable("turn submission"))?;
         let composer = self.composer_state(task_id)?;
-        if composer.attachments.is_empty() && composer.conversation_references.is_empty() {
+        if session_branch.is_none()
+            && composer.attachments.is_empty()
+            && composer.conversation_references.is_empty()
+        {
             if let Some(execution) = self.resolve_task_slash_command(task_id, &composer.content)? {
+                self.promote_composer_task_if_draft(&composer)?;
                 self.record_task_slash_command(task_id, composer.revision, &execution)?;
                 let cleared = self
                     .inner
@@ -459,8 +624,14 @@ impl DesktopApplication {
         if runtime.turn_id.is_none() && runtime.queued_turns == 0 {
             drop(submission);
             return self
-                .start_composer_turn(task_id)
+                .start_composer_turn_with_session_branch(task_id, session_branch)
                 .map(DesktopComposerSubmission::Turn);
+        }
+        if session_branch.is_some() {
+            return Err(DesktopApplicationError::InvalidInput {
+                field: "session_branch",
+                message: "task must be idle before continuing from an earlier turn".to_owned(),
+            });
         }
 
         let guide_text = crate::agent::turn_content_with_references(&composer.turn_request());
@@ -508,6 +679,7 @@ impl DesktopApplication {
                     priority: DesktopTodoPriority::Normal,
                     attachments,
                     conversation_references: composer.conversation_references.clone(),
+                    workflow: composer.workflow.clone(),
                 },
                 queue,
             )?;
@@ -543,6 +715,28 @@ impl DesktopApplication {
             guide: committed.guide,
             turn,
         })
+    }
+
+    fn promote_composer_task_if_draft(
+        &self,
+        composer: &DesktopComposerState,
+    ) -> Result<(), DesktopApplicationError> {
+        let task = self.get_task(&composer.task_id)?;
+        if task.status != ProductTaskStatus::Draft {
+            return Ok(());
+        }
+        let title = (task.title.trim() == "新对话")
+            .then(|| composer_submission_title(composer))
+            .flatten();
+        self.update_task(
+            &composer.task_id,
+            DesktopTaskPatch {
+                title,
+                status: Some(ProductTaskStatus::Waiting),
+                ..DesktopTaskPatch::default()
+            },
+        )?;
+        Ok(())
     }
 
     pub fn submit_composer_guide(
@@ -589,6 +783,11 @@ fn row_to_composer(row: &rusqlite::Row<'_>) -> rusqlite::Result<DesktopComposerS
     let conversation_references_json = row.get::<_, String>(9)?;
     let conversation_references = serde_json::from_str(&conversation_references_json)
         .map_err(|error| invalid_data(error.to_string()))?;
+    let workflow = row
+        .get::<_, Option<String>>(10)?
+        .map(|value| serde_json::from_str(&value))
+        .transpose()
+        .map_err(|error| invalid_data(error.to_string()))?;
     let permission = DesktopExecutionPermission::parse(&row.get::<_, String>(6)?)
         .ok_or_else(|| invalid_data("invalid composer permission".to_owned()))?;
     Ok(DesktopComposerState {
@@ -597,6 +796,7 @@ fn row_to_composer(row: &rusqlite::Row<'_>) -> rusqlite::Result<DesktopComposerS
         content: row.get(2)?,
         attachments,
         conversation_references,
+        workflow,
         model: row.get(4)?,
         reasoning_effort: row.get(5)?,
         permission,
@@ -698,6 +898,28 @@ fn normalized_option(value: Option<String>) -> Option<String> {
     })
 }
 
+fn composer_submission_title(composer: &DesktopComposerState) -> Option<String> {
+    let normalized = composer
+        .content
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let source = if normalized.is_empty() {
+        composer.attachments.first()?.name.trim().to_owned()
+    } else {
+        normalized
+    };
+    if source.is_empty() {
+        return None;
+    }
+    let mut characters = source.chars();
+    let mut title = characters.by_ref().take(30).collect::<String>();
+    if characters.next().is_some() {
+        title.push('…');
+    }
+    Some(title)
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -787,6 +1009,29 @@ mod tests {
     }
 
     #[test]
+    fn transient_composer_materializes_only_when_the_host_promotes_it() {
+        let (application, _, parent_id) = application();
+        let input = crate::DesktopTaskCreate::new(None, "新对话").with_parent(parent_id.clone());
+        let task_id = input.id.clone();
+        let mut draft = DesktopComposerState::transient(task_id.clone());
+        assert!(draft
+            .apply_transient_command(DesktopComposerCommand::SetContent(
+                "first message".to_owned(),
+            ))
+            .unwrap());
+
+        assert!(application.get_task(&task_id).is_err());
+        let task = application
+            .materialize_task_draft(input, draft.clone())
+            .unwrap();
+
+        assert_eq!(task.id, task_id);
+        assert_eq!(task.parent_id, Some(parent_id));
+        assert_eq!(task.status, ProductTaskStatus::Draft);
+        assert_eq!(application.composer_state(&task_id).unwrap(), draft);
+    }
+
+    #[test]
     fn turn_request_uses_composer_settings_and_trims_only_the_dispatched_content() {
         let task_id = TaskId::new("composer-request").unwrap();
         let state = DesktopComposerState {
@@ -795,6 +1040,7 @@ mod tests {
             content: "  implement native  ".to_owned(),
             attachments: Vec::new(),
             conversation_references: Vec::new(),
+            workflow: Some(LiliaAgentWorkflow::LiliaCompact),
             model: Some(" gpt-native ".to_owned()),
             reasoning_effort: Some(" high ".to_owned()),
             permission: DesktopExecutionPermission::Full,
@@ -806,12 +1052,84 @@ mod tests {
 
         assert_eq!(request.task_id, task_id);
         assert_eq!(request.content, "implement native");
+        assert_eq!(request.workflow, Some(LiliaAgentWorkflow::LiliaCompact));
         assert_eq!(request.model.as_deref(), Some(" gpt-native "));
         assert_eq!(request.reasoning_effort.as_deref(), Some(" high "));
         assert_eq!(request.permission, DesktopExecutionPermission::Full);
         assert!(request.plan_mode);
         assert!(request.goal_mode);
         assert_eq!(state.content, "  implement native  ");
+    }
+
+    #[test]
+    fn anchored_session_branch_is_validated_and_kept_in_the_durable_turn_request() {
+        let (application, task_id, _) = application();
+        let mut request = DesktopTurnRequest::new(task_id, "继续处理");
+        request.session_branch = Some(DesktopSessionBranchAnchor {
+            source_turn_id: "  turn-source  ".to_owned(),
+            mode: crate::DesktopSessionBranchMode::Continue,
+        });
+
+        let prepared = application.prepare_task_turn_request(request).unwrap();
+        assert_eq!(
+            prepared.session_branch,
+            Some(DesktopSessionBranchAnchor {
+                source_turn_id: "turn-source".to_owned(),
+                mode: crate::DesktopSessionBranchMode::Continue,
+            })
+        );
+        let restored: DesktopTurnRequest =
+            serde_json::from_value(serde_json::to_value(&prepared).unwrap()).unwrap();
+        assert_eq!(restored.session_branch, prepared.session_branch);
+
+        let mut invalid = DesktopTurnRequest::new(prepared.task_id, "继续处理");
+        invalid.session_branch = Some(DesktopSessionBranchAnchor {
+            source_turn_id: "   ".to_owned(),
+            mode: crate::DesktopSessionBranchMode::Fork,
+        });
+        assert!(matches!(
+            application.prepare_task_turn_request(invalid),
+            Err(DesktopApplicationError::InvalidInput {
+                field: "session_branch.source_turn_id",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn model_selection_updates_model_and_effort_in_one_persisted_revision() {
+        let task_id = TaskId::new("composer-model-selection").unwrap();
+        let store = DesktopComposerStore::in_memory().unwrap();
+
+        let manual = store
+            .execute(
+                &task_id,
+                DesktopComposerCommand::SetModelSelection {
+                    model: Some("  gpt-manual  ".to_owned()),
+                    reasoning_effort: Some(" high ".to_owned()),
+                },
+            )
+            .unwrap()
+            .0;
+
+        assert_eq!(manual.revision, 1);
+        assert_eq!(manual.model.as_deref(), Some("gpt-manual"));
+        assert_eq!(manual.reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(store.snapshot(&task_id).unwrap(), manual);
+
+        let automatic = store
+            .execute(
+                &task_id,
+                DesktopComposerCommand::SetModelSelection {
+                    model: None,
+                    reasoning_effort: None,
+                },
+            )
+            .unwrap()
+            .0;
+        assert_eq!(automatic.revision, 2);
+        assert!(automatic.model.is_none());
+        assert!(automatic.reasoning_effort.is_none());
     }
 
     #[test]
@@ -888,6 +1206,95 @@ mod tests {
     }
 
     #[test]
+    fn asynchronous_content_replacement_does_not_overwrite_a_newer_draft() {
+        let task_id = TaskId::new("composer-replace-content").unwrap();
+        let store = DesktopComposerStore::in_memory().unwrap();
+        let original = store
+            .execute(
+                &task_id,
+                DesktopComposerCommand::SetContent("原始提示".to_owned()),
+            )
+            .unwrap()
+            .0;
+        let routed = store
+            .execute(
+                &task_id,
+                DesktopComposerCommand::SetWorkflow(Some(LiliaAgentWorkflow::LiliaCompact)),
+            )
+            .unwrap()
+            .0;
+        let optimized = store
+            .execute(
+                &task_id,
+                DesktopComposerCommand::ApplyPromptOptimization {
+                    expected_revision: routed.revision,
+                    content: "优化后的提示".to_owned(),
+                },
+            )
+            .unwrap()
+            .0;
+        let newer = store
+            .execute(
+                &task_id,
+                DesktopComposerCommand::SetContent("用户继续输入".to_owned()),
+            )
+            .unwrap()
+            .0;
+
+        assert_eq!(original.revision + 1, routed.revision);
+        assert_eq!(optimized.content, "优化后的提示");
+        assert!(optimized.workflow.is_none());
+        assert!(matches!(
+            store.execute(
+                &task_id,
+                DesktopComposerCommand::ApplyPromptOptimization {
+                    expected_revision: optimized.revision,
+                    content: "过期优化结果".to_owned(),
+                },
+            ),
+            Err(DesktopComposerError::RevisionConflict { expected, actual })
+                if expected == optimized.revision && actual == newer.revision
+        ));
+        assert_eq!(store.snapshot(&task_id).unwrap().content, "用户继续输入");
+    }
+
+    #[test]
+    fn slash_workflow_replaces_only_the_trigger_text_at_the_expected_revision() {
+        let task_id = TaskId::new("composer-slash-workflow").unwrap();
+        let store = DesktopComposerStore::in_memory().unwrap();
+        let draft = store
+            .execute(
+                &task_id,
+                DesktopComposerCommand::SetContent("/frontend".to_owned()),
+            )
+            .unwrap()
+            .0;
+
+        let selected = store
+            .execute(
+                &task_id,
+                DesktopComposerCommand::ApplySlashWorkflow {
+                    expected_revision: draft.revision,
+                    workflow: LiliaAgentWorkflow::LiliaTaskWorkflow {
+                        kind: "frontend".to_owned(),
+                        instructions: None,
+                    },
+                },
+            )
+            .unwrap()
+            .0;
+
+        assert!(selected.content.is_empty());
+        assert_eq!(
+            selected.workflow,
+            Some(LiliaAgentWorkflow::LiliaTaskWorkflow {
+                kind: "frontend".to_owned(),
+                instructions: None,
+            })
+        );
+    }
+
+    #[test]
     fn external_guide_submission_uses_the_staged_composer_revision_atomically() {
         let (application, task_id, _) = application();
         let staged = application
@@ -906,6 +1313,7 @@ mod tests {
                     priority: DesktopTodoPriority::Normal,
                     attachments: Vec::new(),
                     conversation_references: Vec::new(),
+                    workflow: None,
                 },
             )
             .unwrap();
@@ -931,6 +1339,7 @@ mod tests {
                     priority: DesktopTodoPriority::Normal,
                     attachments: Vec::new(),
                     conversation_references: Vec::new(),
+                    workflow: None,
                 },
             )
             .unwrap_err();
@@ -950,7 +1359,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_composer_schema_migrates_conversation_references_without_losing_drafts() {
+    fn legacy_composer_schema_migrates_optional_context_without_losing_drafts() {
         let connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(
@@ -980,11 +1389,21 @@ mod tests {
         assert_eq!(state.revision, 4);
         assert_eq!(state.content, "legacy draft");
         assert!(state.conversation_references.is_empty());
+        assert_eq!(state.workflow, None);
     }
 
     #[test]
     fn bare_slash_command_records_real_timeline_and_clears_the_draft() {
         let (application, task_id, _) = application();
+        application
+            .update_task(
+                &task_id,
+                DesktopTaskPatch {
+                    title: Some("新对话".to_owned()),
+                    ..DesktopTaskPatch::default()
+                },
+            )
+            .unwrap();
         application
             .execute_composer_command(
                 &task_id,
@@ -1001,6 +1420,9 @@ mod tests {
         let composer = application.composer_state(&task_id).unwrap();
         assert!(composer.content.is_empty());
         assert_eq!(composer.revision, 2);
+        let task = application.get_task(&task_id).unwrap();
+        assert_eq!(task.status, ProductTaskStatus::Waiting);
+        assert_eq!(task.title, "/status");
         let timeline = application
             .authority()
             .shared_runtime()

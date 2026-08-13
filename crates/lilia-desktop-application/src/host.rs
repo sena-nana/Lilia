@@ -30,6 +30,15 @@ pub trait DesktopHost: Send + Sync {
         context: &DesktopHostContext,
         action: DesktopHostAction,
     ) -> Result<DesktopHostResult, DesktopHostError>;
+
+    fn execute_update(
+        &self,
+        context: &DesktopHostContext,
+        action: DesktopUpdateAction,
+        _on_download_progress: &mut dyn FnMut(Option<f32>),
+    ) -> Result<DesktopHostResult, DesktopHostError> {
+        self.execute(context, DesktopHostAction::Update(action))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,6 +53,7 @@ pub enum DesktopHostAction {
     WriteClipboardText(String),
     OpenPath(PathBuf),
     OpenTerminal(PathBuf),
+    OpenCodeEditor(PathBuf),
     OpenExternal(String),
     SetSystemAwake { active: bool, reason: String },
     NotifySecondInstance(DesktopSingleInstanceRequest),
@@ -114,8 +124,16 @@ pub enum DesktopCredentialAction {
     },
     ImportConfirmed {
         source_instance_identity: String,
-        keys: Vec<String>,
+        entries: Vec<DesktopCredentialImportEntry>,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopCredentialImportEntry {
+    pub source_service: String,
+    pub source_account: String,
+    pub target_key: String,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -215,6 +233,7 @@ pub struct HostCredentialImportResult {
     pub imported: u32,
     pub skipped: u32,
     pub failed: u32,
+    pub available_target_keys: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]

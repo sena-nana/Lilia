@@ -108,6 +108,32 @@ pub enum DesktopEventKind {
         project_id: ProjectId,
         version: i64,
     },
+    ProjectFilesChanged {
+        project_id: ProjectId,
+    },
+    TerminalChanged {
+        session_id: crate::DesktopTerminalSessionId,
+        revision: u64,
+    },
+    ProjectSettingsChanged,
+    ConversationSuggestionSettingsChanged,
+    ConversationSuggestionsChanged {
+        project_id: Option<String>,
+    },
+    PopupWindowSettingsChanged,
+    ModelFeatureSettingsChanged {
+        revision: u64,
+    },
+    AssistantAiSettingsChanged {
+        revision: u64,
+    },
+    RouterModeSettingsChanged {
+        revision: u64,
+    },
+    HooksRegistryChanged,
+    SkillsRegistryChanged,
+    McpRegistryChanged,
+    PluginsRegistryChanged,
     NavigationRequested {
         target: DesktopNavigationTarget,
     },

@@ -6,17 +6,29 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lilia_service::{StorageWriterGuard, WriterLeaseError, WriterMode};
-use lilia_storage::{LiliaDataPaths, PRODUCT_SCHEMA_VERSION};
+use lilia_storage::{LiliaDataPaths, SqliteAgentRuntimeStateStore, PRODUCT_SCHEMA_VERSION};
 use rusqlite::backup::Backup;
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    DesktopApplicationConfig, DesktopCredentialAction, DesktopHost, DesktopHostAction,
-    DesktopHostContext, DesktopHostResult,
+    normalize_assistant_ai_settings, DesktopApplicationConfig, DesktopAssistantAiModelPoolItem,
+    DesktopAssistantAiSettings, DesktopCredentialAction, DesktopCredentialImportEntry,
+    DesktopGitHubBindingMetadata, DesktopHost, DesktopHostAction, DesktopHostContext,
+    DesktopHostResult, ASSISTANT_AI_SETTINGS_KEY,
 };
 
 const SQLITE_HEADER: &[u8; 16] = b"SQLite format 3\0";
+const LEGACY_PROVIDER_STORE_FILE: &str = "provider-config.json";
+const LEGACY_PROJECT_SETTINGS_KEY: &str = "project.cloneParentDir";
+const LEGACY_ASSISTANT_AI_SETTINGS_KEY: &str = "assistant-ai.config";
+const LEGACY_AI_CREDENTIAL_SERVICE: &str = "com.lilia.desktop.ai";
+const LEGACY_ASSISTANT_AI_ACCOUNT: &str = "assistant-ai";
+const LEGACY_GITHUB_CREDENTIAL_SERVICE: &str = "com.lilia.desktop.github";
+const ASSISTANT_AI_TARGET_KEY: &str = "assistant-ai";
+const GITHUB_BINDING_SETTINGS_KEY: &str = "desktop.github.binding.v1";
+const GITHUB_TARGET_KEY: &str = "github.oauth.token";
+const LEGACY_PROVIDER_STORE_MAX_BYTES: u64 = 4 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct DesktopDataImportService {
@@ -72,26 +84,29 @@ impl DesktopDataImportService {
                 .map(|kind| missing_plan_item(kind, &source_paths, &target_paths))
                 .collect()
         };
-        let (credential_keys, credential_item) = match inspect_credential_keys(&source_paths) {
-            Ok(keys) => (
-                keys,
-                DesktopImportPlanItem {
-                    kind: DesktopImportItemKind::Credentials,
-                    status: DesktopImportPlanItemStatus::RequiresCredentialConfirmation,
-                    files: Vec::new(),
-                    error: None,
-                },
-            ),
-            Err(error) => (
-                Vec::new(),
-                DesktopImportPlanItem {
-                    kind: DesktopImportItemKind::Credentials,
-                    status: DesktopImportPlanItemStatus::InspectionFailed,
-                    files: Vec::new(),
-                    error: Some(error),
-                },
-            ),
-        };
+        let (credential_entries, legacy_configuration, credential_item) =
+            match inspect_credential_manifest(&source_paths, source.instance_identity()) {
+                Ok((entries, legacy_configuration)) => (
+                    entries,
+                    legacy_configuration,
+                    DesktopImportPlanItem {
+                        kind: DesktopImportItemKind::Credentials,
+                        status: DesktopImportPlanItemStatus::RequiresCredentialConfirmation,
+                        files: Vec::new(),
+                        error: None,
+                    },
+                ),
+                Err(error) => (
+                    Vec::new(),
+                    DesktopLegacyConfigurationImport::default(),
+                    DesktopImportPlanItem {
+                        kind: DesktopImportItemKind::Credentials,
+                        status: DesktopImportPlanItemStatus::InspectionFailed,
+                        files: Vec::new(),
+                        error: Some(error),
+                    },
+                ),
+            };
         items.push(credential_item);
 
         let status = summarize_plan(&items);
@@ -101,7 +116,8 @@ impl DesktopDataImportService {
             source_instance_identity: source.instance_identity().to_owned(),
             target_home,
             target_instance_identity: self.target.instance_identity().to_owned(),
-            credential_keys,
+            credential_entries,
+            legacy_configuration,
             status,
             items,
         })
@@ -124,7 +140,7 @@ impl DesktopDataImportService {
         });
         let needs_source_lock = has_ready_database
             || (options.credential_decision == CredentialImportDecision::Confirmed
-                && !plan.credential_keys.is_empty());
+                && !plan.credential_entries.is_empty());
 
         let mut source_guard = None;
         let mut target_guard = None;
@@ -260,10 +276,18 @@ impl DesktopDataImportService {
                 DesktopImportItemKind::Credentials => {
                     let valid_status = match item.status {
                         DesktopImportPlanItemStatus::RequiresCredentialConfirmation => {
-                            item.error.is_none() && valid_credential_keys(&plan.credential_keys)
+                            item.error.is_none()
+                                && valid_credential_entries(
+                                    &plan.source_instance_identity,
+                                    &plan.credential_entries,
+                                )
+                                && valid_legacy_configuration(&plan.legacy_configuration)
                         }
                         DesktopImportPlanItemStatus::InspectionFailed => {
-                            item.error.is_some() && plan.credential_keys.is_empty()
+                            item.error.is_some()
+                                && plan.credential_entries.is_empty()
+                                && plan.legacy_configuration
+                                    == DesktopLegacyConfigurationImport::default()
                         }
                         _ => false,
                     };
@@ -273,12 +297,18 @@ impl DesktopDataImportService {
                         ));
                     }
                     if item.status == DesktopImportPlanItemStatus::RequiresCredentialConfirmation
-                        && inspect_credential_keys(&source_paths)
-                            .map_err(|error| invalid_plan_error(error.message))?
-                            != plan.credential_keys
+                        && inspect_credential_manifest(
+                            &source_paths,
+                            &plan.source_instance_identity,
+                        )
+                        .map_err(|error| invalid_plan_error(error.message))?
+                            != (
+                                plan.credential_entries.clone(),
+                                plan.legacy_configuration.clone(),
+                            )
                     {
                         return Err(invalid_plan_error(
-                            "credential key manifest does not match the source registry",
+                            "credential manifest does not match the source registry or legacy settings",
                         ));
                     }
                 }
@@ -309,14 +339,21 @@ impl DesktopDataImportService {
                 error: None,
             },
             CredentialImportDecision::Confirmed => {
-                if let Some(error) = lock_error.filter(|_| !plan.credential_keys.is_empty()) {
+                if let Some(error) = lock_error.filter(|_| !plan.credential_entries.is_empty()) {
                     return failed_report_item(kind, error.clone());
                 }
-                let current_keys = match inspect_credential_keys(source_paths) {
-                    Ok(keys) => keys,
-                    Err(error) => return failed_report_item(kind, error),
-                };
-                if current_keys != plan.credential_keys {
+                let current_manifest =
+                    match inspect_credential_manifest(source_paths, &plan.source_instance_identity)
+                    {
+                        Ok(manifest) => manifest,
+                        Err(error) => return failed_report_item(kind, error),
+                    };
+                if current_manifest
+                    != (
+                        plan.credential_entries.clone(),
+                        plan.legacy_configuration.clone(),
+                    )
+                {
                     return failed_report_item(
                         kind,
                         DesktopImportItemError::new(
@@ -329,25 +366,47 @@ impl DesktopDataImportService {
                 let action =
                     DesktopHostAction::Credential(DesktopCredentialAction::ImportConfirmed {
                         source_instance_identity: plan.source_instance_identity.clone(),
-                        keys: plan.credential_keys.clone(),
+                        entries: plan.credential_entries.clone(),
                     });
                 match self.host.execute(&self.host_context, action) {
-                    Ok(DesktopHostResult::CredentialImport(result)) => DesktopImportReportItem {
-                        kind,
-                        status: DesktopImportReportItemStatus::CredentialsImported {
-                            imported: result.imported,
-                            skipped: result.skipped,
-                            failed: result.failed,
-                        },
-                        files: Vec::new(),
-                        error: (result.failed > 0).then(|| {
-                            DesktopImportItemError::new(
-                                DesktopImportErrorCode::CredentialImportFailed,
-                                format!("{} credential entries failed to import", result.failed),
-                                true,
-                            )
-                        }),
-                    },
+                    Ok(DesktopHostResult::CredentialImport(mut result)) => {
+                        if let Err(error) = persist_legacy_configuration(
+                            &self.target,
+                            &plan.legacy_configuration,
+                            &result.available_target_keys,
+                        ) {
+                            result.failed = result.failed.saturating_add(1);
+                            return DesktopImportReportItem {
+                                kind,
+                                status: DesktopImportReportItemStatus::CredentialsImported {
+                                    imported: result.imported,
+                                    skipped: result.skipped,
+                                    failed: result.failed,
+                                },
+                                files: Vec::new(),
+                                error: Some(error),
+                            };
+                        }
+                        DesktopImportReportItem {
+                            kind,
+                            status: DesktopImportReportItemStatus::CredentialsImported {
+                                imported: result.imported,
+                                skipped: result.skipped,
+                                failed: result.failed,
+                            },
+                            files: Vec::new(),
+                            error: (result.failed > 0).then(|| {
+                                DesktopImportItemError::new(
+                                    DesktopImportErrorCode::CredentialImportFailed,
+                                    format!(
+                                        "{} credential entries failed to import",
+                                        result.failed
+                                    ),
+                                    true,
+                                )
+                            }),
+                        }
+                    }
                     Ok(_) => failed_report_item(
                         kind,
                         DesktopImportItemError::new(
@@ -379,9 +438,20 @@ pub struct DesktopImportPlan {
     pub target_home: PathBuf,
     pub target_instance_identity: String,
     #[serde(default)]
-    pub credential_keys: Vec<String>,
+    pub credential_entries: Vec<DesktopCredentialImportEntry>,
+    #[serde(default)]
+    pub legacy_configuration: DesktopLegacyConfigurationImport,
     pub status: DesktopImportPlanStatus,
     pub items: Vec<DesktopImportPlanItem>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopLegacyConfigurationImport {
+    #[serde(default)]
+    pub github_binding: Option<DesktopGitHubBindingMetadata>,
+    #[serde(default)]
+    pub assistant_ai: Option<DesktopAssistantAiSettings>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -580,7 +650,50 @@ fn database_kinds() -> [DesktopDatabaseKind; 4] {
     ]
 }
 
-fn inspect_credential_keys(paths: &LiliaDataPaths) -> Result<Vec<String>, DesktopImportItemError> {
+fn inspect_credential_manifest(
+    paths: &LiliaDataPaths,
+    source_instance_identity: &str,
+) -> Result<
+    (
+        Vec<DesktopCredentialImportEntry>,
+        DesktopLegacyConfigurationImport,
+    ),
+    DesktopImportItemError,
+> {
+    let legacy_configuration = inspect_legacy_configuration(paths.home())?;
+    let mut entries = inspect_agentkit_credential_entries(paths, source_instance_identity)?;
+    if source_has_assistant_ai_configuration(paths, &legacy_configuration)? {
+        entries.push(DesktopCredentialImportEntry {
+            source_service: LEGACY_AI_CREDENTIAL_SERVICE.to_owned(),
+            source_account: LEGACY_ASSISTANT_AI_ACCOUNT.to_owned(),
+            target_key: ASSISTANT_AI_TARGET_KEY.to_owned(),
+        });
+    }
+    if let Some(binding) = &legacy_configuration.github_binding {
+        entries.push(DesktopCredentialImportEntry {
+            source_service: LEGACY_GITHUB_CREDENTIAL_SERVICE.to_owned(),
+            source_account: binding.login.clone(),
+            target_key: GITHUB_TARGET_KEY.to_owned(),
+        });
+    }
+    entries.sort_by(|left, right| credential_entry_key(left).cmp(&credential_entry_key(right)));
+    entries.dedup();
+    if !valid_credential_entries(source_instance_identity, &entries)
+        || !valid_legacy_configuration(&legacy_configuration)
+    {
+        return Err(DesktopImportItemError::new(
+            DesktopImportErrorCode::InspectionFailed,
+            "legacy credential or settings manifest is invalid",
+            false,
+        ));
+    }
+    Ok((entries, legacy_configuration))
+}
+
+fn inspect_agentkit_credential_entries(
+    paths: &LiliaDataPaths,
+    source_instance_identity: &str,
+) -> Result<Vec<DesktopCredentialImportEntry>, DesktopImportItemError> {
     let database = paths.agent_runtime_db();
     if !database.exists() {
         return Ok(Vec::new());
@@ -608,22 +721,26 @@ fn inspect_credential_keys(paths: &LiliaDataPaths) -> Result<Vec<String>, Deskto
     let rows = statement
         .query_map([], |row| row.get::<_, String>(0))
         .map_err(|error| credential_inspection_error(&database, error))?;
-    let mut keys = Vec::new();
+    let mut entries = Vec::new();
     for row in rows {
         let secret_id = row.map_err(|error| credential_inspection_error(&database, error))?;
         let key = crate::provider::credential_secret_key(&secret_id);
-        if !valid_credential_key(&key) {
+        if !valid_agentkit_credential_key(&key) {
             return Err(DesktopImportItemError::new(
                 DesktopImportErrorCode::InspectionFailed,
                 "credential registry contains an invalid secret identifier",
                 false,
             ));
         }
-        keys.push(key);
+        entries.push(DesktopCredentialImportEntry {
+            source_service: source_instance_identity.to_owned(),
+            source_account: key.clone(),
+            target_key: key,
+        });
     }
-    keys.sort();
-    keys.dedup();
-    Ok(keys)
+    entries.sort_by(|left, right| credential_entry_key(left).cmp(&credential_entry_key(right)));
+    entries.dedup();
+    Ok(entries)
 }
 
 fn credential_inspection_error(database: &Path, error: rusqlite::Error) -> DesktopImportItemError {
@@ -637,12 +754,39 @@ fn credential_inspection_error(database: &Path, error: rusqlite::Error) -> Deskt
     )
 }
 
-fn valid_credential_keys(keys: &[String]) -> bool {
-    keys.windows(2).all(|pair| pair[0] < pair[1])
-        && keys.iter().all(|key| valid_credential_key(key))
+fn valid_credential_entries(
+    source_instance_identity: &str,
+    entries: &[DesktopCredentialImportEntry],
+) -> bool {
+    entries
+        .windows(2)
+        .all(|pair| credential_entry_key(&pair[0]) < credential_entry_key(&pair[1]))
+        && entries.iter().all(|entry| {
+            if entry.source_service == source_instance_identity {
+                return entry.source_account == entry.target_key
+                    && valid_agentkit_credential_key(&entry.target_key);
+            }
+            if entry.source_service == LEGACY_AI_CREDENTIAL_SERVICE {
+                return entry.source_account == LEGACY_ASSISTANT_AI_ACCOUNT
+                    && entry.target_key == ASSISTANT_AI_TARGET_KEY;
+            }
+            if entry.source_service == LEGACY_GITHUB_CREDENTIAL_SERVICE {
+                return entry.target_key == GITHUB_TARGET_KEY
+                    && valid_github_login(&entry.source_account);
+            }
+            false
+        })
 }
 
-fn valid_credential_key(key: &str) -> bool {
+fn credential_entry_key(entry: &DesktopCredentialImportEntry) -> (&str, &str, &str) {
+    (
+        entry.target_key.as_str(),
+        entry.source_service.as_str(),
+        entry.source_account.as_str(),
+    )
+}
+
+fn valid_agentkit_credential_key(key: &str) -> bool {
     let Some(secret_id) = key.strip_prefix("agentkit.") else {
         return false;
     };
@@ -651,6 +795,239 @@ fn valid_credential_key(key: &str) -> bool {
         && secret_id.chars().all(|character| {
             character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | ':')
         })
+}
+
+fn valid_github_login(login: &str) -> bool {
+    !login.is_empty()
+        && login.len() <= 39
+        && !login.starts_with('-')
+        && !login.ends_with('-')
+        && login
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || character == '-')
+}
+
+fn valid_legacy_configuration(configuration: &DesktopLegacyConfigurationImport) -> bool {
+    configuration.github_binding.as_ref().is_none_or(|binding| {
+        valid_github_login(&binding.login)
+            && binding
+                .avatar_url
+                .as_ref()
+                .is_none_or(|url| url.len() <= 2048)
+            && binding.scopes.len() <= 64
+            && binding
+                .scopes
+                .iter()
+                .all(|scope| !scope.is_empty() && scope.len() <= 128)
+    }) && configuration
+        .assistant_ai
+        .as_ref()
+        .is_none_or(|settings| normalize_assistant_ai_settings(settings.clone()) == *settings)
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyProjectSettingsImport {
+    #[serde(default)]
+    github_binding: Option<DesktopGitHubBindingMetadata>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyAssistantAiSettingsImport {
+    #[serde(default)]
+    base_url: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    model_pool: Vec<DesktopAssistantAiModelPoolItem>,
+    #[serde(default)]
+    codex_account_spark_enabled: bool,
+}
+
+fn inspect_legacy_configuration(
+    source_home: &Path,
+) -> Result<DesktopLegacyConfigurationImport, DesktopImportItemError> {
+    let path = source_home.join(LEGACY_PROVIDER_STORE_FILE);
+    if !path.exists() {
+        return Ok(DesktopLegacyConfigurationImport::default());
+    }
+    let metadata = fs::metadata(&path).map_err(|error| legacy_configuration_error(&path, error))?;
+    if !metadata.is_file() || metadata.len() > LEGACY_PROVIDER_STORE_MAX_BYTES {
+        return Err(DesktopImportItemError::new(
+            DesktopImportErrorCode::InspectionFailed,
+            format!(
+                "legacy settings file is invalid or exceeds the size limit: {}",
+                path.display()
+            ),
+            false,
+        ));
+    }
+    let bytes = fs::read(&path).map_err(|error| legacy_configuration_error(&path, error))?;
+    let root = serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|error| {
+        DesktopImportItemError::new(
+            DesktopImportErrorCode::InspectionFailed,
+            format!(
+                "failed to parse legacy settings {}: {error}",
+                path.display()
+            ),
+            false,
+        )
+    })?;
+    let github_binding = root
+        .get(LEGACY_PROJECT_SETTINGS_KEY)
+        .cloned()
+        .map(serde_json::from_value::<LegacyProjectSettingsImport>)
+        .transpose()
+        .map_err(|error| {
+            DesktopImportItemError::new(
+                DesktopImportErrorCode::InspectionFailed,
+                format!("legacy GitHub binding is invalid: {error}"),
+                false,
+            )
+        })?
+        .and_then(|settings| settings.github_binding);
+    let assistant_ai = root
+        .get(LEGACY_ASSISTANT_AI_SETTINGS_KEY)
+        .cloned()
+        .map(serde_json::from_value::<LegacyAssistantAiSettingsImport>)
+        .transpose()
+        .map_err(|error| {
+            DesktopImportItemError::new(
+                DesktopImportErrorCode::InspectionFailed,
+                format!("legacy Assistant AI settings are invalid: {error}"),
+                false,
+            )
+        })?
+        .map(|settings| {
+            normalize_assistant_ai_settings(DesktopAssistantAiSettings {
+                revision: 1,
+                base_url: settings.base_url,
+                model: settings.model,
+                model_pool: settings.model_pool,
+                codex_account_spark_enabled: settings.codex_account_spark_enabled,
+            })
+        });
+    Ok(DesktopLegacyConfigurationImport {
+        github_binding,
+        assistant_ai,
+    })
+}
+
+fn source_has_assistant_ai_configuration(
+    paths: &LiliaDataPaths,
+    legacy: &DesktopLegacyConfigurationImport,
+) -> Result<bool, DesktopImportItemError> {
+    if legacy.assistant_ai.is_some() {
+        return Ok(true);
+    }
+    let database = paths.agent_runtime_db();
+    if !database.exists() {
+        return Ok(false);
+    }
+    let connection = Connection::open_with_flags(
+        &database,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| credential_inspection_error(&database, error))?;
+    let has_settings = connection
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_runtime_settings'",
+            [],
+            |_| Ok(()),
+        )
+        .optional()
+        .map_err(|error| credential_inspection_error(&database, error))?
+        .is_some();
+    if !has_settings {
+        return Ok(false);
+    }
+    connection
+        .query_row(
+            "SELECT 1 FROM agent_runtime_settings WHERE settings_key = ?1",
+            [ASSISTANT_AI_SETTINGS_KEY],
+            |_| Ok(()),
+        )
+        .optional()
+        .map(|value| value.is_some())
+        .map_err(|error| credential_inspection_error(&database, error))
+}
+
+fn legacy_configuration_error(path: &Path, error: io::Error) -> DesktopImportItemError {
+    DesktopImportItemError::new(
+        DesktopImportErrorCode::InspectionFailed,
+        format!(
+            "failed to inspect legacy settings {}: {error}",
+            path.display()
+        ),
+        false,
+    )
+}
+
+fn persist_legacy_configuration(
+    target: &DesktopApplicationConfig,
+    configuration: &DesktopLegacyConfigurationImport,
+    available_target_keys: &[String],
+) -> Result<(), DesktopImportItemError> {
+    if configuration.github_binding.is_none() && configuration.assistant_ai.is_none() {
+        return Ok(());
+    }
+    target
+        .data_paths()
+        .ensure_layout()
+        .map_err(|error| legacy_configuration_persistence_error(error.to_string()))?;
+    let store = SqliteAgentRuntimeStateStore::open(target.data_paths().agent_runtime_db())
+        .map_err(|error| legacy_configuration_persistence_error(error.to_string()))?;
+    let has_available_key = |key: &str| {
+        available_target_keys
+            .binary_search_by(|candidate| candidate.as_str().cmp(key))
+            .is_ok()
+    };
+    if let Some(settings) = configuration
+        .assistant_ai
+        .as_ref()
+        .filter(|_| has_available_key(ASSISTANT_AI_TARGET_KEY))
+    {
+        let existing = store
+            .setting(ASSISTANT_AI_SETTINGS_KEY)
+            .map_err(|error| legacy_configuration_persistence_error(error.to_string()))?;
+        if existing.is_none() {
+            let value = serde_json::json!({
+                "schemaVersion": 1,
+                "settings": settings,
+            });
+            store
+                .put_setting(ASSISTANT_AI_SETTINGS_KEY, &value)
+                .map_err(|error| legacy_configuration_persistence_error(error.to_string()))?;
+        }
+    }
+    if let Some(binding) = configuration
+        .github_binding
+        .as_ref()
+        .filter(|_| has_available_key(GITHUB_TARGET_KEY))
+    {
+        let existing = store
+            .setting(GITHUB_BINDING_SETTINGS_KEY)
+            .map_err(|error| legacy_configuration_persistence_error(error.to_string()))?;
+        if existing.is_none() {
+            let value = serde_json::json!({
+                "schemaVersion": 1,
+                "binding": binding,
+            });
+            store
+                .put_setting(GITHUB_BINDING_SETTINGS_KEY, &value)
+                .map_err(|error| legacy_configuration_persistence_error(error.to_string()))?;
+        }
+    }
+    Ok(())
+}
+
+fn legacy_configuration_persistence_error(message: String) -> DesktopImportItemError {
+    DesktopImportItemError::new(
+        DesktopImportErrorCode::CredentialImportFailed,
+        format!("failed to import legacy credential metadata: {message}"),
+        true,
+    )
 }
 
 fn database_path(paths: &LiliaDataPaths, kind: DesktopDatabaseKind) -> PathBuf {
@@ -1621,6 +1998,7 @@ mod tests {
                     imported: 0,
                     skipped: 0,
                     failed: 0,
+                    available_target_keys: Vec::new(),
                 },
             }
         }
@@ -2290,6 +2668,7 @@ mod tests {
                 imported: 2,
                 skipped: 1,
                 failed: 0,
+                available_target_keys: Vec::new(),
             },
         });
         let (service, source) = service(&root, host.clone());
@@ -2307,7 +2686,7 @@ mod tests {
             &[DesktopHostAction::Credential(
                 DesktopCredentialAction::ImportConfirmed {
                     source_instance_identity: "liliacode".into(),
-                    keys: Vec::new(),
+                    entries: Vec::new(),
                 }
             )]
         );
@@ -2323,11 +2702,22 @@ mod tests {
 
         let plan = service.plan(&source).unwrap();
         assert_eq!(
-            plan.credential_keys,
-            vec!["agentkit.secret-a", "agentkit.secret-z"]
+            plan.credential_entries,
+            vec![
+                DesktopCredentialImportEntry {
+                    source_service: "liliacode".into(),
+                    source_account: "agentkit.secret-a".into(),
+                    target_key: "agentkit.secret-a".into(),
+                },
+                DesktopCredentialImportEntry {
+                    source_service: "liliacode".into(),
+                    source_account: "agentkit.secret-z".into(),
+                    target_key: "agentkit.secret-z".into(),
+                },
+            ]
         );
         let mut tampered = plan.clone();
-        tampered.credential_keys[0] = "agentkit.another-secret".into();
+        tampered.credential_entries[0].source_account = "agentkit.another-secret".into();
         assert_invalid_plan(&service, &tampered);
         assert!(host.actions.lock().unwrap().is_empty());
 
@@ -2343,9 +2733,174 @@ mod tests {
             &[DesktopHostAction::Credential(
                 DesktopCredentialAction::ImportConfirmed {
                     source_instance_identity: "liliacode".into(),
-                    keys: vec!["agentkit.secret-a".into(), "agentkit.secret-z".into()],
+                    entries: vec![
+                        DesktopCredentialImportEntry {
+                            source_service: "liliacode".into(),
+                            source_account: "agentkit.secret-a".into(),
+                            target_key: "agentkit.secret-a".into(),
+                        },
+                        DesktopCredentialImportEntry {
+                            source_service: "liliacode".into(),
+                            source_account: "agentkit.secret-z".into(),
+                            target_key: "agentkit.secret-z".into(),
+                        },
+                    ],
                 }
             )]
         );
+    }
+
+    #[test]
+    fn legacy_github_and_assistant_credentials_import_with_usable_metadata() {
+        let root = TestDirectory::new("legacy-credential-metadata");
+        let host = Arc::new(TestHost {
+            actions: Mutex::new(Vec::new()),
+            credential_result: HostCredentialImportResult {
+                imported: 2,
+                skipped: 0,
+                failed: 0,
+                available_target_keys: vec![
+                    ASSISTANT_AI_TARGET_KEY.to_owned(),
+                    GITHUB_TARGET_KEY.to_owned(),
+                ],
+            },
+        });
+        let (service, source) = service(&root, host.clone());
+        write_database(source.home(), DesktopDatabaseKind::AgentRuntime, 9);
+        fs::write(
+            source.home().join(LEGACY_PROVIDER_STORE_FILE),
+            serde_json::to_vec(&serde_json::json!({
+                (LEGACY_PROJECT_SETTINGS_KEY): {
+                    "githubBinding": {
+                        "login": "octocat",
+                        "avatarUrl": "https://avatars.example/octocat.png",
+                        "boundAt": 1_700_000_000_000_i64,
+                        "scopes": ["repo", "read:user"],
+                        "clientIdSource": "bundled"
+                    }
+                },
+                (LEGACY_ASSISTANT_AI_SETTINGS_KEY): {
+                    "baseUrl": "https://models.example/v1",
+                    "model": "assistant-model",
+                    "modelPool": [{
+                        "id": "assistant-model",
+                        "label": "Assistant Model",
+                        "source": "remote",
+                        "backend": "native-agentkit"
+                    }],
+                    "codexAccountSparkEnabled": true,
+                    "apiKey": "must-not-enter-the-plan"
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let plan = service.plan(&source).unwrap();
+        assert_eq!(
+            plan.credential_entries,
+            vec![
+                DesktopCredentialImportEntry {
+                    source_service: LEGACY_AI_CREDENTIAL_SERVICE.into(),
+                    source_account: LEGACY_ASSISTANT_AI_ACCOUNT.into(),
+                    target_key: ASSISTANT_AI_TARGET_KEY.into(),
+                },
+                DesktopCredentialImportEntry {
+                    source_service: LEGACY_GITHUB_CREDENTIAL_SERVICE.into(),
+                    source_account: "octocat".into(),
+                    target_key: GITHUB_TARGET_KEY.into(),
+                },
+            ]
+        );
+        assert_eq!(
+            plan.legacy_configuration
+                .github_binding
+                .as_ref()
+                .map(|binding| binding.login.as_str()),
+            Some("octocat")
+        );
+        assert_eq!(
+            plan.legacy_configuration
+                .assistant_ai
+                .as_ref()
+                .and_then(|settings| settings.model.as_deref()),
+            Some("assistant-model")
+        );
+        assert!(!serde_json::to_string(&plan)
+            .unwrap()
+            .contains("must-not-enter-the-plan"));
+
+        let report = service.execute(
+            &plan,
+            DesktopImportExecutionOptions {
+                credential_decision: CredentialImportDecision::Confirmed,
+            },
+        );
+        assert_eq!(report.status, DesktopImportReportStatus::Completed);
+        let target_store =
+            SqliteAgentRuntimeStateStore::open(service.target().data_paths().agent_runtime_db())
+                .unwrap();
+        let github = target_store
+            .setting(GITHUB_BINDING_SETTINGS_KEY)
+            .unwrap()
+            .unwrap();
+        assert_eq!(github["binding"]["login"], "octocat");
+        let assistant = target_store
+            .setting(ASSISTANT_AI_SETTINGS_KEY)
+            .unwrap()
+            .unwrap();
+        assert_eq!(assistant["settings"]["model"], "assistant-model");
+        assert_eq!(
+            host.actions.lock().unwrap().as_slice(),
+            &[DesktopHostAction::Credential(
+                DesktopCredentialAction::ImportConfirmed {
+                    source_instance_identity: "liliacode".into(),
+                    entries: plan.credential_entries.clone(),
+                }
+            )]
+        );
+    }
+
+    #[test]
+    fn imported_legacy_metadata_never_overwrites_native_settings() {
+        let root = TestDirectory::new("legacy-metadata-no-overwrite");
+        let target = config(root.child("target"), "liliacode.native-preview");
+        target.data_paths().ensure_layout().unwrap();
+        let store =
+            SqliteAgentRuntimeStateStore::open(target.data_paths().agent_runtime_db()).unwrap();
+        store
+            .put_setting(
+                GITHUB_BINDING_SETTINGS_KEY,
+                &serde_json::json!({
+                    "schemaVersion": 1,
+                    "binding": {
+                        "login": "native-owner",
+                        "avatarUrl": null,
+                        "boundAt": 2_i64,
+                        "scopes": ["repo"],
+                        "clientIdSource": "bundled"
+                    }
+                }),
+            )
+            .unwrap();
+        let configuration = DesktopLegacyConfigurationImport {
+            github_binding: Some(
+                serde_json::from_value(serde_json::json!({
+                    "login": "legacy-owner",
+                    "avatarUrl": null,
+                    "boundAt": 1_i64,
+                    "scopes": ["repo"],
+                    "clientIdSource": "bundled"
+                }))
+                .unwrap(),
+            ),
+            assistant_ai: None,
+        };
+
+        persist_legacy_configuration(&target, &configuration, &[GITHUB_TARGET_KEY.to_owned()])
+            .unwrap();
+
+        let saved = store.setting(GITHUB_BINDING_SETTINGS_KEY).unwrap().unwrap();
+        assert_eq!(saved["binding"]["login"], "native-owner");
     }
 }

@@ -71,12 +71,43 @@ impl DesktopApplication {
             version: version.clone(),
             progress: None,
         })?;
-        match self.inner.host.execute(
-            &self.inner.host_context,
-            DesktopHostAction::Update(DesktopUpdateAction::Install {
+        let mut last_progress = None;
+        let mut progress_error = None;
+        let mut publish_progress = |progress: Option<f32>| {
+            if progress_error.is_some() {
+                return;
+            }
+            let progress = progress
+                .filter(|progress| progress.is_finite())
+                .map(|progress| progress.clamp(0.0, 1.0));
+            if progress.is_none() || progress == last_progress {
+                return;
+            }
+            if progress
+                .zip(last_progress)
+                .is_some_and(|(next, last)| next < last)
+            {
+                return;
+            }
+            match self.set_update_state(DesktopUpdateState::Downloading {
                 version: version.clone(),
-            }),
-        ) {
+                progress,
+            }) {
+                Ok(_) => last_progress = progress,
+                Err(error) => progress_error = Some(error),
+            }
+        };
+        let result = self.inner.host.execute_update(
+            &self.inner.host_context,
+            DesktopUpdateAction::Install {
+                version: version.clone(),
+            },
+            &mut publish_progress,
+        );
+        if let Some(error) = progress_error {
+            return Err(error);
+        }
+        match result {
             Ok(DesktopHostResult::Update(DesktopUpdateResult::InstallerLaunched {
                 version: launched_version,
             })) if launched_version == version => {
@@ -168,6 +199,7 @@ mod tests {
 
     struct ScriptedUpdateHost {
         responses: Mutex<VecDeque<Result<DesktopHostResult, DesktopHostError>>>,
+        install_progress: Vec<Option<f32>>,
     }
 
     impl DesktopHost for ScriptedUpdateHost {
@@ -183,10 +215,29 @@ mod tests {
                 .pop_front()
                 .expect("scripted update response")
         }
+
+        fn execute_update(
+            &self,
+            context: &DesktopHostContext,
+            action: DesktopUpdateAction,
+            on_download_progress: &mut dyn FnMut(Option<f32>),
+        ) -> Result<DesktopHostResult, DesktopHostError> {
+            for progress in &self.install_progress {
+                on_download_progress(*progress);
+            }
+            self.execute(context, DesktopHostAction::Update(action))
+        }
     }
 
     fn application(
         responses: impl IntoIterator<Item = Result<DesktopHostResult, DesktopHostError>>,
+    ) -> DesktopApplication {
+        application_with_progress(responses, Vec::new())
+    }
+
+    fn application_with_progress(
+        responses: impl IntoIterator<Item = Result<DesktopHostResult, DesktopHostError>>,
+        install_progress: Vec<Option<f32>>,
     ) -> DesktopApplication {
         let id = NEXT_UPDATE_TEST.fetch_add(1, Ordering::Relaxed);
         let authority = ServiceAuthority::bootstrap_in_memory_named(
@@ -204,6 +255,7 @@ mod tests {
             authority,
             Arc::new(ScriptedUpdateHost {
                 responses: Mutex::new(responses.into_iter().collect()),
+                install_progress,
             }),
         )
         .unwrap()
@@ -279,5 +331,62 @@ mod tests {
             }
         ));
         assert_eq!(app.update_state().unwrap(), DesktopUpdateState::Idle);
+    }
+
+    #[test]
+    fn install_publishes_monotonic_host_download_progress() {
+        let app = application_with_progress(
+            [
+                Ok(DesktopHostResult::Update(DesktopUpdateResult::Available {
+                    version: "0.2.0".into(),
+                    notes: None,
+                })),
+                Ok(DesktopHostResult::Update(
+                    DesktopUpdateResult::InstallerLaunched {
+                        version: "0.2.0".into(),
+                    },
+                )),
+            ],
+            vec![Some(0.25), Some(0.75), Some(0.5), Some(0.75)],
+        );
+        let events = app.subscribe_events();
+        app.check_for_update("preview").unwrap();
+        app.install_update("0.2.0").unwrap();
+
+        let states = (0..7)
+            .map(|_| events.recv().unwrap().kind)
+            .filter_map(|event| match event {
+                DesktopEventKind::UpdateStateChanged { state } => Some(state),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            states,
+            vec![
+                DesktopUpdateState::Checking,
+                DesktopUpdateState::Available {
+                    version: "0.2.0".into(),
+                    notes: None,
+                },
+                DesktopUpdateState::Downloading {
+                    version: "0.2.0".into(),
+                    progress: None,
+                },
+                DesktopUpdateState::Downloading {
+                    version: "0.2.0".into(),
+                    progress: Some(0.25),
+                },
+                DesktopUpdateState::Downloading {
+                    version: "0.2.0".into(),
+                    progress: Some(0.75),
+                },
+                DesktopUpdateState::Installing {
+                    version: "0.2.0".into(),
+                },
+                DesktopUpdateState::Restarting {
+                    version: "0.2.0".into(),
+                },
+            ]
+        );
     }
 }

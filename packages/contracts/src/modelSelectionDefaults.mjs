@@ -142,9 +142,9 @@ export function normalizeModelFeatureSettings(input, backend = DEFAULT_CHAT_BACK
   // Mirror builtin preset models into chat tiers for legacy consumers.
   const byId = Object.fromEntries(presets.map((p) => [p.id, p]));
   const nextChat = {
-    light: byId.fast?.model ?? chat.light,
-    normal: byId.default?.model ?? chat.normal,
-    deep: byId.plan?.model ?? byId.review?.model ?? chat.deep,
+    light: byId.fast ? byId.fast.model : chat.light,
+    normal: byId.default ? byId.default.model : chat.normal,
+    deep: byId.plan ? byId.plan.model : byId.review ? byId.review.model : chat.deep,
   };
 
   return {
@@ -245,7 +245,7 @@ function mergePresetsWithBuiltins(rawPresets, chat, backend) {
       id,
       label: builtinPresetLabel(id),
       kind: "builtin",
-      model: override?.model ?? chat[tier] ?? null,
+      model: override ? override.model : chat[tier] ?? null,
       reasoningEffort: override?.reasoningEffort ?? null,
       enabled: override ? override.enabled : true,
     };

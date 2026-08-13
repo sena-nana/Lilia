@@ -9,18 +9,22 @@ license.workspace = true
 base64 = "0.22.1"
 ignore = "0.4.26"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
+notify = "6.1.1"
 lilia-agent-integration = { workspace = true }
 lilia-contracts = { workspace = true }
 lilia-service = { workspace = true }
 lilia-storage = { workspace = true }
 mutsuki-agent-contracts = { workspace = true }
+portable-pty = { workspace = true }
 rusqlite = { workspace = true, features = ["backup"] }
 reqwest = { workspace = true, features = ["form", "query"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
+tempfile = "3.27.0"
 uuid = { workspace = true }
+vt100 = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62.2", features = [
@@ -30,5 +34,5 @@ windows = { version = "0.62.2", features = [
   "Win32_System_Threading",
 ] }
 
-[dev-dependencies]
-tempfile = "3.27.0"
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

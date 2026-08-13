@@ -1452,6 +1452,121 @@ mod tests {
     }
 
     #[test]
+    fn document_editor_views_share_one_buffer_and_restore_ui_state_only() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lilia-editor-share-{stamp}.txt"));
+        fs::write(&path, "shared").unwrap();
+        let path = fs::canonicalize(&path).unwrap();
+
+        let app = application();
+        let (document, created) = app.open_document_at_path(&path).unwrap();
+        assert!(created);
+        let first = app.document_workspace_item(document.id).unwrap();
+        let second = app
+            .document_workspace_item_view(
+                document.id,
+                crate::WorkspaceItemId::new("document-view:shared:second").unwrap(),
+            )
+            .unwrap();
+        assert_eq!(first.resource_id, second.resource_id);
+        assert_ne!(first.id, second.id);
+
+        let session = app.create_workspace_session(
+            DesktopWorkspaceSessionId::new("window:document-share").unwrap(),
+        );
+        let primary = crate::PaneId::new("primary").unwrap();
+        let secondary = crate::PaneId::new("secondary").unwrap();
+        session
+            .execute(DesktopCommand::OpenWorkspaceItem {
+                pane_id: primary.clone(),
+                item: first.clone(),
+            })
+            .unwrap();
+        session
+            .execute(DesktopCommand::SplitPane {
+                pane_id: primary,
+                new_pane_id: secondary.clone(),
+                axis: crate::SplitAxis::Horizontal,
+                ratio: 0.5,
+            })
+            .unwrap();
+        session
+            .execute(DesktopCommand::OpenWorkspaceItem {
+                pane_id: secondary,
+                item: second.with_serialized_state(Some(serde_json::json!({
+                    "scrollOffset": 24.0,
+                    "selectionStart": 1,
+                    "selectionEnd": 3
+                }))),
+            })
+            .unwrap();
+
+        let revision = app
+            .edit_document(
+                document.id,
+                document.buffer.revision,
+                vec![crate::TextEdit::new(0..6, "edited")],
+            )
+            .unwrap();
+        assert_eq!(
+            app.document_snapshot(document.id).unwrap().buffer.text,
+            "edited"
+        );
+        app.save_document(document.id, revision).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "edited");
+        assert!(!app
+            .document_snapshot(document.id)
+            .unwrap()
+            .buffer
+            .is_dirty());
+
+        let persisted = session.persisted_state().unwrap();
+        assert_eq!(persisted.workspace_items.len(), 2);
+        assert!(persisted.workspace_items.iter().all(|item| {
+            item.kind.as_str() == crate::DOCUMENT_WORKSPACE_ITEM_KIND
+                && item
+                    .resource_id
+                    .as_ref()
+                    .is_some_and(|resource| resource == &first.resource_id)
+        }));
+        let restored = app
+            .create_workspace_session(
+                DesktopWorkspaceSessionId::new("window:document-share-restored").unwrap(),
+            )
+            .restore(&persisted)
+            .unwrap();
+        assert_eq!(restored.workspace.workspace_items.len(), 2);
+        let restored_second = restored
+            .workspace
+            .workspace_items
+            .iter()
+            .find(|item| item.id.as_str() == "document-view:shared:second")
+            .unwrap();
+        assert_eq!(
+            restored_second.serialized_state,
+            Some(serde_json::json!({
+                "scrollOffset": 24.0,
+                "selectionStart": 1,
+                "selectionEnd": 3
+            }))
+        );
+        assert_eq!(
+            restored_second
+                .serialized_state
+                .as_ref()
+                .and_then(|state| state.get("text")),
+            None
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn invalid_task_selection_does_not_mutate_workspace_state() {
         let app = application();
         let project = ProjectId::new("project").unwrap();

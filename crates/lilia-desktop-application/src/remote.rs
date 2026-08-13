@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::path::Path;
@@ -6,9 +6,11 @@ use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(test)]
+use lilia_contracts::TimelineProjectionEvent;
 use lilia_contracts::{
     ChatAttachment, PendingProjection, PendingProjectionStatus, ProductTask, ProductTaskStatus,
-    TaskId, TimelineProjectionEvent,
+    TaskId,
 };
 use mutsuki_agent_contracts::AgentWireRequestEnvelope;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -18,8 +20,10 @@ use uuid::Uuid;
 
 use crate::application::DesktopApplicationInner;
 use crate::{
-    DesktopApplication, DesktopApplicationError, DesktopArchitectureInteractionDecision,
-    DesktopExecutionPermission, DesktopHost, DesktopHostAction, DesktopHostContext,
+    timeline_retry_context, DesktopApplication, DesktopApplicationError,
+    DesktopArchitectureInteractionDecision, DesktopExecutionPermission, DesktopHost,
+    DesktopHostAction, DesktopHostContext, DesktopTerminalCommand, DesktopTerminalLaunch,
+    DesktopTerminalProcessState, DesktopTerminalScope, DesktopTerminalSessionId,
     DesktopTurnRequest, ProjectQuery, TaskQuery,
 };
 
@@ -69,6 +73,24 @@ pub struct RemoteCapabilitySet {
 struct RemoteSessionForkCommand {
     source_turn_id: String,
     mode: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RemoteProcessSessionCommand {
+    Spawn {
+        command: String,
+        environment: BTreeMap<String, String>,
+        requested_cwd: Option<String>,
+        rows: u16,
+        columns: u16,
+    },
+    WriteStdin {
+        process_id: Option<String>,
+        input: String,
+    },
+    Kill {
+        process_id: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +207,7 @@ struct RemoteServiceInner {
     connection: Mutex<Connection>,
     bridge: Mutex<Option<RemoteHttpBridge>>,
     wake: Arc<RemoteWakeController>,
+    process_sessions: Mutex<HashMap<TaskId, DesktopTerminalSessionId>>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -252,6 +275,7 @@ impl DesktopRemoteControlService {
                 connection: Mutex::new(connection),
                 bridge: Mutex::new(None),
                 wake,
+                process_sessions: Mutex::new(HashMap::new()),
             }),
         })
     }
@@ -589,7 +613,7 @@ impl DesktopApplication {
                 Ok(json!({
                     "type": "tasks.get",
                     "task": remote_task_detail(&task, project_name),
-                    "runtime": self.task_runtime_snapshot(&task_id),
+                    "runtime": self.remote_task_runtime(&task_id)?,
                 }))
             }
             "timeline.snapshot" => self.remote_timeline_snapshot(&envelope.request),
@@ -761,6 +785,163 @@ impl DesktopApplication {
             .collect())
     }
 
+    fn remote_task_runtime(&self, task_id: &TaskId) -> Result<Value, DesktopRemoteControlError> {
+        let mut runtime = serde_json::to_value(self.task_runtime_snapshot(task_id))
+            .map_err(|error| DesktopRemoteControlError::internal(error.to_string()))?;
+        let process_session_id = self.active_remote_process_session(task_id)?;
+        let object = runtime.as_object_mut().ok_or_else(|| {
+            DesktopRemoteControlError::internal("task runtime snapshot is not an object")
+        })?;
+        object.insert("processSessionId".to_owned(), json!(process_session_id));
+        Ok(runtime)
+    }
+
+    fn active_remote_process_session(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Option<String>, DesktopRemoteControlError> {
+        let mut sessions = self
+            .inner
+            .remote
+            .inner
+            .process_sessions
+            .lock()
+            .map_err(|_| DesktopRemoteControlError::internal("remote process state unavailable"))?;
+        let Some(session_id) = sessions.get(task_id).cloned() else {
+            return Ok(None);
+        };
+        match self.terminal_snapshot(&session_id, 0) {
+            Ok(snapshot) if snapshot.process.is_running() => {
+                Ok(Some(session_id.as_str().to_owned()))
+            }
+            Ok(_) => {
+                sessions.remove(task_id);
+                let _ = self.forget_terminal(&session_id);
+                Ok(None)
+            }
+            Err(DesktopApplicationError::Terminal(
+                crate::DesktopTerminalError::SessionNotFound(_),
+            )) => {
+                sessions.remove(task_id);
+                Ok(None)
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn remote_process_session(
+        &self,
+        task_id: &TaskId,
+        request: &Value,
+        command: RemoteProcessSessionCommand,
+    ) -> Result<Value, DesktopRemoteControlError> {
+        let has_content = request
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| !content.trim().is_empty());
+        let has_attachments = request
+            .get("attachments")
+            .and_then(Value::as_array)
+            .is_some_and(|attachments| !attachments.is_empty());
+        if has_content || has_attachments {
+            return Err(DesktopRemoteControlError::invalid(
+                "process session commands cannot also submit a chat message",
+            ));
+        }
+
+        let mut sessions = self
+            .inner
+            .remote
+            .inner
+            .process_sessions
+            .lock()
+            .map_err(|_| DesktopRemoteControlError::internal("remote process state unavailable"))?;
+        let existing = sessions.get(task_id).cloned();
+        match command {
+            RemoteProcessSessionCommand::Spawn {
+                command,
+                environment,
+                requested_cwd,
+                rows,
+                columns,
+            } => {
+                if let Some(block) = self.task_run_block(task_id)? {
+                    return Err(DesktopRemoteControlError::new(
+                        "conflict",
+                        block.to_string(),
+                        false,
+                    ));
+                }
+                if let Some(requested_cwd) = requested_cwd {
+                    let requested_cwd = std::fs::canonicalize(&requested_cwd).map_err(|error| {
+                        DesktopRemoteControlError::invalid(format!(
+                            "process session cwd `{requested_cwd}` cannot be resolved: {error}"
+                        ))
+                    })?;
+                    let workspace_root =
+                        self.terminal_workspace_root(&DesktopTerminalScope::Task(task_id.clone()))?;
+                    if requested_cwd != workspace_root {
+                        return Err(DesktopRemoteControlError::invalid(
+                            "process session cwd must match the task workspace",
+                        ));
+                    }
+                }
+                if let Some(session_id) = existing {
+                    match self.terminal_snapshot(&session_id, 0) {
+                        Ok(snapshot) if snapshot.process.is_running() => {
+                            return Err(DesktopRemoteControlError::new(
+                                "conflict",
+                                "task already has a running process session",
+                                false,
+                            ));
+                        }
+                        Ok(_) => {
+                            let _ = self.forget_terminal(&session_id);
+                        }
+                        Err(DesktopApplicationError::Terminal(
+                            crate::DesktopTerminalError::SessionNotFound(_),
+                        )) => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                    sessions.remove(task_id);
+                }
+                let terminal_command = remote_shell_command(command, environment);
+                let snapshot = self.launch_terminal(DesktopTerminalLaunch {
+                    scope: DesktopTerminalScope::Task(task_id.clone()),
+                    command: Some(terminal_command),
+                    rows,
+                    columns,
+                })?;
+                sessions.insert(task_id.clone(), snapshot.id.clone());
+                Ok(json!({
+                    "type": "chat.send",
+                    "result": { "accepted": true },
+                    "processSession": remote_process_snapshot(&snapshot),
+                }))
+            }
+            RemoteProcessSessionCommand::WriteStdin { process_id, input } => {
+                let session_id = require_remote_process_session(existing, process_id.as_deref())?;
+                self.write_terminal(&session_id, input.as_bytes())?;
+                let snapshot = self.terminal_snapshot(&session_id, 0)?;
+                Ok(json!({
+                    "type": "chat.send",
+                    "result": { "accepted": true },
+                    "processSession": remote_process_snapshot(&snapshot),
+                }))
+            }
+            RemoteProcessSessionCommand::Kill { process_id } => {
+                let session_id = require_remote_process_session(existing, process_id.as_deref())?;
+                self.terminate_terminal(&session_id)?;
+                let snapshot = self.terminal_snapshot(&session_id, 0)?;
+                Ok(json!({
+                    "type": "chat.send",
+                    "result": { "accepted": true },
+                    "processSession": remote_process_snapshot(&snapshot),
+                }))
+            }
+        }
+    }
+
     fn remote_timeline_snapshot(
         &self,
         request: &Value,
@@ -834,6 +1015,9 @@ impl DesktopApplication {
 
     fn remote_chat_send(&self, request: &Value) -> Result<Value, DesktopRemoteControlError> {
         let task_id = parse_task_id(request)?;
+        if let Some(command) = remote_process_session_command(request)? {
+            return self.remote_process_session(&task_id, request, command);
+        }
         let session_fork = remote_session_fork_command(request)?;
         let content = string_field(request, "content")?;
         let attachments = request
@@ -913,14 +1097,12 @@ impl DesktopApplication {
             .and_then(Value::as_str)
             .and_then(|event_id| events.iter().find(|event| event.id.as_str() == event_id));
         let error = selected.or_else(|| events.iter().rev().find(|event| event.kind == "error"));
-        let context = error
-            .and_then(|event| retry_context(event, &events))
+        let error = error
+            .filter(|event| timeline_retry_context(event, &events).is_some())
             .ok_or_else(|| {
                 DesktopRemoteControlError::new("conflict", "no retryable remote message", false)
             })?;
-        let mut turn = DesktopTurnRequest::new(task_id, context.content);
-        turn.attachments = context.attachments;
-        let result = self.start_task_turn(turn)?;
+        let result = self.retry_task_timeline_event(&task_id, error.id.as_str())?;
         Ok(json!({ "type": "chat.retry", "result": result }))
     }
 
@@ -1198,8 +1380,199 @@ fn remote_capabilities() -> RemoteCapabilitySet {
         supports_interrupt: true,
         supports_agent_wire: true,
         supports_session_fork: true,
-        supports_process_session: false,
+        supports_process_session: true,
     }
+}
+
+fn remote_process_session_command(
+    request: &Value,
+) -> Result<Option<RemoteProcessSessionCommand>, DesktopRemoteControlError> {
+    let Some(command) = request
+        .get("runtimeCommand")
+        .filter(|value| !value.is_null())
+    else {
+        return Ok(None);
+    };
+    if command.get("type").and_then(Value::as_str) != Some("process_session") {
+        return Ok(None);
+    }
+    let action = string_field(command, "action")?;
+    let process_id = command
+        .get("processId")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    match action.as_str() {
+        "spawn" => {
+            let command_text = string_field(command, "command")?.to_owned();
+            if command_text.chars().any(char::is_control) {
+                return Err(DesktopRemoteControlError::invalid(
+                    "process session command must be a single line",
+                ));
+            }
+            if command.get("tty").and_then(Value::as_bool) == Some(false) {
+                return Err(DesktopRemoteControlError::unsupported(
+                    "Native process sessions always use a PTY",
+                ));
+            }
+            if let Some(permission) = command
+                .get("permissionProfile")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            {
+                if permission != ":workspace" {
+                    return Err(DesktopRemoteControlError::unsupported(
+                        "Native process sessions only support the workspace permission profile",
+                    ));
+                }
+            }
+            let environment = command
+                .get("env")
+                .filter(|value| !value.is_null())
+                .map(remote_process_environment)
+                .transpose()?
+                .unwrap_or_default();
+            Ok(Some(RemoteProcessSessionCommand::Spawn {
+                command: command_text,
+                environment,
+                requested_cwd: command
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned),
+                rows: remote_terminal_dimension(command, "rows", 24)?,
+                columns: remote_terminal_dimension(command, "cols", 80)?,
+            }))
+        }
+        "write_stdin" => {
+            let input = command
+                .get("stdin")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    DesktopRemoteControlError::invalid("process session stdin is missing")
+                })?
+                .to_owned();
+            Ok(Some(RemoteProcessSessionCommand::WriteStdin {
+                process_id,
+                input,
+            }))
+        }
+        "kill" => Ok(Some(RemoteProcessSessionCommand::Kill { process_id })),
+        _ => Err(DesktopRemoteControlError::unsupported(format!(
+            "unsupported process session action: {action}"
+        ))),
+    }
+}
+
+fn remote_process_environment(
+    value: &Value,
+) -> Result<BTreeMap<String, String>, DesktopRemoteControlError> {
+    let object = value.as_object().ok_or_else(|| {
+        DesktopRemoteControlError::invalid("process session env must be an object")
+    })?;
+    object
+        .iter()
+        .map(|(key, value)| {
+            let value = value.as_str().ok_or_else(|| {
+                DesktopRemoteControlError::invalid(format!(
+                    "process session env `{key}` must be a string"
+                ))
+            })?;
+            Ok((key.clone(), value.to_owned()))
+        })
+        .collect()
+}
+
+fn remote_terminal_dimension(
+    command: &Value,
+    field: &'static str,
+    default: u16,
+) -> Result<u16, DesktopRemoteControlError> {
+    command
+        .get(field)
+        .filter(|value| !value.is_null())
+        .map(|value| {
+            value
+                .as_u64()
+                .and_then(|value| u16::try_from(value).ok())
+                .ok_or_else(|| {
+                    DesktopRemoteControlError::invalid(format!(
+                        "process session {field} must be an unsigned 16-bit integer"
+                    ))
+                })
+        })
+        .transpose()
+        .map(|value| value.unwrap_or(default))
+}
+
+fn remote_shell_command(
+    command: String,
+    environment: BTreeMap<String, String>,
+) -> DesktopTerminalCommand {
+    #[cfg(windows)]
+    let mut specification = DesktopTerminalCommand::new("cmd.exe");
+    #[cfg(windows)]
+    {
+        specification.arguments = vec![
+            "/D".to_owned(),
+            "/S".to_owned(),
+            "/C".to_owned(),
+            command.clone(),
+        ];
+    }
+    #[cfg(not(windows))]
+    let mut specification = DesktopTerminalCommand::new("/bin/sh");
+    #[cfg(not(windows))]
+    {
+        specification.arguments = vec!["-lc".to_owned(), command.clone()];
+    }
+    specification.environment = environment;
+    specification.label = Some(command);
+    specification
+}
+
+fn require_remote_process_session(
+    existing: Option<DesktopTerminalSessionId>,
+    requested: Option<&str>,
+) -> Result<DesktopTerminalSessionId, DesktopRemoteControlError> {
+    let existing = existing.ok_or_else(|| {
+        DesktopRemoteControlError::new(
+            "conflict",
+            "task does not have a running process session",
+            false,
+        )
+    })?;
+    if requested.is_some_and(|requested| requested != existing.as_str()) {
+        return Err(DesktopRemoteControlError::new(
+            "conflict",
+            "process session id does not match the task's active session",
+            false,
+        ));
+    }
+    Ok(existing)
+}
+
+fn remote_process_snapshot(snapshot: &crate::DesktopTerminalSnapshot) -> Value {
+    let status = match snapshot.process {
+        DesktopTerminalProcessState::Running => "running",
+        DesktopTerminalProcessState::Terminating => "terminating",
+        DesktopTerminalProcessState::Exited { .. } => "exited",
+        DesktopTerminalProcessState::Failed { .. } => "failed",
+        DesktopTerminalProcessState::Restored => "restored",
+    };
+    json!({
+        "processSessionId": snapshot.id.as_str(),
+        "status": status,
+        "processId": snapshot.process_id,
+        "cwd": snapshot.cwd,
+        "command": snapshot.command_label,
+        "rows": snapshot.rows,
+        "cols": snapshot.columns,
+        "revision": snapshot.revision,
+    })
 }
 
 fn remote_session_fork_command(
@@ -1453,48 +1826,6 @@ fn remote_pending_interaction(pending: &PendingProjection) -> Option<Value> {
         "kind": pending.kind,
         "payload": payload,
     }))
-}
-
-struct RetryContext {
-    content: String,
-    attachments: Vec<ChatAttachment>,
-}
-
-fn retry_context(
-    error: &TimelineProjectionEvent,
-    events: &[TimelineProjectionEvent],
-) -> Option<RetryContext> {
-    if error.kind != "error" {
-        return None;
-    }
-    if let Some(context) = retry_context_value(error.payload.get("retryContext")) {
-        return Some(context);
-    }
-    let turn_id = error.turn_id.as_deref()?;
-    let source = events.iter().find(|event| {
-        event.kind == "message"
-            && event.turn_id.as_deref() == Some(turn_id)
-            && event.payload.get("role").and_then(Value::as_str) == Some("user")
-    })?;
-    retry_context_value(Some(&source.payload))
-}
-
-fn retry_context_value(value: Option<&Value>) -> Option<RetryContext> {
-    let value = value?;
-    let content = value
-        .get("content")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_owned();
-    let attachments: Vec<ChatAttachment> = value
-        .get("attachments")
-        .cloned()
-        .and_then(|value| serde_json::from_value(value).ok())
-        .unwrap_or_default();
-    (!content.trim().is_empty() || !attachments.is_empty()).then_some(RetryContext {
-        content,
-        attachments,
-    })
 }
 
 fn serve_http_bridge(listener: TcpListener, application: Weak<DesktopApplicationInner>) {
@@ -1819,7 +2150,7 @@ mod tests {
     use super::*;
     use crate::{
         DesktopApplicationConfig, DesktopHostError, DesktopHostResult, DesktopProjectCreate,
-        DesktopTaskCreate,
+        DesktopTaskCreate, DesktopTaskPatch,
     };
 
     #[derive(Default)]
@@ -2016,7 +2347,224 @@ mod tests {
     fn native_remote_capabilities_only_advertise_runtime_commands_that_are_real() {
         let capabilities = remote_capabilities();
         assert!(capabilities.supports_session_fork);
-        assert!(!capabilities.supports_process_session);
+        assert!(capabilities.supports_process_session);
+        assert!(matches!(
+            remote_process_session_command(&json!({
+                "runtimeCommand": {
+                    "type": "process_session",
+                    "action": "spawn",
+                    "command": "cargo test",
+                    "rows": 30,
+                    "cols": 100,
+                    "tty": true,
+                    "permissionProfile": ":workspace",
+                    "env": { "CI": "1" },
+                }
+            }))
+            .unwrap(),
+            Some(RemoteProcessSessionCommand::Spawn {
+                rows: 30,
+                columns: 100,
+                ..
+            })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_process_session_runs_in_task_workspace_and_supports_input_and_kill() {
+        let root = tempfile::tempdir().unwrap();
+        let authority = ServiceAuthority::bootstrap_in_memory_named(
+            format!("remote-process-test:{}", Uuid::new_v4()),
+            "remote-process-test",
+        )
+        .unwrap();
+        let application = DesktopApplication::from_authority(
+            DesktopApplicationConfig::new(root.path().join("home"), "lilia.remote-process-test")
+                .unwrap(),
+            authority,
+            Arc::new(TestHost::default()),
+        )
+        .unwrap();
+        let project = application
+            .create_project(DesktopProjectCreate {
+                workspace_path: Some(root.path().display().to_string()),
+                ..DesktopProjectCreate::new("Remote process")
+            })
+            .unwrap();
+        let task = application
+            .create_task(DesktopTaskCreate::new(Some(project.id), "Run remotely"))
+            .unwrap();
+        let ticket = application.start_remote_pairing().unwrap();
+        application
+            .pair_remote_device(RemotePairDeviceInput {
+                ticket_id: ticket.id,
+                challenge: ticket.challenge,
+                device_name: "Phone".to_owned(),
+                android_endpoint: RemoteEndpointAddress {
+                    endpoint_id: "android-process".to_owned(),
+                    relay_url: None,
+                    direct_addresses: Vec::new(),
+                },
+                protocol_version: 1,
+            })
+            .unwrap();
+
+        application
+            .update_task(
+                &task.id,
+                DesktopTaskPatch {
+                    status: Some(ProductTaskStatus::Blocked),
+                    ..DesktopTaskPatch::default()
+                },
+            )
+            .unwrap();
+        let blocked = application.dispatch_remote_request(RemoteRequestEnvelope {
+            id: "process-blocked".to_owned(),
+            protocol_version: 1,
+            sent_at: None,
+            device_id: "android-process".to_owned(),
+            request: json!({
+                "type": "chat.send",
+                "taskId": task.id.as_str(),
+                "content": "",
+                "runtimeCommand": {
+                    "type": "process_session",
+                    "action": "spawn",
+                    "command": "echo should-not-run",
+                },
+            }),
+        });
+        assert_eq!(blocked["ok"], false, "{blocked}");
+        assert_eq!(blocked["error"]["code"], "conflict");
+        assert!(application.list_terminal_sessions().unwrap().is_empty());
+        application
+            .update_task(
+                &task.id,
+                DesktopTaskPatch {
+                    status: Some(ProductTaskStatus::Waiting),
+                    ..DesktopTaskPatch::default()
+                },
+            )
+            .unwrap();
+
+        let spawn = application.dispatch_remote_request(RemoteRequestEnvelope {
+            id: "process-spawn".to_owned(),
+            protocol_version: 1,
+            sent_at: None,
+            device_id: "android-process".to_owned(),
+            request: json!({
+                "type": "chat.send",
+                "taskId": task.id.as_str(),
+                "content": "",
+                "runtimeCommand": {
+                    "type": "process_session",
+                    "action": "spawn",
+                    "command": "printf 'ready:%s\\n' \"$PWD\"; read line; printf 'input:%s\\n' \"$line\"; sleep 30",
+                    "cwd": root.path(),
+                    "env": { "CI": "1" },
+                    "tty": true,
+                    "rows": 12,
+                    "cols": 90,
+                    "permissionProfile": ":workspace",
+                },
+            }),
+        });
+        assert_eq!(spawn["ok"], true, "{spawn}");
+        let session_id = spawn["payload"]["processSession"]["processSessionId"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let detail = application.dispatch_remote_request(RemoteRequestEnvelope {
+            id: "process-detail".to_owned(),
+            protocol_version: 1,
+            sent_at: None,
+            device_id: "android-process".to_owned(),
+            request: json!({ "type": "tasks.get", "taskId": task.id.as_str() }),
+        });
+        assert_eq!(detail["payload"]["runtime"]["processSessionId"], session_id);
+
+        let stdin = application.dispatch_remote_request(RemoteRequestEnvelope {
+            id: "process-stdin".to_owned(),
+            protocol_version: 1,
+            sent_at: None,
+            device_id: "android-process".to_owned(),
+            request: json!({
+                "type": "chat.send",
+                "taskId": task.id.as_str(),
+                "content": "",
+                "runtimeCommand": {
+                    "type": "process_session",
+                    "action": "write_stdin",
+                    "processId": session_id,
+                    "stdin": "hello\r",
+                },
+            }),
+        });
+        assert_eq!(stdin["ok"], true, "{stdin}");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let snapshot = application
+                .list_terminal_sessions()
+                .unwrap()
+                .into_iter()
+                .find(|snapshot| snapshot.id.as_str() == session_id)
+                .unwrap();
+            let screen = snapshot
+                .screen
+                .iter()
+                .map(|row| row.text.trim_end())
+                .collect::<Vec<_>>()
+                .join("\n");
+            if screen.contains("input:hello") {
+                assert!(screen.contains(&format!(
+                    "ready:{}",
+                    std::fs::canonicalize(root.path()).unwrap().display()
+                )));
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "remote process output did not converge"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        let kill = application.dispatch_remote_request(RemoteRequestEnvelope {
+            id: "process-kill".to_owned(),
+            protocol_version: 1,
+            sent_at: None,
+            device_id: "android-process".to_owned(),
+            request: json!({
+                "type": "chat.send",
+                "taskId": task.id.as_str(),
+                "content": "",
+                "runtimeCommand": {
+                    "type": "process_session",
+                    "action": "kill",
+                    "processId": session_id,
+                },
+            }),
+        });
+        assert_eq!(kill["ok"], true, "{kill}");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let detail = application.dispatch_remote_request(RemoteRequestEnvelope {
+                id: "process-detail-after-kill".to_owned(),
+                protocol_version: 1,
+                sent_at: None,
+                device_id: "android-process".to_owned(),
+                request: json!({ "type": "tasks.get", "taskId": task.id.as_str() }),
+            });
+            if detail["payload"]["runtime"]["processSessionId"].is_null() {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "remote process did not terminate"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     #[test]

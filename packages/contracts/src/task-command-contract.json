@@ -2,6 +2,7 @@
   "commands": {
     "list": "task_list",
     "listSidebarConversations": "task_list_sidebar_conversations",
+    "searchSessions": "search_sessions",
     "get": "task_get",
     "handoffGet": "task_handoff_get",
     "create": "task_create",

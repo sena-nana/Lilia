@@ -831,7 +831,6 @@ fn execute_hook_command(
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    drop(process_tree);
     let input_result = stdin_writer
         .join()
         .map_err(|_| "command input writer panicked".to_owned())?;

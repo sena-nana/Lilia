@@ -186,7 +186,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let arguments = Arguments::parse()?;
     let manifest_bytes = fs::read(&arguments.manifest)?;
     let fixture: Fixture = serde_json::from_slice(&manifest_bytes)?;
-    if !matches!(fixture.schema_version, 1..=6) {
+    if !matches!(fixture.schema_version, 1..=7) {
         return Err(format!(
             "unsupported equivalence fixture schema {}",
             fixture.schema_version
@@ -242,6 +242,7 @@ fn seed(
         application.create_task(DesktopTaskCreate {
             id: task_id.clone(),
             project_id,
+            parent_id: None,
             title: task.title.clone(),
         })?;
         application.update_task(
@@ -446,6 +447,7 @@ fn seed(
             priority: todo.priority,
             attachments: Vec::new(),
             conversation_references: Vec::new(),
+            workflow: None,
         })?;
     }
     Ok(())

@@ -163,6 +163,20 @@ impl TextBuffer {
         Ok(next_revision)
     }
 
+    pub fn apply_transaction_at(
+        &mut self,
+        expected_revision: BufferRevision,
+        edits: Vec<TextEdit>,
+    ) -> Result<BufferRevision, BufferError> {
+        if self.snapshot.revision != expected_revision {
+            return Err(BufferError::RevisionMismatch {
+                expected: expected_revision,
+                actual: self.snapshot.revision,
+            });
+        }
+        self.apply_transaction(edits)
+    }
+
     pub fn mark_saved(&mut self, revision: BufferRevision) -> Result<(), BufferError> {
         if revision != self.snapshot.revision {
             return Err(BufferError::StaleSave {
@@ -181,6 +195,10 @@ impl TextBuffer {
         if self.is_dirty() {
             return Err(BufferError::DirtyReload);
         }
+        self.force_reload(text)
+    }
+
+    pub fn force_reload(&mut self, text: impl Into<String>) -> Result<BufferRevision, BufferError> {
         let next_revision = self.snapshot.revision.next()?;
         self.snapshot.text = text.into();
         self.snapshot.revision = next_revision;
@@ -205,6 +223,11 @@ pub enum BufferError {
     RevisionOverflow,
     #[error("save completed for revision {actual:?}, but current revision is {expected:?}")]
     StaleSave {
+        expected: BufferRevision,
+        actual: BufferRevision,
+    },
+    #[error("edit expected revision {expected:?}, but buffer is at {actual:?}")]
+    RevisionMismatch {
         expected: BufferRevision,
         actual: BufferRevision,
     },
@@ -250,5 +273,28 @@ mod tests {
             Err(BufferError::StaleSave { .. })
         ));
         assert!(buffer.is_dirty());
+    }
+
+    #[test]
+    fn edit_with_stale_expected_revision_is_rejected() {
+        let mut buffer = TextBuffer::new(BufferId::new(1), "alpha");
+        let current = buffer
+            .apply_transaction(vec![TextEdit::new(0..5, "beta")])
+            .unwrap();
+
+        assert!(matches!(
+            buffer
+                .apply_transaction_at(BufferRevision::INITIAL, vec![TextEdit::new(0..4, "gamma")]),
+            Err(BufferError::RevisionMismatch { .. })
+        ));
+        assert_eq!(buffer.text(), "beta");
+        assert_eq!(
+            buffer
+                .apply_transaction_at(current, vec![TextEdit::new(0..4, "gamma")])
+                .unwrap()
+                .get(),
+            2
+        );
+        assert_eq!(buffer.text(), "gamma");
     }
 }

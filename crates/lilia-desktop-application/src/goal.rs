@@ -282,6 +282,7 @@ mod tests {
                 priority: DesktopTodoPriority::Normal,
                 attachments: Vec::new(),
                 conversation_references: Vec::new(),
+                workflow: None,
             })
             .unwrap();
         application

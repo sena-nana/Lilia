@@ -26,6 +26,17 @@ CREATE TABLE IF NOT EXISTS task_worktrees (
 );
 CREATE INDEX IF NOT EXISTS idx_task_worktrees_project_status
   ON task_worktrees(project_id, status, updated_at DESC);
+CREATE TABLE IF NOT EXISTS initial_worktree_intents (
+  task_id       TEXT PRIMARY KEY,
+  mode          TEXT NOT NULL CHECK (mode IN ('create','existing')),
+  worktree_path TEXT,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  CHECK (
+    (mode = 'create' AND worktree_path IS NULL) OR
+    (mode = 'existing' AND worktree_path IS NOT NULL)
+  )
+);
 "#;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +101,13 @@ pub struct DesktopWorktreeMergeResult {
     pub removed: bool,
     pub archived: bool,
     pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "mode", content = "worktree_path")]
+pub enum DesktopInitialWorktreeSelection {
+    Create,
+    Existing(PathBuf),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -250,9 +268,140 @@ impl DesktopWorktreeStore {
             })?;
         Ok(changed > 0)
     }
+
+    fn save_initial_intent(
+        &self,
+        task_id: &TaskId,
+        selection: &DesktopInitialWorktreeSelection,
+    ) -> Result<(), DesktopWorktreeError> {
+        let (mode, worktree_path) = match selection {
+            DesktopInitialWorktreeSelection::Create => ("create", None),
+            DesktopInitialWorktreeSelection::Existing(path) => {
+                ("existing", Some(normalized_path(path)))
+            }
+        };
+        let now = now_millis();
+        self.connection
+            .execute(
+                r#"INSERT INTO initial_worktree_intents
+                   (task_id, mode, worktree_path, created_at, updated_at)
+                   VALUES (?1, ?2, ?3, ?4, ?4)
+                   ON CONFLICT(task_id) DO UPDATE SET
+                     mode = excluded.mode,
+                     worktree_path = excluded.worktree_path,
+                     updated_at = excluded.updated_at"#,
+                params![task_id.as_str(), mode, worktree_path, now],
+            )
+            .map(|_| ())
+            .map_err(|error| DesktopWorktreeError::Storage {
+                operation: "save initial worktree intent",
+                message: error.to_string(),
+            })
+    }
+
+    fn initial_intent(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Option<DesktopInitialWorktreeSelection>, DesktopWorktreeError> {
+        let stored = self
+            .connection
+            .query_row(
+                "SELECT mode, worktree_path FROM initial_worktree_intents WHERE task_id = ?1",
+                params![task_id.as_str()],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()
+            .map_err(|error| DesktopWorktreeError::Storage {
+                operation: "read initial worktree intent",
+                message: error.to_string(),
+            })?;
+        stored
+            .map(|(mode, path)| match (mode.as_str(), path) {
+                ("create", None) => Ok(DesktopInitialWorktreeSelection::Create),
+                ("existing", Some(path)) => Ok(DesktopInitialWorktreeSelection::Existing(
+                    PathBuf::from(path),
+                )),
+                _ => Err(DesktopWorktreeError::InvalidStoredInitialIntent(mode)),
+            })
+            .transpose()
+    }
+
+    fn clear_initial_intent(&self, task_id: &TaskId) -> Result<bool, DesktopWorktreeError> {
+        self.connection
+            .execute(
+                "DELETE FROM initial_worktree_intents WHERE task_id = ?1",
+                params![task_id.as_str()],
+            )
+            .map(|changed| changed > 0)
+            .map_err(|error| DesktopWorktreeError::Storage {
+                operation: "clear initial worktree intent",
+                message: error.to_string(),
+            })
+    }
 }
 
 impl DesktopApplication {
+    pub fn set_initial_worktree_intent(
+        &self,
+        task_id: &TaskId,
+        selection: Option<&DesktopInitialWorktreeSelection>,
+    ) -> Result<(), DesktopApplicationError> {
+        let worktrees = self
+            .inner
+            .worktrees
+            .lock()
+            .map_err(|_| DesktopApplicationError::StateUnavailable("worktrees"))?;
+        if let Some(selection) = selection {
+            worktrees.save_initial_intent(task_id, selection)?;
+        } else {
+            worktrees.clear_initial_intent(task_id)?;
+        }
+        Ok(())
+    }
+
+    pub fn initial_worktree_intent(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Option<DesktopInitialWorktreeSelection>, DesktopApplicationError> {
+        Ok(self
+            .inner
+            .worktrees
+            .lock()
+            .map_err(|_| DesktopApplicationError::StateUnavailable("worktrees"))?
+            .initial_intent(task_id)?)
+    }
+
+    pub fn retry_initial_worktree(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<bool, DesktopApplicationError> {
+        let Some(selection) = self.initial_worktree_intent(task_id)? else {
+            return Ok(false);
+        };
+        if self.task_worktree(task_id)?.is_none() {
+            match selection {
+                DesktopInitialWorktreeSelection::Create => {
+                    self.create_task_worktree(task_id, None)?;
+                }
+                DesktopInitialWorktreeSelection::Existing(path) => {
+                    self.attach_task_worktree(task_id, &path)?;
+                }
+            }
+        }
+        self.set_initial_worktree_intent(task_id, None)?;
+        Ok(true)
+    }
+
+    pub(crate) fn ensure_initial_worktree_ready(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<(), DesktopApplicationError> {
+        if self.initial_worktree_intent(task_id)?.is_some() {
+            return Err(DesktopWorktreeError::InitialPreparationPending(task_id.clone()).into());
+        }
+        Ok(())
+    }
+
     pub fn task_workspace_path(
         &self,
         task_id: &TaskId,
@@ -331,11 +480,15 @@ impl DesktopApplication {
         ensure_git_repo(&base)?;
         let base = canonical_path(&base, "base repository")?;
         let base_branch = current_branch(&base)?;
-        let parent = parent_directory.map(Path::to_path_buf).unwrap_or_else(|| {
-            base.parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| base.clone())
-        });
+        let preferred_parent = self.worktree_parent_directory_preference()?;
+        let parent = parent_directory
+            .map(Path::to_path_buf)
+            .or(preferred_parent)
+            .unwrap_or_else(|| {
+                base.parent()
+                    .map(Path::to_path_buf)
+                    .unwrap_or_else(|| base.clone())
+            });
         let parent = canonical_path(&parent, "worktree parent directory")?;
         let slug = task_title_slug(&task.title, task_id);
         let target = unique_worktree_target(&parent, &slug);
@@ -919,6 +1072,10 @@ pub enum DesktopWorktreeError {
     },
     #[error("invalid stored worktree status `{0}`")]
     InvalidStoredStatus(String),
+    #[error("invalid stored initial worktree intent `{0}`")]
+    InvalidStoredInitialIntent(String),
+    #[error("task `{0}` is waiting for its initial worktree to be prepared")]
+    InitialPreparationPending(TaskId),
     #[error("git {command} failed: {message}")]
     Git { command: String, message: String },
     #[error("worktree storage failed during {operation}: {message}")]
@@ -967,9 +1124,10 @@ mod tests {
     }
 
     fn application(repo: &Path) -> (DesktopApplication, TaskId) {
+        let instance_id = Uuid::new_v4();
         let authority = ServiceAuthority::bootstrap_in_memory_named(
-            "test:desktop-worktree",
-            format!("desktop-worktree-test:{}", Uuid::new_v4()),
+            format!("test:desktop-worktree:{instance_id}"),
+            format!("desktop-worktree-test:{instance_id}"),
         )
         .unwrap();
         let project_id = ProjectId::new("worktree-project").unwrap();
@@ -1053,5 +1211,43 @@ mod tests {
         assert!(repo.join("native.txt").is_file());
         assert!(application.get_task(&task_id).unwrap().archived);
         assert_eq!(application.task_worktree(&task_id).unwrap(), None);
+    }
+
+    #[test]
+    fn initial_worktree_intent_survives_reopen_until_explicitly_cleared() {
+        let root = TempDir::new().unwrap();
+        let database = root.path().join("worktrees.db");
+        let task_id = TaskId::new("pending-worktree").unwrap();
+        let selection = DesktopInitialWorktreeSelection::Existing(root.path().join("existing"));
+        {
+            let store = DesktopWorktreeStore::open(&database).unwrap();
+            store.save_initial_intent(&task_id, &selection).unwrap();
+        }
+
+        let store = DesktopWorktreeStore::open(&database).unwrap();
+        assert_eq!(store.initial_intent(&task_id).unwrap(), Some(selection));
+        assert!(store.clear_initial_intent(&task_id).unwrap());
+        assert_eq!(store.initial_intent(&task_id).unwrap(), None);
+    }
+
+    #[test]
+    fn pending_initial_worktree_blocks_turns_and_retry_clears_the_gate() {
+        let root = TempDir::new().unwrap();
+        let repo = root.path().join("repo");
+        initialize_repository(&repo);
+        let (application, task_id) = application(&repo);
+        application
+            .set_initial_worktree_intent(&task_id, Some(&DesktopInitialWorktreeSelection::Create))
+            .unwrap();
+
+        assert!(matches!(
+            application.start_composer_turn(&task_id),
+            Err(DesktopApplicationError::Worktree(
+                DesktopWorktreeError::InitialPreparationPending(ref pending)
+            )) if pending == &task_id
+        ));
+        assert!(application.retry_initial_worktree(&task_id).unwrap());
+        assert_eq!(application.initial_worktree_intent(&task_id).unwrap(), None);
+        assert!(application.task_worktree(&task_id).unwrap().is_some());
     }
 }

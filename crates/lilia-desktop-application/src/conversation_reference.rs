@@ -14,6 +14,15 @@ impl DesktopApplication {
         limit: usize,
     ) -> Result<Vec<ChatConversationReference>, DesktopApplicationError> {
         self.get_task(current_task_id)?;
+        self.search_conversation_references_from(current_task_id, query, limit)
+    }
+
+    pub fn search_conversation_references_from(
+        &self,
+        current_task_id: &TaskId,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<ChatConversationReference>, DesktopApplicationError> {
         let query = query.trim().to_lowercase();
         if query.is_empty() {
             return Ok(Vec::new());
@@ -152,5 +161,13 @@ mod tests {
         assert_eq!(result[0].task_id, referenced_task_id.as_str());
         assert_eq!(result[0].route, "/projects/project-1/tasks/task-reference");
         assert_eq!(result[0].project_name.as_deref(), Some("Native 搜索"));
+
+        let reserved_draft_id = TaskId::new("task-draft-reserved").unwrap();
+        let draft_result = app
+            .search_conversation_references_from(&reserved_draft_id, "设计", 12)
+            .unwrap();
+        assert_eq!(draft_result.len(), 1);
+        assert_eq!(draft_result[0].task_id, referenced_task_id.as_str());
+        assert!(app.get_task(&reserved_draft_id).is_err());
     }
 }

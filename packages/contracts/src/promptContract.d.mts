@@ -63,6 +63,11 @@ export interface PromptAssistantContract {
     requestInstruction: string;
     tierPolicy: Record<"light" | "normal" | "deep", string>;
   };
+  contextCompaction: {
+    systemInstruction: string;
+    requestInstruction: string;
+    successMessage: string;
+  };
 }
 
 export interface PromptSuggestionContract {

@@ -341,7 +341,7 @@ fn run_clone_operation<F>(
     }
 
     let mut command = command_factory(&repository, &reservation.path, &parent);
-    hide_console_window(&mut command);
+    configure_clone_process(&mut command);
     command.stdout(Stdio::null()).stderr(Stdio::piped());
     let mut child = match command.spawn() {
         Ok(child) => child,
@@ -641,19 +641,25 @@ impl Drop for CloneProcessTree {
 }
 
 #[cfg(not(windows))]
-struct CloneProcessTree;
+struct CloneProcessTree {
+    #[cfg(unix)]
+    process_group_id: i32,
+}
 
 #[cfg(not(windows))]
 impl CloneProcessTree {
-    fn attach(_child: &Child) -> Result<Self, ()> {
-        Ok(Self)
+    fn attach(child: &Child) -> Result<Self, ()> {
+        Ok(Self {
+            #[cfg(unix)]
+            process_group_id: child.id().try_into().map_err(|_| ())?,
+        })
     }
 }
 
 #[cfg(windows)]
 fn terminate_process_tree(child: &Child, process_tree: Option<&CloneProcessTree>) {
     let mut command = Command::new("taskkill");
-    hide_console_window(&mut command);
+    configure_clone_process(&mut command);
     let _ = command
         .args(["/PID", &child.id().to_string(), "/T", "/F"])
         .stdout(Stdio::null())
@@ -664,7 +670,16 @@ fn terminate_process_tree(child: &Child, process_tree: Option<&CloneProcessTree>
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+fn terminate_process_tree(_child: &Child, process_tree: Option<&CloneProcessTree>) {
+    if let Some(process_tree) = process_tree {
+        unsafe {
+            libc::kill(-process_tree.process_group_id, libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
 fn terminate_process_tree(_child: &Child, _process_tree: Option<&CloneProcessTree>) {}
 
 fn derive_repository_name(repository: &str) -> String {
@@ -722,15 +737,22 @@ fn reserve_unique_target_path(
 }
 
 #[cfg(windows)]
-fn hide_console_window(command: &mut Command) {
+fn configure_clone_process(command: &mut Command) {
     use std::os::windows::process::CommandExt;
 
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
     command.creation_flags(CREATE_NO_WINDOW);
 }
 
-#[cfg(not(windows))]
-fn hide_console_window(_command: &mut Command) {}
+#[cfg(unix)]
+fn configure_clone_process(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+
+    command.process_group(0);
+}
+
+#[cfg(not(any(windows, unix)))]
+fn configure_clone_process(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {

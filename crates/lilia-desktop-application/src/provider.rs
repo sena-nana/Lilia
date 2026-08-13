@@ -416,6 +416,37 @@ pub struct DesktopProviderCredentialImportInput {
 }
 
 impl DesktopApplication {
+    pub(crate) fn read_host_credential_text_result(
+        &self,
+        key: &str,
+    ) -> Result<Option<String>, DesktopApplicationError> {
+        match self.inner.host.execute(
+            &self.inner.host_context,
+            DesktopHostAction::Credential(DesktopCredentialAction::Read {
+                key: key.to_owned(),
+            }),
+        )? {
+            DesktopHostResult::Credential(secret) => secret
+                .map(|secret| {
+                    String::from_utf8(secret.into_inner()).map_err(|_| {
+                        DesktopApplicationError::InvalidInput {
+                            field: "credential",
+                            message: "stored credential is not valid UTF-8 text".to_owned(),
+                        }
+                    })
+                })
+                .transpose(),
+            _ => Err(DesktopApplicationError::InvalidInput {
+                field: "credential",
+                message: "credential read returned an unexpected host result".to_owned(),
+            }),
+        }
+    }
+
+    pub(crate) fn read_host_credential_text(&self, key: &str) -> Option<String> {
+        self.read_host_credential_text_result(key).ok().flatten()
+    }
+
     pub fn provider_runtime_settings(
         &self,
     ) -> Result<DesktopAgentRuntimeSettings, DesktopApplicationError> {

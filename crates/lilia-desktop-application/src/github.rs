@@ -467,7 +467,7 @@ impl DesktopApplication {
         Ok(Some(stored.binding))
     }
 
-    fn reconcile_github_binding(
+    pub(crate) fn reconcile_github_binding(
         &self,
         token_required: bool,
     ) -> Result<(Option<DesktopGitHubBindingMetadata>, Option<String>), DesktopGitHubError> {
@@ -574,14 +574,17 @@ fn github_client_id() -> Option<&'static str> {
     (!GITHUB_CLIENT_ID.trim().is_empty()).then_some(GITHUB_CLIENT_ID.trim())
 }
 
-fn github_client() -> Result<Client, DesktopGitHubError> {
+pub(crate) fn github_client() -> Result<Client, DesktopGitHubError> {
     Client::builder()
         .timeout(Duration::from_secs(8))
         .build()
         .map_err(|error| request_error("building the HTTP client", error))
 }
 
-fn github_request_headers(builder: RequestBuilder, token: Option<&str>) -> RequestBuilder {
+pub(crate) fn github_request_headers(
+    builder: RequestBuilder,
+    token: Option<&str>,
+) -> RequestBuilder {
     let builder = builder
         .header(USER_AGENT, GITHUB_USER_AGENT)
         .header(ACCEPT, GITHUB_ACCEPT)

@@ -36,9 +36,10 @@ pub use model_turn::{
 };
 pub use mutsuki_agent_runtime::SecretStore;
 pub use native_runtime::{
-    NativeAgentKitRuntime, NativeControlModelRequest, NativeControlModelResult,
-    NativeModelRuntimeConfiguration, NativeRuntimeBootstrap, NativeRuntimeError, NativeRuntimeMode,
-    NativeTurnStreamPage, SharedNativeAgentKitRuntime, TurnCancellationDisposition,
+    NativeAgentKitRuntime, NativeContextCompactionSource, NativeControlModelRequest,
+    NativeControlModelResult, NativeModelRuntimeConfiguration, NativeRuntimeBootstrap,
+    NativeRuntimeError, NativeRuntimeMode, NativeTurnStreamPage, SharedNativeAgentKitRuntime,
+    TurnCancellationDisposition,
 };
 pub use profile::{
     build_product_coding_profile, build_product_coding_profile_id, profile_has_credential_refs,

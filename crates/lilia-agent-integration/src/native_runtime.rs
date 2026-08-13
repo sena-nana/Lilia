@@ -25,12 +25,15 @@ use mutsuki_agent_contracts::{
     AgentModelGenerateRequest, AgentPermissionMode, AgentRole, AgentRunRequest, AgentRunResult,
     AgentRunStatus, AgentRuntimeProfile, AgentSession, AgentSessionAppendRequest,
     AgentSessionCreateRequest, AgentSessionForkRequest, AgentSessionGetRequest, AgentToolCall,
-    AgentToolResultMetadata, AgentWorkspaceRef, InteractionRequest, InteractionResolution,
-    ModelGenerateRequest, PermissionDecision, PermissionDecisionKind, AGENT_RUN_PROTOCOL,
-    AGENT_SESSION_APPEND_PROTOCOL, AGENT_SESSION_CREATE_PROTOCOL, AGENT_SESSION_FORK_PROTOCOL,
-    AGENT_SESSION_GET_PROTOCOL,
+    AgentToolResultMetadata, AgentUsage, AgentWorkspaceRef, InteractionRequest,
+    InteractionResolution, ModelGenerateRequest, PermissionDecision, PermissionDecisionKind,
+    AGENT_RUN_PROTOCOL, AGENT_SESSION_APPEND_PROTOCOL, AGENT_SESSION_CREATE_PROTOCOL,
+    AGENT_SESSION_FORK_PROTOCOL, AGENT_SESSION_GET_PROTOCOL,
 };
-use mutsuki_agent_runtime::{SessionEventSubscription, SessionPersistence};
+use mutsuki_agent_runtime::{
+    SessionEventSubscription, SessionPersistence, TranscriptContextDisposition,
+    TranscriptContextWindow,
+};
 use mutsuki_runtime_contracts::TaskHandle;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -72,6 +75,8 @@ pub struct NativeModelRuntimeConfiguration {
 pub struct NativeControlModelRequest {
     pub system_instruction: String,
     pub prompt: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
     #[serde(default = "default_control_model_output_tokens")]
     pub max_output_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +91,19 @@ pub struct NativeControlModelResult {
     pub text: String,
     pub input_tokens: u64,
     pub output_tokens: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeContextCompactionSource {
+    pub source_session_id: String,
+    pub profile_id: String,
+    pub title: Option<String>,
+    pub messages: Vec<AgentMessage>,
+    pub source_message_count: usize,
+    pub omitted_message_count: usize,
+    pub estimated_tokens: u64,
+    pub budget_satisfied: bool,
 }
 
 const fn default_control_model_output_tokens() -> u64 {
@@ -405,8 +423,14 @@ impl NativeAgentKitRuntime {
                 "control model system instruction and prompt are required".into(),
             ));
         }
+        let turn_context = request
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+            .map(|model| json!({ "model": model }));
         let (mut plan, _) = self
-            .turn_plan(None)
+            .turn_plan(turn_context.as_ref())
             .map_err(|error| NativeRuntimeError::Agent(error.to_string()))?;
         plan.provider
             .compatibility
@@ -481,6 +505,185 @@ impl NativeAgentKitRuntime {
             input_tokens: generated.usage.input_tokens,
             output_tokens: generated.usage.output_tokens,
         })
+    }
+
+    pub fn prepare_product_session_compaction(
+        &self,
+        source_session_id: &str,
+        max_context_tokens: u64,
+    ) -> Result<NativeContextCompactionSource, AgentKitPortError> {
+        if max_context_tokens == 0 {
+            return Err(AgentKitPortError::InvalidInput(
+                "context compaction token budget must be greater than zero".into(),
+            ));
+        }
+        self.binding(source_session_id)?;
+        let snapshot = self.session_snapshot(source_session_id)?;
+        let profile_prompt = self
+            .current_product_profile()
+            .filter(|profile| profile.profile_id == snapshot.profile_id)
+            .map(|profile| render_profile_prompt(&profile))
+            .unwrap_or_default();
+        let source_messages = snapshot
+            .messages
+            .iter()
+            .filter(|message| {
+                !(message.role == AgentRole::System
+                    && !profile_prompt.is_empty()
+                    && message.content == profile_prompt)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if source_messages.is_empty() {
+            return Err(AgentKitPortError::InvalidInput(
+                "Agent session has no conversation context to compact".into(),
+            ));
+        }
+        let source_message_count = source_messages.len();
+        let prepared = TranscriptContextWindow.prepare(&source_messages, Some(max_context_tokens));
+        let omitted_message_count = match prepared.disposition {
+            TranscriptContextDisposition::Unchanged => 0,
+            TranscriptContextDisposition::Compacted { dropped_messages } => dropped_messages,
+        };
+        Ok(NativeContextCompactionSource {
+            source_session_id: source_session_id.to_owned(),
+            profile_id: snapshot.profile_id,
+            title: snapshot.title,
+            messages: prepared.messages,
+            source_message_count,
+            omitted_message_count,
+            estimated_tokens: prepared.estimated_tokens,
+            budget_satisfied: prepared.budget_satisfied,
+        })
+    }
+
+    pub fn create_compacted_product_session(
+        &self,
+        task_id: &TaskId,
+        source: &NativeContextCompactionSource,
+        target_session_id: &str,
+        turn_id: &str,
+        generated: &NativeControlModelResult,
+        confirmation: &str,
+    ) -> Result<AgentSession, AgentKitPortError> {
+        if target_session_id.trim().is_empty() || target_session_id == source.source_session_id {
+            return Err(AgentKitPortError::InvalidInput(
+                "context compaction requires a distinct target session id".into(),
+            ));
+        }
+        if turn_id.trim().is_empty()
+            || generated.text.trim().is_empty()
+            || confirmation.trim().is_empty()
+        {
+            return Err(AgentKitPortError::InvalidInput(
+                "context compaction turn, summary and confirmation are required".into(),
+            ));
+        }
+        let source_binding = self.binding(&source.source_session_id)?;
+        if source_binding.task_id != task_id.as_str()
+            || source_binding.profile_id != source.profile_id
+        {
+            return Err(AgentKitPortError::InvalidInput(
+                "context compaction source does not match its product binding".into(),
+            ));
+        }
+        self.open_bound_session_with_title(
+            task_id,
+            target_session_id,
+            Some(&source.profile_id),
+            source.title.clone(),
+        )?;
+        let host = self.host_for_plan(None, false)?;
+        let target = self.session_snapshot_on_host(&host, target_session_id)?;
+        let mut messages = Vec::new();
+        if let Some(prompt) = self
+            .current_product_profile()
+            .filter(|profile| profile.profile_id == source.profile_id)
+            .map(|profile| render_profile_prompt(&profile))
+            .filter(|prompt| !prompt.is_empty())
+        {
+            messages.push(AgentMessage::system(prompt));
+        }
+        let mut summary = AgentMessage::system(generated.text.trim());
+        summary.metadata = Some(json!({
+            "context_compaction": {
+                "strategy": "lilia_model_summary_v1",
+                "source_session_id": source.source_session_id,
+                "source_message_count": source.source_message_count,
+                "omitted_message_count": source.omitted_message_count,
+                "provider_id": generated.provider_id,
+                "model": generated.model,
+                "input_tokens": generated.input_tokens,
+                "output_tokens": generated.output_tokens,
+            }
+        }));
+        messages.push(summary);
+        messages.push(AgentMessage::assistant(confirmation.trim()));
+
+        let mut sequence = target.next_event_sequence;
+        let mut next_event = |summary: &str, event| {
+            sequence = sequence.saturating_add(1);
+            AgentEventEnvelope {
+                session_id: target_session_id.to_owned(),
+                sequence,
+                meta: timestamped_event_meta(
+                    format!("{turn_id}:context-compaction:{sequence}"),
+                    summary,
+                    turn_id,
+                ),
+                event,
+            }
+        };
+        let events = vec![
+            next_event(
+                "context compaction started",
+                AgentEvent::TurnState {
+                    turn_id: turn_id.to_owned(),
+                    status: "running".into(),
+                },
+            ),
+            next_event(
+                "context compaction usage",
+                AgentEvent::Usage {
+                    turn_id: turn_id.to_owned(),
+                    usage: AgentUsage {
+                        input_tokens: generated.input_tokens,
+                        output_tokens: generated.output_tokens,
+                        total_tokens: generated
+                            .input_tokens
+                            .saturating_add(generated.output_tokens),
+                    },
+                },
+            ),
+            next_event(
+                "context compaction completed",
+                AgentEvent::FinalResponse {
+                    turn_id: turn_id.to_owned(),
+                    summary: confirmation.trim().to_owned(),
+                    result: None,
+                },
+            ),
+            next_event(
+                "context compaction turn completed",
+                AgentEvent::TurnState {
+                    turn_id: turn_id.to_owned(),
+                    status: "completed".into(),
+                },
+            ),
+        ];
+        let compacted: AgentSession = self.call(
+            &host,
+            "session-context-compaction",
+            AGENT_SESSION_APPEND_PROTOCOL,
+            AgentSessionAppendRequest {
+                session_id: target_session_id.to_owned(),
+                messages,
+                events: events.clone(),
+                advance_turn: true,
+            },
+        )?;
+        self.project_and_observe_turn_events(target_session_id, turn_id, &events)?;
+        Ok(compacted)
     }
 
     pub fn configure_subagents(
@@ -594,11 +797,13 @@ impl NativeAgentKitRuntime {
         workflow_kind: Option<&str>,
     ) -> Result<AgentRuntimeProfile, NativeRuntimeError> {
         let profile = self.bootstrap.product_profile(workflow_kind)?;
-        *self
-            .product_profile
-            .lock()
-            .map_err(|_| NativeRuntimeError::Agent("product profile lock poisoned".into()))? =
-            Some(profile.clone());
+        {
+            *self
+                .product_profile
+                .lock()
+                .map_err(|_| NativeRuntimeError::Agent("product profile lock poisoned".into()))? =
+                Some(profile.clone());
+        }
         Ok(profile)
     }
 
@@ -735,6 +940,18 @@ impl NativeAgentKitRuntime {
         let resume_without_prompt = persisted_turn_has_durable_progress(&snapshot, turn_id);
         let mut messages = Vec::new();
         if !resume_without_prompt {
+            let system_prompt = self
+                .current_product_profile()
+                .as_ref()
+                .map(render_profile_prompt)
+                .unwrap_or_default();
+            if !system_prompt.is_empty()
+                && !snapshot.messages.iter().any(|message| {
+                    message.role == AgentRole::System && message.content == system_prompt
+                })
+            {
+                messages.push(AgentMessage::system(system_prompt));
+            }
             if let Some(context) = &context {
                 messages.push(AgentMessage::system(format!(
                     "Product-provided workspace and turn context (authoritative for this turn): {context}"
@@ -1256,6 +1473,16 @@ impl NativeAgentKitRuntime {
         session_id: &str,
         profile_id: Option<&str>,
     ) -> Result<AgentSessionRef, AgentKitPortError> {
+        self.open_bound_session_with_title(task_id, session_id, profile_id, None)
+    }
+
+    fn open_bound_session_with_title(
+        &self,
+        task_id: &TaskId,
+        session_id: &str,
+        profile_id: Option<&str>,
+        title: Option<String>,
+    ) -> Result<AgentSessionRef, AgentKitPortError> {
         if session_id.trim().is_empty() {
             return Err(AgentKitPortError::InvalidInput(
                 "session_id is required".into(),
@@ -1288,7 +1515,7 @@ impl NativeAgentKitRuntime {
             AgentSessionCreateRequest {
                 session_id: Some(session_id.to_string()),
                 profile_id: profile_id.clone(),
-                title: None,
+                title,
             },
         )?;
         if session.session_id != session_id {
@@ -2182,6 +2409,23 @@ fn workspace_cwd(context: Option<&Value>) -> Option<String> {
         .map(str::to_string)
 }
 
+fn render_profile_prompt(profile: &AgentRuntimeProfile) -> String {
+    profile
+        .system_instructions
+        .iter()
+        .map(String::as_str)
+        .chain(
+            profile
+                .prompt_fragments
+                .iter()
+                .map(|fragment| fragment.content.as_str()),
+        )
+        .map(str::trim)
+        .filter(|fragment| !fragment.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
 fn agent_run_metadata(
     workspace: Option<AgentWorkspaceRef>,
     turn_id: &str,
@@ -2911,6 +3155,113 @@ mod tests {
             .find(|event| event.kind == "usage")
             .expect("usage projection");
         assert!(usage.payload["createdAt"].as_u64().unwrap_or_default() > 0);
+    }
+
+    #[test]
+    fn product_profile_prompt_is_persisted_once_across_session_turns() {
+        let (runtime, server) = configured_runtime(vec![final_response(), final_response()]);
+        let session = session(&runtime, "profile-prompt");
+
+        for turn in ["turn-one", "turn-two"] {
+            runtime
+                .submit_turn_with_context_streaming(&session, turn, turn, None)
+                .unwrap();
+        }
+        server.join().unwrap();
+
+        let profile = runtime.current_product_profile().unwrap();
+        let expected = render_profile_prompt(&profile);
+        let snapshot = runtime.session_snapshot(session.as_str()).unwrap();
+        assert_eq!(
+            snapshot
+                .messages
+                .iter()
+                .filter(|message| {
+                    message.role == AgentRole::System && message.content == expected
+                })
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn context_compaction_creates_a_new_durable_session_without_mutating_the_source() {
+        let runtime = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        let task_id = TaskId::new("task-context-compaction").unwrap();
+        let source_session_id = "session-context-compaction-source";
+        runtime
+            .open_bound_session(
+                &task_id,
+                source_session_id,
+                Some("profile-context-compaction"),
+            )
+            .unwrap();
+        let host = runtime.host_for_plan(None, false).unwrap();
+        let source_before: AgentSession = runtime
+            .call(
+                &host,
+                "session-context-compaction-source",
+                AGENT_SESSION_APPEND_PROTOCOL,
+                AgentSessionAppendRequest {
+                    session_id: source_session_id.into(),
+                    messages: vec![
+                        AgentMessage::user("keep the workspace changes"),
+                        AgentMessage::assistant("the document editor is complete"),
+                        AgentMessage::user("continue with diagnostics"),
+                    ],
+                    events: Vec::new(),
+                    advance_turn: true,
+                },
+            )
+            .unwrap();
+        let source = runtime
+            .prepare_product_session_compaction(source_session_id, 8_000)
+            .unwrap();
+        assert!(source.budget_satisfied);
+        assert_eq!(source.source_message_count, 3);
+
+        let target = runtime
+            .create_compacted_product_session(
+                &task_id,
+                &source,
+                "session-context-compaction-target",
+                "turn-context-compaction",
+                &NativeControlModelResult {
+                    provider_id: "provider-test".into(),
+                    model: "model-test".into(),
+                    text: "目标：保留工作区改动。当前：文档编辑器已完成。下一步：继续诊断。".into(),
+                    input_tokens: 30,
+                    output_tokens: 12,
+                },
+                "上下文已压缩，可以继续对话。",
+            )
+            .unwrap();
+
+        assert_eq!(
+            runtime.session_snapshot(source_session_id).unwrap(),
+            source_before
+        );
+        assert!(target.messages.iter().any(|message| {
+            message.role == AgentRole::System
+                && message
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.get("context_compaction"))
+                    .is_some()
+        }));
+        assert!(target.events.iter().any(|event| matches!(
+            &event.event,
+            AgentEvent::FinalResponse { turn_id, summary, .. }
+                if turn_id == "turn-context-compaction"
+                    && summary == "上下文已压缩，可以继续对话。"
+        )));
+        assert!(target.events.iter().any(|event| matches!(
+            &event.event,
+            AgentEvent::TurnState { turn_id, status }
+                if turn_id == "turn-context-compaction" && status == "completed"
+        )));
     }
 
     #[test]

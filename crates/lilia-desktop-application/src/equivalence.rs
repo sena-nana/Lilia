@@ -10,7 +10,7 @@ use crate::{
     DesktopTodoPriority, DesktopTodoSource, MemoryScope, MilestoneStatus, ProjectQuery, TaskQuery,
 };
 
-const SNAPSHOT_SCHEMA_VERSION: u32 = 8;
+const SNAPSHOT_SCHEMA_VERSION: u32 = 9;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,6 +27,7 @@ pub struct DesktopEquivalenceSnapshot {
     pub roadmap: Vec<DesktopEquivalenceMilestoneFact>,
     pub memories: Vec<DesktopEquivalenceMemoryFact>,
     pub memory_settings: DesktopEquivalenceMemorySettingsFact,
+    pub conversation_suggestions: DesktopEquivalenceConversationSuggestionSettingsFact,
     pub automations: Vec<DesktopEquivalenceAutomationFact>,
     pub skills_registry_revision: u64,
     pub skills: Vec<DesktopEquivalenceSkillFact>,
@@ -166,6 +167,13 @@ pub struct DesktopEquivalenceMemorySettingsFact {
     pub enabled: bool,
     pub baseline_injection_enabled: bool,
     pub cooldown_turns: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopEquivalenceConversationSuggestionSettingsFact {
+    pub enabled: bool,
+    pub source: crate::DesktopConversationSuggestionSource,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -556,6 +564,11 @@ impl DesktopApplication {
             baseline_injection_enabled: memory_settings.baseline_injection_enabled,
             cooldown_turns: memory_settings.cooldown_turns,
         };
+        let conversation_suggestions = self.conversation_suggestion_settings()?;
+        let conversation_suggestions = DesktopEquivalenceConversationSuggestionSettingsFact {
+            enabled: conversation_suggestions.enabled,
+            source: conversation_suggestions.source,
+        };
 
         let mut automations = self
             .list_automation_workflows()?
@@ -759,6 +772,7 @@ impl DesktopApplication {
             roadmap,
             memories,
             memory_settings,
+            conversation_suggestions,
             automations,
             skills_registry_revision: extensions.skills_registry_revision,
             skills,
@@ -866,6 +880,7 @@ mod tests {
             .create_task(DesktopTaskCreate {
                 id: task_id.clone(),
                 project_id: Some(project_id.clone()),
+                parent_id: None,
                 title: "等价任务".to_owned(),
             })
             .unwrap();
@@ -873,6 +888,7 @@ mod tests {
             .create_task(DesktopTaskCreate {
                 id: TaskId::new("foreign-task").unwrap(),
                 project_id: None,
+                parent_id: None,
                 title: "不应导出".to_owned(),
             })
             .unwrap();
@@ -972,6 +988,7 @@ mod tests {
                 priority: DesktopTodoPriority::High,
                 attachments: Vec::new(),
                 conversation_references: Vec::new(),
+                workflow: None,
             })
             .unwrap();
         application
@@ -1021,7 +1038,7 @@ mod tests {
 
         let snapshot = application.debug_equivalence_snapshot(fixture_id).unwrap();
 
-        assert_eq!(snapshot.schema_version, 8);
+        assert_eq!(snapshot.schema_version, 9);
         assert_eq!(snapshot.projects.len(), 1);
         assert_eq!(snapshot.tasks.len(), 1);
         assert_eq!(snapshot.conversations.len(), 1);
@@ -1057,6 +1074,11 @@ mod tests {
         assert!(!snapshot.memory_settings.enabled);
         assert!(!snapshot.memory_settings.baseline_injection_enabled);
         assert_eq!(snapshot.memory_settings.cooldown_turns, 10);
+        assert!(snapshot.conversation_suggestions.enabled);
+        assert_eq!(
+            snapshot.conversation_suggestions.source,
+            crate::DesktopConversationSuggestionSource::AssistantAi
+        );
         assert_eq!(snapshot.automations.len(), 1);
         assert_eq!(
             snapshot.automations[0].name,

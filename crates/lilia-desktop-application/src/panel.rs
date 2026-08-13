@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub const RESOURCES_PANEL_ID: &str = "resources";
 pub const TASK_INSPECTOR_PANEL_ID: &str = "task-inspector";
 pub const CODING_TOOLS_PANEL_ID: &str = "coding-tools";
+pub const IAB_PANEL_ID: &str = "iab";
 pub const DIAGNOSTICS_PANEL_ID: &str = "diagnostics";
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -535,6 +536,13 @@ pub fn default_panel_states() -> Vec<PanelState> {
             extent: 360.0,
         },
         PanelState {
+            id: PanelId(IAB_PANEL_ID.to_owned()),
+            slot: DockSlot::Right,
+            visible: false,
+            active: false,
+            extent: 420.0,
+        },
+        PanelState {
             id: PanelId(DIAGNOSTICS_PANEL_ID.to_owned()),
             slot: DockSlot::Bottom,
             visible: false,
@@ -878,13 +886,20 @@ mod tests {
     fn default_layout_is_a_valid_ide_shell_layout() {
         let layout = PanelLayoutSnapshot::default();
         layout.validate().unwrap();
-        assert_eq!(layout.panels.len(), 4);
+        assert_eq!(layout.panels.len(), 5);
         assert_eq!(
             layout
                 .active_panel(DockSlot::Left)
                 .map(|panel| panel.id.as_str()),
             Some(RESOURCES_PANEL_ID)
         );
+        let iab = layout
+            .panel(&PanelId::new(IAB_PANEL_ID).unwrap())
+            .expect("default layout includes the IAB dock");
+        assert_eq!(iab.slot, DockSlot::Right);
+        assert!(!iab.visible);
+        assert!(!iab.active);
+        assert_eq!(iab.extent, 420.0);
         assert!(layout.active_panel(DockSlot::Right).is_none());
         assert!(layout.active_panel(DockSlot::Bottom).is_none());
     }

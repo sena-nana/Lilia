@@ -5,15 +5,18 @@
 //! second session or private product service.
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use mutsuki_agent_contracts::{
     AgentMemoryQueryRequest, AgentMemoryWriteRequest, AgentWorkspaceRef, CodeFileChange,
     CodeIndexBatch, CodeSearchMode, CodeSearchQuery, CodeWorkspaceRef, ComputerUseServiceRequest,
-    GitServiceRequest, GitServiceResponse, LspServerDescriptor, LspWorkspaceId, McpPromptGetResult,
-    McpResourceReadResult, McpServerManifest, McpServerState, McpTransportKind, MemoryScopeRef,
-    SkillLoadRequest, SkillSourceKind, WorkspacePathRequest,
+    GitDiffRequest, GitDiffScope, GitServiceRequest, GitServiceResponse, GitWorktreeRef,
+    LspDiagnostic, LspDocumentId, LspDocumentSnapshot, LspLocation, LspPosition, LspQueryResult,
+    LspRange, LspServerDescriptor, LspWorkspaceId, McpPromptGetResult, McpResourceReadResult,
+    McpServerManifest, McpServerState, McpTransportKind, MemoryScopeRef, SkillLoadRequest,
+    SkillSourceKind, WorkspacePathRequest,
 };
 use mutsuki_agent_plugin_code_index::SERVICE_ID as CODE_INDEX_SERVICE_ID;
 use mutsuki_agent_plugin_computer_use::SERVICE_ID as COMPUTER_USE_SERVICE_ID;
@@ -118,16 +121,7 @@ impl NativeAgentKitRuntime {
 
     /// Call SharedGitService Status after Discover — product Git UI path.
     pub fn shared_git_status(&self, path: &str) -> Result<Value, NativeRuntimeError> {
-        let discovered = self.shared_git_discover(path)?;
-        let GitServiceResponse::Discovered { worktree, .. } =
-            serde_json::from_value::<GitServiceResponse>(discovered).map_err(|err| {
-                NativeRuntimeError::Agent(format!("git discover response decode failed: {err}"))
-            })?
-        else {
-            return Err(NativeRuntimeError::Agent(
-                "git discover returned unexpected response shape".into(),
-            ));
-        };
+        let worktree = self.shared_git_worktree(path)?;
         let response = self
             .bootstrap()
             .bundle()
@@ -138,14 +132,82 @@ impl NativeAgentKitRuntime {
         Ok(response)
     }
 
+    /// Read a working-tree or staged diff through the same Git service as Agent tools.
+    pub fn shared_git_diff(
+        &self,
+        path: &str,
+        scope: GitDiffScope,
+    ) -> Result<Value, NativeRuntimeError> {
+        let worktree = self.shared_git_worktree(path)?;
+        let bundle = self.bootstrap().bundle();
+        let response = bundle
+            .git
+            .call_value(serde_json::to_value(GitServiceRequest::Diff {
+                request: GitDiffRequest {
+                    worktree,
+                    scope,
+                    base: None,
+                    head: None,
+                    paths: Vec::new(),
+                },
+            })?)?;
+        let mut response =
+            serde_json::from_value::<GitServiceResponse>(response).map_err(|error| {
+                NativeRuntimeError::Agent(format!("git diff response decode failed: {error}"))
+            })?;
+        if let GitServiceResponse::Diff(diff) = &mut response {
+            if diff.inline_patch.is_none() {
+                if let Some(reference) = diff.patch_ref.as_ref() {
+                    let content = bundle.resources.read_json(reference)?;
+                    let text = content.get("text").and_then(Value::as_str).ok_or_else(|| {
+                        NativeRuntimeError::Agent(
+                            "git diff resource did not contain text".to_owned(),
+                        )
+                    })?;
+                    diff.inline_patch = Some(text.to_owned());
+                }
+            }
+        }
+        Ok(serde_json::to_value(response)?)
+    }
+
+    fn shared_git_worktree(&self, path: &str) -> Result<GitWorktreeRef, NativeRuntimeError> {
+        let discovered = self.shared_git_discover(path)?;
+        let GitServiceResponse::Discovered { worktree, .. } =
+            serde_json::from_value::<GitServiceResponse>(discovered).map_err(|error| {
+                NativeRuntimeError::Agent(format!("git discover response decode failed: {error}"))
+            })?
+        else {
+            return Err(NativeRuntimeError::Agent(
+                "git discover returned unexpected response shape".into(),
+            ));
+        };
+        Ok(worktree)
+    }
+
     /// Synchronize text files from a real workspace and search the shared index.
     ///
     /// The Host supplies filesystem facts; AgentKit owns index state and search.
     pub fn shared_code_index_workspace_search(
         &self,
+        workspace_id: &str,
+        root: &str,
+        query: &str,
+    ) -> Result<Value, NativeRuntimeError> {
+        self.shared_code_index_workspace_search_with_mode(
+            workspace_id,
+            root,
+            query,
+            CodeSearchMode::Text,
+        )
+    }
+
+    pub fn shared_code_index_workspace_search_with_mode(
+        &self,
         _workspace_id: &str,
         root: &str,
         query: &str,
+        mode: CodeSearchMode,
     ) -> Result<Value, NativeRuntimeError> {
         let root = canonical_workspace_root(root)?;
         let workspace = self.synchronize_code_index(&root)?;
@@ -153,7 +215,7 @@ impl NativeAgentKitRuntime {
         let result = service.search(CodeSearchQuery {
             workspace,
             query: query.to_string(),
-            mode: CodeSearchMode::Text,
+            mode,
             path_prefix: None,
             limit: 16,
             include_overlay: false,
@@ -470,6 +532,112 @@ impl NativeAgentKitRuntime {
         Ok(serde_json::to_value(lsp.workspace_status(&workspace)?)?)
     }
 
+    pub fn shared_lsp_open_document(
+        &self,
+        root: &str,
+        path: &Path,
+        language_id: &str,
+        version: i64,
+        text: String,
+    ) -> Result<LspDocumentId, NativeRuntimeError> {
+        let root = canonical_workspace_root(root)?;
+        let path = fs::canonicalize(path).map_err(|error| {
+            NativeRuntimeError::Agent(format!(
+                "cannot canonicalize LSP document {}: {error}",
+                path.display()
+            ))
+        })?;
+        if !path.is_file() || !path.starts_with(&root) {
+            return Err(NativeRuntimeError::Agent(format!(
+                "LSP document {} is not a file below {}",
+                path.display(),
+                root.display()
+            )));
+        }
+        let workspace_id = canonical_workspace_id(&root);
+        self.shared_lsp_open_workspace(&workspace_id, &root.to_string_lossy())?;
+        let document = LspDocumentId {
+            workspace: LspWorkspaceId(workspace_id),
+            uri: reqwest::Url::from_file_path(&path)
+                .map_err(|_| {
+                    NativeRuntimeError::Agent(format!(
+                        "cannot create document URI for {}",
+                        path.display()
+                    ))
+                })?
+                .to_string(),
+        };
+        self.bootstrap()
+            .bundle()
+            .lsp
+            .open_document(LspDocumentSnapshot {
+                document: document.clone(),
+                language_id: language_id.to_owned(),
+                version,
+                text,
+            })?;
+        Ok(document)
+    }
+
+    pub fn shared_lsp_change_document(
+        &self,
+        document: &LspDocumentId,
+        version: i64,
+        text: String,
+    ) -> Result<(), NativeRuntimeError> {
+        self.bootstrap()
+            .bundle()
+            .lsp
+            .change_document(document, version, text)?;
+        Ok(())
+    }
+
+    pub fn shared_lsp_save_document(
+        &self,
+        document: &LspDocumentId,
+        text: String,
+    ) -> Result<(), NativeRuntimeError> {
+        self.bootstrap()
+            .bundle()
+            .lsp
+            .save_document(document, Some(text))?;
+        Ok(())
+    }
+
+    pub fn shared_lsp_close_document(
+        &self,
+        document: &LspDocumentId,
+    ) -> Result<(), NativeRuntimeError> {
+        self.bootstrap().bundle().lsp.close_document(document)?;
+        Ok(())
+    }
+
+    pub fn shared_lsp_document_diagnostics(
+        &self,
+        document: &LspDocumentId,
+    ) -> Result<Vec<LspDiagnostic>, NativeRuntimeError> {
+        self.bootstrap()
+            .bundle()
+            .lsp
+            .diagnostics(document)
+            .map_err(NativeRuntimeError::from)
+    }
+
+    /// Resolve definition locations through the same LSP session as Agent tools.
+    ///
+    /// LSP permits `Location`, `Location[]`, and `LocationLink[]` response shapes;
+    /// product callers receive one normalized contract regardless of server.
+    pub fn shared_lsp_definition(
+        &self,
+        document: &LspDocumentId,
+        position: LspPosition,
+    ) -> Result<Vec<LspLocation>, NativeRuntimeError> {
+        let bundle = self.bootstrap().bundle();
+        let result = bundle.lsp.definition(document, position)?;
+        let value = materialize_lsp_query_result(bundle, result)?;
+        normalize_lsp_locations(value)
+    }
+
     /// Prepare the exact shared workspace state exposed to the model.
     ///
     /// Code Index is mandatory. LSP is best-effort because a workspace may not
@@ -615,6 +783,72 @@ fn registered_mcp_transport(
             "unsupported MCP transport `{value}`"
         ))),
     }
+}
+
+fn materialize_lsp_query_result(
+    bundle: &mutsuki_agent_bundle::NativeCodingAgentBundle,
+    result: LspQueryResult,
+) -> Result<Value, NativeRuntimeError> {
+    if let Some(value) = result.inline {
+        return Ok(value);
+    }
+    let reference = result.details.ok_or_else(|| {
+        NativeRuntimeError::Agent("LSP query returned neither inline nor resource data".into())
+    })?;
+    bundle
+        .resources
+        .read_json(&reference)
+        .map_err(NativeRuntimeError::from)
+}
+
+fn normalize_lsp_locations(value: Value) -> Result<Vec<LspLocation>, NativeRuntimeError> {
+    let entries = match value {
+        Value::Null => return Ok(Vec::new()),
+        Value::Array(entries) => entries,
+        value @ Value::Object(_) => vec![value],
+        _ => {
+            return Err(NativeRuntimeError::Agent(
+                "LSP definition returned an invalid response shape".into(),
+            ));
+        }
+    };
+    entries
+        .into_iter()
+        .map(|entry| {
+            if entry.get("uri").is_some() {
+                return serde_json::from_value::<LspLocation>(entry).map_err(|error| {
+                    NativeRuntimeError::Agent(format!(
+                        "LSP definition location decode failed: {error}"
+                    ))
+                });
+            }
+            let uri = entry
+                .get("targetUri")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    NativeRuntimeError::Agent(
+                        "LSP definition link did not contain targetUri".into(),
+                    )
+                })?;
+            let range = entry
+                .get("targetSelectionRange")
+                .or_else(|| entry.get("targetRange"))
+                .cloned()
+                .ok_or_else(|| {
+                    NativeRuntimeError::Agent(
+                        "LSP definition link did not contain a target range".into(),
+                    )
+                })?;
+            Ok(LspLocation {
+                uri: uri.to_owned(),
+                range: serde_json::from_value::<LspRange>(range).map_err(|error| {
+                    NativeRuntimeError::Agent(format!(
+                        "LSP definition target range decode failed: {error}"
+                    ))
+                })?,
+            })
+        })
+        .collect()
 }
 
 const MAX_INDEX_FILES: usize = 4_096;
@@ -825,6 +1059,39 @@ mod tests {
     }
 
     #[test]
+    fn lsp_definition_normalizes_locations_and_location_links() {
+        let locations = normalize_lsp_locations(serde_json::json!([
+            {
+                "uri": "file:///workspace/src/direct.rs",
+                "range": {
+                    "start": {"line": 2, "character": 3},
+                    "end": {"line": 2, "character": 9}
+                }
+            },
+            {
+                "targetUri": "file:///workspace/src/link.rs",
+                "targetRange": {
+                    "start": {"line": 4, "character": 0},
+                    "end": {"line": 6, "character": 1}
+                },
+                "targetSelectionRange": {
+                    "start": {"line": 5, "character": 2},
+                    "end": {"line": 5, "character": 8}
+                }
+            }
+        ]))
+        .unwrap();
+
+        assert_eq!(locations.len(), 2);
+        assert_eq!(locations[0].uri, "file:///workspace/src/direct.rs");
+        assert_eq!(locations[0].range.start.line, 2);
+        assert_eq!(locations[1].uri, "file:///workspace/src/link.rs");
+        assert_eq!(locations[1].range.start.line, 5);
+        assert_eq!(locations[1].range.end.character, 8);
+        assert!(normalize_lsp_locations(Value::Null).unwrap().is_empty());
+    }
+
+    #[test]
     fn shared_git_status_uses_cli_backend_on_real_repo() {
         let dir = tempfile_dir();
         assert!(Command::new("git")
@@ -860,6 +1127,81 @@ mod tests {
     }
 
     #[test]
+    fn shared_git_diff_returns_the_real_worktree_patch() {
+        let dir = tempfile_dir();
+        assert!(Command::new("git")
+            .args(["init"])
+            .current_dir(&dir)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(Path::new(&dir).join("tracked.txt"), "before\n").unwrap();
+        assert!(Command::new("git")
+            .args(["add", "tracked.txt"])
+            .current_dir(&dir)
+            .status()
+            .unwrap()
+            .success());
+        assert!(Command::new("git")
+            .args([
+                "-c",
+                "user.email=test@example.com",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-m",
+                "init"
+            ])
+            .current_dir(&dir)
+            .status()
+            .unwrap()
+            .success());
+        std::fs::write(Path::new(&dir).join("tracked.txt"), "after\n").unwrap();
+        let runtime = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        let diff = runtime
+            .shared_git_diff(&dir, GitDiffScope::WorkingTree)
+            .unwrap();
+        assert_eq!(diff.get("kind").and_then(Value::as_str), Some("diff"));
+        assert!(
+            diff.pointer("/inline_patch")
+                .and_then(Value::as_str)
+                .is_some_and(|patch| patch.contains("+after")),
+            "unexpected git diff payload: {diff}"
+        );
+
+        let large_body = "after\n".repeat(600);
+        std::fs::write(Path::new(&dir).join("tracked.txt"), &large_body).unwrap();
+        let diff = runtime
+            .shared_git_diff(&dir, GitDiffScope::WorkingTree)
+            .unwrap();
+        assert!(diff.pointer("/patch_ref").is_some());
+        assert!(
+            diff.pointer("/inline_patch")
+                .and_then(Value::as_str)
+                .is_some_and(|patch| patch.len() > 2_048 && patch.contains("+after\n+after")),
+            "unexpected materialized git diff payload: {diff}"
+        );
+        assert_eq!(diff.get("truncated").and_then(Value::as_bool), Some(true));
+
+        assert!(Command::new("git")
+            .args(["add", "tracked.txt"])
+            .current_dir(&dir)
+            .status()
+            .unwrap()
+            .success());
+        let staged = runtime.shared_git_diff(&dir, GitDiffScope::Staged).unwrap();
+        assert!(
+            staged
+                .pointer("/inline_patch")
+                .and_then(Value::as_str)
+                .is_some_and(|patch| patch.contains("+after\n+after")),
+            "unexpected staged git diff payload: {staged}"
+        );
+    }
+
+    #[test]
     fn shared_code_index_search_indexes_real_workspace_files() {
         let root = std::env::temp_dir().join("lilia-shared-index-workspace");
         let _ = std::fs::remove_dir_all(&root);
@@ -891,6 +1233,25 @@ mod tests {
         assert_eq!(
             hits[0].get("path").and_then(Value::as_str),
             Some("src/hello.rs")
+        );
+        let symbols = runtime
+            .shared_code_index_workspace_search_with_mode(
+                "ws-48",
+                &root.display().to_string(),
+                "shared_marker_alpha",
+                CodeSearchMode::Symbol,
+            )
+            .unwrap();
+        assert_eq!(
+            symbols.pointer("/query/mode").and_then(Value::as_str),
+            Some("symbol")
+        );
+        assert!(
+            symbols
+                .get("hits")
+                .and_then(Value::as_array)
+                .is_some_and(|hits| !hits.is_empty()),
+            "symbol search should return the indexed function: {symbols}"
         );
         let _ = std::fs::remove_dir_all(root);
     }
@@ -971,6 +1332,50 @@ mod tests {
         let bundle = runtime.bootstrap().bundle();
         let product = Arc::clone(&bundle.lsp);
         assert!(Arc::ptr_eq(&bundle.lsp, &product));
+    }
+
+    #[test]
+    #[ignore = "requires the rust-analyzer executable"]
+    fn shared_lsp_surfaces_unsaved_rust_diagnostics() {
+        let root = PathBuf::from(tempfile_dir());
+        std::fs::create_dir(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname=\"lilia-lsp-fixture\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+        )
+        .unwrap();
+        let path = root.join("src/main.rs");
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        let runtime = NativeRuntimeBootstrap::embedded_reference()
+            .unwrap()
+            .into_runtime();
+        let document = runtime
+            .shared_lsp_open_document(
+                &root.to_string_lossy(),
+                &path,
+                "rust",
+                1,
+                "fn main() {}\n".to_owned(),
+            )
+            .unwrap();
+        runtime
+            .shared_lsp_change_document(&document, 2, "fn main() { let _: bool = 1; }\n".to_owned())
+            .unwrap();
+
+        let mut diagnostics = Vec::new();
+        for _ in 0..100 {
+            diagnostics = runtime.shared_lsp_document_diagnostics(&document).unwrap();
+            if !diagnostics.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(
+            !diagnostics.is_empty(),
+            "rust-analyzer did not publish the unsaved type error"
+        );
+        runtime.shared_lsp_close_document(&document).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

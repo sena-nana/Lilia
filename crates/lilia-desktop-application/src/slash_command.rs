@@ -2,7 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use lilia_contracts::{
-    AgentSessionRef, ProjectionEventId, TaskId, TimelineProjectionCommand, TimelineProjectionEvent,
+    AgentSessionRef, ProjectId, ProjectionEventId, TaskId, TimelineProjectionCommand,
+    TimelineProjectionEvent,
 };
 use lilia_storage::ProjectionApplyResult;
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,15 @@ pub enum DesktopSlashCommandSource {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "type")]
+pub enum DesktopSlashCommandAction {
+    Execute,
+    Review,
+    FixSuggestion,
+    TaskWorkflow { kind: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopSlashCommand {
     pub id: String,
@@ -28,6 +38,7 @@ pub struct DesktopSlashCommand {
     pub title: String,
     pub description: String,
     pub source: DesktopSlashCommandSource,
+    pub action: DesktopSlashCommandAction,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -61,8 +72,22 @@ impl DesktopApplication {
         query: &str,
         limit: usize,
     ) -> Result<Vec<DesktopSlashCommandSearchResult>, DesktopApplicationError> {
-        self.get_task(task_id)?;
-        let workspace = self.task_workspace_path(task_id)?.map(PathBuf::from);
+        let task = self.get_task(task_id)?;
+        self.search_project_slash_commands(task.project_id.as_ref(), query, limit)
+    }
+
+    pub fn search_project_slash_commands(
+        &self,
+        project_id: Option<&ProjectId>,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<DesktopSlashCommandSearchResult>, DesktopApplicationError> {
+        let workspace = project_id
+            .map(|project_id| {
+                self.project_context(project_id)
+                    .map(|context| context.active_root().to_path_buf())
+            })
+            .transpose()?;
         Ok(search_commands(workspace.as_deref(), query, limit))
     }
 
@@ -78,7 +103,9 @@ impl DesktopApplication {
         let Some(command) = search_commands(workspace.as_deref(), &name, usize::MAX)
             .into_iter()
             .map(|result| result.command)
-            .find(|command| command.name == name)
+            .find(|command| {
+                command.name == name && command.action == DesktopSlashCommandAction::Execute
+            })
         else {
             return Ok(None);
         };
@@ -130,13 +157,14 @@ impl DesktopApplication {
 }
 
 fn native_commands() -> Vec<DesktopSlashCommand> {
-    vec![
+    let mut commands = vec![
         DesktopSlashCommand {
             id: "native:help".to_owned(),
             name: "help".to_owned(),
             title: "显示可用斜杠命令".to_owned(),
             description: "列出 Lilia 当前可执行的内置命令和项目命令。".to_owned(),
             source: DesktopSlashCommandSource::Native,
+            action: DesktopSlashCommandAction::Execute,
         },
         DesktopSlashCommand {
             id: "native:status".to_owned(),
@@ -144,8 +172,108 @@ fn native_commands() -> Vec<DesktopSlashCommand> {
             title: "显示当前会话状态".to_owned(),
             description: "写入 Native Agent 和工作目录状态。".to_owned(),
             source: DesktopSlashCommandSource::Native,
+            action: DesktopSlashCommandAction::Execute,
         },
-    ]
+        workflow_command(
+            "workflow:lilia_review",
+            "review",
+            "代码审查",
+            "对指定代码范围做审查。",
+            DesktopSlashCommandAction::Review,
+        ),
+        workflow_command(
+            "workflow:lilia_fix_suggestion",
+            "fix",
+            "修复建议",
+            "生成修复建议。",
+            DesktopSlashCommandAction::FixSuggestion,
+        ),
+    ];
+    commands.extend([
+        task_workflow_command(
+            "task",
+            "通用实现任务",
+            "按通用实现任务工作流发送。",
+            "generalTask",
+        ),
+        task_workflow_command(
+            "debug",
+            "问题定位",
+            "按问题定位工作流发送。",
+            "bugLocalization",
+        ),
+        task_workflow_command(
+            "frontend",
+            "前端与交互",
+            "按前端与交互工作流发送。",
+            "frontend",
+        ),
+        task_workflow_command(
+            "refactor",
+            "重构与结构调整",
+            "按重构与结构调整工作流发送。",
+            "refactor",
+        ),
+        task_workflow_command(
+            "verify",
+            "测试与验证",
+            "按测试与验证工作流发送。",
+            "testAndVerification",
+        ),
+        task_workflow_command(
+            "docs",
+            "文档与提示词",
+            "按文档与提示词工作流发送。",
+            "docsAndPrompt",
+        ),
+        task_workflow_command(
+            "git",
+            "Git 与发布",
+            "按 Git 与发布工作流发送。",
+            "gitAndRelease",
+        ),
+        task_workflow_command(
+            "architecture",
+            "架构图与记忆",
+            "按架构图与记忆工作流发送。",
+            "architectureAndMemory",
+        ),
+    ]);
+    commands
+}
+
+fn workflow_command(
+    id: &str,
+    name: &str,
+    title: &str,
+    description: &str,
+    action: DesktopSlashCommandAction,
+) -> DesktopSlashCommand {
+    DesktopSlashCommand {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        title: title.to_owned(),
+        description: description.to_owned(),
+        source: DesktopSlashCommandSource::Native,
+        action,
+    }
+}
+
+fn task_workflow_command(
+    name: &str,
+    title: &str,
+    description: &str,
+    kind: &str,
+) -> DesktopSlashCommand {
+    workflow_command(
+        &format!("workflow:lilia_task_workflow:{kind}"),
+        name,
+        title,
+        description,
+        DesktopSlashCommandAction::TaskWorkflow {
+            kind: kind.to_owned(),
+        },
+    )
 }
 
 fn search_commands(
@@ -180,6 +308,15 @@ fn execute_command(
     command: &DesktopSlashCommand,
     workspace: Option<&Path>,
 ) -> Result<DesktopSlashCommandExecution, DesktopApplicationError> {
+    if command.action != DesktopSlashCommandAction::Execute {
+        return Err(DesktopApplicationError::InvalidInput {
+            field: "slash_command",
+            message: format!(
+                "workflow command `/{}` must be submitted as a workflow",
+                command.name
+            ),
+        });
+    }
     match command.id.as_str() {
         "native:help" => {
             let project_count = workspace
@@ -287,6 +424,7 @@ fn list_project_command_definitions(workspace: &Path) -> Vec<ProjectCommandDefin
                 title,
                 description,
                 source: DesktopSlashCommandSource::Project,
+                action: DesktopSlashCommandAction::Execute,
             },
             body,
             path,
@@ -399,5 +537,19 @@ mod tests {
         assert_eq!(results[0].command.id, "native:status");
         assert_eq!(results[0].matched_by, "title");
         assert_eq!(search_commands(None, "", 1).len(), 1);
+    }
+
+    #[test]
+    fn workflow_commands_expose_typed_review_and_task_actions() {
+        let review = search_commands(None, "review", 12).remove(0).command;
+        assert_eq!(review.action, DesktopSlashCommandAction::Review);
+
+        let task = search_commands(None, "frontend", 12).remove(0).command;
+        assert_eq!(
+            task.action,
+            DesktopSlashCommandAction::TaskWorkflow {
+                kind: "frontend".to_owned(),
+            }
+        );
     }
 }

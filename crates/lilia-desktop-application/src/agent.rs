@@ -3,8 +3,8 @@ use std::sync::Mutex;
 
 use lilia_contracts::{
     AgentSessionBinding, AgentSessionRef, BindingId, ChatAttachment, ChatConversationReference,
-    PendingProjection, PendingProjectionStatus, ProductApprovalDecision, ProductEntity,
-    ProductEntityKind, ProductRevision, ProductTask, TaskId,
+    LiliaAgentWorkflow, PendingProjection, PendingProjectionStatus, ProductApprovalDecision,
+    ProductEntity, ProductEntityKind, ProductRevision, ProductTask, TaskId,
 };
 #[cfg(debug_assertions)]
 use mutsuki_agent_contracts::AgentToolCall;
@@ -62,6 +62,20 @@ pub struct DesktopAutomationTurnCorrelation {
     pub node_id: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopSessionBranchMode {
+    Continue,
+    Fork,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopSessionBranchAnchor {
+    pub source_turn_id: String,
+    pub mode: DesktopSessionBranchMode,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopTurnRequest {
@@ -86,11 +100,15 @@ pub struct DesktopTurnRequest {
     #[serde(default)]
     pub session_fork: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_branch: Option<DesktopSessionBranchAnchor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automatic_selection: Option<DesktopAutomaticTurnSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub automation: Option<DesktopAutomationTurnCorrelation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guide_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workflow: Option<LiliaAgentWorkflow>,
 }
 
 impl DesktopTurnRequest {
@@ -110,9 +128,11 @@ impl DesktopTurnRequest {
             auto_turn_settings: None,
             auto_turn_decision_applied: false,
             session_fork: false,
+            session_branch: None,
             automatic_selection: None,
             automation: None,
             guide_id: None,
+            workflow: None,
         }
     }
 
@@ -875,11 +895,7 @@ struct WaitingApprovalSnapshot {
 fn supported_pending_interaction_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "ask_user"
-            | "plan_approval"
-            | "mcp_elicitation"
-            | "architecture_change"
-            | "agent_interaction"
+        "ask_user" | "plan_approval" | "tool_consent" | "mcp_elicitation" | "architecture_change"
     )
 }
 
@@ -888,6 +904,35 @@ fn normalized_pending_interaction_response(
     accepted: bool,
     response: Value,
 ) -> Result<(bool, Value), DesktopApplicationError> {
+    if pending.kind == "tool_consent" {
+        let decision = response.get("decision").and_then(Value::as_str);
+        let expected_accepted = match decision {
+            Some("allow") => true,
+            Some("deny") => false,
+            _ => {
+                return Err(DesktopApplicationError::InvalidPendingInteraction {
+                    request_id: pending.request_id.clone(),
+                    message: "tool consent response has an invalid decision".to_owned(),
+                })
+            }
+        };
+        if accepted != expected_accepted {
+            return Err(DesktopApplicationError::InvalidPendingInteraction {
+                request_id: pending.request_id.clone(),
+                message: "tool consent decision does not match its accepted state".to_owned(),
+            });
+        }
+        if response
+            .get("updatedInput")
+            .is_some_and(|input| !input.is_object())
+        {
+            return Err(DesktopApplicationError::InvalidPendingInteraction {
+                request_id: pending.request_id.clone(),
+                message: "tool consent updated input must be an object".to_owned(),
+            });
+        }
+        return Ok((accepted, response));
+    }
     if pending.kind != "mcp_elicitation" {
         return Ok((accepted, response));
     }
@@ -1018,6 +1063,7 @@ impl DesktopApplication {
             .as_ref()
             .map(|project_id| self.project_architecture(project_id))
             .transpose()?;
+        let worktree_instructions = self.worktree_auto_instructions_for_task(task_id)?;
         message.metadata = Some(turn_context(
             task_id,
             turn_id,
@@ -1025,6 +1071,7 @@ impl DesktopApplication {
             goal.as_ref(),
             task.project_id.as_ref(),
             architecture.as_ref(),
+            worktree_instructions.as_deref(),
         ));
         self.authority()
             .shared_runtime()
@@ -1396,9 +1443,19 @@ impl DesktopApplication {
         mut request: DesktopTurnRequest,
     ) -> Result<DesktopTurnRequest, DesktopApplicationError> {
         request.content = turn_content_with_references(&request);
+        if let Some(branch) = request.session_branch.as_mut() {
+            branch.source_turn_id = branch.source_turn_id.trim().to_owned();
+            if branch.source_turn_id.is_empty() {
+                return Err(DesktopApplicationError::InvalidInput {
+                    field: "session_branch.source_turn_id",
+                    message: "source turn id must not be empty".to_owned(),
+                });
+            }
+        }
         if request.content.is_empty()
             && request.attachments.is_empty()
             && request.conversation_references.is_empty()
+            && request.workflow.is_none()
         {
             return Err(DesktopApplicationError::InvalidInput {
                 field: "content",
@@ -1406,14 +1463,12 @@ impl DesktopApplication {
             });
         }
         let task = self.get_task(&request.task_id)?;
+        self.ensure_task_runnable(&request.task_id)?;
         if request.workspace_path.is_none() {
             request.workspace_path = self.workspace_path_for_task(&task)?;
         }
         if request.allow_auto_turn_decision && request.auto_turn_settings.is_none() {
             let settings = self.agent_interaction_settings()?.auto_turn_decision;
-            if !settings.enabled {
-                request.auto_turn_decision_applied = true;
-            }
             request.auto_turn_settings = Some(settings);
         } else if !request.allow_auto_turn_decision {
             request.auto_turn_decision_applied = true;
@@ -2422,6 +2477,12 @@ impl DesktopApplication {
         if let Some(guide_id) = active.request.guide_id.as_deref() {
             self.set_task_guide_status(guide_id, DesktopTodoGuideStatus::Sent)?;
         }
+        if matches!(
+            active.request.workflow.as_ref(),
+            Some(LiliaAgentWorkflow::LiliaCompact)
+        ) {
+            return self.run_context_compaction_turn(task_id, turn_id, &active.request);
+        }
         let task = self.get_task(task_id)?;
         let runtime = self.authority().shared_runtime();
         let profile = runtime
@@ -2433,7 +2494,31 @@ impl DesktopApplication {
             .list_session_bindings(task_id)?
             .into_iter()
             .next();
-        let session = if active.request.session_fork {
+        let session = if let Some(branch) = active.request.session_branch.as_ref() {
+            let source =
+                existing_binding
+                    .as_ref()
+                    .ok_or_else(|| DesktopApplicationError::InvalidInput {
+                        field: "agent_session",
+                        message: "task has no Agent session to branch".to_owned(),
+                    })?;
+            let target_session_id = format!(
+                "native-{}-{}-{}",
+                task_id.as_str(),
+                match branch.mode {
+                    DesktopSessionBranchMode::Continue => "continue",
+                    DesktopSessionBranchMode::Fork => "fork",
+                },
+                uuid::Uuid::new_v4()
+            );
+            self.authority()
+                .fork_agent_task_session_through_turn(
+                    source.agent_session.as_str(),
+                    &target_session_id,
+                    &branch.source_turn_id,
+                )
+                .map_err(agent_wire_error)?
+        } else if active.request.session_fork {
             if let Some(source) = existing_binding.as_ref() {
                 let target_session_id =
                     format!("native-{}-fork-{}", task_id.as_str(), uuid::Uuid::new_v4());
@@ -2462,7 +2547,7 @@ impl DesktopApplication {
                 )
                 .map_err(agent_wire_error)?
         };
-        if active.request.session_fork {
+        if active.request.session_fork || active.request.session_branch.is_some() {
             self.replace_session_binding(task_id, &session.session_id, &profile.profile_id)?;
         } else {
             self.persist_session_binding(task_id, &session.session_id, &profile.profile_id)?;
@@ -2496,6 +2581,7 @@ impl DesktopApplication {
             .as_ref()
             .map(|project_id| self.project_architecture(project_id))
             .transpose()?;
+        let worktree_instructions = self.worktree_auto_instructions_for_task(task_id)?;
         message.metadata = Some(turn_context(
             task_id,
             turn_id,
@@ -2503,6 +2589,7 @@ impl DesktopApplication {
             goal.as_ref(),
             task.project_id.as_ref(),
             architecture.as_ref(),
+            worktree_instructions.as_deref(),
         ));
         let events_application = self.clone();
         let events_task_id = task_id.clone();
@@ -2543,6 +2630,47 @@ impl DesktopApplication {
                 cancelled_by_user: page.cancelled,
             },
         )
+    }
+
+    fn run_context_compaction_turn(
+        &self,
+        task_id: &TaskId,
+        turn_id: &str,
+        request: &DesktopTurnRequest,
+    ) -> Result<(), DesktopApplicationError> {
+        if self.inner.agent.cancel_requested(task_id, turn_id) {
+            self.finish_turn(
+                task_id.clone(),
+                turn_id.to_owned(),
+                DesktopTurnState::Cancelled,
+            );
+            return Ok(());
+        }
+        self.emit_event(DesktopEventKind::TurnStateChanged {
+            task_id: task_id.clone(),
+            turn_id: turn_id.to_owned(),
+            state: DesktopTurnState::Running,
+        });
+        self.execute_turn_hooks(
+            DesktopHookEvent::UserPromptSubmit,
+            task_id,
+            turn_id,
+            request.workspace_path.as_deref(),
+            &request.content,
+        )?;
+        let result =
+            self.compact_task_agent_context_with_commit_guard(task_id, turn_id, None, || {
+                !self.inner.agent.cancel_requested(task_id, turn_id)
+            })?;
+        self.inner
+            .agent
+            .attach_session(task_id, turn_id, result.session_id);
+        self.finish_turn(
+            task_id.clone(),
+            turn_id.to_owned(),
+            DesktopTurnState::Completed,
+        );
+        Ok(())
     }
 
     fn spawn_approval_worker(
@@ -2819,7 +2947,11 @@ impl DesktopApplication {
             } else {
                 DesktopTurnState::Completed
             };
-            self.finish_turn(task_id, turn_id, state);
+            let completed = matches!(state, DesktopTurnState::Completed);
+            self.finish_turn(task_id.clone(), turn_id.clone(), state);
+            if completed {
+                self.spawn_title_update_after_turn(task_id, Some(turn_id));
+            }
         } else {
             self.finish_turn(
                 task_id,
@@ -3036,7 +3168,7 @@ impl DesktopApplication {
         Ok(client.products().record_binding(binding)?)
     }
 
-    fn replace_session_binding(
+    pub(crate) fn replace_session_binding(
         &self,
         task_id: &TaskId,
         session_id: &str,
@@ -3137,6 +3269,7 @@ fn turn_context(
     goal: Option<&crate::DesktopGoalSnapshot>,
     project_id: Option<&lilia_contracts::ProjectId>,
     architecture: Option<&ProjectArchitectureGraph>,
+    worktree_instructions: Option<&str>,
 ) -> serde_json::Value {
     let folders = request
         .workspace_path
@@ -3160,12 +3293,15 @@ fn turn_context(
         "permission": request.permission.as_str(),
         "planMode": request.plan_mode,
         "goalMode": request.goal_mode,
-        "sessionFork": request.session_fork,
+        "sessionFork": request.session_fork || request.session_branch.is_some(),
+        "sessionBranch": request.session_branch,
         "automaticSelection": request.automatic_selection,
         "goal": goal,
         "projectArchitecture": architecture,
         "attachments": request.attachments,
         "conversationReferences": request.conversation_references,
+        "additionalContext": worktree_instructions,
+        "workflow": request.workflow,
         "turnId": turn_id,
     })
 }
@@ -3274,6 +3410,42 @@ mod tests {
     }
 
     #[test]
+    fn typed_workflow_can_start_without_message_content_and_reaches_turn_context() {
+        let id = NEXT_AGENT_APPLICATION_ID.fetch_add(1, Ordering::Relaxed);
+        let authority = ServiceAuthority::bootstrap_in_memory_named(
+            format!("test:desktop-agent-workflow:{id}"),
+            format!("desktop-agent-workflow:{id}"),
+        )
+        .unwrap();
+        let task_id = TaskId::new(format!("workflow-task-{id}")).unwrap();
+        authority
+            .client()
+            .unwrap()
+            .products()
+            .create_entity(ProductEntity::Task(
+                ProductTask::new(task_id.clone(), None, "Workflow turn").unwrap(),
+            ))
+            .unwrap();
+        let application = DesktopApplication::from_authority(
+            DesktopApplicationConfig::new(
+                "C:/lilia/native-workflow-test",
+                format!("liliacode.native-workflow-test.{id}"),
+            )
+            .unwrap(),
+            authority,
+            Arc::new(NoopHost),
+        )
+        .unwrap();
+        let mut request = DesktopTurnRequest::new(task_id.clone(), "");
+        request.workflow = Some(LiliaAgentWorkflow::LiliaCompact);
+
+        let prepared = application.prepare_task_turn_request(request).unwrap();
+        let context = turn_context(&task_id, "turn-workflow", &prepared, None, None, None, None);
+
+        assert_eq!(context["workflow"]["type"], "lilia_compact");
+    }
+
+    #[test]
     fn mcp_interaction_response_preserves_actions_and_validates_form_content() {
         assert!(supported_pending_interaction_kind("mcp_elicitation"));
         let pending = mcp_pending();
@@ -3305,6 +3477,42 @@ mod tests {
     }
 
     #[test]
+    fn tool_consent_response_is_supported_and_decision_fenced() {
+        assert!(supported_pending_interaction_kind("tool_consent"));
+        assert!(!supported_pending_interaction_kind("agent_interaction"));
+        let mut pending = mcp_pending();
+        pending.kind = "tool_consent".to_owned();
+        pending.payload = json!({
+            "toolName": "shell",
+            "input": {"command": "cargo test"}
+        });
+
+        let response = json!({
+            "taskId": "task-1",
+            "requestId": pending.request_id.clone(),
+            "decision": "allow",
+            "message": null,
+            "updatedInput": {"command": "cargo test --locked"}
+        });
+        assert_eq!(
+            normalized_pending_interaction_response(&pending, true, response.clone()).unwrap(),
+            (true, response)
+        );
+        assert!(normalized_pending_interaction_response(
+            &pending,
+            false,
+            json!({"decision": "allow"}),
+        )
+        .is_err());
+        assert!(normalized_pending_interaction_response(
+            &pending,
+            false,
+            json!({"decision": "deny", "updatedInput": "invalid"}),
+        )
+        .is_err());
+    }
+
+    #[test]
     fn native_turn_context_preserves_structured_attachments() {
         let task_id = TaskId::new("task-attachment").unwrap();
         let request = DesktopTurnRequest::new(task_id.clone(), "inspect").with_attachments(vec![
@@ -3320,7 +3528,7 @@ mod tests {
             },
         ]);
 
-        let context = turn_context(&task_id, "turn-1", &request, None, None, None);
+        let context = turn_context(&task_id, "turn-1", &request, None, None, None, None);
 
         assert_eq!(context["attachments"][0]["id"], "att-1");
         assert_eq!(context["attachments"][0]["kind"], "file");
@@ -3353,7 +3561,7 @@ mod tests {
             turn_content_with_references(&already_referenced),
             "inspect\n[对话引用: 相关设计 | related-task]"
         );
-        let context = turn_context(&task_id, "turn-reference", &request, None, None, None);
+        let context = turn_context(&task_id, "turn-reference", &request, None, None, None, None);
         assert_eq!(
             context["conversationReferences"][0]["taskId"],
             "related-task"
@@ -3375,7 +3583,15 @@ mod tests {
             updated_at: 200,
         };
 
-        let context = turn_context(&task_id, "turn-goal", &request, Some(&goal), None, None);
+        let context = turn_context(
+            &task_id,
+            "turn-goal",
+            &request,
+            Some(&goal),
+            None,
+            None,
+            None,
+        );
 
         assert_eq!(context["goal"]["objective"], "finish Native parity");
         assert_eq!(context["goal"]["status"], "active");

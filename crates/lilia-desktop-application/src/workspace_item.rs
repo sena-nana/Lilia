@@ -2,27 +2,36 @@ use lilia_contracts::{ProductError, ProductTask, Project, ProjectArchiveState, P
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{DesktopApplication, DesktopApplicationError, WorkspaceItemId};
+use crate::{
+    document_resource_key, path_from_document_resource_key, DesktopApplication,
+    DesktopApplicationError, DocumentId, DocumentSnapshot, WorkspaceItemId,
+};
 
 pub const TASK_WORKSPACE_ITEM_KIND: &str = "task";
 pub const ROADMAP_WORKSPACE_ITEM_KIND: &str = "project-roadmap";
 pub const MEMORY_WORKSPACE_ITEM_KIND: &str = "project-memory";
 pub const ARCHITECTURE_WORKSPACE_ITEM_KIND: &str = "project-architecture";
+pub const PROJECT_FILES_WORKSPACE_ITEM_KIND: &str = "project-files";
+pub const DOCUMENT_WORKSPACE_ITEM_KIND: &str = "document-editor";
+pub const TERMINAL_WORKSPACE_ITEM_KIND: &str = "terminal";
 pub const AUTOMATION_WORKSPACE_ITEM_KIND: &str = "automation-workspace";
 pub const SETTINGS_WORKSPACE_ITEM_KIND: &str = "settings-workspace";
+pub const PROJECTS_WORKSPACE_ITEM_KIND: &str = "projects-workspace";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplicationWorkspaceSurface {
+    Projects,
     Automations,
     Settings,
 }
 
 impl ApplicationWorkspaceSurface {
-    pub const ALL: [Self; 2] = [Self::Automations, Self::Settings];
+    pub const ALL: [Self; 3] = [Self::Projects, Self::Automations, Self::Settings];
 
     pub const fn kind(self) -> &'static str {
         match self {
+            Self::Projects => PROJECTS_WORKSPACE_ITEM_KIND,
             Self::Automations => AUTOMATION_WORKSPACE_ITEM_KIND,
             Self::Settings => SETTINGS_WORKSPACE_ITEM_KIND,
         }
@@ -30,6 +39,7 @@ impl ApplicationWorkspaceSurface {
 
     const fn resource_id(self) -> &'static str {
         match self {
+            Self::Projects => "application:projects",
             Self::Automations => "application:automations",
             Self::Settings => "application:settings",
         }
@@ -37,6 +47,7 @@ impl ApplicationWorkspaceSurface {
 
     const fn title(self) -> &'static str {
         match self {
+            Self::Projects => "项目",
             Self::Automations => "自动化",
             Self::Settings => "设置",
         }
@@ -44,6 +55,7 @@ impl ApplicationWorkspaceSurface {
 
     const fn icon(self) -> &'static str {
         match self {
+            Self::Projects => "workspace",
             Self::Automations => "automation",
             Self::Settings => "settings",
         }
@@ -51,6 +63,7 @@ impl ApplicationWorkspaceSurface {
 
     const fn focus_target(self) -> &'static str {
         match self {
+            Self::Projects => "projects-overview",
             Self::Automations => "automation-canvas",
             Self::Settings => "settings-content",
         }
@@ -69,16 +82,18 @@ pub enum ProjectWorkspaceSurface {
     Roadmap,
     Memory,
     Architecture,
+    Files,
 }
 
 impl ProjectWorkspaceSurface {
-    pub const ALL: [Self; 3] = [Self::Roadmap, Self::Memory, Self::Architecture];
+    pub const ALL: [Self; 4] = [Self::Roadmap, Self::Memory, Self::Architecture, Self::Files];
 
     pub const fn kind(self) -> &'static str {
         match self {
             Self::Roadmap => ROADMAP_WORKSPACE_ITEM_KIND,
             Self::Memory => MEMORY_WORKSPACE_ITEM_KIND,
             Self::Architecture => ARCHITECTURE_WORKSPACE_ITEM_KIND,
+            Self::Files => PROJECT_FILES_WORKSPACE_ITEM_KIND,
         }
     }
 
@@ -87,6 +102,7 @@ impl ProjectWorkspaceSurface {
             Self::Roadmap => "project-roadmap:",
             Self::Memory => "project-memory:",
             Self::Architecture => "project-architecture:",
+            Self::Files => "project-files:",
         }
     }
 
@@ -95,6 +111,7 @@ impl ProjectWorkspaceSurface {
             Self::Roadmap => "路线图",
             Self::Memory => "记忆",
             Self::Architecture => "架构",
+            Self::Files => "文件",
         }
     }
 
@@ -103,6 +120,7 @@ impl ProjectWorkspaceSurface {
             Self::Roadmap => "roadmap",
             Self::Memory => "memory",
             Self::Architecture => "architecture",
+            Self::Files => "folder",
         }
     }
 
@@ -111,6 +129,7 @@ impl ProjectWorkspaceSurface {
             Self::Roadmap => "roadmap",
             Self::Memory => "memory-search",
             Self::Architecture => "architecture-canvas",
+            Self::Files => "project-files",
         }
     }
 
@@ -293,6 +312,27 @@ impl WorkspaceItem {
         }
         Ok(Some(surface))
     }
+
+    pub fn document_path(&self) -> Result<Option<std::path::PathBuf>, WorkspaceItemError> {
+        if self.kind.as_str() != DOCUMENT_WORKSPACE_ITEM_KIND {
+            return Ok(None);
+        }
+        path_from_document_resource_key(self.resource_id.as_str())
+            .map(Some)
+            .map_err(|_| WorkspaceItemError::InvalidRestorationIdentity {
+                item_id: self.resource_id.as_str().to_owned(),
+                kind: DOCUMENT_WORKSPACE_ITEM_KIND.to_owned(),
+            })
+    }
+
+    pub fn terminal_session_id(
+        &self,
+    ) -> Result<Option<crate::DesktopTerminalSessionId>, WorkspaceItemError> {
+        if self.kind.as_str() != TERMINAL_WORKSPACE_ITEM_KIND {
+            return Ok(None);
+        }
+        terminal_session_id_from_resource_identity(&self.resource_id).map(Some)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -391,10 +431,103 @@ impl DesktopApplication {
         application_item(surface).map_err(DesktopApplicationError::from)
     }
 
+    pub fn document_workspace_item(
+        &self,
+        document_id: DocumentId,
+    ) -> Result<WorkspaceItem, DesktopApplicationError> {
+        let snapshot = self.document_snapshot(document_id)?;
+        document_item(&snapshot).map_err(DesktopApplicationError::from)
+    }
+
+    pub fn document_workspace_item_view(
+        &self,
+        document_id: DocumentId,
+        instance_id: WorkspaceItemId,
+    ) -> Result<WorkspaceItem, DesktopApplicationError> {
+        let snapshot = self.document_snapshot(document_id)?;
+        document_item_with_instance_id(&snapshot, instance_id)
+            .map_err(DesktopApplicationError::from)
+    }
+
+    pub fn terminal_workspace_item(
+        &self,
+        snapshot: &crate::DesktopTerminalSnapshot,
+    ) -> Result<WorkspaceItem, DesktopApplicationError> {
+        terminal_item(snapshot).map_err(DesktopApplicationError::from)
+    }
+
+    pub fn open_project_document_workspace_item(
+        &self,
+        project_id: &ProjectId,
+        relative_path: &str,
+    ) -> Result<(DocumentSnapshot, WorkspaceItem), DesktopApplicationError> {
+        let snapshot = self.open_project_file(project_id, relative_path)?;
+        let item = self.document_workspace_item(snapshot.id)?;
+        Ok((snapshot, item))
+    }
+
     pub(crate) fn restore_workspace_item(
         &self,
         restoration: &WorkspaceItemRestoration,
     ) -> Result<Option<WorkspaceItem>, DesktopApplicationError> {
+        if restoration.kind.as_str() == DOCUMENT_WORKSPACE_ITEM_KIND {
+            let resource_id = restoration
+                .resource_id
+                .clone()
+                .unwrap_or_else(|| WorkspaceResourceId(restoration.id.as_str().to_owned()));
+            let path = match path_from_document_resource_key(resource_id.as_str()) {
+                Ok(path) => path,
+                Err(_) => {
+                    return Err(WorkspaceItemError::InvalidRestorationIdentity {
+                        item_id: resource_id.as_str().to_owned(),
+                        kind: DOCUMENT_WORKSPACE_ITEM_KIND.to_owned(),
+                    }
+                    .into());
+                }
+            };
+            let (snapshot, _) = match self.open_document_at_path(&path) {
+                Ok(opened) => opened,
+                Err(DesktopApplicationError::Document(crate::DocumentError::Io { .. }))
+                | Err(DesktopApplicationError::Document(crate::DocumentError::NotAFile(_))) => {
+                    return Ok(None);
+                }
+                Err(error) => return Err(error),
+            };
+            return document_item_with_instance_id(&snapshot, restoration.id.clone())
+                .map(|item| item.with_serialized_state(restoration.serialized_state.clone()))
+                .map(Some)
+                .map_err(DesktopApplicationError::from);
+        }
+
+        if restoration.kind.as_str() == TERMINAL_WORKSPACE_ITEM_KIND {
+            let resource_id = restoration
+                .resource_id
+                .clone()
+                .unwrap_or_else(|| WorkspaceResourceId(restoration.id.as_str().to_owned()));
+            let session_id = terminal_session_id_from_resource_identity(&resource_id)?;
+            let state = restoration.serialized_state.clone().ok_or_else(|| {
+                WorkspaceItemError::InvalidRestorationIdentity {
+                    item_id: resource_id.as_str().to_owned(),
+                    kind: TERMINAL_WORKSPACE_ITEM_KIND.to_owned(),
+                }
+            })?;
+            let terminal: crate::DesktopTerminalRestoration = serde_json::from_value(state)
+                .map_err(|_| WorkspaceItemError::InvalidRestorationIdentity {
+                    item_id: resource_id.as_str().to_owned(),
+                    kind: TERMINAL_WORKSPACE_ITEM_KIND.to_owned(),
+                })?;
+            if terminal.id != session_id {
+                return Err(WorkspaceItemError::InvalidRestorationIdentity {
+                    item_id: resource_id.as_str().to_owned(),
+                    kind: TERMINAL_WORKSPACE_ITEM_KIND.to_owned(),
+                }
+                .into());
+            }
+            return terminal_item_with_instance_id(&terminal.snapshot(), restoration.id.clone())
+                .map(Some)
+                .map_err(DesktopApplicationError::from);
+        }
+
         if restoration.kind.as_str() == TASK_WORKSPACE_ITEM_KIND {
             let resource_id = restoration
                 .resource_id
@@ -462,8 +595,31 @@ impl DesktopApplication {
 
 pub(crate) fn has_workspace_item_restorer(kind: &WorkspaceItemKind) -> bool {
     kind.as_str() == TASK_WORKSPACE_ITEM_KIND
+        || kind.as_str() == DOCUMENT_WORKSPACE_ITEM_KIND
+        || kind.as_str() == TERMINAL_WORKSPACE_ITEM_KIND
         || ProjectWorkspaceSurface::from_kind(kind).is_some()
         || ApplicationWorkspaceSurface::from_kind(kind).is_some()
+}
+
+fn terminal_session_id_from_resource_identity(
+    id: &WorkspaceResourceId,
+) -> Result<crate::DesktopTerminalSessionId, WorkspaceItemError> {
+    let Some(session_id) = id
+        .as_str()
+        .strip_prefix("terminal:")
+        .filter(|value| !value.is_empty())
+    else {
+        return Err(WorkspaceItemError::InvalidRestorationIdentity {
+            item_id: id.as_str().to_owned(),
+            kind: TERMINAL_WORKSPACE_ITEM_KIND.to_owned(),
+        });
+    };
+    serde_json::from_value(serde_json::Value::String(session_id.to_owned())).map_err(|_| {
+        WorkspaceItemError::InvalidRestorationIdentity {
+            item_id: id.as_str().to_owned(),
+            kind: TERMINAL_WORKSPACE_ITEM_KIND.to_owned(),
+        }
+    })
 }
 
 fn task_id_from_resource_identity(id: &WorkspaceResourceId) -> Result<TaskId, WorkspaceItemError> {
@@ -599,6 +755,102 @@ fn application_item_with_instance_id(
     .with_icon(surface.icon())
 }
 
+fn document_item(snapshot: &DocumentSnapshot) -> Result<WorkspaceItem, WorkspaceItemError> {
+    let resource = document_resource_key(&snapshot.canonical_path).map_err(|_| {
+        WorkspaceItemError::InvalidRestorationIdentity {
+            item_id: snapshot.canonical_path.display().to_string(),
+            kind: DOCUMENT_WORKSPACE_ITEM_KIND.to_owned(),
+        }
+    })?;
+    let instance_id = WorkspaceItemId::new(resource.clone()).map_err(|_| {
+        WorkspaceItemError::InvalidRestorationIdentity {
+            item_id: resource.clone(),
+            kind: DOCUMENT_WORKSPACE_ITEM_KIND.to_owned(),
+        }
+    })?;
+    document_item_with_resource(snapshot, instance_id, resource)
+}
+
+fn document_item_with_instance_id(
+    snapshot: &DocumentSnapshot,
+    instance_id: WorkspaceItemId,
+) -> Result<WorkspaceItem, WorkspaceItemError> {
+    let resource = document_resource_key(&snapshot.canonical_path).map_err(|_| {
+        WorkspaceItemError::InvalidRestorationIdentity {
+            item_id: snapshot.canonical_path.display().to_string(),
+            kind: DOCUMENT_WORKSPACE_ITEM_KIND.to_owned(),
+        }
+    })?;
+    document_item_with_resource(snapshot, instance_id, resource)
+}
+
+fn document_item_with_resource(
+    snapshot: &DocumentSnapshot,
+    instance_id: WorkspaceItemId,
+    resource: String,
+) -> Result<WorkspaceItem, WorkspaceItemError> {
+    let title = snapshot
+        .canonical_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .unwrap_or("未命名文档")
+        .to_owned();
+    WorkspaceItem::new(
+        instance_id,
+        WorkspaceResourceId::new(resource)?,
+        WorkspaceItemKind::new(DOCUMENT_WORKSPACE_ITEM_KIND)?,
+        title,
+        WorkspaceFocusTarget::new("editor")?,
+        WorkspaceItemCapabilities {
+            closable: true,
+            splittable: true,
+            movable_across_windows: true,
+            persistent: true,
+        },
+    )?
+    .with_icon("document")
+}
+
+fn terminal_item(
+    snapshot: &crate::DesktopTerminalSnapshot,
+) -> Result<WorkspaceItem, WorkspaceItemError> {
+    let instance_id =
+        WorkspaceItemId::new(format!("terminal:{}", snapshot.id.as_str())).map_err(|_| {
+            WorkspaceItemError::InvalidRestorationIdentity {
+                item_id: snapshot.id.as_str().to_owned(),
+                kind: TERMINAL_WORKSPACE_ITEM_KIND.to_owned(),
+            }
+        })?;
+    terminal_item_with_instance_id(snapshot, instance_id)
+}
+
+fn terminal_item_with_instance_id(
+    snapshot: &crate::DesktopTerminalSnapshot,
+    instance_id: WorkspaceItemId,
+) -> Result<WorkspaceItem, WorkspaceItemError> {
+    let title = snapshot
+        .cwd
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.is_empty())
+        .map_or_else(|| "终端".to_owned(), |name| format!("终端 · {name}"));
+    WorkspaceItem::new(
+        instance_id,
+        WorkspaceResourceId::new(format!("terminal:{}", snapshot.id.as_str()))?,
+        WorkspaceItemKind::new(TERMINAL_WORKSPACE_ITEM_KIND)?,
+        title,
+        WorkspaceFocusTarget::new("terminal-input")?,
+        WorkspaceItemCapabilities::dockable(),
+    )?
+    .with_icon("terminal")
+    .map(|item| {
+        item.with_serialized_state(
+            serde_json::to_value(crate::DesktopTerminalRestoration::from_snapshot(snapshot)).ok(),
+        )
+    })
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum WorkspaceItemError {
     #[error("workspace resource id must not be empty or contain control characters")]
@@ -726,6 +978,10 @@ mod tests {
     fn application_surface_has_stable_identity_and_cross_window_capabilities() {
         for (surface, resource_id) in [
             (
+                ApplicationWorkspaceSurface::Projects,
+                "application:projects",
+            ),
+            (
                 ApplicationWorkspaceSurface::Automations,
                 "application:automations",
             ),
@@ -763,5 +1019,37 @@ mod tests {
             Err(WorkspaceItemError::InvalidRestorationIdentity { kind, .. })
                 if kind == AUTOMATION_WORKSPACE_ITEM_KIND
         ));
+    }
+
+    #[test]
+    fn document_editor_items_share_canonical_resource_identity() {
+        let snapshot = DocumentSnapshot {
+            id: DocumentId::new(3),
+            canonical_path: std::env::current_dir().unwrap().join("src/lib.rs"),
+            language: None,
+            read_only: false,
+            buffer: crate::BufferSnapshot {
+                id: crate::BufferId::new(1),
+                text: "fn ok() {}".into(),
+                revision: crate::BufferRevision::INITIAL,
+                saved_revision: crate::BufferRevision::INITIAL,
+            },
+            disk_fingerprint: 1,
+        };
+        let first = document_item(&snapshot).unwrap();
+        let second = document_item_with_instance_id(
+            &snapshot,
+            WorkspaceItemId::new("document-view:lib:second").unwrap(),
+        )
+        .unwrap();
+        assert_eq!(first.kind.as_str(), DOCUMENT_WORKSPACE_ITEM_KIND);
+        assert_eq!(first.resource_id, second.resource_id);
+        assert_ne!(first.id, second.id);
+        assert_eq!(
+            first.document_path().unwrap(),
+            Some(snapshot.canonical_path.clone())
+        );
+        assert_eq!(first.serialized_state, None);
+        assert!(first.capabilities.persistent);
     }
 }

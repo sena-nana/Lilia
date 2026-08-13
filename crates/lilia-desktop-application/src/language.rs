@@ -64,6 +64,38 @@ pub struct LanguageRegistry {
 }
 
 impl LanguageRegistry {
+    pub fn with_builtins() -> Self {
+        let mut registry = Self::default();
+        let builtins = [
+            ("plaintext", "Plain Text", &[] as &[&str]),
+            ("markdown", "Markdown", &["md", "markdown", "mdx"]),
+            ("rust", "Rust", &["rs"]),
+            ("toml", "TOML", &["toml"]),
+            ("json", "JSON", &["json", "jsonc"]),
+            ("javascript", "JavaScript", &["js", "mjs", "cjs"]),
+            ("typescript", "TypeScript", &["ts", "mts", "cts"]),
+            ("tsx", "TSX", &["tsx"]),
+            ("jsx", "JSX", &["jsx"]),
+            ("python", "Python", &["py"]),
+            ("css", "CSS", &["css"]),
+            ("html", "HTML", &["html", "htm"]),
+            ("yaml", "YAML", &["yaml", "yml"]),
+            ("shell", "Shell", &["sh", "bash", "zsh"]),
+        ];
+        for (id, display_name, extensions) in builtins {
+            let definition = LanguageDefinition::new(
+                LanguageId::new(id).expect("builtin language id is valid"),
+                display_name,
+                extensions.iter().copied(),
+            )
+            .expect("builtin language definition is valid");
+            registry
+                .register(definition)
+                .expect("builtin language registration is unique");
+        }
+        registry
+    }
+
     pub fn register(
         &mut self,
         definition: LanguageDefinition,

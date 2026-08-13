@@ -2,7 +2,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lilia_contracts::{ChatAttachment, ChatConversationReference, TaskId, TodoProjection};
+use lilia_contracts::{
+    ChatAttachment, ChatConversationReference, LiliaAgentWorkflow, TaskId, TodoProjection,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -25,6 +27,7 @@ CREATE TABLE IF NOT EXISTS task_todos (
   guide_status     TEXT CHECK (guide_status IS NULL OR guide_status IN ('pending','queued','sent')),
   attachments_json TEXT NOT NULL DEFAULT '[]',
   conversation_references_json TEXT NOT NULL DEFAULT '[]',
+  workflow_json    TEXT,
   created_at       INTEGER NOT NULL,
   updated_at       INTEGER NOT NULL
 );
@@ -143,6 +146,7 @@ pub struct DesktopTaskTodo {
     pub guide_status: Option<DesktopTodoGuideStatus>,
     pub attachments: Vec<Value>,
     pub conversation_references: Vec<ChatConversationReference>,
+    pub workflow: Option<LiliaAgentWorkflow>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -158,6 +162,8 @@ pub struct DesktopTodoCreate {
     pub attachments: Vec<Value>,
     #[serde(default)]
     pub conversation_references: Vec<ChatConversationReference>,
+    #[serde(default)]
+    pub workflow: Option<LiliaAgentWorkflow>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -209,6 +215,12 @@ impl DesktopTodoStore {
             "conversation_references_json",
             "ALTER TABLE task_todos ADD COLUMN conversation_references_json TEXT NOT NULL DEFAULT '[]'",
         )?;
+        ensure_column(
+            &locked,
+            "task_todos",
+            "workflow_json",
+            "ALTER TABLE task_todos ADD COLUMN workflow_json TEXT",
+        )?;
         drop(locked);
         Ok(Self { connection })
     }
@@ -226,7 +238,7 @@ impl DesktopTodoStore {
             .prepare(
                 r#"SELECT id, task_id, text, done, "order", source, priority,
                           guide_status, attachments_json, created_at, updated_at,
-                          conversation_references_json
+                          conversation_references_json, workflow_json
                    FROM task_todos WHERE task_id = ?1
                    ORDER BY "order" ASC, created_at ASC, id ASC"#,
             )
@@ -298,6 +310,7 @@ impl DesktopTodoStore {
                 && existing.guide_status == guide_status
                 && existing.attachments == input.attachments
                 && existing.conversation_references == input.conversation_references
+                && existing.workflow == input.workflow
             {
                 return Ok((existing, false));
             }
@@ -325,6 +338,7 @@ impl DesktopTodoStore {
             guide_status,
             attachments: input.attachments,
             conversation_references: input.conversation_references,
+            workflow: input.workflow,
             created_at: now,
             updated_at: now,
         };
@@ -339,12 +353,22 @@ impl DesktopTodoStore {
                 operation: "encode todo conversation references",
                 message: error.to_string(),
             })?;
+        let workflow = todo
+            .workflow
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|error| DesktopTodoError::Storage {
+                operation: "encode todo workflow",
+                message: error.to_string(),
+            })?;
         connection
             .execute(
                 r#"INSERT INTO task_todos
                    (id, task_id, text, done, "order", source, priority, guide_status,
-                     attachments_json, created_at, updated_at, conversation_references_json)
-                    VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"#,
+                     attachments_json, created_at, updated_at, conversation_references_json,
+                     workflow_json)
+                    VALUES (?1, ?2, ?3, 0, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"#,
                 params![
                     todo.id,
                     todo.task_id.as_str(),
@@ -357,6 +381,7 @@ impl DesktopTodoStore {
                     todo.created_at,
                     todo.updated_at,
                     conversation_references,
+                    workflow,
                 ],
             )
             .map_err(|error| DesktopTodoError::Storage {
@@ -448,7 +473,7 @@ impl DesktopTodoStore {
             .query_row(
                 r#"SELECT id, task_id, text, done, "order", source, priority,
                           guide_status, attachments_json, created_at, updated_at,
-                          conversation_references_json
+                          conversation_references_json, workflow_json
                    FROM task_todos WHERE id = ?1 AND source = 'lilia'"#,
                 params![id],
                 row_to_todo,
@@ -468,7 +493,7 @@ impl DesktopTodoStore {
             .query_row(
                 r#"SELECT id, task_id, text, done, "order", source, priority,
                           guide_status, attachments_json, created_at, updated_at,
-                          conversation_references_json
+                          conversation_references_json, workflow_json
                    FROM task_todos WHERE id = ?1"#,
                 params![id],
                 row_to_todo,
@@ -688,6 +713,7 @@ impl DesktopApplication {
             })
             .collect::<Result<Vec<_>, _>>()?;
         request.conversation_references = guide.conversation_references.clone();
+        request.workflow = guide.workflow.clone();
         request.workspace_path = self.task_workspace_path(task_id)?;
         request.guide_id = Some(guide.id.clone());
         let turn = self.start_task_turn(request)?;
@@ -765,6 +791,7 @@ fn merge_todos_with_latest_projection(
             guide_status: None,
             attachments: Vec::new(),
             conversation_references: Vec::new(),
+            workflow: None,
             created_at: timestamp,
             updated_at: timestamp,
         });
@@ -825,6 +852,11 @@ fn row_to_todo(row: &rusqlite::Row<'_>) -> rusqlite::Result<DesktopTaskTodo> {
     let attachments = serde_json::from_str(&row.get::<_, String>(8)?).unwrap_or_default();
     let conversation_references = serde_json::from_str(&row.get::<_, String>(11)?)
         .map_err(|error| invalid_data(error.to_string()))?;
+    let workflow = row
+        .get::<_, Option<String>>(12)?
+        .map(|value| serde_json::from_str(&value))
+        .transpose()
+        .map_err(|error| invalid_data(error.to_string()))?;
     Ok(DesktopTaskTodo {
         id: row.get(0)?,
         task_id,
@@ -836,6 +868,7 @@ fn row_to_todo(row: &rusqlite::Row<'_>) -> rusqlite::Result<DesktopTaskTodo> {
         guide_status,
         attachments,
         conversation_references,
+        workflow,
         created_at: row.get(9)?,
         updated_at: row.get(10)?,
     })
@@ -940,11 +973,13 @@ mod tests {
                 priority: DesktopTodoPriority::High,
                 attachments: vec![json!({"path": "src/main.rs"})],
                 conversation_references: Vec::new(),
+                workflow: Some(LiliaAgentWorkflow::LiliaCompact),
             })
             .unwrap();
 
         assert_eq!(created.text, "implement Native");
         assert_eq!(created.guide_status, Some(DesktopTodoGuideStatus::Pending));
+        assert_eq!(created.workflow, Some(LiliaAgentWorkflow::LiliaCompact));
         let updated = store
             .update(
                 &created.id,
@@ -964,7 +999,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_todo_schema_migrates_conversation_references_without_losing_guides() {
+    fn legacy_todo_schema_migrates_optional_context_without_losing_guides() {
         let connection = Connection::open_in_memory().unwrap();
         connection
             .execute_batch(
@@ -995,6 +1030,7 @@ mod tests {
         assert_eq!(guides.len(), 1);
         assert_eq!(guides[0].text, "legacy guide");
         assert!(guides[0].conversation_references.is_empty());
+        assert_eq!(guides[0].workflow, None);
     }
 
     #[test]
@@ -1011,6 +1047,7 @@ mod tests {
                         priority,
                         attachments: Vec::new(),
                         conversation_references: Vec::new(),
+                        workflow: None,
                     },
                     DesktopTodoSource::Lilia,
                     Some(DesktopTodoGuideStatus::Pending),
@@ -1087,6 +1124,7 @@ mod tests {
             guide_status: Some(DesktopTodoGuideStatus::Pending),
             attachments: Vec::new(),
             conversation_references: Vec::new(),
+            workflow: Some(LiliaAgentWorkflow::LiliaCompact),
             created_at: 1,
             updated_at: 1,
         };
@@ -1111,6 +1149,7 @@ mod tests {
             guide_status: Some(DesktopTodoGuideStatus::Pending),
             attachments: Vec::new(),
             conversation_references: Vec::new(),
+            workflow: None,
             created_at: 1,
             updated_at: 1,
         };
@@ -1125,6 +1164,7 @@ mod tests {
             guide_status: None,
             attachments: Vec::new(),
             conversation_references: Vec::new(),
+            workflow: None,
             created_at: 1,
             updated_at: 1,
         };

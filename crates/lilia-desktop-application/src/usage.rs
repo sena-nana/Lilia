@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lilia_contracts::{ProductTask, ProductTaskStatus, Project};
@@ -147,6 +147,50 @@ pub struct QuotaUsageStats {
     pub tools: Vec<QuotaUsageToolSummary>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopProjectTaskStatusCounts {
+    pub draft: i64,
+    pub waiting: i64,
+    pub running: i64,
+    pub blocked: i64,
+    pub done: i64,
+    pub cancelled: i64,
+}
+
+impl DesktopProjectTaskStatusCounts {
+    fn increment(&mut self, status: ProductTaskStatus) {
+        let value = match status {
+            ProductTaskStatus::Draft => &mut self.draft,
+            ProductTaskStatus::Waiting => &mut self.waiting,
+            ProductTaskStatus::Running => &mut self.running,
+            ProductTaskStatus::Blocked => &mut self.blocked,
+            ProductTaskStatus::Done => &mut self.done,
+            ProductTaskStatus::Cancelled => &mut self.cancelled,
+        };
+        *value = value.saturating_add(1);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopProjectDashboardSummary {
+    pub project_id: String,
+    pub name: String,
+    pub workspace_path: Option<String>,
+    pub pinned: bool,
+    pub task_count: i64,
+    pub session_count: i64,
+    pub status_counts: DesktopProjectTaskStatusCounts,
+    pub blocked_count: i64,
+    pub active_count: i64,
+    pub recent_activity_at: Option<i64>,
+    pub total_tokens: i64,
+    pub known_cost_usd: Option<f64>,
+    pub cost_record_count: i64,
+    pub usage_record_count: i64,
+}
+
 #[derive(Clone)]
 struct UsageRecord {
     event_id: String,
@@ -191,6 +235,111 @@ impl Aggregate {
 }
 
 impl DesktopApplication {
+    pub fn project_dashboard_summaries(
+        &self,
+    ) -> Result<Vec<DesktopProjectDashboardSummary>, DesktopApplicationError> {
+        let projects = self.query_projects(ProjectQuery::default())?;
+        let tasks = self.query_tasks(TaskQuery::default())?;
+        let conversations = self.authority().client()?.products().list_conversations()?;
+        let mut tasks_by_project = BTreeMap::<String, Vec<&ProductTask>>::new();
+        for task in &tasks {
+            if let Some(project_id) = &task.project_id {
+                tasks_by_project
+                    .entry(project_id.as_str().to_owned())
+                    .or_default()
+                    .push(task);
+            }
+        }
+
+        let mut summaries = Vec::with_capacity(projects.len());
+        for project in projects {
+            let project_id = project.id.as_str().to_owned();
+            let project_tasks = tasks_by_project
+                .get(&project_id)
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let task_ids = project_tasks
+                .iter()
+                .map(|task| task.id.as_str())
+                .collect::<BTreeSet<_>>();
+            let mut status_counts = DesktopProjectTaskStatusCounts::default();
+            let mut recent_activity_at = None;
+            let mut total_tokens = 0_i64;
+            let mut known_cost_usd = 0.0_f64;
+            let mut cost_record_count = 0_i64;
+            let mut usage_record_count = 0_i64;
+            for task in project_tasks {
+                status_counts.increment(task.status);
+                recent_activity_at = max_activity(recent_activity_at, task.updated_at);
+                for event in self.authority().projection_timeline_for_task(&task.id) {
+                    recent_activity_at = max_activity(
+                        recent_activity_at,
+                        positive_i64(event.payload.get("createdAt")),
+                    );
+                    if event.kind != "usage" {
+                        continue;
+                    }
+                    let Some(record) = usage_record(
+                        &event,
+                        event
+                            .payload
+                            .get("backend")
+                            .and_then(Value::as_str)
+                            .unwrap_or(NATIVE_BACKEND),
+                        positive_i64(event.payload.get("createdAt")),
+                    ) else {
+                        continue;
+                    };
+                    total_tokens = total_tokens.saturating_add(record.totals.total_tokens);
+                    usage_record_count = usage_record_count.saturating_add(1);
+                    if let Some(cost) = first_value(
+                        &event.payload,
+                        &["knownCostUsd", "known_cost_usd", "costUsd", "cost_usd"],
+                    )
+                    .and_then(Value::as_f64)
+                    .filter(|cost| cost.is_finite() && *cost >= 0.0)
+                    {
+                        known_cost_usd += cost;
+                        cost_record_count = cost_record_count.saturating_add(1);
+                    }
+                }
+            }
+            let session_ids = conversations
+                .iter()
+                .filter(|conversation| {
+                    !conversation.archived
+                        && conversation
+                            .task_id
+                            .as_ref()
+                            .is_some_and(|task_id| task_ids.contains(task_id.as_str()))
+                })
+                .map(|conversation| {
+                    recent_activity_at = max_activity(recent_activity_at, conversation.updated_at);
+                    conversation.id.as_str()
+                })
+                .collect::<BTreeSet<_>>();
+            let active_count = status_counts.waiting.saturating_add(status_counts.running);
+            let blocked_count = status_counts.blocked;
+            summaries.push(DesktopProjectDashboardSummary {
+                project_id,
+                name: project.name,
+                workspace_path: project.workspace_path,
+                pinned: project.pinned,
+                task_count: project_tasks.len() as i64,
+                session_count: session_ids.len() as i64,
+                status_counts,
+                blocked_count,
+                active_count,
+                recent_activity_at,
+                total_tokens,
+                known_cost_usd: (cost_record_count > 0).then_some(known_cost_usd),
+                cost_record_count,
+                usage_record_count,
+            });
+        }
+        Ok(summaries)
+    }
+
     pub fn quota_usage_stats(
         &self,
         input: QuotaUsageStatsInput,
@@ -275,6 +424,13 @@ impl DesktopApplication {
             &project_by_id,
         ))
     }
+}
+
+fn max_activity(current: Option<i64>, candidate: i64) -> Option<i64> {
+    if candidate <= 0 {
+        return current;
+    }
+    Some(current.map_or(candidate, |value| value.max(candidate)))
 }
 
 fn usage_record(
@@ -799,5 +955,57 @@ mod tests {
         assert_eq!(stats.tools[0].label, "Search");
         assert_eq!(stats.tools[0].call_count, 1);
         assert_eq!(stats.cost.known_cost_usd, None);
+    }
+
+    #[test]
+    fn project_dashboard_joins_product_status_sessions_activity_and_usage() {
+        let application = application();
+        let project = application
+            .create_project(DesktopProjectCreate::new("Dashboard"))
+            .unwrap();
+        let task = application
+            .create_task(DesktopTaskCreate::new(
+                Some(project.id.clone()),
+                "Dashboard task",
+            ))
+            .unwrap();
+        application
+            .authority()
+            .apply_projection(TimelineProjectionCommand::UpsertTimelineEvent {
+                event: TimelineProjectionEvent {
+                    id: ProjectionEventId::new("dashboard-usage"),
+                    task_id: task.id,
+                    agent_session: AgentSessionRef::new("dashboard-session").unwrap(),
+                    sequence: 1,
+                    turn_id: Some("dashboard-turn".to_owned()),
+                    kind: "usage".to_owned(),
+                    status: "success".to_owned(),
+                    title: "Usage".to_owned(),
+                    summary: None,
+                    payload: serde_json::json!({
+                        "inputTokens": 12,
+                        "outputTokens": 8,
+                        "totalTokens": 20,
+                        "knownCostUsd": 0.25,
+                        "createdAt": 1_800_000_000_000_i64,
+                        "backend": NATIVE_BACKEND,
+                    }),
+                    projected: true,
+                },
+            })
+            .unwrap();
+
+        let dashboard = application.project_dashboard_summaries().unwrap();
+        assert_eq!(dashboard.len(), 1);
+        let summary = &dashboard[0];
+        assert_eq!(summary.project_id, project.id.as_str());
+        assert_eq!(summary.task_count, 1);
+        assert_eq!(summary.session_count, 1);
+        assert_eq!(summary.status_counts.draft, 1);
+        assert_eq!(summary.total_tokens, 20);
+        assert_eq!(summary.known_cost_usd, Some(0.25));
+        assert_eq!(summary.cost_record_count, 1);
+        assert_eq!(summary.usage_record_count, 1);
+        assert_eq!(summary.recent_activity_at, Some(1_800_000_000_000));
     }
 }
