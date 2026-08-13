@@ -487,8 +487,13 @@ Coding Tools、Architecture、Quota、Extensions、Remote 与最终 Workspace �
 作为并发栅栏，在一个 SQLite 事务内关闭并归档会话、归档任务并记录类型化幂等结果；任一实体、事件或结果写入
 失败都会整体回滚。Tauri 数据层只调用一次共享命令，Native 使用真实 NanaUI 确认框，取消时零写入，确认后清理
 同项目的 transient draft 并从权威快照刷新。Native Agent Debug 已加入取消、确认、归档列表恢复及确认框截图回放；
-`native-2026-08-13T04-08-26-149Z` 在当前 macOS 环境完成最新 Debug 构建，但程序按平台门禁在 ready 前退出，故
+`native-2026-08-13T04-22-32-990Z` 在当前 macOS 环境完成最新 Debug 构建，但程序按平台门禁在 ready 前退出，故
 Windows 11 可见交互和截图仍待真机执行，不能以该产物宣称完成系统验收。
+
+单个对话的归档/恢复也已统一为 Product aggregate。Tauri 不再先逐条更新 conversation、再单独更新 task；Native
+普通归档、归档列表恢复及 Worktree 清理/合并后的归档都复用同一应用命令。SQLite 会校验 task revision 与完整绑定
+conversation 集，在一个事务内关闭/恢复 conversation 并切换 task archive state；后续 conversation 写入失败时，
+已经执行的 task 更新、事件和幂等结果会一起回滚。既有 Native Agent Debug 的任务归档/恢复路径会直接覆盖该命令。
 
 `native-2026-08-10T17-24-49-172Z` 又将项目侧栏接入 NanaUI 公共 `ReorderList`。该控件以 4px 鼠标/触摸阈值、
 Grab/Grabbing 指针、横向插入线和 moved/before 值发出纵向重排意图，不持有 Product 项目或持久化；Native 将

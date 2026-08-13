@@ -4007,13 +4007,7 @@ impl PreviewProgram {
                 }
             }
         }
-        match self.application.update_task(
-            &task_id,
-            DesktopTaskPatch {
-                archived: Some(true),
-                ..DesktopTaskPatch::default()
-            },
-        ) {
+        match self.application.set_task_archived(&task_id, true) {
             Ok(_) => {
                 self.execute_workspace_command(DesktopCommand::BackToTaskList);
                 self.refresh_tasks();
@@ -4023,13 +4017,7 @@ impl PreviewProgram {
     }
 
     fn restore_task(&mut self, task_id: TaskId) {
-        match self.application.update_task(
-            &task_id,
-            DesktopTaskPatch {
-                archived: Some(false),
-                ..DesktopTaskPatch::default()
-            },
-        ) {
+        match self.application.set_task_archived(&task_id, false) {
             Ok(_) => self.refresh_tasks(),
             Err(error) => self.error_message = Some(format!("无法恢复任务：{error}")),
         }

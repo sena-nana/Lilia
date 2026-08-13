@@ -40,7 +40,8 @@
 - [x] Native Shell、项目/任务导航、设置、窗口状态、Workspace Item、多 Pane、Tab 重排、拆分、
   跨 Pane/窗口移动及进程重启恢复已落地。
 - [x] 项目和任务的创建、编辑、固定、排序、移动、归档/恢复、项目级对话批量归档、项目移除事务、目录选择及
-  可取消 Git clone 已接入真实 Product Core；批量归档由共享 aggregate 在单个事务中同时更新任务与绑定会话。
+  可取消 Git clone 已接入真实 Product Core；单个任务归档/恢复和项目批量归档均由共享 aggregate 在单个事务中
+  同时更新任务与绑定会话。
 - [x] GitHub Device OAuth、OS Keyring token、分页仓库目录、private/public 选择、解绑与认证 clone 已
   落地；token 不进入 URL、参数、SQLite、日志或调试观察。
 - [x] 任务时间线分页/虚拟化、Composer 草稿与附件、队列/打断、斜杠命令、`@` 文件、`#` 会话、

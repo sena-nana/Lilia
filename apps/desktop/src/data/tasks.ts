@@ -7,6 +7,7 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { ref } from "vue";
 import {
+  TASK_ARCHIVE_COMMAND,
   TASK_ARCHIVE_PROJECT_COMMAND,
   TASK_REORDER_COMMAND,
   TASK_REPARENT_COMMAND,
@@ -197,26 +198,6 @@ function upsertTaskRow(row: ProductTask): Task | OrphanConversation {
     }
   }
   return orphan;
-}
-
-async function updateTaskConversations(
-  taskId: string,
-  update: (conversation: ProductConversation) => ProductConversation,
-  action: string,
-): Promise<void> {
-  const entities = await listProductEntities("conversation");
-  for (const entity of entities) {
-    if (entity.kind !== "conversation" || entity.value.taskId !== taskId) continue;
-    const candidate = update(entity.value);
-    const result = await updateProductEntity(
-      newProductCommandMeta(action, entity.value.revision),
-      { kind: "conversation", value: candidate },
-      action,
-    );
-    if (result.value.kind !== "conversation") {
-      throw new Error("Product Core 返回了错误的对话实体。");
-    }
-  }
 }
 
 export function isProjectTasksLoaded(projectId: string): boolean {
@@ -472,28 +453,9 @@ export async function promoteDraftTask(id: string, title: string): Promise<void>
 }
 
 export async function archiveTask(taskId: string): Promise<boolean> {
-  const current = await loadTaskRow(taskId);
-  if (!current || current.archived) return false;
-  await updateTaskConversations(
-    taskId,
-    (conversation) => ({
-      ...conversation,
-      archived: true,
-      status: "closed",
-      updatedAt: Date.now(),
-    }),
-    "archived",
-  );
-  const result = await updateProductEntity(
-    newProductCommandMeta("archive-task", current.revision),
-    {
-      kind: "task",
-      value: { ...current, archived: true, updatedAt: Date.now() },
-    },
-    "archived",
-  );
-  if (result.value.kind !== "task") throw new Error("Product Core 返回了错误的任务实体。");
-  rememberProductTask(result.value.value);
+  const archived = await invoke<boolean>(TASK_ARCHIVE_COMMAND, { id: taskId });
+  if (!archived) return false;
+  await loadProductTasks();
   removeArchivedTaskFromLists(taskId);
   return true;
 }

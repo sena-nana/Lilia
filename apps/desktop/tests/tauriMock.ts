@@ -3769,18 +3769,48 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
 
     case TASK_ARCHIVE_COMMAND: {
       const id = String(args.id);
-      const before = tasks.length;
-      tasks = tasks.filter((task) => task.id !== id);
+      const task = tasks.find((candidate) => candidate.id === id);
+      if (!task || task.archived === true) return false;
+      task.archived = true;
+      productTaskRevisions.set(id, (productTaskRevisions.get(id) ?? 0) + 1);
+      for (const [conversationId, conversation] of productConversations) {
+        if (conversation.taskId !== id) continue;
+        productConversations.set(conversationId, {
+          ...conversation,
+          archived: true,
+          status: "closed",
+          updatedAt: Date.now(),
+          revision: conversation.revision + 1,
+        });
+      }
       refreshSessionCounts();
-      return tasks.length !== before;
+      return true;
     }
 
     case TASK_ARCHIVE_PROJECT_COMMAND: {
       const projectId = String(args.projectId);
-      const count = tasks.filter((task) => task.projectId === projectId).length;
-      tasks = tasks.filter((task) => task.projectId !== projectId);
+      const archivedTaskIds = new Set(
+        tasks
+          .filter((task) => task.projectId === projectId && task.archived !== true)
+          .map((task) => task.id),
+      );
+      for (const task of tasks) {
+        if (!archivedTaskIds.has(task.id)) continue;
+        task.archived = true;
+        productTaskRevisions.set(task.id, (productTaskRevisions.get(task.id) ?? 0) + 1);
+      }
+      for (const [conversationId, conversation] of productConversations) {
+        if (!conversation.taskId || !archivedTaskIds.has(conversation.taskId)) continue;
+        productConversations.set(conversationId, {
+          ...conversation,
+          archived: true,
+          status: "closed",
+          updatedAt: Date.now(),
+          revision: conversation.revision + 1,
+        });
+      }
       refreshSessionCounts();
-      return count;
+      return archivedTaskIds.size;
     }
 
     case WORKTREE_LIST_COMMAND: {

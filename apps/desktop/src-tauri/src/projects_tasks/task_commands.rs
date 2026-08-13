@@ -397,17 +397,21 @@ pub fn task_archive_project(
 #[tauri::command]
 pub fn task_archive(
     id: String,
-    store: State<'_, LiliaStore>,
-    _app: AppHandle,
+    application: State<'_, DesktopApplication>,
 ) -> Result<bool, String> {
-    let conn = store.conn()?;
-    let changed = conn
-        .execute(
-            "UPDATE tasks SET archived = 1 WHERE id = ?1 AND archived = 0",
-            params![id],
-        )
-        .map_err(|e| format!("task_archive: {e}"))?;
-    Ok(changed > 0)
+    let task_id = lilia_contracts::TaskId::new(id)
+        .map_err(|error| format!("task_archive: id 无效：{error}"))?;
+    if application
+        .get_task(&task_id)
+        .map_err(|error| format!("task_archive: {error}"))?
+        .archived
+    {
+        return Ok(false);
+    }
+    application
+        .set_task_archived(&task_id, true)
+        .map(|_| true)
+        .map_err(|error| format!("task_archive: {error}"))
 }
 
 #[tauri::command]
@@ -427,146 +431,4 @@ pub fn task_toggle_pin(id: String, store: State<'_, LiliaStore>) -> Result<bool,
     )
     .map_err(|e| format!("task_toggle_pin: 更新失败：{e}"))?;
     Ok(new_val != 0)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn create_archive_schema(conn: &rusqlite::Connection) {
-        conn.execute_batch(
-            r#"
-            CREATE TABLE tasks (
-              id           TEXT PRIMARY KEY,
-              project_id   TEXT,
-              session_id   TEXT NOT NULL,
-              title        TEXT NOT NULL,
-              status       TEXT NOT NULL,
-              created_at   INTEGER NOT NULL,
-              archived     INTEGER NOT NULL DEFAULT 0,
-              sort_order   INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE TABLE task_agent_sessions (
-              task_id         TEXT NOT NULL,
-              backend         TEXT NOT NULL,
-              session_id      TEXT NOT NULL,
-              updated_at      INTEGER NOT NULL,
-              PRIMARY KEY (task_id, backend)
-            );
-            "#,
-        )
-        .unwrap();
-    }
-
-    fn insert_task(conn: &rusqlite::Connection, id: &str, project_id: &str, archived: bool) {
-        conn.execute(
-            r#"INSERT INTO tasks
-               (id, project_id, session_id, title, status, created_at, archived, sort_order)
-               VALUES (?1, ?2, ?1, ?3, 'waiting', 1, ?4, ?5)"#,
-            params![
-                id,
-                project_id,
-                format!("任务 {id}"),
-                if archived { 1 } else { 0 },
-                match id {
-                    "task-2" => 2,
-                    "task-3" => 3,
-                    _ => 1,
-                },
-            ],
-        )
-        .unwrap();
-    }
-
-    fn insert_session(conn: &rusqlite::Connection, task_id: &str, backend: &str, session_id: &str) {
-        conn.execute(
-            r#"INSERT INTO task_agent_sessions
-               (task_id, backend, session_id, updated_at)
-               VALUES (?1, ?2, ?3, 1)"#,
-            params![task_id, backend, session_id],
-        )
-        .unwrap();
-    }
-
-    fn task_archived(conn: &rusqlite::Connection, id: &str) -> bool {
-        conn.query_row(
-            "SELECT archived FROM tasks WHERE id = ?1",
-            params![id],
-            |row| row.get::<_, i64>(0),
-        )
-        .unwrap()
-            != 0
-    }
-
-    #[test]
-    fn archive_task_skips_already_archived_rows() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        create_archive_schema(&conn);
-        insert_task(&conn, "active-task", "project-1", false);
-        insert_task(&conn, "archived-task", "project-1", true);
-        insert_session(
-            &conn,
-            "active-task",
-            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
-            "native-session",
-        );
-        insert_session(
-            &conn,
-            "archived-task",
-            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
-            "thread-archived",
-        );
-
-        let unchanged = conn
-            .execute(
-                "UPDATE tasks SET archived = 1 WHERE id = ?1 AND archived = 0",
-                params!["archived-task"],
-            )
-            .unwrap();
-        assert_eq!(unchanged, 0);
-
-        let changed = conn
-            .execute(
-                "UPDATE tasks SET archived = 1 WHERE id = ?1 AND archived = 0",
-                params!["active-task"],
-            )
-            .unwrap();
-        assert_eq!(changed, 1);
-        assert!(task_archived(&conn, "active-task"));
-    }
-
-    #[test]
-    fn archive_project_marks_unarchived_tasks_only() {
-        let conn = rusqlite::Connection::open_in_memory().unwrap();
-        create_archive_schema(&conn);
-        insert_task(&conn, "task-1", "project-1", false);
-        insert_task(&conn, "task-2", "project-1", false);
-        insert_task(&conn, "task-3", "project-2", false);
-        insert_task(&conn, "task-4", "project-1", true);
-        insert_session(
-            &conn,
-            "task-1",
-            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
-            "thread-1",
-        );
-        insert_session(
-            &conn,
-            "task-2",
-            crate::native_agent::BACKEND_NATIVE_AGENTKIT,
-            "thread-2",
-        );
-
-        let count = conn
-            .execute(
-                "UPDATE tasks SET archived = 1 WHERE project_id = ?1 AND archived = 0",
-                params!["project-1"],
-            )
-            .unwrap();
-
-        assert_eq!(count, 2);
-        assert!(task_archived(&conn, "task-1"));
-        assert!(task_archived(&conn, "task-2"));
-        assert!(!task_archived(&conn, "task-3"));
-        assert!(task_archived(&conn, "task-4"));
-    }
 }
