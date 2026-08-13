@@ -17,6 +17,7 @@ struct TaskCommandContract {
 struct TaskCommandsContract {
     list: String,
     list_sidebar_conversations: String,
+    search_sessions: String,
     get: String,
     handoff_get: String,
     create: String,
@@ -48,8 +49,8 @@ fn task_command_contract() -> &'static TaskCommandContract {
 mod tests {
     use super::*;
     use crate::projects_tasks::{
-        task_archive, task_archive_project, task_create, task_delete, task_get, task_list,
-        task_list_sidebar_conversations, task_promote, task_reorder, task_reparent,
+        search_sessions, task_archive, task_archive_project, task_create, task_delete, task_get,
+        task_list, task_list_sidebar_conversations, task_promote, task_reorder, task_reparent,
         task_toggle_pin, task_update, task_update_dependencies,
     };
     use crate::task_goal::{task_goal_clear, task_goal_get, task_goal_refresh, task_goal_set};
@@ -60,6 +61,7 @@ mod tests {
         let commands = &task_command_contract().commands;
         let _ = task_list;
         let _ = task_list_sidebar_conversations;
+        let _ = search_sessions;
         let _ = task_get;
         let _ = task_handoff_get;
         let _ = task_create;
@@ -82,6 +84,7 @@ mod tests {
             commands.list_sidebar_conversations,
             stringify!(task_list_sidebar_conversations)
         );
+        assert_eq!(commands.search_sessions, stringify!(search_sessions));
         assert_eq!(commands.get, stringify!(task_get));
         assert_eq!(commands.handoff_get, stringify!(task_handoff_get));
         assert_eq!(commands.create, stringify!(task_create));

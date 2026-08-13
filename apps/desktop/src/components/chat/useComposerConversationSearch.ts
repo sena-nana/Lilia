@@ -96,7 +96,9 @@ export function useComposerConversationSearch(options: {
       );
       if (seq !== searchSeq) return;
       const query = range.query.trim();
-      results.value = query ? deps.searchSessions(query).slice(0, CONVERSATION_SEARCH_LIMIT) : [];
+      results.value = query
+        ? (await deps.searchSessions(query)).slice(0, CONVERSATION_SEARCH_LIMIT)
+        : [];
       activeIndex.value = 0;
       userInteracted.value = false;
     } catch (err) {

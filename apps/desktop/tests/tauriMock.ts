@@ -134,6 +134,7 @@ import {
   TASK_HANDOFF_GET_COMMAND,
   TASK_LIST_COMMAND,
   TASK_LIST_SIDEBAR_CONVERSATIONS_COMMAND,
+  SEARCH_SESSIONS_COMMAND,
   TASK_PROMOTE_COMMAND,
   TASK_REORDER_COMMAND,
   TASK_REPARENT_COMMAND,
@@ -3528,6 +3529,35 @@ export const mockInvoke = vi.fn(async (cmd: string, args: Record<string, unknown
           pinned: task.pinned,
           route: task.projectId ? `/projects/${task.projectId}/tasks/${task.id}` : `/chats/${task.id}`,
         }));
+
+    case SEARCH_SESSIONS_COMMAND: {
+      const query = String(args.query ?? "").trim().toLowerCase();
+      if (!query) return [];
+      const limit = Math.max(1, Math.min(Number(args.limit ?? 100) || 100, 100));
+      return tasks
+        .filter((task) => !task.archived && task.title.toLowerCase().includes(query))
+        .map((task) => {
+          const titleLower = task.title.toLowerCase();
+          const start = titleLower.indexOf(query);
+          const highlights = start >= 0 ? [[start, start + query.length] as [number, number]] : [];
+          return {
+            kind: task.projectId ? "project-task" : "orphan",
+            projectId: task.projectId ?? undefined,
+            projectName: task.projectId
+              ? projects.find((project) => project.id === task.projectId)?.name
+              : undefined,
+            taskId: task.id,
+            title: task.title,
+            route: task.projectId
+              ? `/projects/${task.projectId}/tasks/${task.id}`
+              : `/chats/${task.id}`,
+            score: 10 + (1 - Math.max(start, 0) / Math.max(task.title.length, 1)),
+            highlights,
+          };
+        })
+        .sort((a, b) => b.score - a.score)
+        .slice(0, limit);
+    }
 
     case TASK_GET_COMMAND: {
       const id = String(args.id);

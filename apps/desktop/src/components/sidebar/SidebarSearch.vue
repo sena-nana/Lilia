@@ -4,7 +4,6 @@ import FileText from "@lucide/vue/dist/esm/icons/file-text.mjs";
 import Search from "@lucide/vue/dist/esm/icons/search.mjs";
 import X from "@lucide/vue/dist/esm/icons/x.mjs";
 import {
-  ensureSessionSearchCorpusLoaded,
   searchSessions,
   type SearchResult,
 } from "../../services/sessionSearch";
@@ -25,50 +24,64 @@ const active = computed({
   set: (value) => emit("update:modelValue", value),
 });
 const query = ref("");
+const results = ref<SearchResult[]>([]);
 const inputRef = ref<{ focus: () => void } | null>(null);
 const selectedIdx = ref(0);
-const hydrating = ref(false);
+const searching = ref(false);
 let disposed = false;
-let hydrateSeq = 0;
-
-const results = computed<SearchResult[]>(() =>
-  searchSessions(query.value).slice(0, 12),
-);
+let searchSeq = 0;
 
 watch(results, () => {
   selectedIdx.value = 0;
 });
 
+watch(
+  query,
+  (value) => {
+    void refreshResults(value);
+  },
+);
+
+async function refreshResults(rawQuery: string) {
+  if (disposed) return;
+  const seq = ++searchSeq;
+  const trimmed = rawQuery.trim();
+  if (!trimmed) {
+    results.value = [];
+    searching.value = false;
+    return;
+  }
+  searching.value = true;
+  try {
+    const next = await measurePerfAsync("sidebar.search.query", () =>
+      searchSessions(trimmed),
+    );
+    if (disposed || seq !== searchSeq) return;
+    results.value = next.slice(0, 12);
+  } catch {
+    if (disposed || seq !== searchSeq) return;
+    results.value = [];
+  } finally {
+    if (!disposed && seq === searchSeq) searching.value = false;
+  }
+}
+
 async function openSearch() {
   if (disposed) return;
   active.value = true;
   query.value = "";
+  results.value = [];
   selectedIdx.value = 0;
-  void hydrateCorpus();
   await nextTick();
   if (disposed) return;
   inputRef.value?.focus();
-}
-
-async function hydrateCorpus() {
-  if (disposed || hydrating.value) return;
-  const seq = ++hydrateSeq;
-  hydrating.value = true;
-  try {
-    await measurePerfAsync(
-      "sidebar.search.hydrate",
-      () => ensureSessionSearchCorpusLoaded(),
-    );
-  } finally {
-    if (disposed || seq !== hydrateSeq) return;
-    hydrating.value = false;
-  }
 }
 
 function closeSearch() {
   if (disposed) return;
   active.value = false;
   query.value = "";
+  results.value = [];
   selectedIdx.value = 0;
 }
 
@@ -104,7 +117,7 @@ function onKeydown(event: KeyboardEvent) {
 
 onBeforeUnmount(() => {
   disposed = true;
-  hydrateSeq += 1;
+  searchSeq += 1;
 });
 
 </script>
@@ -176,6 +189,7 @@ onBeforeUnmount(() => {
             </span>
           </button>
         </template>
+        <p v-else-if="searching" class="search-dropdown__hint">搜索中…</p>
         <p v-else-if="query.trim()" class="search-dropdown__empty">没有匹配</p>
         <p v-else class="search-dropdown__hint">
           <FileText :size="11" aria-hidden="true" />

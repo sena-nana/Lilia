@@ -1,3 +1,5 @@
+use lilia_contracts::{ProductTask, TaskId};
+use lilia_desktop_application::{DesktopApplication, DesktopSessionSearchResult};
 use rusqlite::{params, OptionalExtension};
 use tauri::{AppHandle, State};
 use uuid::Uuid;
@@ -12,9 +14,7 @@ use crate::util::now_millis;
 use super::events::emit_tasks_changed;
 use super::ordering::next_task_sort_order;
 use super::queries::{build_task, insert_task_with_deps, load_project_deps, load_task_deps};
-use super::relations::{
-    normalize_dependency_ids, replace_task_dependencies, task_project_id, validate_parent,
-};
+use super::relations::{normalize_dependency_ids, validate_parent};
 use super::types::{NewTask, SidebarConversationSummaryRow, TaskRow};
 
 #[tauri::command]
@@ -60,6 +60,17 @@ pub fn task_list(
         }
     }
     Ok(out)
+}
+
+#[tauri::command]
+pub fn search_sessions(
+    application: State<'_, DesktopApplication>,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<DesktopSessionSearchResult>, String> {
+    application
+        .search_sessions(&query, limit.unwrap_or(100))
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -356,31 +367,18 @@ pub fn task_promote(
 pub fn task_update_dependencies(
     id: String,
     depends_on: Vec<String>,
-    store: State<'_, LiliaStore>,
-    app: AppHandle,
-) -> Result<TaskRow, String> {
-    let conn = store.conn()?;
-    let project_id = task_project_id(&conn, &id, "task_update_dependencies")?
-        .ok_or_else(|| "task_update_dependencies: 任务不存在".to_string())?;
-    let depends_on = normalize_dependency_ids(
-        &id,
-        project_id.as_deref(),
-        depends_on,
-        &conn,
-        "task_update_dependencies",
-    )?;
-    replace_task_dependencies(&conn, &id, &depends_on, "task_update_dependencies")?;
-    let deps_map = load_task_deps(&conn, &id)?;
-    let task = conn
-        .query_row(
-            r#"SELECT id, project_id, session_id, title, title_source, status, created_at, parent_id, sort_order, pinned
-               FROM tasks WHERE id = ?1 AND archived = 0"#,
-            params![id],
-            |row| build_task(row, &deps_map),
-        )
-        .map_err(|e| format!("task_update_dependencies: 更新后读取失败：{e}"))?;
-    emit_tasks_changed(&app, project_id);
-    Ok(task)
+    application: State<'_, DesktopApplication>,
+) -> Result<ProductTask, String> {
+    let task_id =
+        TaskId::new(id).map_err(|error| format!("task_update_dependencies: id 无效：{error}"))?;
+    let depends_on = depends_on
+        .into_iter()
+        .map(TaskId::new)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("task_update_dependencies: depends_on 无效：{error}"))?;
+    application
+        .update_task_dependencies(&task_id, depends_on)
+        .map_err(|error| format!("task_update_dependencies: {error}"))
 }
 
 #[tauri::command]

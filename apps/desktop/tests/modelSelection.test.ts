@@ -315,4 +315,28 @@ describe("model selection (preset router)", () => {
       kind: "custom",
     });
   });
+
+  it("keeps an explicitly cleared builtin model cleared", () => {
+    const next = normalizeModelFeatureSettings({
+      chat: { light: "legacy-light", normal: null, deep: null },
+      presets: [
+        {
+          id: "fast",
+          label: "Fast",
+          kind: "builtin",
+          model: null,
+          reasoningEffort: null,
+          enabled: true,
+        },
+      ],
+      title: null,
+      suggestion: null,
+      promptRouter: null,
+      promptOptimize: null,
+      autoTurnDecision: null,
+    });
+
+    expect(next.presets.find((preset) => preset.id === "fast")?.model).toBeNull();
+    expect(next.chat.light).toBeNull();
+  });
 });

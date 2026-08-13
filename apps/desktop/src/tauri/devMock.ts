@@ -133,6 +133,7 @@ import {
   TASK_HANDOFF_GET_COMMAND,
   TASK_LIST_COMMAND,
   TASK_LIST_SIDEBAR_CONVERSATIONS_COMMAND,
+  SEARCH_SESSIONS_COMMAND,
   TASK_PROMOTE_COMMAND,
   TASK_REORDER_COMMAND,
   TASK_REPARENT_COMMAND,
@@ -1386,6 +1387,38 @@ export async function invoke<T>(cmd: string, args: Args = {}): Promise<T> {
             route: task.projectId ? `/projects/${task.projectId}/tasks/${task.id}` : `/chats/${task.id}`,
           })),
       ) as T;
+    case SEARCH_SESSIONS_COMMAND: {
+      const query = text(args, "query").trim().toLowerCase();
+      if (!query) return [] as T;
+      const limit = Math.max(1, Math.min(Number(args.limit ?? 100) || 100, 100));
+      return clone(
+        tasks
+          .filter(
+            (task) =>
+              task.archived !== true && String(task.title ?? "").toLowerCase().includes(query),
+          )
+          .map((task) => {
+            const title = String(task.title ?? "");
+            const start = title.toLowerCase().indexOf(query);
+            return {
+              kind: task.projectId ? "project-task" : "orphan",
+              projectId: task.projectId ?? undefined,
+              projectName: task.projectId
+                ? projects.find((project) => project.id === task.projectId)?.name
+                : undefined,
+              taskId: task.id,
+              title,
+              route: task.projectId
+                ? `/projects/${task.projectId}/tasks/${task.id}`
+                : `/chats/${task.id}`,
+              score: 10 + (1 - Math.max(start, 0) / Math.max(title.length, 1)),
+              highlights: start >= 0 ? [[start, start + query.length]] : [],
+            };
+          })
+          .sort((a, b) => b.score - a.score)
+          .slice(0, limit),
+      ) as T;
+    }
     case TASK_GET_COMMAND:
       return clone(tasks.find((task) => task.id === text(args, "id")) ?? null) as T;
     case TASK_HANDOFF_GET_COMMAND:

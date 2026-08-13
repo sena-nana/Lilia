@@ -332,6 +332,13 @@ pub(crate) fn ensure_task_ready_for_agent_turn<R: Runtime>(
     app: &AppHandle<R>,
     task_id: &str,
 ) -> Result<(), String> {
+    if let Some(application) = app.try_state::<lilia_desktop_application::DesktopApplication>() {
+        let task_id =
+            lilia_contracts::TaskId::new(task_id.to_owned()).map_err(|error| error.to_string())?;
+        return application
+            .ensure_task_runnable(&task_id)
+            .map_err(|error| error.to_string());
+    }
     let Some(lilia_store) = app.try_state::<LiliaStore>() else {
         return Ok(());
     };

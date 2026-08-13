@@ -1,68 +1,134 @@
-mod cache;
 #[cfg(test)]
 mod command_contract;
 mod contract;
-mod generation;
-mod github_context;
-mod local_git;
 mod model;
-mod scope;
 mod types;
 
 pub(crate) use types::{SuggestionItem, SuggestionSettings};
 
+use lilia_desktop_application::{
+    ConversationSuggestionModelPort, DesktopApplication, DesktopConversationSuggestionSettings,
+    DesktopConversationSuggestionSource, DesktopSuggestionItem, DesktopSuggestionItemSource,
+    DesktopSuggestionLocalGitProbe, DesktopSuggestionSourceProbe,
+};
 use tauri::{AppHandle, Manager, State};
 
-use crate::settings_store::{load_store_value, save_store_value};
 use crate::store::LiliaStore;
 
-use cache::{build_cache_key, cache_scope_key, load_cache_hit, normalize_settings, save_cache};
-use generation::{build_generation_prompt, materialize_items, parse_model_suggestions};
-use model::{request_model, resolve_model_requests};
-use scope::{build_scope, summarize_scope_sources};
-use types::{SuggestionSourceProbe, SETTINGS_KEY};
+use model::TauriSuggestionModelPort;
+use types::{
+    SuggestionItemSource, SuggestionLocalGitProbe, SuggestionSource, SuggestionSourceProbe,
+};
+
+fn suggestion_settings_from_shared(
+    settings: DesktopConversationSuggestionSettings,
+) -> SuggestionSettings {
+    SuggestionSettings {
+        enabled: settings.enabled,
+        source: match settings.source {
+            DesktopConversationSuggestionSource::Provider => SuggestionSource::Provider,
+            DesktopConversationSuggestionSource::AssistantAi => SuggestionSource::AssistantAi,
+        },
+    }
+}
+
+fn shared_from_suggestion_settings(
+    settings: &SuggestionSettings,
+) -> DesktopConversationSuggestionSettings {
+    DesktopConversationSuggestionSettings {
+        enabled: settings.enabled,
+        source: match settings.source {
+            SuggestionSource::Provider => DesktopConversationSuggestionSource::Provider,
+            SuggestionSource::AssistantAi => DesktopConversationSuggestionSource::AssistantAi,
+        },
+    }
+}
+
+fn map_item_source(source: DesktopSuggestionItemSource) -> SuggestionItemSource {
+    match source {
+        DesktopSuggestionItemSource::Task => SuggestionItemSource::Task,
+        DesktopSuggestionItemSource::Github => SuggestionItemSource::Github,
+        DesktopSuggestionItemSource::LocalGit => SuggestionItemSource::LocalGit,
+        DesktopSuggestionItemSource::SessionThread => SuggestionItemSource::SessionThread,
+        DesktopSuggestionItemSource::Provider => SuggestionItemSource::Provider,
+    }
+}
+
+fn map_item(item: DesktopSuggestionItem) -> SuggestionItem {
+    SuggestionItem {
+        id: item.id,
+        project_id: item.project_id,
+        task_ids: item.task_ids,
+        source: map_item_source(item.source),
+        github_activities: item
+            .github_activities
+            .into_iter()
+            .map(|activity| types::SuggestionGitHubActivityRef {
+                id: activity.id,
+                repo_full_name: activity.repo_full_name,
+                kind: activity.kind,
+                title: activity.title,
+                url: activity.url,
+            })
+            .collect(),
+        local_git_contexts: item
+            .local_git_contexts
+            .into_iter()
+            .map(|context| types::SuggestionLocalGitContextRef {
+                id: context.id,
+                branch: context.branch,
+                status: context.status,
+                changed_files: context.changed_files,
+                recent_commits: context.recent_commits,
+            })
+            .collect(),
+        codex_threads: item
+            .codex_threads
+            .into_iter()
+            .map(|thread| types::SuggestionCodexThreadRef {
+                id: thread.id,
+                title: thread.title,
+                updated_at: thread.updated_at,
+                preview: thread.preview,
+            })
+            .collect(),
+        summary: item.summary,
+        reason: item.reason,
+        prompt: item.prompt,
+        generated_at: item.generated_at,
+    }
+}
+
+fn map_source_probe(probe: DesktopSuggestionSourceProbe) -> SuggestionSourceProbe {
+    SuggestionSourceProbe {
+        sources: probe.sources.into_iter().map(map_item_source).collect(),
+        local_git: probe
+            .local_git
+            .map(
+                |probe: DesktopSuggestionLocalGitProbe| SuggestionLocalGitProbe {
+                    has_recent_commits: probe.has_recent_commits,
+                    has_changed_files: probe.has_changed_files,
+                },
+            ),
+    }
+}
+
+fn require_application(app: &AppHandle) -> Result<DesktopApplication, String> {
+    app.try_state::<DesktopApplication>()
+        .map(|state| state.inner().clone())
+        .ok_or_else(|| "DesktopApplication unavailable".to_string())
+}
 
 #[tauri::command]
 pub fn conversation_suggestions_get_settings(app: AppHandle) -> SuggestionSettings {
-    normalize_settings(load_store_value(&app, SETTINGS_KEY))
-}
-
-#[tauri::command]
-pub async fn conversation_suggestions_get_sources(
-    app: AppHandle,
-    _store: State<'_, LiliaStore>,
-    project_id: Option<String>,
-    force_refresh: Option<bool>,
-) -> Result<SuggestionSourceProbe, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        conversation_suggestions_get_sources_blocking(app, project_id, force_refresh)
-    })
-    .await
-    .map_err(|err| format!("conversation suggestions sources 任务执行失败：{err}"))?
-}
-
-fn conversation_suggestions_get_sources_blocking(
-    app: AppHandle,
-    project_id: Option<String>,
-    _force_refresh: Option<bool>,
-) -> Result<SuggestionSourceProbe, String> {
-    let settings = conversation_suggestions_get_settings(app.clone());
-    if !settings.enabled {
-        return Ok(SuggestionSourceProbe {
-            sources: Vec::new(),
-            local_git: None,
-        });
-    }
-
-    let store = app.state::<LiliaStore>();
-    let conn = store.conn()?;
-    let Some(scope) = build_scope(&app, &conn, project_id.as_deref())? else {
-        return Ok(SuggestionSourceProbe {
-            sources: Vec::new(),
-            local_git: None,
-        });
-    };
-    Ok(summarize_scope_sources(&scope))
+    require_application(&app)
+        .and_then(|application| {
+            application
+                .conversation_suggestion_settings()
+                .map(suggestion_settings_from_shared)
+                .map_err(|error| error.to_string())
+        })
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -70,7 +136,33 @@ pub fn conversation_suggestions_set_settings(
     app: AppHandle,
     settings: SuggestionSettings,
 ) -> Result<(), String> {
-    save_store_value(&app, SETTINGS_KEY, &normalize_settings(Some(settings)))
+    let application = require_application(&app)?;
+    let normalized = SuggestionSettings {
+        enabled: settings.enabled,
+        source: settings.source,
+    };
+    application
+        .save_conversation_suggestion_settings(shared_from_suggestion_settings(&normalized))
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn conversation_suggestions_get_sources(
+    app: AppHandle,
+    _store: State<'_, LiliaStore>,
+    project_id: Option<String>,
+    _force_refresh: Option<bool>,
+) -> Result<SuggestionSourceProbe, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let application = require_application(&app)?;
+        application
+            .conversation_suggestion_sources(project_id.as_deref())
+            .map(map_source_probe)
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|err| format!("conversation suggestions sources 任务执行失败：{err}"))?
 }
 
 #[tauri::command]
@@ -81,53 +173,22 @@ pub async fn conversation_suggestions_get(
     force_refresh: Option<bool>,
 ) -> Result<Vec<SuggestionItem>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        conversation_suggestions_get_blocking(app, project_id, force_refresh)
+        let application = require_application(&app)?;
+        let settings = suggestion_settings_from_shared(
+            application
+                .conversation_suggestion_settings()
+                .map_err(|error| error.to_string())?,
+        );
+        let models = TauriSuggestionModelPort::new(app.clone(), &settings);
+        application
+            .conversation_suggestions(
+                project_id.as_deref(),
+                force_refresh == Some(true),
+                &models as &dyn ConversationSuggestionModelPort,
+            )
+            .map(|items| items.into_iter().map(map_item).collect())
+            .map_err(|error| error.to_string())
     })
     .await
     .map_err(|err| format!("conversation suggestions 任务执行失败：{err}"))?
 }
-
-fn conversation_suggestions_get_blocking(
-    app: AppHandle,
-    project_id: Option<String>,
-    force_refresh: Option<bool>,
-) -> Result<Vec<SuggestionItem>, String> {
-    let settings = conversation_suggestions_get_settings(app.clone());
-    if !settings.enabled {
-        return Ok(Vec::new());
-    }
-
-    let store = app.state::<LiliaStore>();
-    let conn = store.conn()?;
-    let Some(scope) = build_scope(&app, &conn, project_id.as_deref())? else {
-        return Ok(Vec::new());
-    };
-    let models = resolve_model_requests(&app, &settings);
-    if models.is_empty() {
-        return Ok(Vec::new());
-    }
-    let prompt = build_generation_prompt(&scope);
-    let cache_scope = cache_scope_key(project_id.as_deref(), &settings.source);
-    for model in models {
-        let cache_key = build_cache_key(&scope, &model);
-        if force_refresh != Some(true) {
-            if let Some(hit) = load_cache_hit(&app, &cache_scope, &cache_key) {
-                return Ok(hit.items);
-            }
-        }
-        match request_model(&app, &model, &prompt).and_then(parse_model_suggestions) {
-            Ok(items) => {
-                let generated = materialize_items(items, &scope);
-                save_cache(&app, cache_scope.clone(), cache_key, generated.clone());
-                return Ok(generated);
-            }
-            Err(err) => {
-                eprintln!("[conversation-suggestions] generate failed: {err}");
-            }
-        }
-    }
-    Ok(Vec::new())
-}
-
-#[cfg(test)]
-mod tests;

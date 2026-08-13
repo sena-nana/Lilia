@@ -51,27 +51,6 @@ pub(super) fn validate_parent(
     ensure_parent_does_not_create_cycle(conn, task_id, parent_id, context)
 }
 
-pub(super) fn replace_task_dependencies(
-    conn: &Connection,
-    task_id: &str,
-    depends_on: &[String],
-    context: &str,
-) -> Result<(), String> {
-    conn.execute(
-        "DELETE FROM task_dependencies WHERE task_id = ?1",
-        params![task_id],
-    )
-    .map_err(|e| format!("{context}: 清理依赖失败：{e}"))?;
-    for dep in depends_on {
-        conn.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on_id) VALUES (?1, ?2)",
-            params![task_id, dep],
-        )
-        .map_err(|e| format!("{context}: 写入依赖失败：{e}"))?;
-    }
-    Ok(())
-}
-
 pub(super) fn task_project_id(
     conn: &Connection,
     task_id: &str,

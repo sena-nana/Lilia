@@ -489,8 +489,10 @@ fn shared_composer_settings(
         .ok_or_else(|| format!("未知 Composer 权限：{}", state.permission))?;
     let explicit_model = (state.model_selection_mode == "manual").then(|| state.model.clone());
     for command in [
-        DesktopComposerCommand::SetModel(explicit_model),
-        DesktopComposerCommand::SetReasoningEffort(state.reasoning_effort.clone()),
+        DesktopComposerCommand::SetModelSelection {
+            model: explicit_model,
+            reasoning_effort: state.reasoning_effort.clone(),
+        },
         DesktopComposerCommand::SetPermission(permission),
         DesktopComposerCommand::SetPlanMode(state.plan_mode),
         DesktopComposerCommand::SetGoalMode(state.goal_mode),

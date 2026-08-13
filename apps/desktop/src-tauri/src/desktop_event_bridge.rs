@@ -4,6 +4,12 @@ use lilia_desktop_application::{
 use tauri::{AppHandle, Emitter};
 
 pub(crate) fn start(app: &AppHandle, desktop: &DesktopApplication) -> Result<(), std::io::Error> {
+    if let Err(error) = desktop.start_product_change_feed() {
+        eprintln!("[desktop-event-bridge] product change feed: {error}");
+    }
+    if let Err(error) = desktop.start_registry_file_watch() {
+        eprintln!("[desktop-event-bridge] registry file watch: {error}");
+    }
     let app = app.clone();
     let desktop = desktop.clone();
     let events = desktop.subscribe_events();
@@ -111,6 +117,19 @@ fn forward(
         | DesktopEventKind::ApprovalChanged { .. }
         | DesktopEventKind::InteractionChanged { .. }
         | DesktopEventKind::MemorySettingsChanged
+        | DesktopEventKind::ProjectFilesChanged { .. }
+        | DesktopEventKind::ProjectSettingsChanged
+        | DesktopEventKind::ConversationSuggestionSettingsChanged
+        | DesktopEventKind::ConversationSuggestionsChanged { .. }
+        | DesktopEventKind::TerminalChanged { .. }
+        | DesktopEventKind::PopupWindowSettingsChanged
+        | DesktopEventKind::ModelFeatureSettingsChanged { .. }
+        | DesktopEventKind::AssistantAiSettingsChanged { .. }
+        | DesktopEventKind::RouterModeSettingsChanged { .. }
+        | DesktopEventKind::HooksRegistryChanged
+        | DesktopEventKind::SkillsRegistryChanged
+        | DesktopEventKind::McpRegistryChanged
+        | DesktopEventKind::PluginsRegistryChanged
         | DesktopEventKind::NavigationRequested { .. }
         | DesktopEventKind::UpdateStateChanged { .. } => {}
     }

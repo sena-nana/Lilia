@@ -1,8 +1,11 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
+#[cfg(test)]
+pub(crate) use lilia_contracts::LiliaReviewTarget;
 pub(crate) use lilia_contracts::{
     ChatAttachment, ChatContextSearchResult, ChatContextUsage, ChatConversationReference,
+    LiliaAgentWorkflow as ChatWorkflow,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,88 +121,6 @@ pub(crate) struct ChatSendResult {
     pub(crate) dispatch: String,
     pub(crate) queued_count: usize,
     pub(crate) turn_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(
-    rename_all = "camelCase",
-    rename_all_fields = "camelCase",
-    tag = "type"
-)]
-pub(crate) enum ChatWorkflow {
-    #[serde(rename = "lilia_review")]
-    LiliaReview {
-        target: LiliaReviewTarget,
-        #[serde(default)]
-        instructions: Option<String>,
-        #[serde(default)]
-        delivery: Option<String>,
-    },
-    #[serde(rename = "lilia_fix_suggestion")]
-    LiliaFixSuggestion {
-        target: LiliaReviewTarget,
-        #[serde(default)]
-        instructions: Option<String>,
-        #[serde(default)]
-        mode: Option<String>,
-    },
-    #[serde(rename = "lilia_batch_apply")]
-    LiliaBatchApply {
-        source_turn_id: String,
-        source_kind: String,
-        source_summary: String,
-        #[serde(default)]
-        instructions: Option<String>,
-    },
-    #[serde(rename = "lilia_task_workflow")]
-    LiliaTaskWorkflow {
-        kind: String,
-        #[serde(default)]
-        instructions: Option<String>,
-    },
-    #[serde(rename = "lilia_goal")]
-    LiliaGoal {
-        action: String,
-        #[serde(default)]
-        objective: Option<String>,
-        #[serde(default)]
-        status: Option<String>,
-        #[serde(default)]
-        token_budget: Option<u64>,
-    },
-    #[serde(rename = "lilia_compact")]
-    LiliaCompact,
-    #[serde(rename = "lilia_background_terminals_clean")]
-    LiliaBackgroundTerminalsClean,
-    #[serde(rename = "lilia_memory_mode")]
-    LiliaMemoryMode { mode: String },
-    #[serde(rename = "lilia_memory_reset")]
-    LiliaMemoryReset,
-    #[serde(rename = "lilia_config_diagnostics")]
-    LiliaConfigDiagnostics {
-        #[serde(default)]
-        include_layers: Option<bool>,
-    },
-    #[serde(rename = "automation")]
-    Automation { automation_run_id: String },
-    #[serde(rename = "slash_command")]
-    SlashCommand {
-        command_id: String,
-        source: String,
-        #[serde(default)]
-        arguments: std::collections::BTreeMap<String, String>,
-    },
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", tag = "type")]
-pub(crate) enum LiliaReviewTarget {
-    #[serde(rename = "uncommittedChanges")]
-    UncommittedChanges,
-    #[serde(rename = "baseBranch")]
-    BaseBranch { branch: String },
-    #[serde(rename = "commit")]
-    Commit { sha: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

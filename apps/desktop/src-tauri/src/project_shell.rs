@@ -1,9 +1,12 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use lilia_desktop_application::{DesktopApplication, DesktopProjectCloneRequest};
+use lilia_desktop_application::{
+    DesktopApplication, DesktopProjectCloneRequest, DesktopProjectSettings,
+    DesktopWorktreeSelectionMode, DesktopWorktreeSettings,
+};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Runtime, State};
+use tauri::{AppHandle, Manager, Runtime, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::process_command::hide_console_window;
@@ -65,29 +68,82 @@ pub(crate) struct ProjectSettings {
 
 // ---------- Project / Git ----------
 
-pub(crate) fn load_project_settings<R: Runtime>(app: &AppHandle<R>) -> ProjectSettings {
-    if let Some(settings) = load_store_value(app, PROJECT_SETTINGS_KEY) {
-        return settings;
+/// GitHub binding / Codex defaults still live in the Tauri host store until those adapters move.
+fn load_tauri_project_bindings<R: Runtime>(app: &AppHandle<R>) -> ProjectSettings {
+    let settings =
+        load_store_value::<ProjectSettings, _>(app, PROJECT_SETTINGS_KEY).unwrap_or_default();
+    ProjectSettings {
+        clone_parent_dir: None,
+        worktree: WorktreeSettings::default(),
+        codex_defaults: settings.codex_defaults,
+        github_binding: settings.github_binding,
     }
+}
 
-    let Some(clone_parent_dir) = load_store_value::<String, _>(app, PROJECT_SETTINGS_KEY) else {
-        return ProjectSettings::default();
-    };
-    let settings = ProjectSettings {
-        clone_parent_dir: Some(clone_parent_dir),
-        ..ProjectSettings::default()
-    };
-    if let Err(err) = save_project_settings(app, &settings) {
-        eprintln!("[project-settings] migrate legacy clone parent failed: {err}");
+fn shared_from_project_settings(settings: &ProjectSettings) -> DesktopProjectSettings {
+    DesktopProjectSettings {
+        clone_parent_dir: settings.clone_parent_dir.clone(),
+        worktree: DesktopWorktreeSettings {
+            default_mode: DesktopWorktreeSelectionMode::parse(&settings.worktree.default_mode),
+            parent_dir: settings.worktree.parent_dir.clone(),
+            auto_instructions: settings.worktree.auto_instructions.clone(),
+            cleanup_on_archive: settings.worktree.cleanup_on_archive,
+        },
     }
-    settings
+}
+
+fn project_settings_from_shared(
+    shared: DesktopProjectSettings,
+    bindings: &ProjectSettings,
+) -> ProjectSettings {
+    ProjectSettings {
+        clone_parent_dir: shared.clone_parent_dir,
+        codex_defaults: bindings.codex_defaults.clone(),
+        github_binding: bindings.github_binding.clone(),
+        worktree: WorktreeSettings {
+            default_mode: shared.worktree.default_mode.as_str().to_owned(),
+            parent_dir: shared.worktree.parent_dir,
+            auto_instructions: shared.worktree.auto_instructions,
+            cleanup_on_archive: shared.worktree.cleanup_on_archive,
+        },
+    }
+}
+
+pub(crate) fn load_project_settings<R: Runtime>(app: &AppHandle<R>) -> ProjectSettings {
+    let bindings = load_tauri_project_bindings(app);
+    let Some(application) = app.try_state::<DesktopApplication>() else {
+        return bindings;
+    };
+    match application.project_settings() {
+        Ok(shared) => project_settings_from_shared(shared, &bindings),
+        Err(err) => {
+            eprintln!("[project-settings] load shared prefs failed: {err}");
+            project_settings_from_shared(DesktopProjectSettings::default(), &bindings)
+        }
+    }
 }
 
 pub(crate) fn save_project_settings<R: Runtime>(
     app: &AppHandle<R>,
     settings: &ProjectSettings,
 ) -> Result<(), String> {
-    save_store_value(app, PROJECT_SETTINGS_KEY, settings)
+    if let Some(application) = app.try_state::<DesktopApplication>() {
+        application
+            .save_project_settings(shared_from_project_settings(settings))
+            .map_err(|err| err.to_string())?;
+    }
+    // Single-write shared clone/worktree prefs via DesktopApplication.
+    // Host store only keeps unfinished GitHub/Codex binding fields.
+    save_store_value(
+        app,
+        PROJECT_SETTINGS_KEY,
+        &ProjectSettings {
+            clone_parent_dir: None,
+            worktree: WorktreeSettings::default(),
+            codex_defaults: settings.codex_defaults.clone(),
+            github_binding: settings.github_binding.clone(),
+        },
+    )
 }
 
 #[tauri::command]

@@ -1,8 +1,8 @@
+use super::types::SuggestionSource;
+
 use std::sync::OnceLock;
 
 use serde::Deserialize;
-
-use super::types::SuggestionSource;
 
 const SUGGESTIONS_CONTRACT_JSON: &str =
     include_str!("../../../../../packages/contracts/src/suggestions-contract.json");
@@ -40,11 +40,6 @@ fn suggestions_contract() -> &'static SuggestionsContract {
 #[cfg(test)]
 pub(in crate::conversation_suggestions) fn commands() -> &'static SuggestionCommandsContract {
     &suggestions_contract().commands
-}
-
-#[cfg(test)]
-pub(super) fn suggestion_sources() -> &'static [SuggestionSource] {
-    &suggestions_contract().suggestion_sources
 }
 
 pub(super) fn default_suggestion_source() -> SuggestionSource {

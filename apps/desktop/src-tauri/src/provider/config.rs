@@ -1,8 +1,13 @@
 use std::collections::HashMap;
 
+use lilia_desktop_application::{
+    DesktopApplication, DesktopAssistantAiModelPoolItem, DesktopAssistantAiSettings,
+    DesktopAssistantAiSettingsUpdate, DesktopModelFeatureChatSettings, DesktopModelFeatureSettings,
+    DesktopModelFeatureSettingsUpdate, DesktopModelPresetGroup,
+};
 use serde::Serialize;
 use serde_json::Value as JsonValue;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
 use crate::chat::state::{default_backend, normalize_backend, try_normalize_backend};
 use crate::chat_backends_contract::chat_backends_contract;
@@ -26,8 +31,6 @@ fn manifest_contains(values: &[String], value: &str) -> bool {
 
 pub(crate) const PROVIDER_ACTIVE_BACKEND_KEY: &str = "provider.activeBackend";
 pub(crate) const CC_SWITCH_KEY: &str = "cc-switch.config";
-pub(crate) const ASSISTANT_AI_KEY: &str = "assistant-ai.config";
-pub(crate) const MODEL_FEATURE_KEY: &str = "model-feature.config";
 pub(crate) const AGENT_INTERACTION_KEY: &str = "agent-interaction.config";
 pub(crate) const ROUTER_API: &str = "api";
 pub(crate) const ROUTER_CODEX_ACCOUNT: &str = "codex-account";
@@ -43,6 +46,7 @@ struct ProviderConfigMetadata {
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(not(test), allow(dead_code))]
 struct AssistantAIConfigMetadata {
     base_url: Option<String>,
     model: Option<String>,
@@ -200,12 +204,16 @@ pub(crate) fn uses_legacy_cc_switch_mode<R: Runtime>(app: &AppHandle<R>, backend
 }
 
 pub(crate) fn load_assistant_ai_config<R: Runtime>(app: &AppHandle<R>) -> AssistantAIConfig {
-    if let Err(err) = migrate_assistant_ai_config(app) {
-        eprintln!("[provider] migrate assistant-ai config secret failed: {err}");
+    let Some(application) = app.try_state::<DesktopApplication>() else {
+        return AssistantAIConfig::default();
+    };
+    match application.assistant_ai_settings() {
+        Ok(shared) => assistant_ai_config_from_shared(shared),
+        Err(err) => {
+            eprintln!("[provider] load shared assistant-ai settings failed: {err}");
+            AssistantAIConfig::default()
+        }
     }
-    let mut config: AssistantAIConfig = load_store_value(app, ASSISTANT_AI_KEY).unwrap_or_default();
-    config.model_pool = normalize_model_pool(config.model_pool);
-    config
 }
 
 pub(crate) fn save_assistant_ai_config_metadata<R: Runtime>(
@@ -215,31 +223,148 @@ pub(crate) fn save_assistant_ai_config_metadata<R: Runtime>(
     model_pool: Vec<AssistantAIModelPoolItem>,
     codex_account_spark_enabled: bool,
 ) -> Result<(), String> {
-    save_store_value(
-        app,
-        ASSISTANT_AI_KEY,
-        &AssistantAIConfigMetadata {
+    let application = app
+        .try_state::<DesktopApplication>()
+        .ok_or_else(|| "DesktopApplication unavailable".to_string())?;
+    let model_pool = normalize_model_pool(model_pool);
+    let expected_revision = application
+        .assistant_ai_settings()
+        .map(|settings| settings.revision)
+        .unwrap_or(1);
+    application
+        .save_assistant_ai_settings(DesktopAssistantAiSettingsUpdate {
+            expected_revision,
             base_url,
             model,
-            model_pool: normalize_model_pool(model_pool),
+            model_pool: shared_model_pool_from_tauri(&model_pool),
             codex_account_spark_enabled,
-        },
-    )
+        })
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 pub(crate) fn load_model_feature_settings<R: Runtime>(app: &AppHandle<R>) -> ModelFeatureSettings {
-    normalize_model_feature_settings(load_store_value(app, MODEL_FEATURE_KEY))
+    let Some(application) = app.try_state::<DesktopApplication>() else {
+        return normalize_model_feature_settings(None);
+    };
+    match application.model_feature_settings() {
+        Ok(shared) => model_feature_from_shared(shared),
+        Err(err) => {
+            eprintln!("[provider] load shared model-feature settings failed: {err}");
+            normalize_model_feature_settings(None)
+        }
+    }
 }
 
 pub(crate) fn save_model_feature_settings<R: Runtime>(
     app: &AppHandle<R>,
     settings: ModelFeatureSettings,
 ) -> Result<(), String> {
-    save_store_value(
-        app,
-        MODEL_FEATURE_KEY,
-        &normalize_model_feature_settings(Some(settings)),
-    )
+    let application = app
+        .try_state::<DesktopApplication>()
+        .ok_or_else(|| "DesktopApplication unavailable".to_string())?;
+    let normalized = normalize_model_feature_settings(Some(settings));
+    let expected_revision = application
+        .model_feature_settings()
+        .map(|settings| settings.revision)
+        .unwrap_or(1);
+    application
+        .save_model_feature_settings(shared_model_feature_update(expected_revision, &normalized))
+        .map(|_| ())
+        .map_err(|err| err.to_string())
+}
+
+fn assistant_ai_config_from_shared(shared: DesktopAssistantAiSettings) -> AssistantAIConfig {
+    AssistantAIConfig {
+        base_url: shared.base_url,
+        api_key: None,
+        model: shared.model,
+        model_pool: shared
+            .model_pool
+            .into_iter()
+            .map(|item| AssistantAIModelPoolItem {
+                id: item.id,
+                label: item.label,
+                source: item.source,
+                backend: item.backend,
+            })
+            .collect(),
+        codex_account_spark_enabled: shared.codex_account_spark_enabled,
+        has_api_key: false,
+        clear_api_key: false,
+    }
+}
+
+fn shared_model_pool_from_tauri(
+    items: &[AssistantAIModelPoolItem],
+) -> Vec<DesktopAssistantAiModelPoolItem> {
+    items
+        .iter()
+        .map(|item| DesktopAssistantAiModelPoolItem {
+            id: item.id.clone(),
+            label: item.label.clone(),
+            source: item.source.clone(),
+            backend: item.backend.clone(),
+        })
+        .collect()
+}
+
+fn model_feature_from_shared(shared: DesktopModelFeatureSettings) -> ModelFeatureSettings {
+    ModelFeatureSettings {
+        chat: ModelFeatureChatSettings {
+            light: shared.chat.light,
+            normal: shared.chat.normal,
+            deep: shared.chat.deep,
+        },
+        presets: shared
+            .presets
+            .into_iter()
+            .map(|preset| ModelPresetGroup {
+                id: preset.id,
+                label: preset.label,
+                kind: preset.kind,
+                model: preset.model,
+                reasoning_effort: preset.reasoning_effort,
+                enabled: preset.enabled,
+            })
+            .collect(),
+        title: shared.title,
+        suggestion: shared.suggestion,
+        prompt_router: shared.prompt_router,
+        prompt_optimize: shared.prompt_optimize,
+        auto_turn_decision: shared.auto_turn_decision,
+    }
+}
+
+fn shared_model_feature_update(
+    expected_revision: u64,
+    settings: &ModelFeatureSettings,
+) -> DesktopModelFeatureSettingsUpdate {
+    DesktopModelFeatureSettingsUpdate {
+        expected_revision,
+        chat: DesktopModelFeatureChatSettings {
+            light: settings.chat.light.clone(),
+            normal: settings.chat.normal.clone(),
+            deep: settings.chat.deep.clone(),
+        },
+        presets: settings
+            .presets
+            .iter()
+            .map(|preset| DesktopModelPresetGroup {
+                id: preset.id.clone(),
+                label: preset.label.clone(),
+                kind: preset.kind.clone(),
+                model: preset.model.clone(),
+                reasoning_effort: preset.reasoning_effort.clone(),
+                enabled: preset.enabled,
+            })
+            .collect(),
+        title: settings.title.clone(),
+        suggestion: settings.suggestion.clone(),
+        prompt_router: settings.prompt_router.clone(),
+        prompt_optimize: settings.prompt_optimize.clone(),
+        auto_turn_decision: settings.auto_turn_decision.clone(),
+    }
 }
 
 pub(crate) fn normalize_model_pool(
@@ -358,10 +483,7 @@ fn normalize_model_presets(
             "deep" => chat.deep.clone(),
             _ => None,
         };
-        if let Some(mut override_preset) = builtin_overrides.remove(*id) {
-            if override_preset.model.is_none() {
-                override_preset.model = from_chat;
-            }
+        if let Some(override_preset) = builtin_overrides.remove(*id) {
             builtins.push(override_preset);
             continue;
         }
@@ -388,10 +510,9 @@ fn mirror_presets_into_chat_tiers(
     let mut deep = chat.deep.clone();
     for preset in presets {
         match preset.id.as_str() {
-            "fast" if preset.model.is_some() => light = preset.model.clone(),
-            "default" if preset.model.is_some() => normal = preset.model.clone(),
-            "plan" if preset.model.is_some() => deep = preset.model.clone(),
-            "review" if preset.model.is_some() && deep.is_none() => deep = preset.model.clone(),
+            "fast" => light = preset.model.clone(),
+            "default" => normal = preset.model.clone(),
+            "plan" => deep = preset.model.clone(),
             _ => {}
         }
     }
@@ -431,25 +552,6 @@ fn migrate_provider_config<R: Runtime>(app: &AppHandle<R>, key: &str) -> Result<
         write_secret(&account, api_key)?;
     }
     save_provider_config_metadata(app, key, config.backend, config.base_url)
-}
-
-fn migrate_assistant_ai_config<R: Runtime>(app: &AppHandle<R>) -> Result<(), String> {
-    let Some(config) = load_store_value::<AssistantAIConfig, _>(app, ASSISTANT_AI_KEY) else {
-        return Ok(());
-    };
-    let Some(api_key) = config.api_key.as_deref().and_then(normalize_secret) else {
-        return Ok(());
-    };
-    if !has_secret(assistant_ai_account())? {
-        write_secret(assistant_ai_account(), api_key)?;
-    }
-    save_assistant_ai_config_metadata(
-        app,
-        config.base_url,
-        config.model,
-        config.model_pool,
-        config.codex_account_spark_enabled,
-    )
 }
 
 pub(crate) fn load_agent_interaction_settings<R: Runtime>(
@@ -621,8 +723,35 @@ pub(crate) fn normalize_string_list(values: Vec<String>) -> Vec<String> {
 
 pub(crate) fn load_router_mode<R: Runtime>(app: &AppHandle<R>, backend: &str) -> String {
     let backend = normalize_backend(backend);
-    let key = router_key_for_backend(backend).expect("normalized backend must have a router key");
-    normalize_router_mode_value(backend, load_store_value::<String, _>(app, key).as_deref())
+    let Some(application) = app.try_state::<DesktopApplication>() else {
+        return normalize_router_mode_value(backend, None);
+    };
+    match application.router_mode_for_backend(backend) {
+        Ok(mode) => normalize_router_mode_value(backend, mode.as_deref()),
+        Err(err) => {
+            eprintln!("[provider] load shared router mode failed: {err}");
+            normalize_router_mode_value(backend, None)
+        }
+    }
+}
+
+pub(crate) fn save_router_mode<R: Runtime>(
+    app: &AppHandle<R>,
+    backend: &str,
+    mode: &str,
+) -> Result<(), String> {
+    let application = app
+        .try_state::<DesktopApplication>()
+        .ok_or_else(|| "DesktopApplication unavailable".to_string())?;
+    let backend = normalize_backend(backend);
+    let mode = normalize_router_mode_value(backend, Some(mode));
+    if !router_mode_supported_for_backend(backend, &mode) {
+        return Err(format!("{backend} 不支持路由模式: {mode}"));
+    }
+    application
+        .set_router_mode_for_backend(backend, &mode)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 pub(crate) fn router_mode_supported_for_backend(backend: &str, mode: &str) -> bool {

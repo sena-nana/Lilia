@@ -19,6 +19,7 @@ use lilia_contracts::{
     TimelineProjectionEvent, PRODUCT_TIMELINE_STORE_ID, TIMELINE_UI_CACHE_KIND,
 };
 use lilia_core::{AgentKitClientPort, NativeAgentCapabilitySnapshot};
+use lilia_desktop_application::DesktopApplication;
 use mutsuki_agent_contracts::{
     AgentEvent, AgentEventEnvelope, AgentMessage, AgentSession, AgentWireError,
     AgentWireRequestEnvelope, AgentWireResponseEnvelope, CredentialRef, EditorContextSnapshot,
@@ -964,6 +965,12 @@ pub fn run_native_agent_turn<R: Runtime>(
     app_handle: &AppHandle<R>,
     invocation: RunnerInvocation,
 ) -> Result<RunnerOutput, String> {
+    if matches!(
+        invocation.workflow.as_ref(),
+        Some(crate::chat::types::ChatWorkflow::LiliaCompact)
+    ) {
+        return run_native_context_compaction(app_handle, invocation);
+    }
     let runtime = native_runtime()?;
     let task_id = TaskId::new(invocation.task_id.clone()).map_err(|err| err.to_string())?;
     let workflow_kind = invocation
@@ -1100,6 +1107,75 @@ pub fn run_native_agent_turn<R: Runtime>(
         waiting_approval: paused && page.waiting_approval,
         waiting_interaction: paused && page.waiting_interaction,
         terminal_failed: !paused && !page.completed && !page.cancelled,
+    })
+}
+
+fn run_native_context_compaction<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    invocation: RunnerInvocation,
+) -> Result<RunnerOutput, String> {
+    let task_id = TaskId::new(invocation.task_id.clone()).map_err(|error| error.to_string())?;
+    register_running_turn(
+        &app_handle.state::<ChatStore>(),
+        invocation.task_id.clone(),
+        invocation.turn_id.clone(),
+        BACKEND_NATIVE_AGENTKIT,
+    );
+    let application = app_handle
+        .try_state::<DesktopApplication>()
+        .ok_or_else(|| "Desktop application is unavailable".to_owned())?;
+    let result = application
+        .compact_task_agent_context_with_model(
+            &task_id,
+            &invocation.turn_id,
+            Some(&invocation.composer.model),
+        )
+        .map_err(|error| error.to_string())?;
+
+    let store = app_handle.state::<ChatStore>();
+    if let Some(lilia_store) = app_handle.try_state::<LiliaStore>() {
+        if let Ok(conn) = lilia_store.conn() {
+            remember_agent_session(
+                &conn,
+                &store,
+                &invocation.task_id,
+                BACKEND_NATIVE_AGENTKIT,
+                &result.session_id,
+                "native-agentkit",
+            );
+        }
+    } else {
+        store.sdk_sessions.lock().unwrap().insert(
+            session_key(BACKEND_NATIVE_AGENTKIT, &invocation.task_id),
+            result.session_id.clone(),
+        );
+    }
+    mirror_agent_events_to_ui_cache(app_handle, &invocation.task_id, &result.events)?;
+    let _ = app_handle.emit(
+        crate::native_agent_contract::stream_event_name(),
+        json!({
+            "taskId": &invocation.task_id,
+            "turnId": &invocation.turn_id,
+            "sessionId": &result.session_id,
+            "eventCount": result.events.len(),
+            "nextSequence": result.events.last().map(|event| event.sequence),
+            "waitingApproval": false,
+            "waitingInteraction": false,
+            "completed": true,
+            "cancelled": false,
+            "timelineIsProjection": true,
+            "productTimelineStore": PRODUCT_TIMELINE_STORE_ID,
+            "desktopSqliteIsUiCacheOnly": true,
+            "terminal": true,
+        }),
+    );
+    Ok(RunnerOutput {
+        last_session_id: Some(result.session_id),
+        interrupted: false,
+        reset: false,
+        waiting_approval: false,
+        waiting_interaction: false,
+        terminal_failed: false,
     })
 }
 

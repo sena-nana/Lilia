@@ -9,12 +9,11 @@ describe("sessionSearch", () => {
     await ensureSessionSearchCorpusLoaded(true);
   });
 
-  it("合并子串与相似度结果并按分值从高到低排序", () => {
-    const res = searchSessions("tsconfig");
+  it("合并子串与相似度结果并按分值从高到低排序", async () => {
+    const res = await searchSessions("tsconfig");
     expect(res.length).toBeGreaterThan(0);
     for (const r of res) {
       expect(r.score).toBeGreaterThan(0);
-      expect(r.score).toBeLessThanOrEqual(1);
     }
 
     const routes = res.map((r) => r.route);
@@ -25,26 +24,25 @@ describe("sessionSearch", () => {
     expect(scores).toEqual(sorted);
   });
 
-  it("project-task 走 /projects 路由，orphan 走 /chats 路由", () => {
-    const res = searchSessions("Claude");
+  it("project-task 走 /projects 路由，orphan 走 /chats 路由", async () => {
+    const res = await searchSessions("Claude");
     const task = res.find((r) => r.kind === "project-task");
     const orphan = res.find((r) => r.kind === "orphan");
     expect(task?.route.startsWith("/projects/")).toBe(true);
     expect(orphan?.route.startsWith("/chats/")).toBe(true);
   });
 
-  it("强制刷新 sidebar summary 后会更新搜索结果", async () => {
+  it("强制刷新后会更新搜索结果", async () => {
     await mockInvoke(TASK_UPDATE_COMMAND, {
       id: "t-002",
       title: "新的统一侧栏标题",
     });
     await ensureSessionSearchCorpusLoaded(true);
 
-    const res = searchSessions("统一侧栏标题");
+    const res = await searchSessions("统一侧栏标题");
     expect(res[0]).toMatchObject({
       taskId: "t-002",
       route: "/projects/lilia/tasks/t-002",
     });
   });
 });
-

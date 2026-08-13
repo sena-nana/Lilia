@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
-use tauri::AppHandle;
+use lilia_desktop_application::DesktopApplication;
+use tauri::{AppHandle, Manager};
 
 use crate::chat::state::{chat_backend_supported, chat_backends};
 use crate::settings_store::save_store_value;
@@ -9,10 +10,9 @@ use super::assistant_ai;
 use super::config::{
     known_provider_key_for_backend, load_active_backend, load_agent_interaction_settings,
     load_model_feature_settings, load_router_mode, normalize_agent_interaction_settings,
-    public_assistant_ai_config, public_provider_config, router_key_for_backend,
-    router_mode_supported_for_backend, save_assistant_ai_config_metadata,
-    save_model_feature_settings, save_provider_config_metadata, AGENT_INTERACTION_KEY,
-    PROVIDER_ACTIVE_BACKEND_KEY,
+    public_assistant_ai_config, public_provider_config, save_assistant_ai_config_metadata,
+    save_model_feature_settings, save_provider_config_metadata, save_router_mode,
+    AGENT_INTERACTION_KEY, PROVIDER_ACTIVE_BACKEND_KEY,
 };
 use super::connection::build_backend_env_status;
 use super::credentials::{apply_secret_update, assistant_ai_account, provider_account};
@@ -122,8 +122,18 @@ pub fn assistant_ai_set_config(app: AppHandle, config: AssistantAIConfig) -> Res
 }
 
 #[tauri::command]
-pub fn assistant_ai_fetch_models(config: AssistantAIConfig) -> AssistantAIModelsResult {
-    assistant_ai::fetch_models(config)
+pub fn assistant_ai_fetch_models(
+    app: AppHandle,
+    config: AssistantAIConfig,
+) -> AssistantAIModelsResult {
+    let Some(application) = app.try_state::<DesktopApplication>() else {
+        return AssistantAIModelsResult {
+            ok: false,
+            error: Some("DesktopApplication unavailable".to_owned()),
+            models: Vec::new(),
+        };
+    };
+    assistant_ai::fetch_models(&application, config)
 }
 
 #[tauri::command]
@@ -176,8 +186,19 @@ pub fn agent_interaction_delete_subagent(id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn assistant_ai_test_connection(config: AssistantAIConfig) -> AssistantAITestResult {
-    assistant_ai::test_connection(config)
+pub fn assistant_ai_test_connection(
+    app: AppHandle,
+    config: AssistantAIConfig,
+) -> AssistantAITestResult {
+    let Some(application) = app.try_state::<DesktopApplication>() else {
+        return AssistantAITestResult {
+            ok: false,
+            error: Some("DesktopApplication unavailable".to_owned()),
+            models: None,
+            model_matched: None,
+        };
+    };
+    assistant_ai::test_connection(&application, config)
 }
 
 #[tauri::command]
@@ -195,9 +216,5 @@ pub fn router_get_mode(app: AppHandle, backend: String) -> String {
 
 #[tauri::command]
 pub fn router_set_mode(app: AppHandle, backend: String, mode: String) -> Result<(), String> {
-    let key = router_key_for_backend(&backend)?;
-    if !router_mode_supported_for_backend(&backend, &mode) {
-        return Err(format!("{backend} 不支持路由模式: {mode}"));
-    }
-    save_store_value(&app, key, &mode)
+    save_router_mode(&app, &backend, &mode)
 }

@@ -222,7 +222,6 @@ pub fn run() {
                 .build(),
         )
         .manage(chat::state::ChatStore::default())
-        .manage(chat::title_update::TitleUpdateCoordinator::default())
         .manage(cli_project::CliProjectOpenState::default())
         .setup(|app| {
             if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
@@ -452,6 +451,7 @@ pub fn run() {
             projects_tasks::project_architecture_rollback,
             projects_tasks::task_list,
             projects_tasks::task_list_sidebar_conversations,
+            projects_tasks::search_sessions,
             projects_tasks::task_get,
             projects_tasks::task_create,
             projects_tasks::task_update,
@@ -525,11 +525,7 @@ pub fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
-                if let Some(coordinator) =
-                    app.try_state::<chat::title_update::TitleUpdateCoordinator>()
-                {
-                    coordinator.shutdown();
-                }
+                chat::title_update::shutdown_title_update(app);
             }
         });
 }

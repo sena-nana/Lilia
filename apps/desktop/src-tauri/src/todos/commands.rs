@@ -97,6 +97,7 @@ pub fn todo_create(
         priority: desktop_priority(priority.as_deref()),
         attachments: attachments.unwrap_or_default(),
         conversation_references: conversation_references.unwrap_or_default(),
+        workflow: None,
     };
     desktop
         .create_task_todo(input)
@@ -120,6 +121,7 @@ pub fn todo_submit_guide(
         priority: desktop_priority(priority.as_deref()),
         attachments: attachments.unwrap_or_default(),
         conversation_references: conversation_references.unwrap_or_default(),
+        workflow: None,
     };
     desktop
         .submit_composer_guide(expected_composer_revision, input)

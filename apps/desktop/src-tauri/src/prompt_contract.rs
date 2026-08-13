@@ -73,11 +73,14 @@ pub(crate) struct NativeSubagentPrompts {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AssistantPrompts {
+    #[cfg(test)]
     prompt_router: PromptRouterPrompts,
+    #[cfg(test)]
     prompt_optimize: PromptOptimizePrompts,
     auto_turn_decision: AutoTurnDecisionPrompts,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PromptRouterPrompts {
@@ -87,6 +90,7 @@ struct PromptRouterPrompts {
     scenarios: Vec<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PromptOptimizePrompts {
@@ -137,6 +141,7 @@ fn prompt_contract() -> &'static PromptContract {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn prompt_optimize_system_instruction() -> &'static str {
     &prompt_contract()
         .assistant
@@ -196,6 +201,7 @@ pub(crate) fn build_main_agent_prompt(mode: &str, custom_prompt: Option<&str>) -
         .join("\n\n")
 }
 
+#[cfg(test)]
 pub(crate) fn prompt_optimize_request_instruction() -> &'static str {
     &prompt_contract()
         .assistant
@@ -203,14 +209,17 @@ pub(crate) fn prompt_optimize_request_instruction() -> &'static str {
         .request_instruction
 }
 
+#[cfg(test)]
 pub(crate) fn prompt_optimize_requirements() -> &'static [String] {
     &prompt_contract().assistant.prompt_optimize.requirements
 }
 
+#[cfg(test)]
 pub(crate) fn prompt_router_system_instruction() -> &'static str {
     &prompt_contract().assistant.prompt_router.system_instruction
 }
 
+#[cfg(test)]
 pub(crate) fn prompt_router_request_instruction() -> &'static str {
     &prompt_contract()
         .assistant
@@ -218,10 +227,12 @@ pub(crate) fn prompt_router_request_instruction() -> &'static str {
         .request_instruction
 }
 
+#[cfg(test)]
 pub(crate) fn prompt_router_requirements() -> &'static [String] {
     &prompt_contract().assistant.prompt_router.requirements
 }
 
+#[cfg(test)]
 pub(crate) fn prompt_router_scenarios() -> &'static [String] {
     &prompt_contract().assistant.prompt_router.scenarios
 }

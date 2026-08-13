@@ -362,6 +362,7 @@ import {
   TASK_GET_COMMAND,
   TASK_LIST_COMMAND,
   TASK_LIST_SIDEBAR_CONVERSATIONS_COMMAND,
+  SEARCH_SESSIONS_COMMAND,
   TASK_PROMOTE_COMMAND,
   TASK_REORDER_COMMAND,
   TASK_REPARENT_COMMAND,
@@ -4094,6 +4095,7 @@ describe("contracts normalization helpers", () => {
     expect(TASKS_CHANGED_EVENT_NAME).toBe("tasks:changed");
     expect(TASK_LIST_COMMAND).toBe("task_list");
     expect(TASK_LIST_SIDEBAR_CONVERSATIONS_COMMAND).toBe("task_list_sidebar_conversations");
+    expect(SEARCH_SESSIONS_COMMAND).toBe("search_sessions");
     expect(TASK_GET_COMMAND).toBe("task_get");
     expect(TASK_CREATE_COMMAND).toBe("task_create");
     expect(TASK_UPDATE_COMMAND).toBe("task_update");

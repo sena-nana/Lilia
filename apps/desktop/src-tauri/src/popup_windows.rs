@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use lilia_desktop_application::{DesktopApplication, DesktopPopupWindowSettings};
 use serde::{Deserialize, Serialize};
 use tauri::{
     utils::config::Color, AppHandle, Emitter, Manager, Runtime, WebviewUrl, WebviewWindow,
@@ -9,12 +10,10 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
-use crate::settings_store::{load_store_value, normalize_optional_string, save_store_value};
+use crate::settings_store::normalize_optional_string;
 use crate::store::LiliaStore;
 use crate::{app_events_contract, BG, MAIN_WINDOW_LABEL};
 
-const POPUP_WINDOW_SETTINGS_KEY: &str = "popup-window.config";
-const POPUP_LAST_PROJECT_KEY: &str = "popup-window.lastProjectId";
 const POPUP_WINDOW_PREFIX: &str = "popup-";
 const POPUP_EXISTING_TASK_PREFIX: &str = "popup-task-";
 pub(crate) const CONVERSATION_STATUS_WINDOW_LABEL: &str = "conversation-status";
@@ -50,24 +49,56 @@ pub(crate) fn normalize_popup_window_settings(
 }
 
 pub(crate) fn load_popup_window_settings(app: &AppHandle) -> PopupWindowSettings {
-    normalize_popup_window_settings(
-        load_store_value(app, POPUP_WINDOW_SETTINGS_KEY).unwrap_or_default(),
-    )
+    let Some(application) = app.try_state::<DesktopApplication>() else {
+        return PopupWindowSettings::default();
+    };
+    match application.popup_window_settings() {
+        Ok(settings) => normalize_popup_window_settings(PopupWindowSettings {
+            shortcut: settings.shortcut,
+        }),
+        Err(err) => {
+            eprintln!("[popup] load shared window settings failed: {err}");
+            PopupWindowSettings::default()
+        }
+    }
 }
 
 pub(crate) fn save_popup_window_settings(
     app: &AppHandle,
     settings: &PopupWindowSettings,
 ) -> Result<(), String> {
-    save_store_value(app, POPUP_WINDOW_SETTINGS_KEY, settings)
+    let application = app
+        .try_state::<DesktopApplication>()
+        .ok_or_else(|| "DesktopApplication unavailable".to_string())?;
+    application
+        .save_popup_window_settings(DesktopPopupWindowSettings {
+            shortcut: settings.shortcut.clone(),
+        })
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 pub(crate) fn load_popup_last_project_id(app: &AppHandle) -> Option<String> {
-    normalize_optional_string(load_store_value(app, POPUP_LAST_PROJECT_KEY))
+    let Some(application) = app.try_state::<DesktopApplication>() else {
+        return None;
+    };
+    match application.popup_last_project_id() {
+        Ok(project_id) => normalize_optional_string(project_id),
+        Err(err) => {
+            eprintln!("[popup] load shared last project failed: {err}");
+            None
+        }
+    }
 }
 
 pub(crate) fn save_popup_last_project_id(app: &AppHandle, project_id: &str) -> Result<(), String> {
-    save_store_value(app, POPUP_LAST_PROJECT_KEY, &project_id)
+    let application = app
+        .try_state::<DesktopApplication>()
+        .ok_or_else(|| "DesktopApplication unavailable".to_string())?;
+    application
+        .remember_popup_last_project(project_id)
+        .map(|_| ())
+        .map_err(|err| err.to_string())
 }
 
 pub(crate) fn project_exists(app: &AppHandle, project_id: &str) -> bool {

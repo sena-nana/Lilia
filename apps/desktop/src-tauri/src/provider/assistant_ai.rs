@@ -1,21 +1,36 @@
+#[cfg(test)]
 use std::time::Duration;
 
+#[cfg(test)]
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+#[cfg(test)]
 use serde_json::Value as JsonValue;
-use tauri::{AppHandle, Runtime};
+use tauri::{AppHandle, Manager, Runtime};
 
-use super::config::{assistant_ai_secret, load_assistant_ai_config, load_model_feature_settings};
-use super::credentials::normalize_secret;
+use lilia_desktop_application::{
+    DesktopApplication, DesktopAssistantAiProbeInput, DesktopAssistantAiTestResult,
+    DesktopPromptOptimizeInput, DesktopSecret,
+};
+
+#[cfg(test)]
+use super::config::assistant_ai_secret;
+#[cfg(test)]
+use super::config::load_assistant_ai_config;
 use super::types::{
     AssistantAIConfig, AssistantAIModelPoolItem, AssistantAIModelsResult, AssistantAITestResult,
 };
 use crate::chat::types::{ChatAttachment, ChatConversationReference, ChatWorkflow};
+#[cfg(test)]
 use crate::prompt_contract;
+#[cfg(test)]
+use serde_json::json;
 
+#[cfg(test)]
 const PROMPT_OPTIMIZE_TIMEOUT: Duration = Duration::from_secs(12);
+#[cfg(test)]
 const PROMPT_ROUTE_CONFIDENCE_THRESHOLD: f64 = 0.6;
+#[cfg(test)]
 const GENERAL_TASK_SCENARIO: &str = "general_task_optimize";
 
 #[derive(Debug, Clone, Deserialize)]
@@ -49,6 +64,7 @@ pub(crate) struct PromptRoute {
     pub(crate) signals: Vec<String>,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RawPromptRoute {
@@ -59,155 +75,52 @@ struct RawPromptRoute {
     signals: Option<Vec<String>>,
 }
 
-pub(crate) fn test_connection(mut config: AssistantAIConfig) -> AssistantAITestResult {
-    if config
-        .api_key
-        .as_deref()
-        .and_then(normalize_secret)
-        .is_none()
-    {
-        config.api_key = assistant_ai_secret().ok().flatten();
-    }
-    let base = config
-        .base_url
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .trim_end_matches('/');
-    let key = config.api_key.as_deref().unwrap_or("").trim();
-    let model = config.model.as_deref().unwrap_or("").trim();
-    if base.is_empty() || key.is_empty() || model.is_empty() {
-        return AssistantAITestResult {
-            ok: false,
-            error: Some("baseUrl / apiKey / model 必须全部填写".into()),
-            models: None,
-            model_matched: None,
-        };
-    }
-    let url = format!("{base}/models");
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(3))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return AssistantAITestResult {
-                ok: false,
-                error: Some(format!("HTTP 客户端构造失败：{e}")),
-                models: None,
-                model_matched: None,
-            }
-        }
-    };
-    match client.get(&url).bearer_auth(key).send() {
-        Ok(resp) if resp.status().is_success() => {
-            let parsed: Option<Vec<String>> = resp
-                .json::<JsonValue>()
-                .ok()
-                .and_then(|v| v.get("data").cloned())
-                .and_then(|d| d.as_array().cloned())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|m| m.get("id").and_then(|i| i.as_str()).map(String::from))
-                        .collect()
-                });
-            let matched = parsed.as_ref().map(|list| list.iter().any(|m| m == model));
-            AssistantAITestResult {
-                ok: true,
-                error: None,
-                models: parsed,
-                model_matched: matched,
-            }
-        }
-        Ok(resp) => AssistantAITestResult {
-            ok: false,
-            error: Some(format!("HTTP {} from {url}", resp.status())),
-            models: None,
-            model_matched: None,
-        },
-        Err(e) => AssistantAITestResult {
-            ok: false,
-            error: Some(format!("请求失败：{e}")),
-            models: None,
-            model_matched: None,
-        },
+pub(crate) fn test_connection(
+    application: &DesktopApplication,
+    config: AssistantAIConfig,
+) -> AssistantAITestResult {
+    let result = application.test_assistant_ai_connection(probe_input(config));
+    map_test_result(result)
+}
+
+pub(crate) fn fetch_models(
+    application: &DesktopApplication,
+    config: AssistantAIConfig,
+) -> AssistantAIModelsResult {
+    let result = application.fetch_assistant_ai_models(probe_input(config));
+    AssistantAIModelsResult {
+        ok: result.ok,
+        error: result.error,
+        models: result
+            .models
+            .into_iter()
+            .map(|item| AssistantAIModelPoolItem {
+                id: item.id,
+                label: item.label,
+                source: item.source,
+                backend: item.backend,
+            })
+            .collect(),
     }
 }
 
-pub(crate) fn fetch_models(mut config: AssistantAIConfig) -> AssistantAIModelsResult {
-    if config
-        .api_key
-        .as_deref()
-        .and_then(normalize_secret)
-        .is_none()
-    {
-        config.api_key = assistant_ai_secret().ok().flatten();
+fn probe_input(config: AssistantAIConfig) -> DesktopAssistantAiProbeInput {
+    DesktopAssistantAiProbeInput {
+        base_url: config.base_url,
+        model: config.model,
+        api_key: config.api_key.and_then(|secret| {
+            let secret = secret.trim();
+            (!secret.is_empty()).then(|| DesktopSecret::new(secret.as_bytes().to_vec()))
+        }),
     }
-    let base = config
-        .base_url
-        .as_deref()
-        .unwrap_or("")
-        .trim()
-        .trim_end_matches('/');
-    let key = config.api_key.as_deref().unwrap_or("").trim();
-    if base.is_empty() || key.is_empty() {
-        return AssistantAIModelsResult {
-            ok: false,
-            error: Some("baseUrl / apiKey 必须填写".into()),
-            models: Vec::new(),
-        };
-    }
-    let url = format!("{base}/models");
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return AssistantAIModelsResult {
-                ok: false,
-                error: Some(format!("HTTP 客户端构造失败：{e}")),
-                models: Vec::new(),
-            }
-        }
-    };
-    match client.get(&url).bearer_auth(key).send() {
-        Ok(resp) if resp.status().is_success() => {
-            let models = resp
-                .json::<JsonValue>()
-                .ok()
-                .and_then(|v| v.get("data").cloned())
-                .and_then(|d| d.as_array().cloned())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|m| m.get("id").and_then(|i| i.as_str()))
-                        .map(str::trim)
-                        .filter(|id| !id.is_empty())
-                        .map(|id| AssistantAIModelPoolItem {
-                            id: id.to_string(),
-                            label: id.to_string(),
-                            source: "remote".to_string(),
-                            backend: "assistant-ai".to_string(),
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
-            AssistantAIModelsResult {
-                ok: true,
-                error: None,
-                models,
-            }
-        }
-        Ok(resp) => AssistantAIModelsResult {
-            ok: false,
-            error: Some(format!("HTTP {} from {url}", resp.status())),
-            models: Vec::new(),
-        },
-        Err(e) => AssistantAIModelsResult {
-            ok: false,
-            error: Some(format!("请求失败：{e}")),
-            models: Vec::new(),
-        },
+}
+
+fn map_test_result(result: DesktopAssistantAiTestResult) -> AssistantAITestResult {
+    AssistantAITestResult {
+        ok: result.ok,
+        error: result.error,
+        models: result.models,
+        model_matched: result.model_matched,
     }
 }
 
@@ -215,35 +128,31 @@ pub(crate) fn optimize_prompt<R: Runtime>(
     app: AppHandle<R>,
     input: PromptOptimizeInput,
 ) -> Result<PromptOptimizeResult, String> {
-    let prompt = input.prompt.trim();
-    if prompt.is_empty() {
-        return Err("提示词为空".to_string());
-    }
-    let model_features = load_model_feature_settings(&app);
-    let route_request = build_prompt_route_request(prompt, &input);
-    let route_text = request_assistant_text(
-        &app,
-        &route_request,
-        prompt_contract::prompt_router_system_instruction(),
-        700,
-        model_features.prompt_router.clone(),
-    )?;
-    let route = normalize_prompt_route(&route_text)?;
-
-    let optimize_request = build_prompt_optimize_request(prompt, &input, &route);
-    let optimized_text = request_assistant_text(
-        &app,
-        &optimize_request,
-        prompt_contract::prompt_optimize_system_instruction(),
-        900,
-        model_features.prompt_optimize,
-    )?;
+    let application = app
+        .try_state::<DesktopApplication>()
+        .ok_or_else(|| "DesktopApplication unavailable".to_owned())?;
+    let result = application
+        .optimize_prompt(DesktopPromptOptimizeInput {
+            prompt: input.prompt,
+            attachments: input.attachments,
+            conversation_references: input.conversation_references,
+            project_cwd: input.project_cwd,
+            task_id: input.task_id,
+        })
+        .map_err(|error| error.to_string())?;
     Ok(PromptOptimizeResult {
-        optimized_prompt: normalize_optimized_prompt(&optimized_text)?,
-        route,
+        optimized_prompt: result.optimized_prompt,
+        route: PromptRoute {
+            scenario: result.route.scenario,
+            workflow: result.route.workflow,
+            confidence: result.route.confidence,
+            reason: result.route.reason,
+            signals: result.route.signals,
+        },
     })
 }
 
+#[cfg(test)]
 fn assistant_ai_model_request<R: Runtime>(
     app: &AppHandle<R>,
     override_model: Option<String>,
@@ -265,6 +174,7 @@ fn assistant_ai_model_request<R: Runtime>(
     Ok(cfg)
 }
 
+#[cfg(test)]
 fn request_assistant_text<R: Runtime>(
     app: &AppHandle<R>,
     prompt: &str,
@@ -276,6 +186,7 @@ fn request_assistant_text<R: Runtime>(
     request_openai_compatible(&model, prompt, system_instruction, max_tokens)
 }
 
+#[cfg(test)]
 fn request_openai_compatible(
     model: &AssistantAIConfig,
     prompt: &str,
@@ -323,6 +234,7 @@ fn request_openai_compatible(
         .ok_or_else(|| "辅助模型响应缺少 message.content".to_string())
 }
 
+#[cfg(test)]
 fn prompt_context_json(input: &PromptOptimizeInput) -> (Vec<JsonValue>, Vec<JsonValue>) {
     let attachments = input
         .attachments
@@ -352,6 +264,7 @@ fn prompt_context_json(input: &PromptOptimizeInput) -> (Vec<JsonValue>, Vec<Json
     (attachments, conversation_references)
 }
 
+#[cfg(test)]
 fn build_prompt_route_request(prompt: &str, input: &PromptOptimizeInput) -> String {
     let (attachments, conversation_references) = prompt_context_json(input);
     json!({
@@ -367,6 +280,7 @@ fn build_prompt_route_request(prompt: &str, input: &PromptOptimizeInput) -> Stri
     .to_string()
 }
 
+#[cfg(test)]
 fn build_prompt_optimize_request(
     prompt: &str,
     input: &PromptOptimizeInput,
@@ -384,6 +298,7 @@ fn build_prompt_optimize_request(
     .to_string()
 }
 
+#[cfg(test)]
 fn extract_json_object(text: &str) -> Result<String, String> {
     let trimmed = text.trim();
     if trimmed.starts_with('{') && trimmed.ends_with('}') {
@@ -398,6 +313,7 @@ fn extract_json_object(text: &str) -> Result<String, String> {
     Ok(trimmed[start..=end].to_string())
 }
 
+#[cfg(test)]
 fn normalize_prompt_route(text: &str) -> Result<PromptRoute, String> {
     Ok(normalize_raw_prompt_route(
         serde_json::from_str::<RawPromptRoute>(&extract_json_object(text)?)
@@ -405,6 +321,7 @@ fn normalize_prompt_route(text: &str) -> Result<PromptRoute, String> {
     ))
 }
 
+#[cfg(test)]
 fn normalize_raw_prompt_route(raw: RawPromptRoute) -> PromptRoute {
     let mut scenario = raw
         .scenario
@@ -435,6 +352,7 @@ fn normalize_raw_prompt_route(raw: RawPromptRoute) -> PromptRoute {
     }
 }
 
+#[cfg(test)]
 fn prompt_route_workflow_matches(scenario: &str, workflow: &ChatWorkflow) -> bool {
     fn task_workflow_matches(scenario: &str, kind: &str) -> bool {
         matches!(
@@ -467,6 +385,7 @@ fn prompt_route_workflow_matches(scenario: &str, workflow: &ChatWorkflow) -> boo
     )
 }
 
+#[cfg(test)]
 fn normalize_optimized_prompt(text: &str) -> Result<String, String> {
     let trimmed = text.trim().trim_matches('`').trim();
     if trimmed.is_empty() {
@@ -481,24 +400,6 @@ fn normalize_optimized_prompt(text: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn assistant_ai_requires_base_url_key_and_model() {
-        let result = test_connection(AssistantAIConfig {
-            base_url: Some("https://example.com/v1".to_string()),
-            api_key: None,
-            model: Some("model".to_string()),
-            model_pool: Vec::new(),
-            codex_account_spark_enabled: false,
-            has_api_key: false,
-            clear_api_key: false,
-        });
-
-        assert!(!result.ok);
-        assert_eq!(result.models, None);
-        assert_eq!(result.model_matched, None);
-        assert!(result.error.unwrap().contains("必须全部填写"));
-    }
 
     #[test]
     fn normalize_optimized_prompt_rejects_empty_text() {
