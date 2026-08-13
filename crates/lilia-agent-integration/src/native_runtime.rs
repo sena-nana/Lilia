@@ -2649,8 +2649,8 @@ mod tests {
     use super::*;
     use crate::credential::ProductCredentialLoginInput;
     use mutsuki_agent_contracts::{CredentialKind, OPENAI_CREDENTIAL_PROVIDER_ID};
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2678,9 +2678,113 @@ mod tests {
         }
     }
 
+    enum ScriptedModelServerStep {
+        AwaitCancellation {
+            request_received: mpsc::Sender<()>,
+            connection_closed: mpsc::Sender<()>,
+        },
+        Respond(Value),
+        Disconnect,
+    }
+
+    fn spawn_scripted_model_server(
+        steps: Vec<ScriptedModelServerStep>,
+    ) -> (String, std::thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            for step in steps {
+                let (mut stream, _) = listener.accept().unwrap();
+                read_complete_http_request(&mut stream).unwrap();
+                match step {
+                    ScriptedModelServerStep::AwaitCancellation {
+                        request_received,
+                        connection_closed,
+                    } => {
+                        request_received.send(()).unwrap();
+                        wait_for_cancelled_connection(&mut stream);
+                        connection_closed.send(()).unwrap();
+                    }
+                    ScriptedModelServerStep::Respond(response) => {
+                        let body = response.to_string();
+                        write!(
+                            stream,
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        )
+                        .unwrap();
+                    }
+                    ScriptedModelServerStep::Disconnect => {}
+                }
+            }
+        });
+        (format!("http://{address}/v1/chat/completions"), server)
+    }
+
+    fn read_complete_http_request(stream: &mut TcpStream) -> std::io::Result<()> {
+        let mut reader = BufReader::new(stream);
+        let mut content_length = None;
+        loop {
+            let mut header = String::new();
+            if reader.read_line(&mut header)? == 0 {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "model request ended before its headers",
+                ));
+            }
+            if header == "\r\n" {
+                break;
+            }
+            if let Some((name, value)) = header.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    content_length = Some(value.trim().parse::<usize>().map_err(|error| {
+                        std::io::Error::new(std::io::ErrorKind::InvalidData, error)
+                    })?);
+                }
+            }
+        }
+        let length = content_length.ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "model request is missing Content-Length",
+            )
+        })?;
+        reader.read_exact(&mut vec![0; length])
+    }
+
+    fn wait_for_cancelled_connection(stream: &mut TcpStream) {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut bytes = [0_u8; 1];
+        match stream.read(&mut bytes) {
+            Ok(0) => {}
+            Ok(_) => panic!("cancelled model connection received unexpected data"),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::UnexpectedEof
+                ) => {}
+            Err(error) => panic!("cancelled model connection failed unexpectedly: {error}"),
+        }
+    }
+
     fn configured_runtime(
         responses: Vec<Value>,
     ) -> (NativeAgentKitRuntime, std::thread::JoinHandle<()>) {
+        let (endpoint, server) = spawn_scripted_model_server(
+            responses
+                .into_iter()
+                .map(ScriptedModelServerStep::Respond)
+                .collect(),
+        );
+        (runtime_for_model_endpoint(endpoint), server)
+    }
+
+    fn runtime_for_model_endpoint(endpoint: String) -> NativeAgentKitRuntime {
         let runtime = NativeRuntimeBootstrap::embedded_reference()
             .unwrap()
             .into_runtime();
@@ -2695,24 +2799,8 @@ mod tests {
             })
             .unwrap();
         runtime.refresh_product_profile(None).unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
-        let server = std::thread::spawn(move || {
-            for response in responses {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut bytes = [0_u8; 32_768];
-                let _ = stream.read(&mut bytes).unwrap();
-                let body = response.to_string();
-                write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                )
-                .unwrap();
-            }
-        });
-        runtime.set_model_endpoint_override(Some(format!("http://{address}/v1/chat/completions")));
-        (runtime, server)
+        runtime.set_model_endpoint_override(Some(endpoint));
+        runtime
     }
 
     #[test]
@@ -3761,48 +3849,17 @@ mod tests {
 
     #[test]
     fn exact_turn_cancellation_stops_the_host_task_and_releases_the_session() {
-        let runtime = Arc::new(
-            NativeRuntimeBootstrap::embedded_reference()
-                .unwrap()
-                .into_runtime(),
-        );
-        runtime
-            .credentials()
-            .login(ProductCredentialLoginInput {
-                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
-                kind: CredentialKind::ApiKey,
-                secret_material: "sk-test-openai-api-key-0123456789abcdef".into(),
-                account_label: None,
-                source: Some("user_api_key".into()),
-            })
-            .unwrap();
-        runtime.refresh_product_profile(None).unwrap();
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = listener.local_addr().unwrap();
         let (request_started_tx, request_started_rx) = mpsc::channel();
-        let (release_response_tx, release_response_rx) = mpsc::channel();
+        let (connection_closed_tx, connection_closed_rx) = mpsc::channel();
         let (streamed_events_tx, streamed_events_rx) = mpsc::channel();
-        let server = std::thread::spawn(move || {
-            for index in 0..2 {
-                let (mut stream, _) = listener.accept().unwrap();
-                let mut bytes = [0_u8; 32_768];
-                let _ = stream.read(&mut bytes).unwrap();
-                if index == 0 {
-                    request_started_tx.send(()).unwrap();
-                    release_response_rx.recv().unwrap();
-                }
-                let body = final_response().to_string();
-                let response = write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                    body.len()
-                );
-                if index != 0 {
-                    response.unwrap();
-                }
-            }
-        });
-        runtime.set_model_endpoint_override(Some(format!("http://{address}/v1/chat/completions")));
+        let (endpoint, server) = spawn_scripted_model_server(vec![
+            ScriptedModelServerStep::AwaitCancellation {
+                request_received: request_started_tx,
+                connection_closed: connection_closed_tx,
+            },
+            ScriptedModelServerStep::Respond(final_response()),
+        ]);
+        let runtime = Arc::new(runtime_for_model_endpoint(endpoint));
         let session = session(&runtime, "cancel");
         let running_runtime = Arc::clone(&runtime);
         let running_session = session.clone();
@@ -3879,7 +3936,9 @@ mod tests {
                 .unwrap(),
             TurnCancellationDisposition::ActiveRun
         );
-        release_response_tx.send(()).unwrap();
+        connection_closed_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
         assert!(running.join().unwrap().is_err());
         let cancelled_events = runtime.events_after(&session, 0).unwrap();
         assert!(cancelled_events.iter().any(|event| {
@@ -3927,6 +3986,27 @@ mod tests {
             event.event,
             mutsuki_agent_contracts::AgentEvent::FinalResponse { .. }
         )));
+        assert!(runtime.active_runs.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn transport_failure_without_cancellation_is_unavailable() {
+        let (endpoint, server) =
+            spawn_scripted_model_server(vec![ScriptedModelServerStep::Disconnect]);
+        let runtime = runtime_for_model_endpoint(endpoint);
+        let session = session(&runtime, "transport-failure");
+
+        let error = runtime
+            .submit_turn_with_context_streaming(
+                &session,
+                "fail without cancellation",
+                "turn-transport-failure",
+                Some(json!({"permission": "full"})),
+            )
+            .unwrap_err();
+
+        server.join().unwrap();
+        assert!(matches!(error, AgentKitPortError::Unavailable(_)));
         assert!(runtime.active_runs.lock().unwrap().is_empty());
     }
 }
