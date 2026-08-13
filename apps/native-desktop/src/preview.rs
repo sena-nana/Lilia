@@ -1178,6 +1178,7 @@ pub enum Message {
     TaskPopupPickAttachmentDirectories(HostedWindowId),
     TaskPopupPasteClipboardText(HostedWindowId),
     TaskPopupPasteClipboardImage(HostedWindowId),
+    PasteClipboardFiles(HostedWindowId),
     TaskPopupRemoveAttachment {
         window_id: HostedWindowId,
         attachment_id: String,
@@ -8114,6 +8115,9 @@ impl PreviewProgram {
             Message::TaskPopupPasteClipboardImage(window_id) => {
                 self.paste_clipboard_image_into_task_popup(window_id);
             }
+            Message::PasteClipboardFiles(window_id) => {
+                self.paste_clipboard_files(window_id);
+            }
             Message::TaskPopupRemoveAttachment {
                 window_id,
                 attachment_id,
@@ -11592,6 +11596,27 @@ impl PreviewProgram {
                     HostedWindowId::PRIMARY,
                     "无法读取剪贴板图片，请重试。".to_owned(),
                 );
+            }
+        }
+    }
+
+    fn paste_clipboard_files(&mut self, window_id: HostedWindowId) {
+        if !self.window_accepts_attachment_drop(window_id) {
+            return;
+        }
+        match self.application.capture_clipboard_file_attachments() {
+            Ok(attachments) if attachments.is_empty() => {
+                self.set_attachment_error(window_id, "剪贴板中没有文件。".to_owned());
+            }
+            Ok(attachments) if window_id == HostedWindowId::PRIMARY => {
+                self.add_composer_attachments(attachments);
+            }
+            Ok(attachments) => {
+                self.add_task_popup_attachments(window_id, attachments);
+            }
+            Err(error) => {
+                eprintln!("failed to capture Native clipboard files: {error}");
+                self.set_attachment_error(window_id, "无法读取剪贴板文件，请重试。".to_owned());
             }
         }
     }
@@ -16578,6 +16603,12 @@ impl PreviewProgram {
             self.paste_clipboard_image_into_task_popup(window_id);
             return true;
         }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_paste_files(popup.id.0) == target_id).then_some(popup.id)
+        }) {
+            self.paste_clipboard_files(window_id);
+            return true;
+        }
         if let Some((window_id, attachment)) = self.task_popups.values().find_map(|popup| {
             popup
                 .composer
@@ -18103,6 +18134,9 @@ impl PreviewProgram {
             }
             target_ids::COMPOSER_PASTE_IMAGE if !self.composer_input_is_locked() => {
                 self.paste_clipboard_image_into_composer();
+            }
+            target_ids::COMPOSER_PASTE_FILES if !self.composer_input_is_locked() => {
+                self.paste_clipboard_files(HostedWindowId::PRIMARY);
             }
             target_id
                 if self
@@ -20534,6 +20568,7 @@ impl PreviewProgram {
                 target_ids::task_popup_attach_directory(popup.id.0),
                 target_ids::task_popup_paste_text(popup.id.0),
                 target_ids::task_popup_paste_image(popup.id.0),
+                target_ids::task_popup_paste_files(popup.id.0),
             ]);
             targets.extend(
                 popup
@@ -21744,6 +21779,7 @@ impl PreviewProgram {
                     target_ids::COMPOSER_ATTACH_DIRECTORY.to_owned(),
                     target_ids::COMPOSER_PASTE_TEXT.to_owned(),
                     target_ids::COMPOSER_PASTE_IMAGE.to_owned(),
+                    target_ids::COMPOSER_PASTE_FILES.to_owned(),
                     target_ids::COMPOSER_PLAN_MODE.to_owned(),
                     target_ids::COMPOSER_GOAL_MODE.to_owned(),
                     target_ids::COMPOSER_PERMISSION.to_owned(),
@@ -21931,6 +21967,7 @@ impl PreviewProgram {
                         target_ids::COMPOSER_ATTACH_DIRECTORY.to_owned(),
                         target_ids::COMPOSER_PASTE_TEXT.to_owned(),
                         target_ids::COMPOSER_PASTE_IMAGE.to_owned(),
+                        target_ids::COMPOSER_PASTE_FILES.to_owned(),
                         target_ids::COMPOSER_PLAN_MODE.to_owned(),
                         target_ids::COMPOSER_GOAL_MODE.to_owned(),
                         target_ids::COMPOSER_PERMISSION.to_owned(),
@@ -26512,6 +26549,8 @@ impl PreviewProgram {
             button(text("文字").size(10)).style(button_style(tokens, ButtonKind::Ghost));
         let mut paste_image =
             button(text("图片").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+        let mut paste_files =
+            button(text("粘文件").size(10)).style(button_style(tokens, ButtonKind::Ghost));
         let optimizing_prompt = self.prompt_optimization_is_busy(window_id, Some(&draft.id));
         let mut optimize_prompt = button(
             text(if optimizing_prompt {
@@ -26542,6 +26581,7 @@ impl PreviewProgram {
         } else {
             Message::TaskPopupPasteClipboardImage(window_id)
         });
+        paste_files = paste_files.on_press(Message::PasteClipboardFiles(window_id));
         if !optimizing_prompt && !content_value.trim().is_empty() {
             optimize_prompt = optimize_prompt.on_press(Message::OptimizePrompt(window_id));
         }
@@ -26593,6 +26633,7 @@ impl PreviewProgram {
                     attach_directory,
                     paste_text,
                     paste_image,
+                    paste_files,
                     optimize_prompt
                 ]
                 .spacing(4),
@@ -27839,6 +27880,8 @@ impl PreviewProgram {
             button(text("文字").size(10)).style(button_style(tokens, ButtonKind::Ghost));
         let mut paste_image =
             button(text("图片").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+        let mut paste_files =
+            button(text("粘文件").size(10)).style(button_style(tokens, ButtonKind::Ghost));
         let optimizing_prompt =
             self.prompt_optimization_is_busy(popup_id, popup.active_task_id.as_ref());
         let mut optimize_prompt = button(
@@ -27875,6 +27918,7 @@ impl PreviewProgram {
             attach_directory.on_press(Message::TaskPopupPickAttachmentDirectories(popup_id));
         paste_text = paste_text.on_press(Message::TaskPopupPasteClipboardText(popup_id));
         paste_image = paste_image.on_press(Message::TaskPopupPasteClipboardImage(popup_id));
+        paste_files = paste_files.on_press(Message::PasteClipboardFiles(popup_id));
         if !optimizing_prompt
             && !turn_active
             && !pending_blocks_send
@@ -27903,6 +27947,7 @@ impl PreviewProgram {
                 attach_directory,
                 paste_text,
                 paste_image,
+                paste_files,
                 optimize_prompt
             ]
             .spacing(4),
@@ -34726,6 +34771,8 @@ impl PreviewProgram {
         .style(button_style(tokens, ButtonKind::Ghost));
         let mut paste_image =
             button(text("图片").size(11)).style(button_style(tokens, ButtonKind::Ghost));
+        let mut paste_files =
+            button(text("粘文件").size(11)).style(button_style(tokens, ButtonKind::Ghost));
         let optimizing_prompt =
             self.prompt_optimization_is_busy(HostedWindowId::PRIMARY, self.selected_task.as_ref());
         let mut optimize_prompt = button(
@@ -34742,6 +34789,8 @@ impl PreviewProgram {
             attach_directory = attach_directory.on_press(Message::PickAttachmentDirectories);
             paste_text = paste_text.on_press(Message::PasteClipboardText);
             paste_image = paste_image.on_press(Message::PasteClipboardImage);
+            paste_files =
+                paste_files.on_press(Message::PasteClipboardFiles(HostedWindowId::PRIMARY));
         }
         if !optimizing_prompt && !self.composer_is_locked() && !composer_content.trim().is_empty() {
             optimize_prompt =
@@ -34801,6 +34850,7 @@ impl PreviewProgram {
                 attach_directory,
                 paste_text,
                 paste_image,
+                paste_files,
                 optimize_prompt,
                 plan_mode,
                 goal_mode,

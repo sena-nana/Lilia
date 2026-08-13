@@ -140,7 +140,8 @@ bootstrap SQLite 之前处理同一 pending。两条路径都会再次确认目�
   更多 IDE Item、完整编辑器/终端交互和系统门禁，而不是窗口布局合同。
 - 多行 Composer 已通过 `DesktopApplication` 调用 Service 持有的 Agent Wire，支持
   真实发送、停止、session binding 复用、流刷新、权限允许/拒绝、最多 8 MiB 的系统剪贴板文字粘贴，以及
-  经过维度/RGBA 上限校验并编码到独立 Preview 缓存的剪贴板图片；
+  经过维度/RGBA 上限校验并编码到独立 Preview 缓存的剪贴板图片；Explorer/Finder 复制的文件列表由
+  `DesktopHost` 类型化读取，应用层统一去空、去重并描述为附件，主窗口、草稿和任务窗口都有真实粘贴入口；
   主窗口与任务窗口共享同一 task-scoped revisioned Composer。正文、附件、对话引用、模型、reasoning、权限与
   Plan/Goal 模式保存到 Preview 独立 SQLite，未发送草稿可跨进程恢复；该能力强于当前 Tauri 普通草稿。
   pending 决策会校验当前 task/session/turn/revision，失败时保持 Open 以便重试。MCP `mcp_elicitation`
@@ -150,7 +151,8 @@ bootstrap SQLite 之前处理同一 pending。两条路径都会再次确认目�
 - NanaUI Hosted runtime 会把 Explorer 文件 hover/drop/cancel 作为带窗口身份、路径和逻辑光标位置的类型化事件交给应用；
   主窗口与任务窗口使用同一附件合并/去重路径，并在可接收区域显示真实释放提示。Composer 和时间线中的 raster/SVG
   图片通过 Iced/WGPU 原生预览，可显式交给系统打开，不启动隐藏 WebView。当前仍需在解锁 Windows 桌面完成真实
-  多文件拖放、图片剪贴板、中文/无权限路径、缩略图视觉和缓存回收门禁。
+  多文件拖放、文件/图片剪贴板、中文/无权限路径、缩略图视觉和缓存回收门禁；Native 的 Ctrl/Cmd+V 自动文件探测
+  还需等 NanaUI 按键事件 revision 正式发布并更新 immutable pin，当前不伪造为已接入。
 - 活动 turn 期间 Composer 继续可编辑：非空发送将完整请求和 UUID turn ID 持久化为 FIFO，空输入才显示停止。
   启动先恢复权限/计划/提问等待态，再按持久顺序挂回队列；正常完成逐项推进，显式停止清空队列且不推进。
   Composer 首个无空格 `/` token 会通过应用层搜索内置 `/help`、`/status` 与项目 `.lilia/commands/*.md`；

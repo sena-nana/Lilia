@@ -271,6 +271,7 @@ pub const TASK_ARCHIVE: &str = "native-preview.task-session.task.archive";
 pub const COMPOSER_INPUT: &str = "native-preview.task-session.composer.input";
 pub const COMPOSER_PASTE_TEXT: &str = "native-preview.task-session.composer.paste-text";
 pub const COMPOSER_PASTE_IMAGE: &str = "native-preview.task-session.composer.paste-image";
+pub const COMPOSER_PASTE_FILES: &str = "native-preview.task-session.composer.paste-files";
 pub const COMPOSER_ATTACH_FILE: &str = "native-preview.task-session.composer.attach-file";
 pub const COMPOSER_ATTACH_DIRECTORY: &str = "native-preview.task-session.composer.attach-directory";
 pub const COMPOSER_PLAN_MODE: &str = "native-preview.task-session.composer.plan-mode";
@@ -954,6 +955,10 @@ pub fn task_popup_paste_text(window_id: u64) -> String {
 
 pub fn task_popup_paste_image(window_id: u64) -> String {
     format!("native-preview.task-popup.{window_id}.composer.paste-image")
+}
+
+pub fn task_popup_paste_files(window_id: u64) -> String {
+    format!("native-preview.task-popup.{window_id}.composer.paste-files")
 }
 
 pub fn attachment_preview(window_id: u64, attachment_id: &str) -> String {
