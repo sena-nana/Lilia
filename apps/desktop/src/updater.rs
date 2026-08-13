@@ -122,7 +122,8 @@ pub fn execute_with_progress(
 }
 
 pub fn is_configured() -> bool {
-    option_env!("LILIA_UPDATER_PUBKEY").is_some_and(|value| !value.trim().is_empty())
+    cfg!(windows)
+        && option_env!("LILIA_UPDATER_PUBKEY").is_some_and(|value| !value.trim().is_empty())
 }
 
 impl NativeUpdaterConfig {

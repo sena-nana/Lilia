@@ -24,6 +24,8 @@ LiliaCode/
 
 Install the stable Rust toolchain and run from the repository root:
 
+The Linux desktop also requires the GTK 3 and AppIndicator development libraries. On Debian or Ubuntu, install `libgtk-3-dev libayatana-appindicator3-dev`. Global shortcuts use the X11 backend on Linux.
+
 ```bash
 cargo run
 cargo check --locked -p lilia-desktop

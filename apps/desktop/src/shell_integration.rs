@@ -1,42 +1,41 @@
 use std::sync::Arc;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 use lilia_contracts::ProductTask;
 use lilia_contracts::TaskId;
 use lilia_desktop_application::DesktopApplication;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 use lilia_desktop_application::{DesktopPopupWindowSettings, TaskQuery};
 
 use crate::desktop::Message;
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const TRAY_ID: &str = "liliacode";
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const MENU_OPEN_MAIN: &str = "native-tray:open-main";
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const MENU_TOGGLE_CONVERSATION_STATUS: &str = "native-tray:toggle-conversation-status";
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const MENU_RECENT: &str = "native-tray:recent";
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const MENU_RECENT_EMPTY: &str = "native-tray:recent-empty";
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const MENU_TASK_PREFIX: &str = "native-tray:task:";
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const MENU_QUIT: &str = "native-tray:quit";
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const RECENT_TASK_LIMIT: usize = 8;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const SINGLE_CLICK_DELAY: std::time::Duration = std::time::Duration::from_millis(250);
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
 const RECENT_TITLE_MAX_CHARS: usize = 32;
 
 type MessageSender = Arc<dyn Fn(Message) -> Result<(), String> + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(windows), expect(dead_code))]
 pub enum ShellCommand {
     FocusMainWindow,
     OpenNewConversation,
@@ -48,35 +47,39 @@ pub enum ShellCommand {
 pub struct NativeShellIntegration {
     shortcut: Option<String>,
     startup_errors: Vec<String>,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     tray: Option<tray_icon::TrayIcon>,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     hotkey_manager: Option<global_hotkey::GlobalHotKeyManager>,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     registered_hotkey: Option<global_hotkey::hotkey::HotKey>,
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
     registered_hotkey_id: Arc<AtomicU64>,
 }
 
 impl NativeShellIntegration {
     pub fn initialize(application: &DesktopApplication, message_sender: MessageSender) -> Self {
-        let (shortcut, mut startup_errors) = match application.popup_window_settings() {
+        let (shortcut, startup_errors) = match application.popup_window_settings() {
             Ok(settings) => (settings.shortcut, Vec::new()),
             Err(error) => (None, vec![format!("读取弹出窗口设置失败：{error}")]),
         };
 
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         {
+            let mut startup_errors = startup_errors;
             let tasks = application
                 .query_tasks(TaskQuery::default())
                 .unwrap_or_else(|error| {
                     startup_errors.push(format!("读取最近任务失败：{error}"));
                     Vec::new()
                 });
-            let tray = build_tray(tasks).map(Some).unwrap_or_else(|error| {
-                startup_errors.push(error);
-                None
-            });
+            let tray = prepare_tray_runtime()
+                .and_then(|()| build_tray(tasks))
+                .map(Some)
+                .unwrap_or_else(|error| {
+                    startup_errors.push(error);
+                    None
+                });
             let hotkey_manager = global_hotkey::GlobalHotKeyManager::new()
                 .map(Some)
                 .unwrap_or_else(|error| {
@@ -119,10 +122,9 @@ impl NativeShellIntegration {
             }
         }
 
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         {
             let _ = (application, message_sender);
-            startup_errors.push("桌面托盘与全局快捷键当前仅支持 Windows 11".to_owned());
             Self {
                 shortcut,
                 startup_errors,
@@ -135,22 +137,22 @@ impl NativeShellIntegration {
     }
 
     pub fn shortcut_active(&self) -> bool {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         {
             self.registered_hotkey.is_some()
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         {
             false
         }
     }
 
     pub fn tray_active(&self) -> bool {
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         {
             self.tray.is_some()
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         {
             false
         }
@@ -160,23 +162,53 @@ impl NativeShellIntegration {
         (!self.startup_errors.is_empty()).then(|| self.startup_errors.join("；"))
     }
 
-    pub fn refresh_tray(&mut self, application: &DesktopApplication) -> Result<(), String> {
-        #[cfg(windows)]
+    pub fn next_wakeup(&self) -> Option<std::time::Instant> {
+        #[cfg(target_os = "linux")]
         {
-            let Some(tray) = self.tray.as_ref() else {
+            self.tray
+                .is_some()
+                .then(|| std::time::Instant::now() + std::time::Duration::from_millis(50))
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            None
+        }
+    }
+
+    pub fn pump_platform_events(&self) {
+        #[cfg(target_os = "linux")]
+        while gtk::events_pending() {
+            gtk::main_iteration_do(false);
+        }
+    }
+
+    pub fn refresh_tray(&mut self, application: &DesktopApplication) -> Result<(), String> {
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+        {
+            if self.tray.is_none() {
                 return Err("系统托盘当前不可用".to_owned());
-            };
+            }
             let tasks = application
                 .query_tasks(TaskQuery::default())
                 .map_err(|error| format!("读取最近任务失败：{error}"))?;
-            let menu = build_tray_menu(tasks)?;
-            tray.set_menu(Some(Box::new(menu)));
+            #[cfg(target_os = "linux")]
+            {
+                self.tray = Some(build_tray(tasks)?);
+            }
+            #[cfg(any(windows, target_os = "macos"))]
+            {
+                let menu = build_tray_menu(tasks)?;
+                self.tray
+                    .as_ref()
+                    .expect("tray availability checked above")
+                    .set_menu(Some(Box::new(menu)));
+            }
             Ok(())
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         {
             let _ = application;
-            Err("系统托盘当前仅支持 Windows 11".to_owned())
+            Err("当前平台不支持系统托盘".to_owned())
         }
     }
 
@@ -186,7 +218,7 @@ impl NativeShellIntegration {
         shortcut: Option<String>,
     ) -> Result<Option<String>, String> {
         let shortcut = normalize_shortcut(shortcut);
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         {
             let parsed = shortcut
                 .as_deref()
@@ -243,15 +275,15 @@ impl NativeShellIntegration {
             self.startup_errors.clear();
             Ok(shortcut)
         }
-        #[cfg(not(windows))]
+        #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
         {
             let _ = (application, shortcut);
-            Err("全局快捷键当前仅支持 Windows 11".to_owned())
+            Err("当前平台不支持全局快捷键".to_owned())
         }
     }
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 impl Drop for NativeShellIntegration {
     fn drop(&mut self) {
         if let (Some(manager), Some(hotkey)) =
@@ -269,7 +301,7 @@ fn normalize_shortcut(shortcut: Option<String>) -> Option<String> {
         .filter(|shortcut| !shortcut.is_empty())
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn install_event_handlers(message_sender: MessageSender, registered_hotkey_id: Arc<AtomicU64>) {
     let click_sequence = Arc::new(AtomicU64::new(0));
     let menu_sender = Arc::clone(&message_sender);
@@ -344,19 +376,29 @@ fn install_event_handlers(message_sender: MessageSender, registered_hotkey_id: A
     ));
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn registered_hotkey_identity(hotkey: global_hotkey::hotkey::HotKey) -> u64 {
     u64::from(hotkey.id()).saturating_add(1)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
 fn hotkey_event_matches(registered_identity: u64, event_id: u32, pressed: bool) -> bool {
     pressed
         && registered_identity != 0
         && registered_identity == u64::from(event_id).saturating_add(1)
 }
 
-#[cfg(windows)]
+#[cfg(target_os = "linux")]
+fn prepare_tray_runtime() -> Result<(), String> {
+    gtk::init().map_err(|error| format!("系统托盘服务不可用：{error}"))
+}
+
+#[cfg(any(windows, target_os = "macos"))]
+fn prepare_tray_runtime() -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn build_tray(tasks: Vec<ProductTask>) -> Result<tray_icon::TrayIcon, String> {
     let icon = load_tray_icon()?;
     let menu = build_tray_menu(tasks)?;
@@ -371,7 +413,7 @@ fn build_tray(tasks: Vec<ProductTask>) -> Result<tray_icon::TrayIcon, String> {
         .map_err(|error| format!("创建系统托盘失败：{error}"))
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn build_tray_menu(mut tasks: Vec<ProductTask>) -> Result<tray_icon::menu::Menu, String> {
     use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 
@@ -421,7 +463,7 @@ fn build_tray_menu(mut tasks: Vec<ProductTask>) -> Result<tray_icon::menu::Menu,
     Ok(root)
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 fn load_tray_icon() -> Result<tray_icon::Icon, String> {
     let image = image::load_from_memory_with_format(
         include_bytes!("../assets/icons/32x32.png"),
@@ -434,7 +476,7 @@ fn load_tray_icon() -> Result<tray_icon::Icon, String> {
         .map_err(|error| format!("创建托盘图标失败：{error}"))
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", target_os = "linux", test))]
 fn recent_task_label(title: &str) -> String {
     let mut label = title
         .trim()

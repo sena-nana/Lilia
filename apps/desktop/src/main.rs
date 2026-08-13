@@ -1,7 +1,6 @@
 #[cfg(not(windows))]
 fn main() {
-    eprintln!("LiliaCode currently requires Windows 11");
-    std::process::exit(2);
+    std::process::exit(liliacode_host::run());
 }
 
 #[cfg(windows)]

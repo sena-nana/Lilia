@@ -24,6 +24,8 @@ LiliaCode/
 
 安装 stable Rust 工具链，并从仓库根目录运行：
 
+Linux 桌面还需要 GTK 3 与 AppIndicator 开发库；Debian/Ubuntu 可安装 `libgtk-3-dev libayatana-appindicator3-dev`。全局快捷键在 Linux 使用 X11 后端。
+
 ```bash
 cargo run
 cargo check --locked -p lilia-desktop

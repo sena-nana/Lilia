@@ -34,10 +34,14 @@ use nana_ui::{run_hosted, HostedWindowSettings};
 #[no_mangle]
 pub extern "system" fn liliacode_run(startup_window: isize) -> i32 {
     startup_window::register(startup_window);
-    std::panic::catch_unwind(run).unwrap_or(101)
+    std::panic::catch_unwind(run_application).unwrap_or(101)
 }
 
-fn run() -> i32 {
+pub fn run() -> i32 {
+    liliacode_run(0)
+}
+
+fn run_application() -> i32 {
     let startup_arguments: Vec<_> = std::env::args_os().skip(1).collect();
     if pending_import::is_helper_request(&startup_arguments) {
         let home = match storage::lilia_home() {

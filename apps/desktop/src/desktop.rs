@@ -29256,6 +29256,7 @@ impl DesktopProgram {
     fn desktop_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
         let colors = tokens.colors;
         let control_height = ControlSize::Medium.height_in(tokens.metrics);
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         let status = SettingsCard::new(
             "桌面集成",
             column![
@@ -29282,6 +29283,7 @@ impl DesktopProgram {
             .spacing(8),
         )
         .view(tokens);
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
         let shortcut = SettingsCard::new(
             "全局唤起快捷键",
             column![
@@ -29450,16 +29452,16 @@ impl DesktopProgram {
         }
         update_body = update_body.push(update_actions);
         let update = SettingsCard::new("应用更新", update_body).view(tokens);
-        let mut content = column![
-            text("桌面")
-                .size(18)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            status,
-            shortcut,
-            update,
-        ]
+        let mut content = column![text("桌面")
+            .size(18)
+            .font(ui_font(font::Weight::Semibold))
+            .color(colors.text),]
         .spacing(16);
+        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+        {
+            content = content.push(status).push(shortcut);
+        }
+        content = content.push(update);
         if let Some(error) = &self.shell_error {
             content = content.push(
                 SettingsCard::new(
@@ -36611,6 +36613,26 @@ impl HostedProgram for LiliaDesktopProgram {
         }
     }
 
+    fn next_wakeup(&self) -> Option<std::time::Instant> {
+        match &self.state {
+            LiliaDesktopState::Ready(program) => program.next_wakeup(),
+            LiliaDesktopState::Loading | LiliaDesktopState::Failed => None,
+        }
+    }
+
+    fn wake(
+        &mut self,
+        now: std::time::Instant,
+        context: &HostedProgramContext<Self::Message>,
+    ) -> HostedProgramUpdate {
+        match &mut self.state {
+            LiliaDesktopState::Ready(program) => program.wake(now, context),
+            LiliaDesktopState::Loading | LiliaDesktopState::Failed => {
+                HostedProgramUpdate::default()
+            }
+        }
+    }
+
     fn frame_presented(
         &mut self,
         material: nana_ui::MaterialOutcome,
@@ -37243,6 +37265,19 @@ impl HostedProgram for DesktopProgram {
 
     fn titlebar_follows_sidebar(&self) -> bool {
         self.appearance.titlebar_follows_sidebar()
+    }
+
+    fn next_wakeup(&self) -> Option<std::time::Instant> {
+        self.shell.next_wakeup()
+    }
+
+    fn wake(
+        &mut self,
+        _now: std::time::Instant,
+        _context: &HostedProgramContext<Self::Message>,
+    ) -> HostedProgramUpdate {
+        self.shell.pump_platform_events();
+        HostedProgramUpdate::default()
     }
 
     #[cfg(debug_assertions)]

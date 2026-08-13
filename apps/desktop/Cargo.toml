@@ -12,7 +12,7 @@ path = "src/main.rs"
 [lib]
 name = "liliacode_host"
 path = "src/lib.rs"
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 arboard = "3.6.1"
@@ -45,10 +45,17 @@ zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = "=0.3.85"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 global-hotkey = "0.8.0"
-libloading = "0.9.0"
 tray-icon = { version = "0.24.2", default-features = false }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+global-hotkey = "0.8.0"
+gtk = "0.18.2"
+tray-icon = { version = "0.24.2", default-features = false, features = ["gtk"] }
+
+[target.'cfg(windows)'.dependencies]
+libloading = "0.9.0"
 windows = { version = "0.62.2", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
