@@ -526,6 +526,18 @@ impl DesktopTodoStore {
         Self::select_pending_guide_from(&connection, task_id, window)
     }
 
+    fn select_pending_guide_by_id(
+        &self,
+        task_id: &TaskId,
+        guide_id: &str,
+    ) -> Result<Option<DesktopTaskTodo>, DesktopTodoError> {
+        Ok(self.get_editable(guide_id)?.filter(|todo| {
+            &todo.task_id == task_id
+                && !todo.done
+                && todo.guide_status == Some(DesktopTodoGuideStatus::Pending)
+        }))
+    }
+
     pub(crate) fn select_pending_guide_from(
         connection: &Connection,
         task_id: &TaskId,
@@ -697,6 +709,38 @@ impl DesktopApplication {
         let Some(guide) = guide else {
             return Ok(None);
         };
+        self.dispatch_task_guide_value(task_id, guide).map(Some)
+    }
+
+    /// Dispatches the exact pending Guide selected by the user.
+    pub fn dispatch_task_guide(
+        &self,
+        task_id: &TaskId,
+        guide_id: &str,
+    ) -> Result<Option<DesktopGuideDispatchResult>, DesktopApplicationError> {
+        let _dispatch = self
+            .inner
+            .guide_dispatch
+            .lock()
+            .map_err(|_| DesktopApplicationError::StateUnavailable("guide dispatch"))?;
+        self.get_task(task_id)?;
+        let guide = self
+            .inner
+            .todos
+            .lock()
+            .map_err(|_| DesktopApplicationError::StateUnavailable("todos"))?
+            .select_pending_guide_by_id(task_id, guide_id)?;
+        let Some(guide) = guide else {
+            return Ok(None);
+        };
+        self.dispatch_task_guide_value(task_id, guide).map(Some)
+    }
+
+    fn dispatch_task_guide_value(
+        &self,
+        task_id: &TaskId,
+        guide: DesktopTaskTodo,
+    ) -> Result<DesktopGuideDispatchResult, DesktopApplicationError> {
         let mut request = self.composer_state(task_id)?.turn_request();
         request.content = guide_message(&guide);
         request.attachments = guide
@@ -717,7 +761,7 @@ impl DesktopApplication {
         request.workspace_path = self.task_workspace_path(task_id)?;
         request.guide_id = Some(guide.id.clone());
         let turn = self.start_task_turn(request)?;
-        Ok(Some(DesktopGuideDispatchResult { guide, turn }))
+        Ok(DesktopGuideDispatchResult { guide, turn })
     }
 }
 
@@ -1105,6 +1149,62 @@ mod tests {
         assert_eq!(
             store
                 .select_pending_guide(&task_id, DesktopGuideDispatchWindow::Tool)
+                .unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn explicit_guide_selection_dispatches_only_the_requested_pending_task_guide() {
+        let store = DesktopTodoStore::in_memory().unwrap();
+        let task_id = TaskId::new("explicit-guide-task").unwrap();
+        let other_task_id = TaskId::new("other-guide-task").unwrap();
+        let create = |id: &str, task_id: TaskId| {
+            store
+                .create_idempotent(
+                    id,
+                    DesktopTodoCreate {
+                        task_id,
+                        text: id.to_owned(),
+                        priority: DesktopTodoPriority::Normal,
+                        attachments: Vec::new(),
+                        conversation_references: Vec::new(),
+                        workflow: None,
+                    },
+                    DesktopTodoSource::Lilia,
+                    Some(DesktopTodoGuideStatus::Pending),
+                )
+                .unwrap()
+                .0
+        };
+        let requested = create("guide-requested", task_id.clone());
+        let other_task = create("guide-other-task", other_task_id);
+        let queued = create("guide-queued", task_id.clone());
+        store
+            .update(
+                &queued.id,
+                DesktopTodoUpdate {
+                    guide_status: Some(DesktopTodoGuideStatus::Queued),
+                    ..DesktopTodoUpdate::default()
+                },
+            )
+            .unwrap();
+
+        assert_eq!(
+            store
+                .select_pending_guide_by_id(&task_id, &requested.id)
+                .unwrap(),
+            Some(requested)
+        );
+        assert_eq!(
+            store
+                .select_pending_guide_by_id(&task_id, &other_task.id)
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store
+                .select_pending_guide_by_id(&task_id, &queued.id)
                 .unwrap(),
             None
         );

@@ -1,4 +1,16 @@
 pub const APP_ROOT: &str = "lilia.app";
+pub const TITLEBAR_SIDEBAR_TOGGLE: &str = "lilia.titlebar.sidebar-toggle";
+pub const TITLEBAR_TASK_INSPECTOR_TOGGLE: &str = "lilia.titlebar.task-inspector-toggle";
+pub const TITLEBAR_MORE: &str = "lilia.titlebar.more";
+pub const TITLEBAR_MORE_BACK_TO_TASKS: &str = "lilia.titlebar.more.back-to-tasks";
+pub const TITLEBAR_MORE_OPEN_TASK_POPUP: &str = "lilia.titlebar.more.open-task-popup";
+pub const TITLEBAR_MORE_ASK_TASK_POPUP: &str = "lilia.titlebar.more.ask-task-popup";
+pub const TITLEBAR_MORE_OPEN_TASK_BROWSER: &str = "lilia.titlebar.more.open-task-browser";
+pub const TITLEBAR_MORE_SPLIT_HORIZONTAL: &str = "lilia.titlebar.more.split-horizontal";
+pub const TITLEBAR_MORE_SPLIT_VERTICAL: &str = "lilia.titlebar.more.split-vertical";
+pub const TITLEBAR_MORE_CLOSE_CURRENT: &str = "lilia.titlebar.more.close-current";
+pub const TITLEBAR_MORE_COMMAND_PALETTE: &str = "lilia.titlebar.more.command-palette";
+pub const TITLEBAR_MORE_CONVERSATION_STATUS: &str = "lilia.titlebar.more.conversation-status";
 pub const COMMAND_PALETTE_OPEN: &str = "lilia.command-palette.open";
 pub const COMMAND_PALETTE_INPUT: &str = "lilia.command-palette.input";
 const COMMAND_PALETTE_ACTION_PREFIX: &str = "lilia.command-palette.action.";
@@ -58,6 +70,7 @@ pub const PROJECT_REMOVE_DIALOG: &str = "lilia.project.remove.dialog";
 pub const PROJECT_REMOVE_CONFIRM: &str = "lilia.project.remove.confirm";
 pub const PROJECT_REMOVE_CANCEL: &str = "lilia.project.remove.cancel";
 pub const PROJECT_TASKS: &str = "lilia.project.tasks";
+pub const PROJECT_SETTINGS: &str = "lilia.project.settings";
 pub const ROADMAP_OPEN: &str = "lilia.project.roadmap";
 pub const ROADMAP_REFRESH: &str = "lilia.roadmap.refresh";
 pub const ROADMAP_CREATE: &str = "lilia.roadmap.create";
@@ -253,6 +266,7 @@ pub const TASK_SESSION_BACK: &str = "lilia.task-session.back";
 pub const TASK_SESSION_SUMMARY: &str = "lilia.task-session.summary";
 pub const TASK_SESSION_TIMELINE: &str = "lilia.task-session.timeline";
 pub const TASK_SESSION_TIMELINE_LOAD_EARLIER: &str = "lilia.task-session.timeline.load-earlier";
+pub const TASK_SESSION_TIMELINE_LATEST: &str = "lilia.task-session.timeline.latest";
 pub const TASK_SESSION_INSPECTOR: &str = "lilia.task-session.inspector";
 pub const TASK_SESSION_INSPECTOR_TOGGLE: &str = "lilia.task-session.inspector.toggle";
 pub const TASK_TITLE: &str = "lilia.task-session.task.title";
@@ -272,6 +286,9 @@ pub const TASK_REPARENT: &str = "lilia.task-session.task.reparent";
 pub const TASK_PARENT_CLEAR: &str = "lilia.task-session.task.parent-clear";
 pub const TASK_ARCHIVE: &str = "lilia.task-session.task.archive";
 pub const COMPOSER_INPUT: &str = "lilia.task-session.composer.input";
+pub const COMPOSER_ACTIONS_OPEN: &str = "lilia.task-session.composer.actions.open";
+pub const COMPOSER_REFERENCE_CONVERSATION: &str =
+    "lilia.task-session.composer.actions.reference-conversation";
 pub const COMPOSER_PASTE_TEXT: &str = "lilia.task-session.composer.paste-text";
 pub const COMPOSER_PASTE_IMAGE: &str = "lilia.task-session.composer.paste-image";
 pub const COMPOSER_PASTE_FILES: &str = "lilia.task-session.composer.paste-files";
@@ -352,9 +369,68 @@ pub const THEME_DARK: &str = "lilia.settings.appearance.theme.dark";
 pub const SIDEBAR_MODE_GROUPED: &str = "lilia.settings.appearance.sidebar.grouped";
 pub const SIDEBAR_MODE_UNIFIED: &str = "lilia.settings.appearance.sidebar.unified";
 pub const UNIFIED_SIDEBAR_TASK_PREFIX: &str = "lilia.sidebar.conversation.";
+pub const SIDEBAR_NEW_CONVERSATION: &str = "lilia.sidebar.new-conversation";
+pub const SIDEBAR_SEARCH_TOGGLE: &str = "lilia.sidebar.search.toggle";
+pub const SIDEBAR_SEARCH_INPUT: &str = "lilia.sidebar.search.input";
+pub const SIDEBAR_PROJECTS_OVERVIEW: &str = "lilia.sidebar.projects.overview";
+pub const SIDEBAR_PROJECTS_TOGGLE_ALL: &str = "lilia.sidebar.projects.toggle-all";
+pub const SIDEBAR_PROJECTS_ADD: &str = "lilia.sidebar.projects.add";
+pub const SIDEBAR_INBOX_TOGGLE: &str = "lilia.sidebar.inbox.toggle";
+pub const SIDEBAR_INBOX_NEW_CONVERSATION: &str = "lilia.sidebar.inbox.new-conversation";
+pub const SIDEBAR_FOOTER_AUTOMATIONS: &str = "lilia.sidebar.footer.automations";
+pub const SIDEBAR_FOOTER_SETTINGS: &str = "lilia.sidebar.footer.settings";
+pub const SIDEBAR_FOOTER_PROVIDER: &str = "lilia.sidebar.footer.provider";
 
 pub fn unified_sidebar_task(task_id: &str) -> String {
     format!("{UNIFIED_SIDEBAR_TASK_PREFIX}{task_id}")
+}
+
+pub fn sidebar_project(project_id: &str) -> String {
+    format!("lilia.sidebar.project.{project_id}")
+}
+
+pub fn sidebar_project_menu(project_id: &str) -> String {
+    format!("{}.menu", sidebar_project(project_id))
+}
+
+pub fn sidebar_project_new_conversation(project_id: &str) -> String {
+    format!("{}.new-conversation", sidebar_project(project_id))
+}
+
+pub fn sidebar_task(task_id: &str) -> String {
+    format!("lilia.sidebar.task.{task_id}")
+}
+
+pub fn sidebar_task_menu(task_id: &str) -> String {
+    format!("{}.menu", sidebar_task(task_id))
+}
+
+pub fn sidebar_task_popup(task_id: &str) -> String {
+    format!("{}.popup", sidebar_task(task_id))
+}
+
+pub fn sidebar_task_pin(task_id: &str) -> String {
+    format!("{}.pin", sidebar_task(task_id))
+}
+
+pub fn sidebar_task_merge_delete(task_id: &str) -> String {
+    format!("{}.merge-delete", sidebar_task(task_id))
+}
+
+pub fn sidebar_task_archive(task_id: &str) -> String {
+    format!("{}.archive", sidebar_task(task_id))
+}
+
+pub fn sidebar_running_stop(task_id: &str) -> String {
+    format!("lilia.sidebar.running.{task_id}.stop")
+}
+
+pub fn sidebar_tree_drop(source: &str, target: &str, position: &str) -> String {
+    format!("lilia.sidebar.tree-drop.{source}.to.{target}.{position}")
+}
+
+pub fn sidebar_menu_action(target: &str, action: &str) -> String {
+    format!("lilia.sidebar.menu.{target}.{action}")
 }
 pub const PROJECT_SETTINGS_CLONE_PARENT: &str = "lilia.settings.project.clone-parent";
 pub const PROJECT_SETTINGS_PICK_CLONE_PARENT: &str = "lilia.settings.project.clone-parent.pick";
@@ -605,6 +681,10 @@ pub fn todo_priority(todo_id: &str) -> String {
 
 pub fn todo_delete(todo_id: &str) -> String {
     format!("lilia.task-session.todo.{todo_id}.delete")
+}
+
+pub fn todo_guide_dispatch(todo_id: &str) -> String {
+    format!("lilia.task-session.todo.{todo_id}.dispatch-guide")
 }
 
 pub fn task(task_id: &str) -> String {
@@ -920,6 +1000,14 @@ pub fn task_popup_load_earlier(window_id: u64) -> String {
 
 pub fn task_popup_composer(window_id: u64) -> String {
     format!("lilia.task-popup.{window_id}.composer.input")
+}
+
+pub fn task_popup_composer_actions(window_id: u64) -> String {
+    format!("lilia.task-popup.{window_id}.composer.actions.open")
+}
+
+pub fn task_popup_reference_conversation(window_id: u64) -> String {
+    format!("lilia.task-popup.{window_id}.composer.actions.reference-conversation")
 }
 
 pub fn task_popup_attach_file(window_id: u64) -> String {

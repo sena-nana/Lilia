@@ -247,6 +247,8 @@ pub struct DebugObservation {
     pub memory_baseline_enabled: bool,
     pub memory_cooldown_turns: u64,
     pub task_memory_enabled: Option<bool>,
+    pub sidebar_region_extent: Option<f32>,
+    pub sidebar_region_collapsed: bool,
     pub inspector_region_extent: Option<f32>,
     pub coding_tools_dock_open: bool,
     pub coding_tools_panel_extent: Option<f32>,
@@ -677,6 +679,8 @@ impl DebugObservation {
                     .clone(),
             );
         let coding_dock = serde_json::json!({
+            "sidebarRegionExtent": self.sidebar_region_extent,
+            "sidebarRegionCollapsed": self.sidebar_region_collapsed,
             "inspectorRegionExtent": self.inspector_region_extent,
             "codingToolsDockOpen": self.coding_tools_dock_open,
             "codingToolsPanelExtent": self.coding_tools_panel_extent,
@@ -1623,6 +1627,8 @@ mod tests {
             memory_baseline_enabled: true,
             memory_cooldown_turns: 5,
             task_memory_enabled: Some(true),
+            sidebar_region_extent: Some(220.0),
+            sidebar_region_collapsed: false,
             inspector_region_extent: Some(352.0),
             coding_tools_dock_open: true,
             coding_tools_panel_extent: Some(360.0),

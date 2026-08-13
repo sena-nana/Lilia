@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -9,14 +9,14 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{sync::mpsc, time::Instant};
 
 use iced::widget::{
-    button, column, container, image, row, scrollable, slider, space, stack, svg, text, text_editor,
+    button, column, container, image, mouse_area, row, scrollable, slider, space, stack, svg, text,
+    text_editor, tooltip,
 };
-use iced::{font, Alignment, ContentFit, Element, Length, Padding};
+use iced::{font, Alignment, ContentFit, Element, Length, Padding, Point, Rectangle, Size};
 use lilia_contracts::{
     LiliaAgentWorkflow, LiliaReviewTarget, PendingProjectionStatus, ProductTask,
     ProductTaskPriority, ProductTaskStatus, Project, ProjectArchiveState, ProjectId, TaskId,
 };
-#[cfg(debug_assertions)]
 use lilia_desktop_application::DesktopTodoGuideStatus;
 use lilia_desktop_application::{
     clipboard_text_should_be_attachment, default_panel_states, describe_attachment_paths,
@@ -60,44 +60,47 @@ use lilia_desktop_application::{
     DesktopSessionBranchAnchor, DesktopSessionBranchMode, DesktopSkillCreate, DesktopSkillScope,
     DesktopSlashCommand, DesktopSlashCommandAction, DesktopSlashCommandSearchResult,
     DesktopSlashCommandSource, DesktopSuggestionItem, DesktopTaskCreate, DesktopTaskMove,
-    DesktopTaskPatch, DesktopTaskRuntimeSnapshot, DesktopTerminalRestoration, DesktopTerminalScope,
-    DesktopTerminalSessionId, DesktopTerminalSnapshot, DesktopTodoCreate, DesktopTodoPriority,
-    DesktopTodoSource, DesktopTodoUpdate, DesktopToolConsent, DesktopToolConsentDecision,
-    DesktopTurnDispatchKind, DesktopTurnRequest, DesktopTurnState, DesktopUpdateState,
-    DesktopWorkspaceCodeSearchHit, DesktopWorkspaceCodeSearchResult, DesktopWorkspaceListing,
-    DesktopWorkspaceProject, DesktopWorkspaceSession, DesktopWorkspaceSessionId,
-    DesktopWorkspaceSnapshot, DesktopWorkspaceTask, DesktopWorktreeSelectionMode, DockSlot,
-    DocumentSnapshot, MemoryInjectionState, MemoryScope, MemorySettings, MemoryUpsertInput,
-    MilestoneDueDateUpdate, MilestoneStatus, MilestoneUpdatePatch, PaneId, PaneNode, PanelId,
-    PanelLayoutSnapshot, PanelState, ProjectArchitectureChange, ProjectArchitectureChangeRecord,
-    ProjectArchitectureGraph, ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery,
-    ProjectRoadmap, ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput,
-    RemoteControlStatus, SplitAxis, TaskQuery, WorkspaceItem, WorkspaceItemId,
-    CODING_TOOLS_PANEL_ID, IAB_PANEL_ID, MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES,
-    TASK_INSPECTOR_PANEL_ID, TITLE_UPDATE_ACTION_KIND,
+    DesktopTaskPatch, DesktopTaskRuntimeSnapshot, DesktopTaskTodo, DesktopTerminalRestoration,
+    DesktopTerminalScope, DesktopTerminalSessionId, DesktopTerminalSnapshot, DesktopTodoCreate,
+    DesktopTodoPriority, DesktopTodoSource, DesktopTodoUpdate, DesktopToolConsent,
+    DesktopToolConsentDecision, DesktopTurnDispatchKind, DesktopTurnRequest, DesktopTurnState,
+    DesktopUpdateState, DesktopWorkspaceCodeSearchHit, DesktopWorkspaceCodeSearchResult,
+    DesktopWorkspaceListing, DesktopWorkspaceProject, DesktopWorkspaceSession,
+    DesktopWorkspaceSessionId, DesktopWorkspaceSnapshot, DesktopWorkspaceTask,
+    DesktopWorktreeSelectionMode, DockSlot, DocumentSnapshot, MemoryInjectionState, MemoryScope,
+    MemorySettings, MemoryUpsertInput, MilestoneDueDateUpdate, MilestoneStatus,
+    MilestoneUpdatePatch, PaneId, PaneNode, PanelId, PanelLayoutSnapshot, PanelState,
+    ProjectArchitectureChange, ProjectArchitectureChangeRecord, ProjectArchitectureGraph,
+    ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery, ProjectRoadmap,
+    ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput, RemoteControlStatus, SplitAxis,
+    TaskQuery, WorkspaceItem, WorkspaceItemId, CODING_TOOLS_PANEL_ID, IAB_PANEL_ID,
+    MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES, TASK_INSPECTOR_PANEL_ID, TITLE_UPDATE_ACTION_KIND,
 };
-use nana_ui::widgets::{button_style, canvas_style, vertical_scrollbar};
+use nana_ui::widgets::{button_style, button_style_overridden, canvas_style, vertical_scrollbar};
 use nana_ui::{
-    app_shell, icon, ui_font, workspace_view, ActionDescriptor, ActionId, ActionPickerState,
-    ActionRegistry, AppTitleBar, AppearanceEvent, AppearanceSection, AppearanceSettings,
-    BackdropTarget, ButtonKind, Card, Colors, CommandPalette, CommandPaletteEvent,
-    CommandPaletteItem, ConfirmDialog, ContextPredicate, ControlSize, Dropdown, DropdownEvent,
-    DropdownOption, EmptyState, GraphCanvas, GraphCanvasEvent, GraphEdge as CanvasGraphEdge,
-    GraphEndpoint, GraphModel, GraphNode as CanvasGraphNode, GraphPoint, GraphPort, GraphPortKind,
-    GraphPortSide, GraphSelection, GraphSize, GraphViewport, HostedBrowserCommand,
-    HostedBrowserEvent, HostedBrowserId, HostedProgram, HostedProgramContext, HostedProgramUpdate,
-    HostedRedraw, HostedRuntimeEvent, HostedTextarea, HostedTextareaState, HostedUiCommand,
-    HostedWindowAction, HostedWindowCaptureId, HostedWindowCommand, HostedWindowEvent,
-    HostedWindowGeometry, HostedWindowId, HostedWindowSettings, Icon, ImageViewer,
-    ImageViewerSource, Input, KeyBinding, KeyCaptureEvent, KeyCaptureLayer, KeyContext,
-    KeyModifiers, KeyStroke, Keymap, KeymapLayer, KeymapMatch, KeymapState, ListItem,
-    MarkdownImage, NarrowBehavior, NativeMarkdown, PaneChrome, PaneChromeAction,
-    PaneChromeActionKind, PaneTree, PaneTreeNode, QrCodeCanvas, RegionId, RegionRole, RegionState,
-    ReorderItem, ReorderList, SelectionOption, SettingsCard, SettingsModel, SettingsState,
-    SettingsTab, SettingsTabId, SidebarFooter, SidebarFooterButton, SidebarFrame, SidebarRow,
-    SidebarRowState, SidebarSection, TabDragGroup, TabDragSurface, Tabs, ThemeMode, ThemeModeExt,
-    ThemeTokens, TimeSeriesChart, WindowChromeEvent, WindowChromeState, WindowMaterialMode,
-    WorkspaceAction, WorkspaceController, WorkspaceLayout, WorkspaceRegions,
+    app_shell, icon, spinner_icon, ui_font, workspace_view, Absolute, ActionDescriptor, ActionId,
+    ActionMenuItem, ActionPickerState, ActionRegistry, AnchoredActionMenu, AnchoredMenuPlacement,
+    AnchoredMenuPosition, AppTitleBar, AppearanceEvent, AppearanceSection, AppearanceSettings,
+    BackdropTarget, ButtonKind, ButtonPaintOverride, Card, Colors, CommandPalette,
+    CommandPaletteEvent, CommandPaletteItem, ConfirmDialog, ContextMenuEvent, ContextPredicate,
+    ControlSize, Dropdown, DropdownEvent, DropdownOption, EmptyState, GraphCanvas,
+    GraphCanvasEvent, GraphEdge as CanvasGraphEdge, GraphEndpoint, GraphModel,
+    GraphNode as CanvasGraphNode, GraphPoint, GraphPort, GraphPortKind, GraphPortSide,
+    GraphSelection, GraphSize, GraphViewport, HostedBrowserCommand, HostedBrowserEvent,
+    HostedBrowserId, HostedProgram, HostedProgramContext, HostedProgramUpdate, HostedRedraw,
+    HostedRuntimeEvent, HostedTextarea, HostedTextareaState, HostedUiCommand, HostedWindowAction,
+    HostedWindowCaptureId, HostedWindowCommand, HostedWindowEvent, HostedWindowGeometry,
+    HostedWindowId, HostedWindowSettings, Icon, IconButton, ImageViewer, ImageViewerSource, Input,
+    KeyBinding, KeyCaptureEvent, KeyCaptureLayer, KeyContext, KeyModifiers, KeyStroke, Keymap,
+    KeymapLayer, KeymapMatch, KeymapState, ListItem, LogicalRect, MarkdownImage, NarrowBehavior,
+    NativeMarkdown, PaneChrome, PaneChromeAction, PaneChromeActionKind, PaneTree, PaneTreeNode,
+    Popover, PopoverPlacement, QrCodeCanvas, RegionId, RegionRole, RegionState, ReorderItem,
+    ReorderList, SelectionOption, SettingsCard, SettingsModel, SettingsState, SettingsTab,
+    SettingsTabId, SidebarFooter, SidebarFooterButton, SidebarFrame, SidebarRow, SidebarRowState,
+    SidebarSection, TabDragGroup, TabDragSurface, Tabs, TextSelectionSnapshot, ThemeMode,
+    ThemeModeExt, ThemeTokens, TimeSeriesChart, TreeDropPosition as NanaTreeDropPosition,
+    WindowChromeEvent, WindowChromeState, WindowMaterialMode, WorkspaceAction, WorkspaceController,
+    WorkspaceLayout, WorkspaceRegions,
 };
 use nana_ui::{
     ratio_pane_split, split_pane, SplitAxis as NanaSplitAxis, SplitPaneAction, SplitPaneController,
@@ -129,23 +132,23 @@ use crate::host::NativeDesktopHost;
 use crate::iab_panel::{IabPanelMessage, IabPanelState};
 use crate::iab_window::{IabWindowMessage, IabWindowState};
 use crate::markdown_images::{load_markdown_image, LoadedMarkdownImage};
-use crate::project_files_panel::{
-    self, project_files_center, project_files_tree, ProjectFilesPanelMessage,
-};
+use crate::project_files_panel::{self, project_files_center, ProjectFilesPanelMessage};
 use crate::provider_ai_settings::ProviderAiSettingsState;
 use crate::shell_integration::{NativeShellIntegration, ShellCommand};
 use crate::storage::{
     lilia_home, load_appearance, load_conversation_status_state, load_sidebar_display_mode,
-    load_theme, load_window_state, load_workspace_state, load_workspace_topology_state,
-    merge_auxiliary_window_state, merge_conversation_status_window_state,
-    normalize_conversation_status_opacity, save_appearance, save_sidebar_display_mode, save_theme,
+    load_sidebar_tree_state, load_theme, load_window_state, load_workspace_state,
+    load_workspace_topology_state, merge_auxiliary_window_state,
+    merge_conversation_status_window_state, normalize_conversation_status_opacity, save_appearance,
+    save_sidebar_display_mode, save_sidebar_tree_state, save_theme,
     NativeConversationStatusStateWriter, NativeConversationStatusWindowState,
-    NativeMemorySettingsStore, NativeSidebarDisplayMode, NativeWindowSnapshot, NativeWindowState,
-    NativeWindowStateWriter, NativeWorkspaceTopologyState, NativeWorkspaceTopologyStateWriter,
-    NativeWorkspaceWindowState, LILIA_INSTANCE_IDENTITY, NATIVE_WORKSPACE_TOPOLOGY_SCHEMA_VERSION,
+    NativeMemorySettingsStore, NativeSidebarDisplayMode, NativeSidebarTreeState,
+    NativeWindowSnapshot, NativeWindowState, NativeWindowStateWriter, NativeWorkspaceTopologyState,
+    NativeWorkspaceTopologyStateWriter, NativeWorkspaceWindowState, LILIA_INSTANCE_IDENTITY,
+    NATIVE_WORKSPACE_TOPOLOGY_SCHEMA_VERSION,
 };
 use crate::target_ids;
-use crate::task_session::{PendingActionView, TaskSessionView};
+use crate::task_session::{PendingActionView, TaskSessionView, TaskTimelineItem};
 use crate::terminal_view::{
     terminal_content, terminal_inactive_preview, terminal_plain_text, TerminalViewMessage,
 };
@@ -159,6 +162,18 @@ const TIMELINE_PAGE_SIZE: usize = 100;
 const TIMELINE_DEFAULT_VIEWPORT_EXTENT: f32 = 720.0;
 const TIMELINE_OVERSCAN_EXTENT: f32 = 480.0;
 const TIMELINE_LOAD_EARLIER_EXTENT: f32 = 34.0;
+const TIMELINE_TAIL_TOLERANCE: f32 = 24.0;
+const SIDEBAR_DEFAULT_WIDTH: f32 = 220.0;
+const SIDEBAR_MIN_WIDTH: f32 = 180.0;
+const SIDEBAR_MAX_WIDTH: f32 = 480.0;
+const CHAT_CONTENT_MAX_WIDTH: f32 = 860.0;
+const CHAT_TIMELINE_MAX_WIDTH: f32 = 788.0;
+const CHAT_COMPACT_TOOLBAR_WIDTH: f32 = 940.0;
+const PROJECT_COMPACT_TOOLBAR_WIDTH: f32 = 760.0;
+const COMPOSER_PLACEHOLDER: &str = "可向 agent 询问任何事，输入 @ 使用插件或提及文件";
+const COMPOSER_TEXTAREA_MIN_HEIGHT: f32 = 32.0;
+const COMPOSER_TEXTAREA_LINE_HEIGHT: f32 = 20.0;
+const COMPOSER_TEXTAREA_MAX_HEIGHT: f32 = 72.0;
 const MAX_MARKDOWN_IMAGE_CACHE_ENTRIES: usize = 64;
 const MAX_MARKDOWN_IMAGE_CACHE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_MARKDOWN_IMAGE_WORKERS: usize = 2;
@@ -296,6 +311,7 @@ struct WorkspaceSplitSpec {
 enum ProjectSurface {
     #[default]
     Tasks,
+    Settings,
     Clone,
     Roadmap,
     Memory,
@@ -627,10 +643,11 @@ struct PendingSessionBranch {
     anchor: DesktopSessionBranchAnchor,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 struct TimelineTextSelection {
     event_id: String,
     text: String,
+    bounds: Option<Rectangle>,
 }
 
 #[derive(Clone, Debug)]
@@ -680,6 +697,7 @@ struct TaskPopupWindow {
     task_sessions: BTreeMap<TaskId, TaskSessionView>,
     session: Option<TaskSessionView>,
     composer: Option<DesktopComposerState>,
+    composer_editor: HostedTextareaState,
     slash_commands: Vec<DesktopSlashCommandSearchResult>,
     conversation_reference_results: Vec<ChatConversationReference>,
     context_attachment_results: Vec<ChatContextSearchResult>,
@@ -703,6 +721,7 @@ struct TaskPopupWindow {
 struct MainConversationDraft {
     task: DesktopTaskCreate,
     composer: DesktopComposerState,
+    composer_editor: HostedTextareaState,
     worktree: DraftWorktreeSelection,
     suggestions: ConversationSuggestionState,
     error: Option<String>,
@@ -718,6 +737,7 @@ struct ConversationDraftSurface<'a> {
     task: &'a DesktopTaskCreate,
     worktree: &'a DraftWorktreeSelection,
     composer: Option<&'a DesktopComposerState>,
+    composer_editor: &'a HostedTextareaState,
     suggestions: &'a ConversationSuggestionState,
     error: Option<&'a str>,
 }
@@ -796,6 +816,167 @@ enum ExternalWorkspaceTarget {
     CodeEditor,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SidebarMenuTarget {
+    AddProject,
+    Project(ProjectId),
+    Task(TaskId),
+}
+
+impl SidebarMenuTarget {
+    fn target_key(&self) -> String {
+        match self {
+            Self::AddProject => "add-project".to_owned(),
+            Self::Project(id) => format!("project-{}", id.as_str()),
+            Self::Task(id) => format!("task-{}", id.as_str()),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SidebarMenuAction {
+    AddLocalFolder,
+    CloneRepository,
+    CreateCategory,
+    OpenProject,
+    OpenProjectPopup,
+    ToggleProjectPinned,
+    OpenProjectFileManager,
+    OpenProjectCodeEditor,
+    RenameProject,
+    ArchiveProjectConversations,
+    RemoveProject,
+    OpenTaskPopup,
+    AskTaskPopup,
+    ToggleTaskPinned,
+    MergeTaskWorktree,
+    ArchiveTask,
+}
+
+impl SidebarMenuAction {
+    const fn target_key(&self) -> &'static str {
+        match self {
+            Self::AddLocalFolder => "add-local-folder",
+            Self::CloneRepository => "clone-repository",
+            Self::CreateCategory => "create-category",
+            Self::OpenProject => "open-project",
+            Self::OpenProjectPopup => "open-project-popup",
+            Self::ToggleProjectPinned => "toggle-project-pinned",
+            Self::OpenProjectFileManager => "open-project-file-manager",
+            Self::OpenProjectCodeEditor => "open-project-code-editor",
+            Self::RenameProject => "rename-project",
+            Self::ArchiveProjectConversations => "archive-project-conversations",
+            Self::RemoveProject => "remove-project",
+            Self::OpenTaskPopup => "open-task-popup",
+            Self::AskTaskPopup => "ask-task-popup",
+            Self::ToggleTaskPinned => "toggle-task-pinned",
+            Self::MergeTaskWorktree => "merge-task-worktree",
+            Self::ArchiveTask => "archive-task",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SidebarTreeNode {
+    Project(ProjectId),
+    Task(TaskId),
+    Inbox,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SidebarTreeListItem {
+    Node(SidebarTreeNode),
+    Passive,
+}
+
+impl SidebarTreeNode {
+    fn target_key(&self) -> String {
+        match self {
+            Self::Project(id) => format!("project-{}", id.as_str()),
+            Self::Task(id) => format!("task-{}", id.as_str()),
+            Self::Inbox => "inbox".to_owned(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SidebarTreeDropPosition {
+    Before,
+    Inside,
+    After,
+}
+
+impl SidebarTreeDropPosition {
+    const ALL: [Self; 3] = [Self::Before, Self::Inside, Self::After];
+
+    const fn target_key(self) -> &'static str {
+        match self {
+            Self::Before => "before",
+            Self::Inside => "inside",
+            Self::After => "after",
+        }
+    }
+}
+
+impl From<NanaTreeDropPosition> for SidebarTreeDropPosition {
+    fn from(position: NanaTreeDropPosition) -> Self {
+        match position {
+            NanaTreeDropPosition::Before => Self::Before,
+            NanaTreeDropPosition::Inside => Self::Inside,
+            NanaTreeDropPosition::After => Self::After,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct SidebarMenuState {
+    target: SidebarMenuTarget,
+    anchor: Point,
+    pending: Option<SidebarMenuAction>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SidebarSearchTarget {
+    Project(ProjectId),
+    Task(TaskId),
+}
+
+impl SidebarMenuState {
+    fn new(target: SidebarMenuTarget, anchor: Point) -> Self {
+        Self {
+            target,
+            anchor,
+            pending: None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TitlebarMenuAction {
+    BackToTaskList,
+    OpenTaskPopup,
+    AskTaskPopup,
+    ToggleTaskInspector,
+    OpenTaskBrowser,
+    SplitHorizontal,
+    SplitVertical,
+    CloseCurrentItem,
+    OpenCommandPalette,
+    OpenConversationStatus,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ComposerAction {
+    AddFile,
+    AddDirectory,
+    ReferenceConversation,
+    PasteText,
+    PasteImage,
+    PasteFiles,
+    TogglePlanMode,
+    ToggleGoalMode,
+}
+
 type MessageSender = Arc<dyn Fn(Message) -> Result<(), String> + Send + Sync>;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -808,7 +989,6 @@ struct ToolConsentDraft {
 pub enum Message {
     RefreshProjects,
     CreateProject,
-    OpenProjectClone,
     CloseProjectClone,
     ProjectCloneRepositoryChanged(String),
     ProjectCloneParentChanged(String),
@@ -868,10 +1048,52 @@ pub enum Message {
     CancelProjectConversationArchive,
     ProjectConversationArchiveDialogInteraction,
     RestoreProject(ProjectId),
+    ToggleSidebarSearch,
+    SidebarSearchChanged(String),
+    SidebarSearchSelectionChanged(usize),
+    ToggleTimelineEvent(String),
+    TimelineEventHover(Option<String>),
+    ToggleSidebarProject(ProjectId),
+    ToggleAllSidebarProjects,
+    ToggleSidebarInbox,
+    RevealSidebarInboxTasks,
+    RevealSidebarProjectTasks(ProjectId),
+    OpenSidebarMenuAt {
+        target: SidebarMenuTarget,
+        anchor: Point,
+    },
+    OpenSidebarMenu {
+        target: SidebarMenuTarget,
+        anchor_y: f32,
+    },
+    SidebarMenu(ContextMenuEvent<SidebarMenuAction>),
+    ToggleTitlebarMenu,
+    TitlebarMenu(ContextMenuEvent<TitlebarMenuAction>),
+    ToggleComposerActionMenu(HostedWindowId),
+    CloseComposerActionMenu,
+    ComposerAction {
+        window_id: HostedWindowId,
+        action: ComposerAction,
+    },
+    OpenSidebarProjectPopup(ProjectId),
+    OpenSidebarProjectDraft(ProjectId),
+    OpenSidebarInboxDraft,
+    OpenSidebarTaskPopup(TaskId),
+    SidebarToggleTaskPinned(TaskId),
+    SidebarRequestTaskWorktreeMerge(TaskId),
+    SidebarArchiveTask(TaskId),
+    CancelSidebarTaskArchive(TaskId),
+    SidebarStopTask(TaskId),
+    SidebarTreeDrop {
+        source: SidebarTreeNode,
+        target: SidebarTreeNode,
+        position: SidebarTreeDropPosition,
+    },
+    SidebarTreeInteraction,
+    DismissSidebarError,
     TaskSearchChanged(String),
     NewTaskTitleChanged(String),
     CreateTask,
-    OpenMainConversationDraft,
     CloseMainConversationDraft,
     TaskTitleChanged(String),
     SaveTask,
@@ -932,6 +1154,7 @@ pub enum Message {
     ResumeAutomation,
     AutomationGraph(GraphCanvasEvent),
     OpenProjectTasks,
+    OpenProjectSettings,
     OpenRoadmap,
     RefreshRoadmap,
     SelectMilestone(String),
@@ -995,14 +1218,12 @@ pub enum Message {
     ToggleTaskMemory,
     ResetTaskMemoryCooldown,
     OpenCodingTools,
-    OpenIab,
     Iab(IabPanelMessage),
     IabWindow {
         window_id: HostedWindowId,
         message: IabWindowMessage,
     },
     CloseInspectorDock,
-    ToggleTaskInspector,
     OpenArchitecture,
     OpenProjectFiles,
     RefreshProjectFiles,
@@ -1038,7 +1259,6 @@ pub enum Message {
     RefreshProjectsOverview,
     SelectInbox,
     SelectTask(TaskId),
-    BackToTaskList,
     OpenConversationStatus,
     CloseConversationStatus,
     ToggleConversationStatusAlwaysOnTop,
@@ -1048,12 +1268,10 @@ pub enum Message {
     DismissConversationStatusError,
     OpenConversationStatusTask(TaskId),
     StopConversationStatusTask(TaskId),
-    OpenSelectedTaskPopup,
     OpenChildQuestionPopup {
         source_window: HostedWindowId,
         parent_task_id: TaskId,
     },
-    MoveSelectedTaskToPopup,
     MoveWorkspaceItemToNewWindow(WorkspaceItemId),
     RestoreTaskPopupWindows,
     CloseTaskPopup(HostedWindowId),
@@ -1144,9 +1362,14 @@ pub enum Message {
         offset: f32,
         viewport_extent: f32,
     },
+    ScrollTimelineToEnd(TimelineSurfaceKey),
     TaskPopupComposerChanged {
         window_id: HostedWindowId,
         value: String,
+    },
+    TaskPopupComposerEdited {
+        window_id: HostedWindowId,
+        action: text_editor::Action,
     },
     TaskPopupDraftProjectSelection {
         window_id: HostedWindowId,
@@ -1252,6 +1475,7 @@ pub enum Message {
         value: String,
     },
     ComposerChanged(String),
+    ComposerEdited(text_editor::Action),
     SelectSlashCommand(DesktopSlashCommand),
     SelectReviewWorkflowTarget {
         window_id: HostedWindowId,
@@ -1283,6 +1507,7 @@ pub enum Message {
     EditTodo(String),
     ToggleTodo(String, bool),
     CycleTodoPriority(String, DesktopTodoPriority),
+    DispatchTodoGuide(String),
     DeleteTodo(String),
     GoalDraftChanged(String),
     SetGoal,
@@ -1331,7 +1556,7 @@ pub enum Message {
     TimelineTextSelectionChanged {
         window_id: HostedWindowId,
         event_id: String,
-        text: Option<String>,
+        selection: Option<TextSelectionSnapshot>,
     },
     CopyTimelineSelection {
         window_id: HostedWindowId,
@@ -1751,6 +1976,7 @@ pub struct DesktopProgram {
     project_workspace_previews: BTreeMap<WorkspaceItemId, ProjectWorkspacePreview>,
     main_conversation_draft: Option<MainConversationDraft>,
     composer: Option<DesktopComposerState>,
+    composer_editor: HostedTextareaState,
     slash_commands: Vec<DesktopSlashCommandSearchResult>,
     conversation_reference_results: Vec<ChatConversationReference>,
     context_attachment_results: Vec<ChatContextSearchResult>,
@@ -1930,6 +2156,21 @@ pub struct DesktopProgram {
     message_sender: MessageSender,
     appearance: AppearanceSettings,
     sidebar_display_mode: NativeSidebarDisplayMode,
+    sidebar_tree_state: NativeSidebarTreeState,
+    sidebar_revealed_projects: BTreeSet<ProjectId>,
+    sidebar_inbox_revealed: bool,
+    sidebar_search_open: bool,
+    sidebar_search_query: String,
+    sidebar_search_selection: usize,
+    timeline_toggled_events: BTreeSet<String>,
+    timeline_hovered_event: Option<String>,
+    sidebar_menu: Option<SidebarMenuState>,
+    titlebar_menu_open: bool,
+    composer_action_menu_window: Option<HostedWindowId>,
+    sidebar_pending_task_archive: Option<TaskId>,
+    sidebar_stopping_tasks: BTreeSet<TaskId>,
+    sidebar_folder_drop_hovered: bool,
+    sidebar_activity_phase: u8,
     debug_timeline: NativeDebugTimeline,
     theme: ThemeMode,
     error_message: Option<String>,
@@ -2128,6 +2369,7 @@ impl DesktopProgram {
 
     fn refresh_projects(&mut self) {
         self.execute_workspace_command(DesktopCommand::RefreshWorkspace);
+        self.refresh_conversation_status_entries();
         if self.projects_overview_open {
             self.refresh_project_dashboard();
         }
@@ -2170,6 +2412,583 @@ impl DesktopProgram {
                 self.execute_workspace_command(DesktopCommand::SelectProject(project_id));
             }
             Err(error) => self.error_message = Some(format!("无法创建项目：{error}")),
+        }
+    }
+
+    fn pick_sidebar_project_folder(&mut self) {
+        let request = DesktopFileDialogRequest {
+            dialog_id: "sidebar-project-folder".to_owned(),
+            title: Some("选择项目根目录".to_owned()),
+            initial_directory: None,
+            filters: Vec::new(),
+            select_directories: true,
+            multiple: false,
+        };
+        let path = match self
+            .application
+            .execute_host(DesktopHostAction::FileDialog(request))
+        {
+            Ok(DesktopHostResult::FileDialogSelection(paths)) => paths.into_iter().next(),
+            Ok(_) => {
+                self.error_message = Some("目录选择器返回了无法识别的结果。".to_owned());
+                return;
+            }
+            Err(error) => {
+                eprintln!("failed to pick Native sidebar project folder: {error}");
+                self.error_message = Some("无法打开目录选择器，请稍后重试。".to_owned());
+                return;
+            }
+        };
+        let Some(path) = path else {
+            return;
+        };
+        self.add_sidebar_project_folder(path);
+    }
+
+    fn add_sidebar_project_folder(&mut self, path: PathBuf) {
+        if !path.is_dir() {
+            self.error_message = Some("只能将文件夹添加为项目。".to_owned());
+            return;
+        }
+        let normalized = path.to_string_lossy().into_owned();
+        if let Some(project_id) = self
+            .projects
+            .iter()
+            .find(|project| project.workspace_path.as_deref() == Some(normalized.as_str()))
+            .map(|project| project.id.clone())
+        {
+            self.execute_workspace_command(DesktopCommand::SelectProject(project_id));
+            return;
+        }
+        let name = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("新项目")
+            .to_owned();
+        let mut input = DesktopProjectCreate::new(name);
+        input.workspace_path = Some(normalized);
+        let project_id = input.id.clone();
+        match self.application.create_project(input) {
+            Ok(_) => {
+                self.error_message = None;
+                self.refresh_projects();
+                self.execute_workspace_command(DesktopCommand::SelectProject(project_id));
+            }
+            Err(error) => self.error_message = Some(format!("无法添加项目：{error}")),
+        }
+    }
+
+    fn sidebar_accepts_folder_drop(
+        &self,
+        window_id: HostedWindowId,
+        path: &Path,
+        position: Option<Point>,
+    ) -> bool {
+        if window_id != HostedWindowId::PRIMARY
+            || self.settings_open
+            || self.automations_open
+            || !path.is_dir()
+        {
+            return false;
+        }
+        let Some(position) = position else {
+            return false;
+        };
+        let geometry = self.workspace.viewport_geometry();
+        let Some(sidebar) = geometry
+            .region(&RegionId::Resources)
+            .filter(|sidebar| sidebar.visible)
+        else {
+            return false;
+        };
+        let bounds = sidebar.logical;
+        sidebar_folder_drop_hit(bounds, position)
+    }
+
+    fn persist_sidebar_tree_state(&mut self) {
+        if let Err(error) = save_sidebar_tree_state(&self.home, &self.sidebar_tree_state) {
+            eprintln!("{error}");
+            self.error_message = Some("无法保存侧栏展开状态。".to_owned());
+        }
+    }
+
+    fn persist_sidebar_layout_state(&mut self) {
+        let Some(sidebar) = self.workspace.layout().region(&RegionId::Resources) else {
+            return;
+        };
+        self.sidebar_tree_state.sidebar_width = sidebar
+            .extent()
+            .round()
+            .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+            as u16;
+        self.sidebar_tree_state.sidebar_collapsed = sidebar.collapsed_value();
+        self.persist_sidebar_tree_state();
+    }
+
+    fn close_sidebar_search(&mut self) {
+        self.sidebar_search_open = false;
+        self.sidebar_search_query.clear();
+        self.sidebar_search_selection = 0;
+    }
+
+    fn sidebar_project_expanded(&self, project_id: &ProjectId) -> bool {
+        self.sidebar_tree_state
+            .expanded_project_ids
+            .iter()
+            .any(|candidate| candidate == project_id.as_str())
+            || self.selected_task.as_ref().is_some_and(|selected_task| {
+                self.task_move_candidates.iter().any(|task| {
+                    &task.id == selected_task && task.project_id.as_ref() == Some(project_id)
+                })
+            })
+    }
+
+    fn sidebar_inbox_expanded(&self) -> bool {
+        self.sidebar_tree_state.inbox_expanded
+            || self.selected_task.as_ref().is_some_and(|selected_task| {
+                self.task_move_candidates
+                    .iter()
+                    .any(|task| &task.id == selected_task && task.project_id.is_none())
+            })
+    }
+
+    fn update_sidebar_menu(&mut self, event: ContextMenuEvent<SidebarMenuAction>) {
+        match event {
+            ContextMenuEvent::Dismiss => self.sidebar_menu = None,
+            ContextMenuEvent::Interaction | ContextMenuEvent::Search(_) => {}
+            ContextMenuEvent::OpenSubmenu(_) => {}
+            ContextMenuEvent::Select(action) => {
+                let Some(menu) = self.sidebar_menu.as_mut() else {
+                    return;
+                };
+                let dangerous = matches!(
+                    action,
+                    SidebarMenuAction::ArchiveProjectConversations
+                        | SidebarMenuAction::RemoveProject
+                        | SidebarMenuAction::MergeTaskWorktree
+                        | SidebarMenuAction::ArchiveTask
+                );
+                if dangerous && menu.pending.as_ref() != Some(&action) {
+                    menu.pending = Some(action);
+                    return;
+                }
+                let target = menu.target.clone();
+                self.sidebar_menu = None;
+                match (target, action) {
+                    (SidebarMenuTarget::AddProject, SidebarMenuAction::AddLocalFolder) => {
+                        self.pick_sidebar_project_folder()
+                    }
+                    (SidebarMenuTarget::AddProject, SidebarMenuAction::CloneRepository) => {
+                        self.open_project_clone()
+                    }
+                    (SidebarMenuTarget::AddProject, SidebarMenuAction::CreateCategory) => {
+                        self.create_project()
+                    }
+                    (SidebarMenuTarget::Project(project_id), action) => {
+                        self.execute_workspace_command(DesktopCommand::SelectProject(
+                            project_id.clone(),
+                        ));
+                        match action {
+                            SidebarMenuAction::OpenProject => {}
+                            SidebarMenuAction::OpenProjectPopup => {
+                                if let Err(error) = self.open_conversation_draft_popup(
+                                    Some(project_id),
+                                    None,
+                                    String::new(),
+                                ) {
+                                    self.error_message =
+                                        Some(format!("无法创建新对话窗口：{error}"));
+                                }
+                            }
+                            SidebarMenuAction::ToggleProjectPinned => self.toggle_project_pinned(),
+                            SidebarMenuAction::OpenProjectFileManager => {
+                                self.open_project_workspace(ExternalWorkspaceTarget::FileManager)
+                            }
+                            SidebarMenuAction::OpenProjectCodeEditor => {
+                                self.open_project_workspace(ExternalWorkspaceTarget::CodeEditor)
+                            }
+                            SidebarMenuAction::RenameProject => {
+                                self.project_surface = ProjectSurface::Settings;
+                                self.project_action_error = None;
+                                self.pending_ui_commands.push(HostedUiCommand::Focus {
+                                    window_id: HostedWindowId::PRIMARY,
+                                    target: target_ids::PROJECT_NAME.to_owned(),
+                                });
+                            }
+                            SidebarMenuAction::ArchiveProjectConversations => {
+                                self.request_project_conversation_archive()
+                            }
+                            SidebarMenuAction::RemoveProject => self.request_project_removal(),
+                            _ => {}
+                        }
+                    }
+                    (SidebarMenuTarget::Task(task_id), action) => {
+                        self.select_task(task_id.clone());
+                        if self.selected_task.as_ref() != Some(&task_id) {
+                            return;
+                        }
+                        match action {
+                            SidebarMenuAction::OpenTaskPopup => self.open_selected_task_popup(),
+                            SidebarMenuAction::AskTaskPopup => {
+                                self.open_child_question_popup(HostedWindowId::PRIMARY, task_id)
+                            }
+                            SidebarMenuAction::ToggleTaskPinned => self.toggle_task_pinned(),
+                            SidebarMenuAction::MergeTaskWorktree => {
+                                self.worktree_confirmation =
+                                    Some(WorktreeDangerAction::MergeAndArchive)
+                            }
+                            SidebarMenuAction::ArchiveTask => self.archive_task(),
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn update_titlebar_menu(&mut self, event: ContextMenuEvent<TitlebarMenuAction>) {
+        match event {
+            ContextMenuEvent::Dismiss => self.titlebar_menu_open = false,
+            ContextMenuEvent::Interaction
+            | ContextMenuEvent::Search(_)
+            | ContextMenuEvent::OpenSubmenu(_) => {}
+            ContextMenuEvent::Select(action) => {
+                self.titlebar_menu_open = false;
+                match action {
+                    TitlebarMenuAction::BackToTaskList => {
+                        self.close_main_conversation_draft();
+                        self.execute_workspace_command(DesktopCommand::BackToTaskList);
+                    }
+                    TitlebarMenuAction::OpenTaskPopup => self.open_selected_task_popup(),
+                    TitlebarMenuAction::AskTaskPopup => {
+                        if let Some(task_id) = self.selected_task.clone() {
+                            self.open_child_question_popup(HostedWindowId::PRIMARY, task_id);
+                        }
+                    }
+                    TitlebarMenuAction::ToggleTaskInspector => self.toggle_task_inspector(),
+                    TitlebarMenuAction::OpenTaskBrowser => self.open_iab(),
+                    TitlebarMenuAction::SplitHorizontal => {
+                        if let Some((pane_id, _)) = self.integrated_product_shell_pane() {
+                            self.split_workspace_pane(pane_id, SplitAxis::Horizontal);
+                        }
+                    }
+                    TitlebarMenuAction::SplitVertical => {
+                        if let Some((pane_id, _)) = self.integrated_product_shell_pane() {
+                            self.split_workspace_pane(pane_id, SplitAxis::Vertical);
+                        }
+                    }
+                    TitlebarMenuAction::CloseCurrentItem => {
+                        let item_id = self
+                            .integrated_product_shell_pane()
+                            .and_then(|(_, item_id)| item_id)
+                            .filter(|item_id| {
+                                self.workspace_items
+                                    .iter()
+                                    .any(|item| &item.id == item_id && item.capabilities.closable)
+                            });
+                        if let Some(item_id) = item_id {
+                            self.close_workspace_item(item_id);
+                        }
+                    }
+                    TitlebarMenuAction::OpenCommandPalette => {
+                        self.update_message(Message::ToggleCommandPalette);
+                    }
+                    TitlebarMenuAction::OpenConversationStatus => {
+                        self.refresh_conversation_status();
+                    }
+                }
+            }
+        }
+    }
+
+    fn apply_sidebar_tree_drop(
+        &mut self,
+        source: SidebarTreeNode,
+        target: SidebarTreeNode,
+        position: SidebarTreeDropPosition,
+    ) {
+        match (source, target) {
+            (SidebarTreeNode::Project(source), SidebarTreeNode::Project(target)) => {
+                if source == target || position == SidebarTreeDropPosition::Inside {
+                    return;
+                }
+                let Some(source_project) =
+                    self.projects.iter().find(|project| project.id == source)
+                else {
+                    return;
+                };
+                let Some(target_project) =
+                    self.projects.iter().find(|project| project.id == target)
+                else {
+                    return;
+                };
+                if source_project.pinned != target_project.pinned {
+                    self.error_message = Some("置顶与普通项目不能跨分组排序。".to_owned());
+                    return;
+                }
+                let cohort = self
+                    .projects
+                    .iter()
+                    .filter(|project| project.pinned == source_project.pinned)
+                    .map(|project| project.id.clone())
+                    .collect::<Vec<_>>();
+                let before = relative_before_id(&cohort, &source, &target, position);
+                self.reorder_project(source, before);
+            }
+            (SidebarTreeNode::Task(source), SidebarTreeNode::Project(project_id))
+                if position == SidebarTreeDropPosition::Inside =>
+            {
+                self.move_sidebar_task(source, Some(project_id), None, None, position);
+            }
+            (SidebarTreeNode::Task(source), SidebarTreeNode::Inbox)
+                if position == SidebarTreeDropPosition::Inside =>
+            {
+                self.move_sidebar_task(source, None, None, None, position);
+            }
+            (SidebarTreeNode::Task(source), SidebarTreeNode::Task(target)) => {
+                let Some(target_task) = self
+                    .task_move_candidates
+                    .iter()
+                    .find(|task| task.id == target)
+                    .cloned()
+                else {
+                    return;
+                };
+                let parent_id = if position == SidebarTreeDropPosition::Inside {
+                    Some(target.clone())
+                } else {
+                    target_task.parent_id.clone()
+                };
+                self.move_sidebar_task(
+                    source,
+                    target_task.project_id,
+                    parent_id,
+                    Some(target),
+                    position,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    fn sidebar_tree_drop_debug_targets(
+        &self,
+    ) -> Vec<(
+        String,
+        SidebarTreeNode,
+        SidebarTreeNode,
+        SidebarTreeDropPosition,
+    )> {
+        let mut targets = Vec::new();
+        for source in &self.projects {
+            for target in self
+                .projects
+                .iter()
+                .filter(|target| target.id != source.id && target.pinned == source.pinned)
+            {
+                for position in [
+                    SidebarTreeDropPosition::Before,
+                    SidebarTreeDropPosition::After,
+                ] {
+                    let source_node = SidebarTreeNode::Project(source.id.clone());
+                    let target_node = SidebarTreeNode::Project(target.id.clone());
+                    targets.push((
+                        target_ids::sidebar_tree_drop(
+                            &source_node.target_key(),
+                            &target_node.target_key(),
+                            position.target_key(),
+                        ),
+                        source_node,
+                        target_node,
+                        position,
+                    ));
+                }
+            }
+        }
+        let Some(source) = self.selected_task.as_ref().and_then(|task_id| {
+            self.task_move_candidates
+                .iter()
+                .find(|task| &task.id == task_id)
+        }) else {
+            return targets;
+        };
+        let source_node = SidebarTreeNode::Task(source.id.clone());
+        let inbox = SidebarTreeNode::Inbox;
+        targets.push((
+            target_ids::sidebar_tree_drop(
+                &source_node.target_key(),
+                &inbox.target_key(),
+                SidebarTreeDropPosition::Inside.target_key(),
+            ),
+            source_node.clone(),
+            inbox,
+            SidebarTreeDropPosition::Inside,
+        ));
+        for project in &self.projects {
+            let target_node = SidebarTreeNode::Project(project.id.clone());
+            targets.push((
+                target_ids::sidebar_tree_drop(
+                    &source_node.target_key(),
+                    &target_node.target_key(),
+                    SidebarTreeDropPosition::Inside.target_key(),
+                ),
+                source_node.clone(),
+                target_node,
+                SidebarTreeDropPosition::Inside,
+            ));
+        }
+        for target in self
+            .task_move_candidates
+            .iter()
+            .filter(|target| target.id != source.id && target.pinned == source.pinned)
+        {
+            let target_node = SidebarTreeNode::Task(target.id.clone());
+            for position in SidebarTreeDropPosition::ALL {
+                targets.push((
+                    target_ids::sidebar_tree_drop(
+                        &source_node.target_key(),
+                        &target_node.target_key(),
+                        position.target_key(),
+                    ),
+                    source_node.clone(),
+                    target_node.clone(),
+                    position,
+                ));
+            }
+        }
+        targets
+    }
+
+    #[cfg(debug_assertions)]
+    fn sidebar_menu_debug_targets(&self) -> Vec<(String, SidebarMenuAction)> {
+        let Some(menu) = self.sidebar_menu.as_ref() else {
+            return Vec::new();
+        };
+        let actions = match &menu.target {
+            SidebarMenuTarget::AddProject => vec![
+                SidebarMenuAction::AddLocalFolder,
+                SidebarMenuAction::CloneRepository,
+                SidebarMenuAction::CreateCategory,
+            ],
+            SidebarMenuTarget::Project(_) => vec![
+                SidebarMenuAction::OpenProject,
+                SidebarMenuAction::OpenProjectPopup,
+                SidebarMenuAction::ToggleProjectPinned,
+                SidebarMenuAction::OpenProjectFileManager,
+                SidebarMenuAction::OpenProjectCodeEditor,
+                SidebarMenuAction::RenameProject,
+                SidebarMenuAction::ArchiveProjectConversations,
+                SidebarMenuAction::RemoveProject,
+            ],
+            SidebarMenuTarget::Task(task_id) => {
+                let mut actions = vec![
+                    SidebarMenuAction::OpenTaskPopup,
+                    SidebarMenuAction::AskTaskPopup,
+                    SidebarMenuAction::ToggleTaskPinned,
+                    SidebarMenuAction::ArchiveTask,
+                ];
+                if self
+                    .application
+                    .task_worktree(task_id)
+                    .is_ok_and(|worktree| worktree.is_some())
+                {
+                    actions.insert(3, SidebarMenuAction::MergeTaskWorktree);
+                }
+                actions
+            }
+        };
+        let target = menu.target.target_key();
+        actions
+            .into_iter()
+            .map(|action| {
+                (
+                    target_ids::sidebar_menu_action(&target, action.target_key()),
+                    action,
+                )
+            })
+            .collect()
+    }
+
+    fn move_sidebar_task(
+        &mut self,
+        task_id: TaskId,
+        target_project_id: Option<ProjectId>,
+        target_parent_id: Option<TaskId>,
+        relative_target: Option<TaskId>,
+        position: SidebarTreeDropPosition,
+    ) {
+        let Some(source) = self
+            .task_move_candidates
+            .iter()
+            .find(|task| task.id == task_id)
+            .cloned()
+        else {
+            return;
+        };
+        if relative_target.as_ref().is_some_and(|target| {
+            target == &task_id
+                || product_task_is_descendant_of(&self.task_move_candidates, target, &task_id)
+        }) {
+            self.error_message = Some("不能把对话移动到自身或其子对话中。".to_owned());
+            return;
+        }
+        if relative_target
+            .as_ref()
+            .and_then(|target_id| {
+                self.task_move_candidates
+                    .iter()
+                    .find(|task| &task.id == target_id)
+            })
+            .is_some_and(|target| source.pinned != target.pinned)
+        {
+            self.error_message = Some("置顶与普通对话不能跨分组排序。".to_owned());
+            return;
+        }
+        match self.application.move_task(
+            &task_id,
+            DesktopTaskMove {
+                target_project_id: target_project_id.clone(),
+                target_parent_id,
+            },
+        ) {
+            Ok(moved) => {
+                self.error_message = None;
+                if let Some(target) =
+                    relative_target.filter(|_| position != SidebarTreeDropPosition::Inside)
+                {
+                    let cohort = self
+                        .task_move_candidates
+                        .iter()
+                        .filter(|task| {
+                            task.id != task_id
+                                && task.project_id == target_project_id
+                                && task.pinned == moved.pinned
+                        })
+                        .map(|task| task.id.clone())
+                        .collect::<Vec<_>>();
+                    let mut ordered = cohort;
+                    let insert_at = ordered
+                        .iter()
+                        .position(|candidate| candidate == &target)
+                        .map(|index| {
+                            index + usize::from(position == SidebarTreeDropPosition::After)
+                        })
+                        .unwrap_or(ordered.len());
+                    ordered.insert(insert_at, task_id.clone());
+                    if let Err(error) = self
+                        .application
+                        .reorder_tasks(target_project_id.clone(), &ordered)
+                    {
+                        self.error_message = Some(format!("对话已移动，但无法调整顺序：{error}"));
+                    }
+                }
+                self.refresh_projects();
+                self.select_task(moved.id);
+            }
+            Err(error) => self.error_message = Some(format!("无法移动对话：{error}")),
         }
     }
 
@@ -3325,8 +4144,10 @@ impl DesktopProgram {
         }
         let task = DesktopTaskCreate::new(project_id, "新对话");
         let worktree = self.initial_draft_worktree(task.project_id.as_ref());
+        let composer = DesktopComposerState::transient(task.id.clone());
         self.main_conversation_draft = Some(MainConversationDraft {
-            composer: DesktopComposerState::transient(task.id.clone()),
+            composer_editor: HostedTextareaState::with_text(&composer.content),
+            composer,
             task,
             worktree,
             suggestions: ConversationSuggestionState::default(),
@@ -4004,6 +4825,12 @@ impl DesktopProgram {
         self.project_surface = ProjectSurface::Tasks;
         self.sync_inspector_region();
         self.refresh_tasks();
+    }
+
+    fn open_project_settings(&mut self) {
+        self.execute_workspace_command(DesktopCommand::BackToTaskList);
+        self.project_surface = ProjectSurface::Settings;
+        self.sync_inspector_region();
     }
 
     fn open_project_surface(&mut self, surface: ProjectWorkspaceSurface) {
@@ -6713,12 +7540,10 @@ impl DesktopProgram {
                     .and_then(|item| item.task_id().ok().flatten())
                     .map(|_| ProjectSurface::Tasks)
             })
-            .unwrap_or_else(|| {
-                if self.project_surface == ProjectSurface::Clone {
-                    ProjectSurface::Clone
-                } else {
-                    ProjectSurface::Tasks
-                }
+            .unwrap_or(match self.project_surface {
+                ProjectSurface::Clone => ProjectSurface::Clone,
+                ProjectSurface::Settings => ProjectSurface::Settings,
+                _ => ProjectSurface::Tasks,
             });
         let next_architecture_workspace_state = active_item
             .filter(|item| {
@@ -6855,7 +7680,7 @@ impl DesktopProgram {
                     }
                 }
                 ProjectSurface::Files => self.refresh_project_files(),
-                ProjectSurface::Tasks | ProjectSurface::Clone => {}
+                ProjectSurface::Tasks | ProjectSurface::Settings | ProjectSurface::Clone => {}
             }
         }
         if has_automation_workspace_item
@@ -7479,7 +8304,6 @@ impl DesktopProgram {
             Message::OpenProjectsOverview => self.open_projects_overview(),
             Message::RefreshProjectsOverview => self.refresh_project_dashboard(),
             Message::CreateProject => self.create_project(),
-            Message::OpenProjectClone => self.open_project_clone(),
             Message::CloseProjectClone => self.close_project_clone(),
             Message::ProjectCloneRepositoryChanged(value) => {
                 self.project_clone_repository = value;
@@ -7565,13 +8389,215 @@ impl DesktopProgram {
             Message::CancelProjectConversationArchive => self.project_archive_confirmation = None,
             Message::ProjectConversationArchiveDialogInteraction => {}
             Message::RestoreProject(project_id) => self.restore_project(project_id),
+            Message::ToggleSidebarSearch => {
+                self.sidebar_search_open = !self.sidebar_search_open;
+                self.sidebar_search_selection = 0;
+                if !self.sidebar_search_open {
+                    self.sidebar_search_query.clear();
+                } else {
+                    self.pending_ui_commands.push(HostedUiCommand::Focus {
+                        window_id: HostedWindowId::PRIMARY,
+                        target: target_ids::SIDEBAR_SEARCH_INPUT.to_owned(),
+                    });
+                }
+            }
+            Message::SidebarSearchChanged(value) => {
+                self.sidebar_search_query = value;
+                self.sidebar_search_selection = 0;
+            }
+            Message::SidebarSearchSelectionChanged(index) => {
+                if index < self.sidebar_search_targets().len() {
+                    self.sidebar_search_selection = index;
+                }
+            }
+            Message::ToggleTimelineEvent(event_id) => {
+                if !self.timeline_toggled_events.remove(&event_id) {
+                    self.timeline_toggled_events.insert(event_id);
+                }
+            }
+            Message::TimelineEventHover(event_id) => self.timeline_hovered_event = event_id,
+            Message::ToggleSidebarProject(project_id) => {
+                let key = project_id.as_str().to_owned();
+                if let Some(index) = self
+                    .sidebar_tree_state
+                    .expanded_project_ids
+                    .iter()
+                    .position(|candidate| candidate == &key)
+                {
+                    self.sidebar_tree_state.expanded_project_ids.remove(index);
+                } else {
+                    self.sidebar_tree_state.expanded_project_ids.push(key);
+                }
+                self.persist_sidebar_tree_state();
+            }
+            Message::ToggleAllSidebarProjects => {
+                let all_expanded = self
+                    .projects
+                    .iter()
+                    .all(|project| self.sidebar_project_expanded(&project.id));
+                self.sidebar_tree_state.expanded_project_ids = if all_expanded {
+                    Vec::new()
+                } else {
+                    self.projects
+                        .iter()
+                        .map(|project| project.id.as_str().to_owned())
+                        .collect()
+                };
+                self.persist_sidebar_tree_state();
+            }
+            Message::ToggleSidebarInbox => {
+                self.sidebar_tree_state.inbox_expanded = !self.sidebar_tree_state.inbox_expanded;
+                self.persist_sidebar_tree_state();
+            }
+            Message::RevealSidebarInboxTasks => {
+                self.sidebar_inbox_revealed = true;
+            }
+            Message::RevealSidebarProjectTasks(project_id) => {
+                self.sidebar_revealed_projects.insert(project_id);
+            }
+            Message::OpenSidebarMenuAt { target, anchor } => {
+                self.titlebar_menu_open = false;
+                self.sidebar_menu = Some(SidebarMenuState::new(target, anchor));
+            }
+            Message::OpenSidebarMenu { target, anchor_y } => {
+                self.titlebar_menu_open = false;
+                let anchor_x = self
+                    .workspace
+                    .viewport_geometry()
+                    .region(&RegionId::Resources)
+                    .filter(|sidebar| sidebar.visible)
+                    .map_or(214.0, |sidebar| {
+                        sidebar.logical.x + sidebar.logical.width - 8.0
+                    });
+                self.sidebar_menu = Some(SidebarMenuState::new(
+                    target,
+                    Point::new(anchor_x, anchor_y),
+                ));
+            }
+            Message::SidebarMenu(event) => self.update_sidebar_menu(event),
+            Message::ToggleTitlebarMenu => {
+                self.titlebar_menu_open = !self.titlebar_menu_open;
+                if self.titlebar_menu_open {
+                    self.sidebar_menu = None;
+                }
+            }
+            Message::TitlebarMenu(event) => self.update_titlebar_menu(event),
+            Message::ToggleComposerActionMenu(window_id) => {
+                self.composer_action_menu_window =
+                    (self.composer_action_menu_window != Some(window_id)).then_some(window_id);
+            }
+            Message::CloseComposerActionMenu => self.composer_action_menu_window = None,
+            Message::ComposerAction { window_id, action } => {
+                self.composer_action_menu_window = None;
+                let message = match action {
+                    ComposerAction::AddFile if window_id == HostedWindowId::PRIMARY => {
+                        Message::PickAttachmentFiles
+                    }
+                    ComposerAction::AddFile => Message::TaskPopupPickAttachmentFiles(window_id),
+                    ComposerAction::AddDirectory if window_id == HostedWindowId::PRIMARY => {
+                        Message::PickAttachmentDirectories
+                    }
+                    ComposerAction::AddDirectory => {
+                        Message::TaskPopupPickAttachmentDirectories(window_id)
+                    }
+                    ComposerAction::ReferenceConversation => {
+                        self.open_composer_conversation_reference(window_id);
+                        return None;
+                    }
+                    ComposerAction::PasteText if window_id == HostedWindowId::PRIMARY => {
+                        Message::PasteClipboardText
+                    }
+                    ComposerAction::PasteText => Message::TaskPopupPasteClipboardText(window_id),
+                    ComposerAction::PasteImage if window_id == HostedWindowId::PRIMARY => {
+                        Message::PasteClipboardImage
+                    }
+                    ComposerAction::PasteImage => Message::TaskPopupPasteClipboardImage(window_id),
+                    ComposerAction::PasteFiles => Message::PasteClipboardFiles(window_id),
+                    ComposerAction::TogglePlanMode if window_id == HostedWindowId::PRIMARY => {
+                        Message::TogglePlanMode
+                    }
+                    ComposerAction::TogglePlanMode => Message::TaskPopupTogglePlanMode(window_id),
+                    ComposerAction::ToggleGoalMode if window_id == HostedWindowId::PRIMARY => {
+                        Message::ToggleGoalMode
+                    }
+                    ComposerAction::ToggleGoalMode => Message::TaskPopupToggleGoalMode(window_id),
+                };
+                self.update_message(message);
+            }
+            Message::OpenSidebarProjectPopup(project_id) => {
+                if let Err(error) =
+                    self.open_conversation_draft_popup(Some(project_id), None, String::new())
+                {
+                    self.error_message = Some(format!("无法创建新对话窗口：{error}"));
+                }
+            }
+            Message::OpenSidebarProjectDraft(project_id) => {
+                self.execute_workspace_command(DesktopCommand::SelectProject(project_id));
+                self.open_main_conversation_draft();
+            }
+            Message::OpenSidebarInboxDraft => {
+                self.execute_workspace_command(DesktopCommand::SelectInbox);
+                self.open_main_conversation_draft();
+            }
+            Message::OpenSidebarTaskPopup(task_id) => {
+                self.select_task(task_id.clone());
+                if self.selected_task.as_ref() == Some(&task_id) {
+                    self.open_selected_task_popup();
+                }
+            }
+            Message::SidebarToggleTaskPinned(task_id) => {
+                self.sidebar_pending_task_archive = None;
+                self.select_task(task_id.clone());
+                if self.selected_task.as_ref() == Some(&task_id) {
+                    self.toggle_task_pinned();
+                }
+            }
+            Message::SidebarRequestTaskWorktreeMerge(task_id) => {
+                self.sidebar_pending_task_archive = None;
+                self.select_task(task_id.clone());
+                if self.selected_task.as_ref() == Some(&task_id)
+                    && self
+                        .application
+                        .task_worktree(&task_id)
+                        .is_ok_and(|worktree| worktree.is_some())
+                {
+                    self.worktree_confirmation = Some(WorktreeDangerAction::MergeAndArchive);
+                }
+            }
+            Message::SidebarArchiveTask(task_id) => {
+                if self.sidebar_pending_task_archive.as_ref() != Some(&task_id) {
+                    self.sidebar_pending_task_archive = Some(task_id);
+                    return None;
+                }
+                self.sidebar_pending_task_archive = None;
+                self.select_task(task_id.clone());
+                if self.selected_task.as_ref() == Some(&task_id) {
+                    self.archive_task();
+                }
+            }
+            Message::CancelSidebarTaskArchive(task_id) => {
+                if self.sidebar_pending_task_archive.as_ref() == Some(&task_id) {
+                    self.sidebar_pending_task_archive = None;
+                }
+            }
+            Message::SidebarStopTask(task_id) => self.stop_conversation_status_task(task_id),
+            Message::SidebarTreeDrop {
+                source,
+                target,
+                position,
+            } => self.apply_sidebar_tree_drop(source, target, position),
+            Message::SidebarTreeInteraction => {}
+            Message::DismissSidebarError => {
+                self.conversation_status_error = None;
+                self.task_move_candidates_error = None;
+                self.error_message = None;
+            }
             Message::TaskSearchChanged(value) => self.task_search = value,
             Message::NewTaskTitleChanged(value) => {
                 self.new_task_title = value;
                 self.error_message = None;
             }
             Message::CreateTask => self.create_task(),
-            Message::OpenMainConversationDraft => self.open_main_conversation_draft(),
             Message::CloseMainConversationDraft => self.close_main_conversation_draft(),
             Message::TaskTitleChanged(value) => {
                 self.task_title_edit = value;
@@ -7662,6 +8688,7 @@ impl DesktopProgram {
             Message::ResumeAutomation => self.resume_automation(),
             Message::AutomationGraph(event) => self.update_automation_graph(event),
             Message::OpenProjectTasks => self.open_project_tasks(),
+            Message::OpenProjectSettings => self.open_project_settings(),
             Message::OpenRoadmap => self.open_project_surface(ProjectWorkspaceSurface::Roadmap),
             Message::RefreshRoadmap => self.refresh_roadmap(),
             Message::SelectMilestone(milestone_id) => self.select_milestone(milestone_id),
@@ -7769,11 +8796,9 @@ impl DesktopProgram {
             Message::ToggleTaskMemory => self.toggle_task_memory(),
             Message::ResetTaskMemoryCooldown => self.reset_task_memory_cooldown(),
             Message::OpenCodingTools => self.open_coding_tools(),
-            Message::OpenIab => self.open_iab(),
             Message::Iab(message) => self.update_iab(message),
             Message::IabWindow { window_id, message } => self.update_iab_window(window_id, message),
             Message::CloseInspectorDock => self.close_inspector_dock(),
-            Message::ToggleTaskInspector => self.toggle_task_inspector(),
             Message::OpenArchitecture => self.open_architecture(),
             Message::OpenProjectFiles => self.open_project_surface(ProjectWorkspaceSurface::Files),
             Message::RefreshProjectFiles => self.refresh_project_files(),
@@ -7938,6 +8963,7 @@ impl DesktopProgram {
                 }
             }
             Message::SelectProject(project_id) => {
+                self.close_sidebar_search();
                 self.close_main_conversation_draft();
                 self.automations_open = false;
                 self.project_surface = ProjectSurface::Tasks;
@@ -7949,20 +8975,18 @@ impl DesktopProgram {
                 self.refresh_project_files();
             }
             Message::SelectInbox => {
+                self.close_sidebar_search();
                 self.close_main_conversation_draft();
                 self.automations_open = false;
                 self.project_surface = ProjectSurface::Tasks;
                 self.execute_workspace_command(DesktopCommand::SelectInbox);
             }
             Message::SelectTask(task_id) => {
+                self.close_sidebar_search();
                 self.close_main_conversation_draft();
                 self.automations_open = false;
                 self.project_surface = ProjectSurface::Tasks;
                 self.select_task(task_id);
-            }
-            Message::BackToTaskList => {
-                self.close_main_conversation_draft();
-                self.execute_workspace_command(DesktopCommand::BackToTaskList);
             }
             Message::OpenConversationStatus => self.refresh_conversation_status(),
             Message::CloseConversationStatus => {
@@ -8019,12 +9043,10 @@ impl DesktopProgram {
             Message::StopConversationStatusTask(task_id) => {
                 self.stop_conversation_status_task(task_id);
             }
-            Message::OpenSelectedTaskPopup => self.open_selected_task_popup(),
             Message::OpenChildQuestionPopup {
                 source_window,
                 parent_task_id,
             } => self.open_child_question_popup(source_window, parent_task_id),
-            Message::MoveSelectedTaskToPopup => self.move_selected_task_to_popup(),
             Message::MoveWorkspaceItemToNewWindow(item_id) => {
                 self.move_workspace_item_to_new_window(item_id)
             }
@@ -8130,7 +9152,24 @@ impl DesktopProgram {
                 offset,
                 viewport_extent,
             } => self.update_timeline_viewport(surface, offset, viewport_extent),
+            Message::ScrollTimelineToEnd(surface) => {
+                let content_extent = match &surface {
+                    TimelineSurfaceKey::Main => self.task_session.as_ref(),
+                    TimelineSurfaceKey::TaskPopup(window_id) => self
+                        .task_popups
+                        .get(window_id)
+                        .and_then(|popup| popup.session.as_ref()),
+                    TimelineSurfaceKey::TaskPopupPane { .. } => None,
+                }
+                .map(|session| timeline_content_extent(session, true));
+                if let Some(content_extent) = content_extent {
+                    self.queue_timeline_to_end(surface, content_extent);
+                }
+            }
             Message::TaskPopupComposerChanged { window_id, value } => {
+                if let Some(popup) = self.task_popups.get(&window_id) {
+                    sync_hosted_textarea(&popup.composer_editor, &value);
+                }
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
                     popup.pending_review_slash_workflow = None;
                 }
@@ -8139,6 +9178,15 @@ impl DesktopProgram {
                     DesktopComposerCommand::SetContent(value),
                 ) {
                     self.refresh_task_popup_composer_suggestions(window_id);
+                }
+            }
+            Message::TaskPopupComposerEdited { window_id, action } => {
+                if let Some(popup) = self.task_popups.get(&window_id) {
+                    popup.composer_editor.perform(action);
+                    self.update_message(Message::TaskPopupComposerChanged {
+                        window_id,
+                        value: popup.composer_editor.text(),
+                    });
                 }
             }
             Message::TaskPopupDraftProjectSelection { window_id, event } => {
@@ -8326,6 +9374,11 @@ impl DesktopProgram {
                 Value::String(value),
             ),
             Message::ComposerChanged(value) => {
+                if let Some(draft) = self.main_conversation_draft.as_ref() {
+                    sync_hosted_textarea(&draft.composer_editor, &value);
+                } else {
+                    sync_hosted_textarea(&self.composer_editor, &value);
+                }
                 self.pending_review_slash_workflow = None;
                 if self.execute_composer_command(DesktopComposerCommand::SetContent(value)) {
                     if self.main_conversation_draft.is_some() {
@@ -8335,6 +9388,15 @@ impl DesktopProgram {
                         self.refresh_composer_suggestions();
                     }
                 }
+            }
+            Message::ComposerEdited(action) => {
+                let editor = self
+                    .main_conversation_draft
+                    .as_ref()
+                    .map(|draft| &draft.composer_editor)
+                    .unwrap_or(&self.composer_editor);
+                editor.perform(action);
+                self.update_message(Message::ComposerChanged(editor.text()));
             }
             Message::SelectSlashCommand(command) => {
                 self.select_slash_command(HostedWindowId::PRIMARY, command)
@@ -8407,6 +9469,7 @@ impl DesktopProgram {
                     ..DesktopTodoUpdate::default()
                 },
             ),
+            Message::DispatchTodoGuide(todo_id) => self.dispatch_todo_guide(&todo_id),
             Message::DeleteTodo(todo_id) => self.delete_todo(&todo_id),
             Message::GoalDraftChanged(value) => {
                 self.goal_draft = value;
@@ -8519,11 +9582,17 @@ impl DesktopProgram {
             Message::TimelineTextSelectionChanged {
                 window_id,
                 event_id,
-                text,
+                selection,
             } => {
-                if let Some(text) = text.filter(|value| !value.trim().is_empty()) {
-                    self.timeline_text_selections
-                        .insert(window_id, TimelineTextSelection { event_id, text });
+                if let Some(selection) = selection.filter(|value| !value.text.trim().is_empty()) {
+                    self.timeline_text_selections.insert(
+                        window_id,
+                        TimelineTextSelection {
+                            event_id,
+                            text: selection.text,
+                            bounds: selection.bounds,
+                        },
+                    );
                 } else if self
                     .timeline_text_selections
                     .get(&window_id)
@@ -8580,6 +9649,7 @@ impl DesktopProgram {
             } => self.set_timeline_session_branch(window_id, &event_id, mode),
             Message::ClearSessionBranch(window_id) => self.clear_session_branch(window_id),
             Message::ToggleCommandPalette => {
+                self.titlebar_menu_open = false;
                 if self.command_picker.is_open() {
                     self.dismiss_command_palette();
                 } else {
@@ -9502,12 +10572,23 @@ impl DesktopProgram {
             Message::Workspace(action) => {
                 let window_resized = matches!(action, WorkspaceAction::WindowResized { .. });
                 let inspector_resize_ended = matches!(action, WorkspaceAction::ResizeEnd);
-                self.workspace.update(action);
+                let persist_sidebar_layout = matches!(
+                    &action,
+                    WorkspaceAction::ToggleRegion(region)
+                        | WorkspaceAction::SetRegionCollapsed(region, _)
+                        | WorkspaceAction::SetRegionSize(region, _)
+                        | WorkspaceAction::ResetRegionSize(region)
+                        if region == &RegionId::Resources
+                ) || matches!(action, WorkspaceAction::ResizeEnd);
+                let workspace_changed = self.workspace.update(action);
                 if window_resized {
                     self.sync_workspace_splits();
                 }
                 if inspector_resize_ended {
                     self.persist_inspector_extent();
+                }
+                if workspace_changed && persist_sidebar_layout {
+                    self.persist_sidebar_layout_state();
                 }
             }
             Message::SelectWorkspacePaneTab { pane_id, item_id } => {
@@ -9859,16 +10940,19 @@ impl DesktopProgram {
     fn refresh_composer(&mut self) {
         let Some(task_id) = self.selected_task.as_ref() else {
             self.composer = None;
+            self.composer_editor.clear();
             self.clear_composer_suggestions();
             return;
         };
         match self.application.composer_state(task_id) {
             Ok(composer) => {
+                sync_hosted_textarea(&self.composer_editor, &composer.content);
                 self.composer = Some(composer);
                 self.task_action_error = None;
             }
             Err(error) => {
                 self.composer = None;
+                self.composer_editor.clear();
                 self.task_action_error = Some(error.to_string());
             }
         }
@@ -10566,6 +11650,43 @@ impl DesktopProgram {
         self.refresh_context_attachment_results();
     }
 
+    fn open_composer_conversation_reference(&mut self, window_id: HostedWindowId) {
+        let content = if window_id == HostedWindowId::PRIMARY {
+            self.main_surface_composer()
+                .map(|composer| composer.content.as_str())
+        } else {
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.composer.as_ref())
+                .map(|composer| composer.content.as_str())
+        };
+        let Some(content) = content else {
+            return;
+        };
+        let content = composer_content_with_trigger(content, '#');
+        let changed = if window_id == HostedWindowId::PRIMARY {
+            self.execute_composer_command(DesktopComposerCommand::SetContent(content))
+        } else {
+            self.task_popup_composer_command(window_id, DesktopComposerCommand::SetContent(content))
+        };
+        if !changed {
+            return;
+        }
+        if window_id == HostedWindowId::PRIMARY {
+            self.refresh_composer_suggestions();
+        } else {
+            self.refresh_task_popup_composer_suggestions(window_id);
+        }
+        self.pending_ui_commands.push(HostedUiCommand::Focus {
+            window_id,
+            target: if window_id == HostedWindowId::PRIMARY {
+                target_ids::COMPOSER_INPUT.to_owned()
+            } else {
+                target_ids::task_popup_composer(window_id.0)
+            },
+        });
+    }
+
     fn refresh_slash_commands(&mut self) {
         let context = self
             .main_conversation_draft
@@ -11041,6 +12162,36 @@ impl DesktopProgram {
         }
     }
 
+    fn dispatch_todo_guide(&mut self, todo_id: &str) {
+        if self.composer_is_locked() {
+            return;
+        }
+        let Some(task_id) = self.selected_task.clone() else {
+            return;
+        };
+        match self.application.dispatch_task_guide(&task_id, todo_id) {
+            Ok(Some(dispatched)) => {
+                let state = match dispatched.turn.kind {
+                    DesktopTurnDispatchKind::Started => DesktopTurnState::Starting,
+                    DesktopTurnDispatchKind::Queued { position } => {
+                        DesktopTurnState::Queued { position }
+                    }
+                };
+                self.turn_state = Some((dispatched.turn.turn_id, state));
+                self.task_action_error = None;
+                self.refresh_task_session();
+            }
+            Ok(None) => {
+                self.task_action_error = Some("该引导已发送或不可用。".to_owned());
+                self.refresh_task_session();
+            }
+            Err(error) => {
+                eprintln!("failed to dispatch Native Todo Guide: {error}");
+                self.task_action_error = Some("无法发送引导，请重试。".to_owned());
+            }
+        }
+    }
+
     fn set_goal(&mut self) {
         let Some(task_id) = self.selected_task.clone() else {
             return;
@@ -11190,6 +12341,7 @@ impl DesktopProgram {
         if let Some(draft) = self.main_conversation_draft.as_mut() {
             return match draft.composer.apply_transient_command(command) {
                 Ok(_) => {
+                    sync_hosted_textarea(&draft.composer_editor, &draft.composer.content);
                     draft.error = None;
                     true
                 }
@@ -11205,6 +12357,7 @@ impl DesktopProgram {
         };
         match self.application.execute_composer_command(task_id, command) {
             Ok(composer) => {
+                sync_hosted_textarea(&self.composer_editor, &composer.content);
                 self.composer = Some(composer);
                 self.task_action_error = None;
                 true
@@ -12390,6 +13543,15 @@ impl DesktopProgram {
             self.sync_markdown_images();
             return;
         };
+        let timeline_surface = TimelineSurfaceKey::Main;
+        let timeline_had_viewport = self.timeline_viewports.contains_key(&timeline_surface);
+        let follow_timeline_tail =
+            self.timeline_is_at_end(self.task_session.as_ref(), &timeline_surface, true);
+        let previous_timeline_tail = self
+            .task_session
+            .as_ref()
+            .and_then(|session| session.timeline.last())
+            .cloned();
         let restored_runtime = self
             .application
             .restore_task_runtime_from_projection(&task_id);
@@ -12406,6 +13568,9 @@ impl DesktopProgram {
                     snapshot,
                     self.task_session.as_ref(),
                 );
+                let timeline_tail_changed =
+                    previous_timeline_tail.as_ref() != session.timeline.last();
+                let timeline_extent = timeline_content_extent(&session, true);
                 if self.turn_state.is_none() {
                     if let Ok(runtime) = &restored_runtime {
                         self.turn_state = restored_turn_state(runtime, &session.pending);
@@ -12414,6 +13579,9 @@ impl DesktopProgram {
                 self.pane_task_sessions
                     .insert(task_id.clone(), session.clone());
                 self.task_session = Some(session);
+                if follow_timeline_tail && (!timeline_had_viewport || timeline_tail_changed) {
+                    self.queue_timeline_to_end(timeline_surface, timeline_extent);
+                }
                 let open_interactions = self
                     .task_session
                     .as_ref()
@@ -12580,6 +13748,48 @@ impl DesktopProgram {
                 extent: viewport_extent,
             },
         );
+    }
+
+    fn timeline_is_at_end(
+        &self,
+        session: Option<&TaskSessionView>,
+        surface: &TimelineSurfaceKey,
+        includes_load_earlier_control: bool,
+    ) -> bool {
+        let Some(session) = session else {
+            return true;
+        };
+        let Some(viewport) = self.timeline_viewports.get(surface).copied() else {
+            return true;
+        };
+        timeline_viewport_is_at_end(
+            viewport,
+            timeline_content_extent(session, includes_load_earlier_control),
+        )
+    }
+
+    fn queue_timeline_to_end(&mut self, surface: TimelineSurfaceKey, content_extent: f32) {
+        let viewport = self
+            .timeline_viewports
+            .get(&surface)
+            .copied()
+            .unwrap_or_default();
+        let offset = (content_extent - viewport.extent).max(0.0);
+        self.timeline_viewports.insert(
+            surface.clone(),
+            TimelineViewport {
+                offset,
+                extent: viewport.extent,
+            },
+        );
+        if offset > 0.0 {
+            self.pending_ui_commands.push(HostedUiCommand::ScrollBy {
+                window_id: surface.window_id(),
+                target: surface.scrollable_id(),
+                x: 0.0,
+                y: content_extent,
+            });
+        }
     }
 
     fn timeline_window(
@@ -14747,7 +15957,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::PROJECT_NAME
                     && !self.settings_open
                     && !self.automations_open
-                    && self.project_surface == ProjectSurface::Tasks
+                    && self.project_surface == ProjectSurface::Settings
                     && self.selected_project.is_some()
                     && self.selected_task.is_none()
                 {
@@ -14756,7 +15966,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::PROJECT_WORKSPACE
                     && !self.settings_open
                     && !self.automations_open
-                    && self.project_surface == ProjectSurface::Tasks
+                    && self.project_surface == ProjectSurface::Settings
                     && self.selected_project.is_some()
                     && self.selected_task.is_none()
                 {
@@ -15252,6 +16462,14 @@ impl DesktopProgram {
 
     #[cfg(debug_assertions)]
     fn debug_interaction_input(&mut self, target_id: &str, value: String) -> bool {
+        if target_id == target_ids::SIDEBAR_SEARCH_INPUT
+            && !self.settings_open
+            && !self.automations_open
+            && self.sidebar_search_open
+        {
+            self.sidebar_search_query = value;
+            return true;
+        }
         if self.settings_open
             || self.automations_open
             || self.project_surface != ProjectSurface::Tasks
@@ -15427,29 +16645,41 @@ impl DesktopProgram {
                 .pane_items(&pane_id)
                 .map(<[WorkspaceItemId]>::to_vec)
                 .unwrap_or_default();
-            if let Some(item_id) = item_ids
+            let visible_item_ids = self.visible_main_workspace_tab_item_ids(
+                &item_ids,
+                self.panel_layout.active_item(&pane_id).ok().flatten(),
+            );
+            let visible_item_ids = if self
+                .integrated_product_shell_pane()
+                .is_some_and(|(integrated_pane, _)| integrated_pane == pane_id)
+            {
+                Vec::new()
+            } else {
+                visible_item_ids
+            };
+            if let Some(item_id) = visible_item_ids
                 .iter()
                 .find(|item_id| target_ids::workspace_tab(item_id.as_str()) == target_id)
             {
                 self.select_workspace_pane_tab(pane_id, Some(item_id.clone()));
                 return true;
             }
-            for (index, item_id) in item_ids.iter().enumerate() {
+            for (index, item_id) in visible_item_ids.iter().enumerate() {
                 if index > 0 && target_ids::workspace_tab_drag_left(item_id.as_str()) == target_id {
                     self.update_message(Message::ReorderWorkspacePaneTab {
                         pane_id,
                         item_id: item_id.clone(),
-                        before: item_ids.get(index - 1).cloned(),
+                        before: visible_item_ids.get(index - 1).cloned(),
                     });
                     return true;
                 }
-                if index + 1 < item_ids.len()
+                if index + 1 < visible_item_ids.len()
                     && target_ids::workspace_tab_drag_right(item_id.as_str()) == target_id
                 {
                     self.update_message(Message::ReorderWorkspacePaneTab {
                         pane_id,
                         item_id: item_id.clone(),
-                        before: item_ids.get(index + 2).cloned(),
+                        before: visible_item_ids.get(index + 2).cloned(),
                     });
                     return true;
                 }
@@ -15726,6 +16956,44 @@ impl DesktopProgram {
             .any(|visible| visible == target_id)
         {
             return false;
+        }
+        if target_id == target_ids::TITLEBAR_SIDEBAR_TOGGLE {
+            self.update_message(Message::Workspace(WorkspaceAction::ToggleRegion(
+                RegionId::Resources,
+            )));
+            return true;
+        }
+        if target_id == target_ids::TITLEBAR_TASK_INSPECTOR_TOGGLE {
+            self.update_message(Message::TitlebarMenu(ContextMenuEvent::Select(
+                TitlebarMenuAction::ToggleTaskInspector,
+            )));
+            return true;
+        }
+        if target_id == target_ids::TITLEBAR_MORE {
+            self.update_message(Message::ToggleTitlebarMenu);
+            return true;
+        }
+        let titlebar_action = match target_id {
+            target_ids::TITLEBAR_MORE_BACK_TO_TASKS => Some(TitlebarMenuAction::BackToTaskList),
+            target_ids::TITLEBAR_MORE_OPEN_TASK_POPUP => Some(TitlebarMenuAction::OpenTaskPopup),
+            target_ids::TITLEBAR_MORE_ASK_TASK_POPUP => Some(TitlebarMenuAction::AskTaskPopup),
+            target_ids::TITLEBAR_MORE_OPEN_TASK_BROWSER => {
+                Some(TitlebarMenuAction::OpenTaskBrowser)
+            }
+            target_ids::TITLEBAR_MORE_SPLIT_HORIZONTAL => Some(TitlebarMenuAction::SplitHorizontal),
+            target_ids::TITLEBAR_MORE_SPLIT_VERTICAL => Some(TitlebarMenuAction::SplitVertical),
+            target_ids::TITLEBAR_MORE_CLOSE_CURRENT => Some(TitlebarMenuAction::CloseCurrentItem),
+            target_ids::TITLEBAR_MORE_COMMAND_PALETTE => {
+                Some(TitlebarMenuAction::OpenCommandPalette)
+            }
+            target_ids::TITLEBAR_MORE_CONVERSATION_STATUS => {
+                Some(TitlebarMenuAction::OpenConversationStatus)
+            }
+            _ => None,
+        };
+        if let Some(action) = titlebar_action {
+            self.update_message(Message::TitlebarMenu(ContextMenuEvent::Select(action)));
+            return true;
         }
         if target_id == target_ids::COMMAND_PALETTE_OPEN {
             self.update_message(Message::ToggleCommandPalette);
@@ -16156,6 +17424,16 @@ impl DesktopProgram {
             self.apply_conversation_suggestion(window_id, prompt);
             return true;
         }
+        if let Some(event_id) = self.task_session.as_ref().and_then(|session| {
+            session.timeline.iter().find_map(|event| {
+                (timeline_event_is_toggleable(event)
+                    && target_ids::timeline_event(&event.id) == target_id)
+                    .then(|| event.id.clone())
+            })
+        }) {
+            self.update_message(Message::ToggleTimelineEvent(event_id));
+            return true;
+        }
         if let Some((window_id, event_id)) =
             std::iter::once((HostedWindowId::PRIMARY, self.task_session.as_ref()))
                 .chain(
@@ -16394,6 +17672,148 @@ impl DesktopProgram {
                 window_id,
                 task_id,
             });
+            return true;
+        }
+        if let Some((_, action)) = self
+            .sidebar_menu_debug_targets()
+            .into_iter()
+            .find(|(candidate, _)| candidate == target_id)
+        {
+            self.update_message(Message::SidebarMenu(ContextMenuEvent::Select(action)));
+            return true;
+        }
+        if let Some((_, source, target, position)) = self
+            .sidebar_tree_drop_debug_targets()
+            .into_iter()
+            .find(|(candidate, ..)| candidate == target_id)
+        {
+            self.update_message(Message::SidebarTreeDrop {
+                source,
+                target,
+                position,
+            });
+            return true;
+        }
+        if target_id == target_ids::SIDEBAR_NEW_CONVERSATION
+            && !self.settings_open
+            && !self.automations_open
+        {
+            self.update_message(Message::OpenSidebarInboxDraft);
+            return true;
+        }
+        if target_id == target_ids::SIDEBAR_SEARCH_TOGGLE
+            && !self.settings_open
+            && !self.automations_open
+        {
+            self.update_message(Message::ToggleSidebarSearch);
+            return true;
+        }
+        if target_id == target_ids::SIDEBAR_PROJECTS_OVERVIEW {
+            self.update_message(Message::OpenProjectsOverview);
+            return true;
+        }
+        if target_id == target_ids::SIDEBAR_PROJECTS_TOGGLE_ALL {
+            self.update_message(Message::ToggleAllSidebarProjects);
+            return true;
+        }
+        if target_id == target_ids::SIDEBAR_PROJECTS_ADD {
+            self.update_message(Message::OpenSidebarMenu {
+                target: SidebarMenuTarget::AddProject,
+                anchor_y: 96.0,
+            });
+            return true;
+        }
+        if target_id == target_ids::SIDEBAR_INBOX_TOGGLE {
+            self.update_message(Message::ToggleSidebarInbox);
+            return true;
+        }
+        if target_id == target_ids::SIDEBAR_INBOX_NEW_CONVERSATION {
+            self.update_message(Message::OpenSidebarInboxDraft);
+            return true;
+        }
+        if target_id == target_ids::SIDEBAR_FOOTER_AUTOMATIONS {
+            self.update_message(Message::OpenAutomations);
+            return true;
+        }
+        if matches!(
+            target_id,
+            target_ids::SIDEBAR_FOOTER_SETTINGS | target_ids::SIDEBAR_FOOTER_PROVIDER
+        ) {
+            self.update_message(Message::OpenSettings);
+            return true;
+        }
+        if let Some(project_id) = self.projects.iter().find_map(|project| {
+            (target_ids::sidebar_project(project.id.as_str()) == target_id)
+                .then(|| project.id.clone())
+        }) {
+            self.update_message(Message::ToggleSidebarProject(project_id));
+            return true;
+        }
+        if let Some(project_id) = self.projects.iter().find_map(|project| {
+            (target_ids::sidebar_project_menu(project.id.as_str()) == target_id)
+                .then(|| project.id.clone())
+        }) {
+            self.update_message(Message::OpenSidebarMenu {
+                target: SidebarMenuTarget::Project(project_id),
+                anchor_y: 126.0,
+            });
+            return true;
+        }
+        if let Some(project_id) = self.projects.iter().find_map(|project| {
+            (target_ids::sidebar_project_new_conversation(project.id.as_str()) == target_id)
+                .then(|| project.id.clone())
+        }) {
+            self.update_message(Message::OpenSidebarProjectDraft(project_id));
+            return true;
+        }
+        if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
+            (target_ids::sidebar_task(task.id.as_str()) == target_id).then(|| task.id.clone())
+        }) {
+            self.update_message(Message::SelectTask(task_id));
+            return true;
+        }
+        if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
+            (target_ids::sidebar_task_menu(task.id.as_str()) == target_id).then(|| task.id.clone())
+        }) {
+            self.update_message(Message::OpenSidebarMenu {
+                target: SidebarMenuTarget::Task(task_id),
+                anchor_y: 164.0,
+            });
+            return true;
+        }
+        if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
+            (target_ids::sidebar_task_popup(task.id.as_str()) == target_id).then(|| task.id.clone())
+        }) {
+            self.update_message(Message::OpenSidebarTaskPopup(task_id));
+            return true;
+        }
+        if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
+            (target_ids::sidebar_task_pin(task.id.as_str()) == target_id).then(|| task.id.clone())
+        }) {
+            self.update_message(Message::SidebarToggleTaskPinned(task_id));
+            return true;
+        }
+        if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
+            (target_ids::sidebar_task_merge_delete(task.id.as_str()) == target_id)
+                .then(|| task.id.clone())
+        }) {
+            self.update_message(Message::SidebarRequestTaskWorktreeMerge(task_id));
+            return true;
+        }
+        if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
+            (target_ids::sidebar_task_archive(task.id.as_str()) == target_id)
+                .then(|| task.id.clone())
+        }) {
+            self.update_message(Message::SidebarArchiveTask(task_id));
+            return true;
+        }
+        if let Some(task_id) = self.conversation_status_entries.iter().find_map(|entry| {
+            (runtime_phase_is_processing(&entry.runtime_phase)
+                && !self.sidebar_stopping_tasks.contains(&entry.task_id)
+                && target_ids::sidebar_running_stop(entry.task_id.as_str()) == target_id)
+                .then(|| entry.task_id.clone())
+        }) {
+            self.update_message(Message::SidebarStopTask(task_id));
             return true;
         }
         if target_id == target_ids::NEW_CONVERSATION
@@ -16651,6 +18071,19 @@ impl DesktopProgram {
             return true;
         }
         if self.debug_workspace_click(target_id) {
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_composer_actions(popup.id.0) == target_id).then_some(popup.id)
+        }) {
+            self.composer_action_menu_window = Some(window_id);
+            return true;
+        }
+        if let Some(window_id) = self.task_popups.values().find_map(|popup| {
+            (target_ids::task_popup_reference_conversation(popup.id.0) == target_id)
+                .then_some(popup.id)
+        }) {
+            self.open_composer_conversation_reference(window_id);
             return true;
         }
         if let Some(window_id) = self.task_popups.values().find_map(|popup| {
@@ -17033,7 +18466,7 @@ impl DesktopProgram {
                 self.refresh_projects();
             }
             target_ids::PROJECT_SAVE
-                if self.project_surface == ProjectSurface::Tasks
+                if self.project_surface == ProjectSurface::Settings
                     && self.selected_project.is_some()
                     && self.selected_task.is_none()
                     && !self.project_name_edit.trim().is_empty() =>
@@ -17041,14 +18474,14 @@ impl DesktopProgram {
                 self.save_project();
             }
             target_ids::PROJECT_WORKSPACE_PICK
-                if self.project_surface == ProjectSurface::Tasks
+                if self.project_surface == ProjectSurface::Settings
                     && self.selected_project.is_some()
                     && self.selected_task.is_none() =>
             {
                 self.pick_project_workspace();
             }
             target_ids::PROJECT_WORKSPACE_CLEAR
-                if self.project_surface == ProjectSurface::Tasks
+                if self.project_surface == ProjectSurface::Settings
                     && self.selected_project.is_some()
                     && self.selected_task.is_none()
                     && !self.project_workspace_edit.is_empty() =>
@@ -17057,28 +18490,28 @@ impl DesktopProgram {
                 self.project_action_error = None;
             }
             target_ids::PROJECT_PIN
-                if self.project_surface == ProjectSurface::Tasks
+                if self.project_surface == ProjectSurface::Settings
                     && self.selected_project.is_some()
                     && self.selected_task.is_none() =>
             {
                 self.toggle_project_pinned();
             }
             target_ids::PROJECT_MOVE_UP
-                if self.project_surface == ProjectSurface::Tasks
+                if self.project_surface == ProjectSurface::Settings
                     && self.selected_task.is_none()
                     && self.reordered_selected_project_ids(-1).is_some() =>
             {
                 self.move_selected_project(-1);
             }
             target_ids::PROJECT_MOVE_DOWN
-                if self.project_surface == ProjectSurface::Tasks
+                if self.project_surface == ProjectSurface::Settings
                     && self.selected_task.is_none()
                     && self.reordered_selected_project_ids(1).is_some() =>
             {
                 self.move_selected_project(1);
             }
             target_ids::PROJECT_ARCHIVE_CONVERSATIONS
-                if self.project_surface == ProjectSurface::Tasks
+                if self.project_surface == ProjectSurface::Settings
                     && self.selected_project.is_some()
                     && self.selected_task.is_none() =>
             {
@@ -17092,7 +18525,7 @@ impl DesktopProgram {
                 self.project_archive_confirmation = None;
             }
             target_ids::PROJECT_REMOVE
-                if self.project_surface == ProjectSurface::Tasks
+                if self.project_surface == ProjectSurface::Settings
                     && self.selected_project.is_some()
                     && self.selected_task.is_none() =>
             {
@@ -17119,6 +18552,20 @@ impl DesktopProgram {
                     && self.selected_project.is_some() =>
             {
                 self.open_project_tasks();
+            }
+            target_ids::PROJECT_SETTINGS
+                if !self.settings_open
+                    && !self.automations_open
+                    && self.selected_project.is_some() =>
+            {
+                self.open_project_settings();
+            }
+            target_ids::PROJECT_FILES_OPEN
+                if !self.settings_open
+                    && !self.automations_open
+                    && self.selected_project.is_some() =>
+            {
+                self.update_message(Message::OpenProjectFiles);
             }
             target_ids::ROADMAP_OPEN
                 if !self.settings_open
@@ -18021,6 +19468,15 @@ impl DesktopProgram {
             {
                 self.load_earlier_timeline();
             }
+            target_ids::TASK_SESSION_TIMELINE_LATEST
+                if !self.timeline_is_at_end(
+                    self.task_session.as_ref(),
+                    &TimelineSurfaceKey::Main,
+                    true,
+                ) =>
+            {
+                self.update_message(Message::ScrollTimelineToEnd(TimelineSurfaceKey::Main));
+            }
             target_ids::TASK_SESSION_INSPECTOR_TOGGLE
                 if !self.settings_open
                     && !self.automations_open
@@ -18221,6 +19677,12 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_CANCEL if self.worktree_confirmation.is_some() => {
                 self.update_message(Message::CancelWorktreeAction);
+            }
+            target_ids::COMPOSER_ACTIONS_OPEN if !self.composer_input_is_locked() => {
+                self.composer_action_menu_window = Some(HostedWindowId::PRIMARY);
+            }
+            target_ids::COMPOSER_REFERENCE_CONVERSATION if !self.composer_input_is_locked() => {
+                self.open_composer_conversation_reference(HostedWindowId::PRIMARY);
             }
             target_ids::COMPOSER_ATTACH_FILE if !self.composer_input_is_locked() => {
                 self.pick_attachments(false);
@@ -18645,6 +20107,17 @@ impl DesktopProgram {
                         })
                     }) {
                         self.delete_todo(&todo_id);
+                        return true;
+                    }
+                    if let Some(todo_id) = self.task_session.as_ref().and_then(|session| {
+                        session.todos.iter().find_map(|todo| {
+                            (todo.source == DesktopTodoSource::Lilia
+                                && todo.guide_status == Some(DesktopTodoGuideStatus::Pending)
+                                && target_ids::todo_guide_dispatch(&todo.id) == target_id)
+                                .then(|| todo.id.clone())
+                        })
+                    }) {
+                        self.dispatch_todo_guide(&todo_id);
                         return true;
                     }
                     if let Some(attachment) = self
@@ -19457,6 +20930,16 @@ impl DesktopProgram {
             memory_baseline_enabled: self.memory_settings.baseline_injection_enabled,
             memory_cooldown_turns: self.memory_settings.cooldown_turns,
             task_memory_enabled: self.memory_injection.as_ref().map(|state| state.enabled),
+            sidebar_region_extent: self
+                .workspace
+                .layout()
+                .region(&RegionId::Resources)
+                .map(|region| region.extent()),
+            sidebar_region_collapsed: self
+                .workspace
+                .layout()
+                .region(&RegionId::Resources)
+                .is_some_and(|region| region.collapsed_value()),
             inspector_region_extent: self
                 .workspace
                 .layout()
@@ -20396,11 +21879,104 @@ impl DesktopProgram {
             self.application_surface_is_visible(ApplicationWorkspaceSurface::Settings);
         let mut targets = vec![
             target_ids::APP_ROOT.to_owned(),
+            target_ids::TITLEBAR_SIDEBAR_TOGGLE.to_owned(),
+            target_ids::TITLEBAR_MORE.to_owned(),
             target_ids::COMMAND_PALETTE_OPEN.to_owned(),
             target_ids::CONVERSATION_STATUS_OPEN.to_owned(),
         ];
+        if !self.settings_open && !self.automations_open && self.selected_task.is_some() {
+            targets.push(target_ids::TITLEBAR_TASK_INSPECTOR_TOGGLE.to_owned());
+        }
+        if self.titlebar_menu_open {
+            targets.extend([
+                target_ids::TITLEBAR_MORE_COMMAND_PALETTE.to_owned(),
+                target_ids::TITLEBAR_MORE_CONVERSATION_STATUS.to_owned(),
+            ]);
+            if self.selected_task.is_some() {
+                targets.extend([
+                    target_ids::TITLEBAR_MORE_BACK_TO_TASKS.to_owned(),
+                    target_ids::TITLEBAR_MORE_OPEN_TASK_POPUP.to_owned(),
+                    target_ids::TITLEBAR_MORE_ASK_TASK_POPUP.to_owned(),
+                    target_ids::TITLEBAR_MORE_OPEN_TASK_BROWSER.to_owned(),
+                ]);
+            }
+            if let Some((_, active_item)) = self.integrated_product_shell_pane() {
+                targets.extend([
+                    target_ids::TITLEBAR_MORE_SPLIT_HORIZONTAL.to_owned(),
+                    target_ids::TITLEBAR_MORE_SPLIT_VERTICAL.to_owned(),
+                ]);
+                if active_item.is_some_and(|item_id| {
+                    self.workspace_items
+                        .iter()
+                        .any(|item| item.id == item_id && item.capabilities.closable)
+                }) {
+                    targets.push(target_ids::TITLEBAR_MORE_CLOSE_CURRENT.to_owned());
+                }
+            }
+        }
         if !self.settings_open && !self.automations_open {
-            targets.push(target_ids::NEW_CONVERSATION.to_owned());
+            targets.extend([
+                target_ids::NEW_CONVERSATION.to_owned(),
+                target_ids::SIDEBAR_NEW_CONVERSATION.to_owned(),
+                target_ids::SIDEBAR_SEARCH_TOGGLE.to_owned(),
+                target_ids::SIDEBAR_PROJECTS_OVERVIEW.to_owned(),
+                target_ids::SIDEBAR_PROJECTS_TOGGLE_ALL.to_owned(),
+                target_ids::SIDEBAR_PROJECTS_ADD.to_owned(),
+                target_ids::SIDEBAR_INBOX_TOGGLE.to_owned(),
+                target_ids::SIDEBAR_INBOX_NEW_CONVERSATION.to_owned(),
+                target_ids::SIDEBAR_FOOTER_AUTOMATIONS.to_owned(),
+                target_ids::SIDEBAR_FOOTER_SETTINGS.to_owned(),
+                target_ids::SIDEBAR_FOOTER_PROVIDER.to_owned(),
+            ]);
+            if self.sidebar_search_open {
+                targets.push(target_ids::SIDEBAR_SEARCH_INPUT.to_owned());
+            }
+            for project in &self.projects {
+                targets.extend([
+                    target_ids::sidebar_project(project.id.as_str()),
+                    target_ids::sidebar_project_menu(project.id.as_str()),
+                    target_ids::sidebar_project_new_conversation(project.id.as_str()),
+                ]);
+            }
+            for task in self
+                .task_move_candidates
+                .iter()
+                .filter(|task| !task.archived)
+            {
+                targets.extend([
+                    target_ids::sidebar_task(task.id.as_str()),
+                    target_ids::sidebar_task_menu(task.id.as_str()),
+                    target_ids::sidebar_task_popup(task.id.as_str()),
+                    target_ids::sidebar_task_pin(task.id.as_str()),
+                    target_ids::sidebar_task_archive(task.id.as_str()),
+                ]);
+                if self
+                    .application
+                    .task_worktree(&task.id)
+                    .is_ok_and(|worktree| worktree.is_some())
+                {
+                    targets.push(target_ids::sidebar_task_merge_delete(task.id.as_str()));
+                }
+            }
+            targets.extend(
+                self.conversation_status_entries
+                    .iter()
+                    .filter(|entry| {
+                        runtime_phase_is_processing(&entry.runtime_phase)
+                            && !self.sidebar_stopping_tasks.contains(&entry.task_id)
+                    })
+                    .map(|entry| target_ids::sidebar_running_stop(entry.task_id.as_str())),
+            );
+            targets.extend(
+                self.sidebar_tree_drop_debug_targets()
+                    .into_iter()
+                    .map(|(target, ..)| target),
+            );
+            targets.extend(
+                self.sidebar_menu_debug_targets()
+                    .into_iter()
+                    .map(|(target, _)| target),
+            );
             if self.sidebar_display_mode == NativeSidebarDisplayMode::Unified {
                 targets.extend(
                     self.task_move_candidates
@@ -20659,6 +22235,8 @@ impl DesktopProgram {
                 continue;
             }
             targets.push(target_ids::task_popup_composer(popup.id.0));
+            targets.push(target_ids::task_popup_composer_actions(popup.id.0));
+            targets.push(target_ids::task_popup_reference_conversation(popup.id.0));
             if popup
                 .session
                 .as_ref()
@@ -21526,6 +23104,8 @@ impl DesktopProgram {
         if self.selected_project.is_some() {
             targets.extend([
                 target_ids::PROJECT_TASKS.to_owned(),
+                target_ids::PROJECT_SETTINGS.to_owned(),
+                target_ids::PROJECT_FILES_OPEN.to_owned(),
                 target_ids::ROADMAP_OPEN.to_owned(),
                 target_ids::MEMORY_OPEN.to_owned(),
                 target_ids::CODING_TOOLS_OPEN.to_owned(),
@@ -21540,57 +23120,61 @@ impl DesktopProgram {
                 target_ids::IAB_OPEN.to_owned(),
             ]);
         }
-        if self.project_surface == ProjectSurface::Tasks && self.selected_task.is_none() {
-            if self.selected_project.is_some() {
-                targets.extend([
-                    target_ids::PROJECT_NAME.to_owned(),
-                    target_ids::PROJECT_WORKSPACE.to_owned(),
-                    target_ids::PROJECT_WORKSPACE_PICK.to_owned(),
-                    target_ids::PROJECT_PIN.to_owned(),
-                    target_ids::PROJECT_ARCHIVE_CONVERSATIONS.to_owned(),
-                    target_ids::PROJECT_REMOVE.to_owned(),
-                ]);
-                if !self.project_name_edit.trim().is_empty() {
-                    targets.push(target_ids::PROJECT_SAVE.to_owned());
-                }
-                if !self.project_workspace_edit.is_empty() {
-                    targets.push(target_ids::PROJECT_WORKSPACE_CLEAR.to_owned());
-                }
-                if self.reordered_selected_project_ids(-1).is_some() {
-                    targets.push(target_ids::PROJECT_MOVE_UP.to_owned());
-                }
-                if self.reordered_selected_project_ids(1).is_some() {
-                    targets.push(target_ids::PROJECT_MOVE_DOWN.to_owned());
-                }
+        if self.project_surface == ProjectSurface::Settings
+            && self.selected_project.is_some()
+            && self.selected_task.is_none()
+        {
+            targets.extend([
+                target_ids::PROJECT_NAME.to_owned(),
+                target_ids::PROJECT_WORKSPACE.to_owned(),
+                target_ids::PROJECT_WORKSPACE_PICK.to_owned(),
+                target_ids::PROJECT_PIN.to_owned(),
+                target_ids::PROJECT_ARCHIVE_CONVERSATIONS.to_owned(),
+                target_ids::PROJECT_REMOVE.to_owned(),
+            ]);
+            if !self.project_name_edit.trim().is_empty() {
+                targets.push(target_ids::PROJECT_SAVE.to_owned());
             }
-            if self.project_removal.is_some() {
-                targets.extend([
-                    target_ids::PROJECT_REMOVE_DIALOG.to_owned(),
-                    target_ids::PROJECT_REMOVE_CONFIRM.to_owned(),
-                    target_ids::PROJECT_REMOVE_CANCEL.to_owned(),
-                ]);
+            if !self.project_workspace_edit.is_empty() {
+                targets.push(target_ids::PROJECT_WORKSPACE_CLEAR.to_owned());
             }
-            if self.project_archive_confirmation.is_some() {
-                targets.extend([
-                    target_ids::PROJECT_ARCHIVE_DIALOG.to_owned(),
-                    target_ids::PROJECT_ARCHIVE_CONFIRM.to_owned(),
-                    target_ids::PROJECT_ARCHIVE_CANCEL.to_owned(),
-                ]);
+            if self.reordered_selected_project_ids(-1).is_some() {
+                targets.push(target_ids::PROJECT_MOVE_UP.to_owned());
             }
-            if self.selected_project.is_some() || self.inbox_selected {
-                targets.extend([
-                    target_ids::TASK_SEARCH.to_owned(),
-                    target_ids::TASK_CREATE_TITLE.to_owned(),
-                ]);
-                if !self.new_task_title.trim().is_empty() {
-                    targets.push(target_ids::TASK_CREATE.to_owned());
-                }
-                targets.extend(
-                    self.archived_tasks
-                        .iter()
-                        .map(|task| target_ids::archived_task(task.id.as_str())),
-                );
+            if self.reordered_selected_project_ids(1).is_some() {
+                targets.push(target_ids::PROJECT_MOVE_DOWN.to_owned());
             }
+        }
+        if self.project_removal.is_some() {
+            targets.extend([
+                target_ids::PROJECT_REMOVE_DIALOG.to_owned(),
+                target_ids::PROJECT_REMOVE_CONFIRM.to_owned(),
+                target_ids::PROJECT_REMOVE_CANCEL.to_owned(),
+            ]);
+        }
+        if self.project_archive_confirmation.is_some() {
+            targets.extend([
+                target_ids::PROJECT_ARCHIVE_DIALOG.to_owned(),
+                target_ids::PROJECT_ARCHIVE_CONFIRM.to_owned(),
+                target_ids::PROJECT_ARCHIVE_CANCEL.to_owned(),
+            ]);
+        }
+        if self.project_surface == ProjectSurface::Tasks
+            && self.selected_task.is_none()
+            && (self.selected_project.is_some() || self.inbox_selected)
+        {
+            targets.extend([
+                target_ids::TASK_SEARCH.to_owned(),
+                target_ids::TASK_CREATE_TITLE.to_owned(),
+            ]);
+            if !self.new_task_title.trim().is_empty() {
+                targets.push(target_ids::TASK_CREATE.to_owned());
+            }
+            targets.extend(
+                self.archived_tasks
+                    .iter()
+                    .map(|task| target_ids::archived_task(task.id.as_str())),
+            );
         }
         if self.project_surface == ProjectSurface::Roadmap {
             targets.extend([
@@ -21886,6 +23470,8 @@ impl DesktopProgram {
                 targets.extend([
                     target_ids::NEW_CONVERSATION_CLOSE.to_owned(),
                     target_ids::COMPOSER_INPUT.to_owned(),
+                    target_ids::COMPOSER_ACTIONS_OPEN.to_owned(),
+                    target_ids::COMPOSER_REFERENCE_CONVERSATION.to_owned(),
                     target_ids::COMPOSER_ATTACH_FILE.to_owned(),
                     target_ids::COMPOSER_ATTACH_DIRECTORY.to_owned(),
                     target_ids::COMPOSER_PASTE_TEXT.to_owned(),
@@ -21973,6 +23559,22 @@ impl DesktopProgram {
                 if session.timeline_has_more_before {
                     targets.push(target_ids::TASK_SESSION_TIMELINE_LOAD_EARLIER.to_owned());
                 }
+                if !self.timeline_is_at_end(Some(&session), &TimelineSurfaceKey::Main, true) {
+                    targets.push(target_ids::TASK_SESSION_TIMELINE_LATEST.to_owned());
+                }
+                if !self.composer_is_locked() {
+                    if session.goal.is_some() {
+                        targets.push(target_ids::GOAL_REFRESH.to_owned());
+                        targets.push(target_ids::GOAL_CLEAR.to_owned());
+                    }
+                    for todo in session.todos.iter().filter(|todo| {
+                        todo.source == DesktopTodoSource::Lilia
+                            && todo.guide_status == Some(DesktopTodoGuideStatus::Pending)
+                    }) {
+                        targets.push(target_ids::todo_guide_dispatch(&todo.id));
+                        targets.push(target_ids::todo_delete(&todo.id));
+                    }
+                }
                 if self.inspector_surface == InspectorSurface::Task
                     && self.inspector_region_is_visible()
                 {
@@ -22025,6 +23627,7 @@ impl DesktopProgram {
                     session
                         .timeline
                         .iter()
+                        .filter(|event| timeline_event_is_toggleable(event))
                         .map(|event| target_ids::timeline_event(&event.id)),
                 );
                 targets.extend(
@@ -22072,6 +23675,8 @@ impl DesktopProgram {
                     targets.push(target_ids::session_branch_clear(HostedWindowId::PRIMARY.0));
                 }
                 targets.push(target_ids::COMPOSER_INPUT.to_owned());
+                targets.push(target_ids::COMPOSER_ACTIONS_OPEN.to_owned());
+                targets.push(target_ids::COMPOSER_REFERENCE_CONVERSATION.to_owned());
                 if !self.composer_input_is_locked() {
                     targets.extend([
                         target_ids::COMPOSER_ATTACH_FILE.to_owned(),
@@ -22395,7 +24000,6 @@ impl DesktopProgram {
 
     #[cfg(debug_assertions)]
     fn append_workspace_debug_targets(&self, targets: &mut Vec<String>) {
-        targets.push(target_ids::WORKSPACE_OVERVIEW_TAB.to_owned());
         for key in self.workspace_splits.keys() {
             targets.extend([
                 target_ids::workspace_split_grow(
@@ -22416,7 +24020,6 @@ impl DesktopProgram {
         for pane_id in &pane_ids {
             targets.extend([
                 target_ids::workspace_pane(pane_id.as_str()),
-                target_ids::workspace_pane_overview(pane_id.as_str()),
                 target_ids::workspace_pane_split_horizontal(pane_id.as_str()),
                 target_ids::workspace_pane_split_vertical(pane_id.as_str()),
             ]);
@@ -22424,16 +24027,32 @@ impl DesktopProgram {
                 targets.push(target_ids::workspace_pane_focus(pane_id.as_str()));
             }
             let item_ids = self.panel_layout.pane_items(pane_id).unwrap_or_default();
+            let active_item = self.panel_layout.active_item(pane_id).ok().flatten();
+            let integrated = self
+                .integrated_product_shell_pane()
+                .is_some_and(|(integrated_pane, _)| &integrated_pane == pane_id);
+            let compact = self.uses_compact_product_shell_tabs(item_ids);
+            if !integrated && (!compact || active_item.is_none()) {
+                targets.push(target_ids::workspace_pane_overview(pane_id.as_str()));
+                if self.panel_layout.active_pane() == pane_id {
+                    targets.push(target_ids::WORKSPACE_OVERVIEW_TAB.to_owned());
+                }
+            }
+            let visible_item_ids = if integrated {
+                Vec::new()
+            } else {
+                self.visible_main_workspace_tab_item_ids(item_ids, active_item)
+            };
             targets.extend(
-                item_ids
+                visible_item_ids
                     .iter()
                     .map(|item_id| target_ids::workspace_tab(item_id.as_str())),
             );
-            for (index, item_id) in item_ids.iter().enumerate() {
+            for (index, item_id) in visible_item_ids.iter().enumerate() {
                 if index > 0 {
                     targets.push(target_ids::workspace_tab_drag_left(item_id.as_str()));
                 }
-                if index + 1 < item_ids.len() {
+                if index + 1 < visible_item_ids.len() {
                     targets.push(target_ids::workspace_tab_drag_right(item_id.as_str()));
                 }
                 targets.extend(
@@ -22773,12 +24392,32 @@ impl DesktopProgram {
     }
 
     fn title_bar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
         let context = if self.settings_open {
             "设置".to_owned()
         } else if self.automations_open {
             "自动化".to_owned()
         } else {
+            if let Some(task) = self.selected_task.as_ref().and_then(|task_id| {
+                self.task_move_candidates
+                    .iter()
+                    .find(|task| &task.id == task_id)
+            }) {
+                let project_name = task
+                    .project_id
+                    .as_ref()
+                    .and_then(|project_id| {
+                        self.projects
+                            .iter()
+                            .find(|project| &project.id == project_id)
+                    })
+                    .map(|project| project.name.clone())
+                    .unwrap_or_else(|| "收集箱".to_owned());
+                return self.conversation_title_bar_with_parent(
+                    project_name,
+                    task.title.clone(),
+                    tokens,
+                );
+            }
             let project = self
                 .projects
                 .iter()
@@ -22786,6 +24425,7 @@ impl DesktopProgram {
                 .map_or_else(|| "项目".to_owned(), |project| project.name.clone());
             match self.project_surface {
                 ProjectSurface::Tasks => project,
+                ProjectSurface::Settings => format!("{project} · 设置"),
                 ProjectSurface::Clone => "克隆仓库".to_owned(),
                 ProjectSurface::Roadmap => format!("{project} · 路线图"),
                 ProjectSurface::Memory => format!("{project} · Memory"),
@@ -22793,19 +24433,96 @@ impl DesktopProgram {
                 ProjectSurface::Files => format!("{project} · 文件"),
             }
         };
-        let trailing = row![
-            button(text("命令").size(10))
-                .on_press(Message::ToggleCommandPalette)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-            button(text("会话状态").size(10))
-                .on_press(Message::OpenConversationStatus)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-            text(context).size(11).color(colors.muted),
+        self.conversation_title_bar(context, tokens)
+    }
+
+    fn conversation_title_bar(
+        &self,
+        context: String,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        self.conversation_title_bar_with_parent(PRODUCT_NAME.to_owned(), context, tokens)
+    }
+
+    fn conversation_title_bar_with_parent(
+        &self,
+        parent: String,
+        context: String,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        let sidebar_collapsed = self
+            .workspace
+            .layout()
+            .region(&RegionId::Resources)
+            .is_some_and(|sidebar| sidebar.collapsed_value());
+        let sidebar_toggle = IconButton::new(
+            if sidebar_collapsed {
+                "展开左侧栏"
+            } else {
+                "折叠左侧栏"
+            },
+            Icon::Sidebar,
+        )
+        .size(ControlSize::Small)
+        .on_press(Message::Workspace(WorkspaceAction::ToggleRegion(
+            RegionId::Resources,
+        )));
+        let leading = row![sidebar_toggle.view(tokens)]
+            .spacing(6)
+            .align_y(Alignment::Center);
+        let center = row![
+            text(parent)
+                .size(12)
+                .color(colors.muted)
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsis(iced::widget::text::Ellipsis::End),
+            text("›").size(12).color(colors.faint),
+            text(context.clone())
+                .size(13)
+                .font(ui_font(font::Weight::Semibold))
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsis(iced::widget::text::Ellipsis::End),
         ]
-        .spacing(8)
+        .spacing(6)
         .align_y(Alignment::Center);
-        AppTitleBar::new(PRODUCT_NAME, tokens)
-            .leading(text("PREVIEW").size(10).color(colors.accent))
+        let mut trailing = row![].spacing(2).align_y(Alignment::Center);
+        if self.selected_task.is_some() && !self.settings_open && !self.automations_open {
+            let inspector_open = self.inspector_surface == InspectorSurface::Task
+                && self.inspector_region_is_visible();
+            trailing = trailing.push(
+                IconButton::new(
+                    if inspector_open {
+                        "关闭对话侧栏"
+                    } else {
+                        "打开对话侧栏"
+                    },
+                    Icon::Sidebar,
+                )
+                .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
+                    TitlebarMenuAction::ToggleTaskInspector,
+                )))
+                .selected(inspector_open)
+                .size(ControlSize::Small)
+                .view(tokens),
+            );
+        }
+        trailing = trailing.push(
+            button(text("•••").size(12))
+                .on_press(Message::ToggleTitlebarMenu)
+                .padding([3, 8])
+                .style(button_style(
+                    tokens,
+                    if self.titlebar_menu_open {
+                        ButtonKind::Selected
+                    } else {
+                        ButtonKind::Subtle
+                    },
+                )),
+        );
+        AppTitleBar::new(context, tokens)
+            .leading(leading)
+            .center(center)
             .trailing(trailing)
             .window_chrome(&self.window_chrome, Message::WindowChrome)
             .view()
@@ -22863,6 +24580,10 @@ impl DesktopProgram {
 
     fn refresh_conversation_status(&mut self) {
         self.conversation_status_open = true;
+        self.refresh_conversation_status_entries();
+    }
+
+    fn refresh_conversation_status_entries(&mut self) {
         let project_names = self
             .projects
             .iter()
@@ -22897,11 +24618,20 @@ impl DesktopProgram {
                         .then_with(|| left.task_id.as_str().cmp(right.task_id.as_str()))
                 });
                 self.conversation_status_entries = entries;
+                let live_tasks = self
+                    .conversation_status_entries
+                    .iter()
+                    .filter(|entry| entry.runtime_phase != "idle")
+                    .map(|entry| entry.task_id.clone())
+                    .collect::<BTreeSet<_>>();
+                self.sidebar_stopping_tasks
+                    .retain(|task_id| live_tasks.contains(task_id));
                 self.conversation_status_error = None;
             }
             Err(error) => {
                 eprintln!("failed to refresh Native conversation status: {error}");
                 self.conversation_status_entries.clear();
+                self.sidebar_stopping_tasks.clear();
                 self.conversation_status_error =
                     Some("暂时无法读取会话状态，请稍后重试。".to_owned());
             }
@@ -22909,12 +24639,16 @@ impl DesktopProgram {
     }
 
     fn stop_conversation_status_task(&mut self, task_id: TaskId) {
+        if !self.sidebar_stopping_tasks.insert(task_id.clone()) {
+            return;
+        }
         match self.application.interrupt_task_turn(&task_id) {
             Ok(_) => {
                 self.conversation_status_error = None;
                 self.refresh_conversation_status();
             }
             Err(error) => {
+                self.sidebar_stopping_tasks.remove(&task_id);
                 eprintln!("failed to stop Native conversation-status task: {error}");
                 self.conversation_status_error =
                     Some("无法停止当前处理，请刷新状态后重试。".to_owned());
@@ -22922,7 +24656,7 @@ impl DesktopProgram {
         }
     }
 
-    fn provider_runtime_badge(&self, colors: Colors) -> (&'static str, iced::Color) {
+    fn provider_runtime_badge(&self, colors: Colors) -> (String, iced::Color, Icon) {
         let selected_credential_usable =
             self.selected_provider.as_deref().is_some_and(|provider| {
                 self.provider
@@ -22932,16 +24666,27 @@ impl DesktopProgram {
                     .is_some_and(|capability| capability.has_usable_credential)
             });
         if !self.provider.broker_ready || !self.provider.runtime.runtime_ready {
-            ("服务不可用", colors.danger)
+            ("服务不可用".to_owned(), colors.danger, Icon::About)
         } else if selected_credential_usable
             && self.provider.runtime.profile_has_credential_refs
             && self.provider.runtime.live_model_adapter_drives_turn
         {
-            ("已连接", colors.success)
+            let provider = self
+                .selected_provider
+                .as_deref()
+                .and_then(|selected| {
+                    self.provider
+                        .providers
+                        .iter()
+                        .find(|provider| provider.provider_id == selected)
+                })
+                .map(|provider| provider.display_name.clone())
+                .unwrap_or_else(|| "已连接".to_owned());
+            (provider, colors.success, Icon::Appearance)
         } else if selected_credential_usable {
-            ("正在准备", colors.warning)
+            ("正在准备".to_owned(), colors.warning, Icon::Appearance)
         } else {
-            ("等待凭据", colors.warning)
+            ("未连接".to_owned(), colors.warning, Icon::About)
         }
     }
 
@@ -22953,7 +24698,7 @@ impl DesktopProgram {
             .iter()
             .filter(|entry| entry.runtime_phase != "idle")
             .count();
-        let (provider_status, provider_color) = self.provider_runtime_badge(colors);
+        let (provider_status, provider_color, _) = self.provider_runtime_badge(colors);
         let mut content = column![
             row![
                 column![
@@ -23065,10 +24810,10 @@ impl DesktopProgram {
             );
         } else {
             for entry in &self.conversation_status_entries {
-                let phase_color = if entry.runtime_phase == "idle" {
-                    colors.muted
-                } else {
-                    colors.accent
+                let phase_color = match entry.runtime_phase.as_str() {
+                    "waiting_approval" | "waiting_interaction" => colors.warning,
+                    phase if runtime_phase_is_processing(phase) => colors.accent,
+                    _ => colors.muted,
                 };
                 let queue = if entry.queued_turns > 0 {
                     format!(" · 排队 {}", entry.queued_turns)
@@ -23107,11 +24852,25 @@ impl DesktopProgram {
                     .align_y(Alignment::Center)
                     .width(Length::Fill);
                 if entry.runtime_phase != "idle" {
-                    task_row = task_row.push(
-                        button(text("停止").size(11))
-                            .on_press(Message::StopConversationStatusTask(entry.task_id.clone()))
-                            .style(button_style(tokens, ButtonKind::Danger)),
-                    );
+                    let stopping = self.sidebar_stopping_tasks.contains(&entry.task_id);
+                    let stop_content: Element<'static, Message> = if stopping {
+                        row![
+                            spinner_icon(self.sidebar_activity_phase, 12.0, colors.danger),
+                            text("正在停止").size(11),
+                        ]
+                        .spacing(5)
+                        .align_y(Alignment::Center)
+                        .into()
+                    } else {
+                        text("停止").size(11).into()
+                    };
+                    let mut stop =
+                        button(stop_content).style(button_style(tokens, ButtonKind::Danger));
+                    if !stopping {
+                        stop = stop
+                            .on_press(Message::StopConversationStatusTask(entry.task_id.clone()));
+                    }
+                    task_row = task_row.push(stop);
                 }
                 content = content.push(task_row);
             }
@@ -23188,6 +24947,7 @@ impl DesktopProgram {
         if task_changed {
             popup.session = None;
             popup.composer = None;
+            popup.composer_editor.clear();
             popup.turn_state = None;
             popup.interaction_drafts.clear();
             popup.ask_user_drafts.clear();
@@ -23410,6 +25170,7 @@ impl DesktopProgram {
                     task_sessions: BTreeMap::new(),
                     session: None,
                     composer: None,
+                    composer_editor: HostedTextareaState::new(),
                     slash_commands: Vec::new(),
                     conversation_reference_results: Vec::new(),
                     context_attachment_results: Vec::new(),
@@ -23511,6 +25272,7 @@ impl DesktopProgram {
                 task_sessions: BTreeMap::new(),
                 session: None,
                 composer: None,
+                composer_editor: HostedTextareaState::new(),
                 slash_commands: Vec::new(),
                 conversation_reference_results: Vec::new(),
                 context_attachment_results: Vec::new(),
@@ -23666,6 +25428,7 @@ impl DesktopProgram {
             .map(|project| project.name.clone())
             .unwrap_or_else(|| "收集箱".to_owned());
         let draft_worktree = self.initial_draft_worktree(project_id.as_ref());
+        let composer_editor = HostedTextareaState::with_text(&composer.content);
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -23680,6 +25443,7 @@ impl DesktopProgram {
                 task_sessions: BTreeMap::new(),
                 session: None,
                 composer: Some(composer),
+                composer_editor,
                 slash_commands: Vec::new(),
                 conversation_reference_results: Vec::new(),
                 context_attachment_results: Vec::new(),
@@ -23920,6 +25684,7 @@ impl DesktopProgram {
                 task_sessions: BTreeMap::new(),
                 session: None,
                 composer: None,
+                composer_editor: HostedTextareaState::new(),
                 slash_commands: Vec::new(),
                 conversation_reference_results: Vec::new(),
                 context_attachment_results: Vec::new(),
@@ -23968,6 +25733,21 @@ impl DesktopProgram {
             }
             return;
         }
+        let timeline_surface = TimelineSurfaceKey::TaskPopup(window_id);
+        let timeline_had_viewport = self.timeline_viewports.contains_key(&timeline_surface);
+        let follow_timeline_tail = self.timeline_is_at_end(
+            self.task_popups
+                .get(&window_id)
+                .and_then(|popup| popup.session.as_ref()),
+            &timeline_surface,
+            true,
+        );
+        let previous_timeline_tail = self
+            .task_popups
+            .get(&window_id)
+            .and_then(|popup| popup.session.as_ref())
+            .and_then(|session| session.timeline.last())
+            .cloned();
         let Some((active_task_id, workspace, previous_sessions)) =
             self.task_popups.get(&window_id).map(|popup| {
                 (
@@ -24022,6 +25802,7 @@ impl DesktopProgram {
                 popup.task_sessions = task_sessions;
                 popup.session = None;
                 popup.composer = None;
+                popup.composer_editor.clear();
                 popup.slash_commands.clear();
                 popup.conversation_reference_results.clear();
                 popup.context_attachment_results.clear();
@@ -24044,6 +25825,12 @@ impl DesktopProgram {
             .application
             .restore_task_runtime_from_projection(&task_id);
         let session = task_sessions.get(&task_id).cloned();
+        let timeline_follow_extent = session.as_ref().and_then(|session| {
+            (follow_timeline_tail
+                && (!timeline_had_viewport
+                    || previous_timeline_tail.as_ref() != session.timeline.last()))
+            .then(|| timeline_content_extent(session, true))
+        });
         let composer = self.application.composer_state(&task_id);
         let Some(popup) = self.task_popups.get_mut(&window_id) else {
             return;
@@ -24082,6 +25869,7 @@ impl DesktopProgram {
                     .and_then(|runtime| restored_turn_state(runtime, &session.pending));
                 popup.session = Some(session.clone());
                 popup.task_sessions.insert(task_id, session);
+                sync_hosted_textarea(&popup.composer_editor, &composer.content);
                 popup.composer = Some(composer);
                 popup.error = if runtime.is_err() {
                     Some("无法恢复等待中的任务，请重试。".to_owned())
@@ -24125,6 +25913,7 @@ impl DesktopProgram {
                     eprintln!("failed to refresh Native task popup composer: {error}");
                 }
                 popup.composer = None;
+                popup.composer_editor.clear();
                 popup.slash_commands.clear();
                 popup.conversation_reference_results.clear();
                 popup.context_attachment_results.clear();
@@ -24132,6 +25921,9 @@ impl DesktopProgram {
             }
         }
         self.refresh_task_popup_composer_suggestions(window_id);
+        if let Some(content_extent) = timeline_follow_extent {
+            self.queue_timeline_to_end(timeline_surface, content_extent);
+        }
         self.sync_markdown_images();
     }
 
@@ -25303,6 +27095,7 @@ impl DesktopProgram {
             };
             return match composer.apply_transient_command(command) {
                 Ok(_) => {
+                    sync_hosted_textarea(&popup.composer_editor, &composer.content);
                     popup.error = None;
                     true
                 }
@@ -25323,6 +27116,7 @@ impl DesktopProgram {
         match self.application.execute_composer_command(&task_id, command) {
             Ok(composer) => {
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                    sync_hosted_textarea(&popup.composer_editor, &composer.content);
                     popup.composer = Some(composer);
                     popup.error = None;
                 }
@@ -26118,7 +27912,7 @@ impl DesktopProgram {
         if selectable {
             let image_states_for_render = image_states.clone();
             let event_id = event_id.to_owned();
-            document.view_with_media(
+            document.view_with_media_selection_snapshot(
                 tokens,
                 Message::OpenMarkdownLink,
                 move |image| {
@@ -26132,10 +27926,10 @@ impl DesktopProgram {
                         tokens,
                     )
                 },
-                move |text| Message::TimelineTextSelectionChanged {
+                move |selection| Message::TimelineTextSelectionChanged {
                     window_id,
                     event_id: event_id.clone(),
-                    text,
+                    selection,
                 },
             )
         } else {
@@ -26207,6 +28001,46 @@ impl DesktopProgram {
             .align_y(Alignment::Center)
             .into(),
         )
+    }
+
+    fn with_timeline_selection_toolbar(
+        &self,
+        window_id: HostedWindowId,
+        content: Element<'static, Message>,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let Some(selection) = self.timeline_text_selections.get(&window_id) else {
+            return content;
+        };
+        let Some(bounds) = selection.bounds else {
+            return content;
+        };
+        let Some(actions) = self.timeline_selection_actions(window_id, &selection.event_id, tokens)
+        else {
+            return content;
+        };
+        let toolbar =
+            container(actions)
+                .padding([4, 6])
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(tokens.colors.surface.into()),
+                    border: iced::Border {
+                        color: tokens.colors.border,
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    shadow: iced::Shadow {
+                        color: iced::Color::from_rgba8(0, 0, 0, 0.18),
+                        offset: iced::Vector::new(0.0, 3.0),
+                        blur_radius: 12.0,
+                    },
+                    ..Default::default()
+                });
+        let position = Point::new(
+            (bounds.x + bounds.width * 0.5 - 96.0).max(8.0),
+            (bounds.y - 36.0).max(8.0),
+        );
+        stack![content, Absolute::new(toolbar, position)].into()
     }
 
     fn task_popup_content(
@@ -26287,6 +28121,7 @@ impl DesktopProgram {
                 task: draft,
                 worktree: &popup.draft_worktree,
                 composer: popup.composer.as_ref(),
+                composer_editor: &popup.composer_editor,
                 suggestions: &popup.conversation_suggestions,
                 error: popup.error.as_deref(),
             },
@@ -26305,6 +28140,7 @@ impl DesktopProgram {
                 task: &draft.task,
                 worktree: &draft.worktree,
                 composer: Some(&draft.composer),
+                composer_editor: &draft.composer_editor,
                 suggestions: &draft.suggestions,
                 error: draft.error.as_deref(),
             },
@@ -26322,6 +28158,7 @@ impl DesktopProgram {
             task: draft,
             worktree: draft_worktree,
             composer,
+            composer_editor,
             suggestions,
             error,
         } = surface;
@@ -26342,64 +28179,57 @@ impl DesktopProgram {
             .unwrap_or_default();
         let has_payload = composer.is_some_and(composer_has_turn_payload);
         let worktree_ready = !matches!(draft_worktree, DraftWorktreeSelection::Existing(None));
-        let mut body = column![
-            text(if draft.parent_id.is_some() {
-                "继续提问"
-            } else {
-                "开始新对话"
-            })
-            .size(19)
-            .font(ui_font(font::Weight::Semibold))
-            .color(colors.text),
-            text("发送第一条消息后，对话才会保存。")
-                .size(11)
-                .color(colors.muted),
-        ]
-        .spacing(8)
-        .width(Length::Fill);
+        let mut body = column![].spacing(8).width(Length::Fill);
         if let Some(error) = error {
             body = body.push(text(error.to_owned()).size(11).color(colors.danger));
         }
-        if draft.project_id.is_none() && draft.parent_id.is_none() {
-            let mut options = vec![DropdownOption::new(None, "收集箱")];
-            options.extend(self.projects.iter().map(|project| {
-                DropdownOption::new(Some(project.id.clone()), project.name.clone())
-            }));
-            body = body.push(
-                Card::new(
-                    Dropdown::single(Some(None), options, move |event| {
-                        Message::TaskPopupDraftProjectSelection { window_id, event }
-                    })
-                    .display_label("选择项目")
-                    .size(ControlSize::Small)
-                    .view(tokens),
+        let project_picker: Option<Element<'static, Message>> =
+            if draft.project_id.is_none() && draft.parent_id.is_none() {
+                let mut options = vec![DropdownOption::new(None, "收集箱")];
+                options.extend(self.projects.iter().map(|project| {
+                    DropdownOption::new(Some(project.id.clone()), project.name.clone())
+                }));
+                Some(
+                    row![
+                        text("保存到").size(10).color(colors.muted),
+                        Dropdown::single(Some(None), options, move |event| {
+                            Message::TaskPopupDraftProjectSelection { window_id, event }
+                        })
+                        .display_label("收集箱")
+                        .size(ControlSize::Small)
+                        .view(tokens),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .into(),
                 )
-                .title("保存位置")
-                .view(tokens),
-            );
-        }
-        if draft.project_id.is_some() {
-            let mut controls = row![button(text(draft_worktree_label(draft_worktree)).size(10))
-                .on_press(Message::CycleDraftWorktree(window_id))
-                .style(button_style(tokens, ButtonKind::Ghost)),]
-            .spacing(6)
+            } else {
+                None
+            };
+        let worktree_controls: Option<Element<'static, Message>> = if draft.project_id.is_some() {
+            let mut controls = row![button(
+                row![
+                    icon(Icon::Nodes, 13.0, colors.muted),
+                    text(draft_worktree_label(draft_worktree)).size(10),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .on_press(Message::CycleDraftWorktree(window_id))
+            .style(button_style(tokens, ButtonKind::Ghost)),]
+            .spacing(3)
             .align_y(Alignment::Center);
             if matches!(draft_worktree, DraftWorktreeSelection::Existing(_)) {
                 controls = controls.push(
-                    button(text("选择工作树").size(10))
+                    button(text("选择").size(10))
                         .on_press(Message::PickDraftWorktree(window_id))
                         .style(button_style(tokens, ButtonKind::Ghost)),
                 );
             }
-            if let DraftWorktreeSelection::Existing(Some(path)) = draft_worktree {
-                controls = controls.push(
-                    text(path.to_string_lossy().into_owned())
-                        .size(10)
-                        .color(colors.muted),
-                );
-            }
-            body = body.push(Card::new(controls).title("工作目录").view(tokens));
-        }
+            Some(controls.into())
+        } else {
+            None
+        };
         if !has_payload {
             if let Some(suggestions) = conversation_suggestions_view(suggestions, tokens) {
                 body = body.push(suggestions.map(move |message| match message {
@@ -26629,16 +28459,37 @@ impl DesktopProgram {
         } else if let Some(workflow) = composer.and_then(|composer| composer.workflow.as_ref()) {
             body = body.push(applied_prompt_workflow_view(workflow, window_id, tokens));
         }
-        let input = Input::new("输入消息", content_value.clone())
-            .on_input(move |value| {
-                if primary {
-                    Message::ComposerChanged(value)
-                } else {
-                    Message::TaskPopupComposerChanged { window_id, value }
-                }
+        let submit = if primary {
+            Message::SubmitTurn
+        } else {
+            Message::TaskPopupSubmitTurn(window_id)
+        };
+        let input = HostedTextarea::new(composer_editor)
+            .id(if primary {
+                target_ids::COMPOSER_INPUT.to_owned()
+            } else {
+                target_ids::task_popup_composer(window_id.0)
             })
-            .view(tokens);
-        let send = button(text("发送").size(11)).style(button_style(tokens, ButtonKind::Primary));
+            .placeholder(COMPOSER_PLACEHOLDER)
+            .height(composer_textarea_height(composer_editor))
+            .on_action(move |action| {
+                if primary {
+                    Message::ComposerEdited(action)
+                } else {
+                    Message::TaskPopupComposerEdited { window_id, action }
+                }
+            });
+        let input = if has_payload && worktree_ready && pending_review.is_none() {
+            input.submit_on_enter(submit)
+        } else {
+            input
+        }
+        .view(tokens);
+        let send = button(text("↑").size(17))
+            .width(Length::Fixed(32.0))
+            .height(Length::Fixed(32.0))
+            .padding(0)
+            .style(composer_round_button_style(tokens, ButtonKind::Primary));
         let send = if has_payload && worktree_ready && pending_review.is_none() {
             send.on_press(if primary {
                 Message::SubmitTurn
@@ -26648,117 +28499,153 @@ impl DesktopProgram {
         } else {
             send
         };
-        let mut attach_file = button(row![
-            icon(Icon::File, 13.0, colors.muted),
-            text("文件").size(10),
-        ])
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let mut attach_directory = button(row![
-            icon(Icon::Folder, 13.0, colors.muted),
-            text("目录").size(10),
-        ])
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let mut paste_text =
-            button(text("文字").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-        let mut paste_image =
-            button(text("图片").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-        let mut paste_files =
-            button(text("粘文件").size(10)).style(button_style(tokens, ButtonKind::Ghost));
+        let compact_toolbar = self.compact_composer_toolbar(window_id);
         let optimizing_prompt = self.prompt_optimization_is_busy(window_id, Some(&draft.id));
-        let mut optimize_prompt = button(
-            text(if optimizing_prompt {
-                "优化中"
+        let optimize_prompt = self.composer_toolbar_action(
+            if optimizing_prompt {
+                "正在优化提示"
             } else {
                 "优化提示"
-            })
-            .size(10),
-        )
-        .style(button_style(tokens, ButtonKind::Ghost));
-        attach_file = attach_file.on_press(if primary {
-            Message::PickAttachmentFiles
-        } else {
-            Message::TaskPopupPickAttachmentFiles(window_id)
-        });
-        attach_directory = attach_directory.on_press(if primary {
-            Message::PickAttachmentDirectories
-        } else {
-            Message::TaskPopupPickAttachmentDirectories(window_id)
-        });
-        paste_text = paste_text.on_press(if primary {
-            Message::PasteClipboardText
-        } else {
-            Message::TaskPopupPasteClipboardText(window_id)
-        });
-        paste_image = paste_image.on_press(if primary {
-            Message::PasteClipboardImage
-        } else {
-            Message::TaskPopupPasteClipboardImage(window_id)
-        });
-        paste_files = paste_files.on_press(Message::PasteClipboardFiles(window_id));
-        if !optimizing_prompt && !content_value.trim().is_empty() {
-            optimize_prompt = optimize_prompt.on_press(Message::OptimizePrompt(window_id));
-        }
+            },
+            Icon::Appearance,
+            compact_toolbar,
+            (!optimizing_prompt && !content_value.trim().is_empty())
+                .then_some(Message::OptimizePrompt(window_id)),
+            optimizing_prompt,
+            tokens,
+        );
         let permission = composer
             .map(|composer| composer.permission)
             .unwrap_or_default();
         let plan_mode = composer.is_some_and(|composer| composer.plan_mode);
         let goal_mode = composer.is_some_and(|composer| composer.goal_mode);
-        let permission_button = button(text(permission_label(permission)).size(10))
-            .on_press(if primary {
+        let actions =
+            self.composer_action_menu(window_id, composer.is_none(), plan_mode, goal_mode, tokens);
+        let permission_button = self.composer_toolbar_action(
+            format!("权限：{}", permission_label(permission)),
+            Icon::About,
+            compact_toolbar,
+            Some(if primary {
                 Message::CyclePermission
             } else {
                 Message::TaskPopupCyclePermission(window_id)
-            })
-            .style(button_style(tokens, ButtonKind::Ghost));
-        let plan_button = button(
-            text(if plan_mode {
-                "计划：开"
-            } else {
-                "计划：关"
-            })
-            .size(10),
-        )
-        .on_press(if primary {
-            Message::TogglePlanMode
-        } else {
-            Message::TaskPopupTogglePlanMode(window_id)
-        })
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let goal_button = button(
-            text(if goal_mode {
-                "目标：开"
-            } else {
-                "目标：关"
-            })
-            .size(10),
-        )
-        .on_press(if primary {
-            Message::ToggleGoalMode
-        } else {
-            Message::TaskPopupToggleGoalMode(window_id)
-        })
-        .style(button_style(tokens, ButtonKind::Ghost));
-        body = body.push(container(space()).width(Length::Fill).height(Length::Fill));
-        body = body.push(
-            column![
-                row![
-                    attach_file,
-                    attach_directory,
-                    paste_text,
-                    paste_image,
-                    paste_files,
-                    optimize_prompt
-                ]
-                .spacing(4),
-                row![input, send].spacing(6).align_y(Alignment::Center),
-                composer
-                    .map(|composer| self
-                        .composer_model_controls(window_id, composer, false, tokens,))
-                    .unwrap_or_else(|| space().into()),
-                row![permission_button, plan_button, goal_button].spacing(4),
-            ]
-            .spacing(5),
+            }),
+            false,
+            tokens,
         );
+        let mut toolbar_left = row![actions, permission_button]
+            .spacing(3)
+            .align_y(Alignment::Center);
+        if let Some(worktree_controls) = worktree_controls {
+            toolbar_left = toolbar_left.push(worktree_controls);
+        }
+        if plan_mode {
+            toolbar_left = toolbar_left.push(self.composer_toolbar_action(
+                "计划 ×",
+                Icon::Nodes,
+                compact_toolbar,
+                Some(if primary {
+                    Message::TogglePlanMode
+                } else {
+                    Message::TaskPopupTogglePlanMode(window_id)
+                }),
+                true,
+                tokens,
+            ));
+        }
+        if goal_mode {
+            toolbar_left = toolbar_left.push(self.composer_toolbar_action(
+                "Goal ×",
+                Icon::Workspace,
+                compact_toolbar,
+                Some(if primary {
+                    Message::ToggleGoalMode
+                } else {
+                    Message::TaskPopupToggleGoalMode(window_id)
+                }),
+                true,
+                tokens,
+            ));
+        }
+        let headline = conversation_empty_headline(
+            draft.project_id.as_ref().map(|_| project_name),
+            draft.parent_id.is_some(),
+        );
+        body = body.push(
+            container(
+                text(headline)
+                    .size(24)
+                    .font(ui_font(font::Weight::Medium))
+                    .color(colors.text),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill),
+        );
+        let model_controls = composer
+            .map(|composer| self.composer_model_controls(window_id, composer, false, tokens))
+            .unwrap_or_else(|| space().into());
+        let composer_toolbar: Element<'static, Message> = if compact_toolbar {
+            column![
+                toolbar_left,
+                row![
+                    space().width(Length::Fill),
+                    model_controls,
+                    optimize_prompt,
+                    send
+                ]
+                .spacing(3)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(4)
+            .into()
+        } else {
+            row![
+                toolbar_left,
+                space().width(Length::Fill),
+                model_controls,
+                optimize_prompt,
+                send,
+            ]
+            .spacing(3)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        body = body.push(
+            container(
+                container(
+                    Card::new(column![input, composer_toolbar].spacing(7))
+                        .padding(Padding::from([10, 12]))
+                        .view(tokens),
+                )
+                .width(if primary {
+                    Length::Fixed(self.primary_chat_content_width(48.0))
+                } else {
+                    Length::Fill
+                }),
+            )
+            .width(Length::Fill)
+            .center_x(Length::Fill)
+            .padding(if primary {
+                Padding {
+                    top: 4.0,
+                    right: 0.0,
+                    bottom: 8.0,
+                    left: 0.0,
+                }
+            } else {
+                Padding::ZERO
+            }),
+        );
+        if let Some(project_picker) = project_picker {
+            body = body.push(
+                container(project_picker)
+                    .width(Length::Fill)
+                    .center_x(Length::Fill)
+                    .padding(Padding::from([0, 4])),
+            );
+        }
         let focus_main: Element<'static, Message> = if primary {
             space().into()
         } else {
@@ -26784,17 +28671,26 @@ impl DesktopProgram {
         .spacing(6)
         .padding(Padding::from([4, 8]))
         .align_y(Alignment::Center);
-        column![
-            chrome,
+        if primary {
             container(body)
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .padding(Padding::from([16, 14]))
-                .style(canvas_style(tokens)),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+                .padding(Padding::from([20, 24]))
+                .style(canvas_style(tokens))
+                .into()
+        } else {
+            column![
+                chrome,
+                container(body)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(Padding::from([16, 14]))
+                    .style(canvas_style(tokens)),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        }
     }
 
     fn workspace_window_pane_tree(
@@ -27012,7 +28908,7 @@ impl DesktopProgram {
                 window_id,
                 pane_id: pane_id.as_str().to_owned(),
             };
-            let mut timeline = column![].spacing(6).width(Length::Fill);
+            let mut timeline = column![].spacing(0).width(Length::Fill);
             if session.timeline.is_empty() {
                 timeline = timeline.push(
                     EmptyState::new("暂无时间线")
@@ -27026,32 +28922,7 @@ impl DesktopProgram {
                     timeline = timeline.push(space().height(window.leading_extent));
                 }
                 for event in &session.timeline[window.range.clone()] {
-                    let mut event_header = row![
-                        text(event.title.clone())
-                            .size(12)
-                            .width(Length::Fill)
-                            .color(colors.text),
-                        text(format!("{} · {}", event.kind, event.status))
-                            .size(10)
-                            .color(colors.muted),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center);
-                    if let Some(value) = &event.markdown_plain_text {
-                        let copied = self
-                            .last_copied_markdown
-                            .as_ref()
-                            .is_some_and(|(event_id, _)| event_id == &event.id);
-                        event_header = event_header.push(
-                            button(text(if copied { "已复制" } else { "复制" }).size(10))
-                                .on_press(Message::CopyTimelineMarkdown {
-                                    event_id: event.id.clone(),
-                                    text: value.clone(),
-                                })
-                                .style(button_style(tokens, ButtonKind::Text)),
-                        );
-                    }
-                    let mut event_content = column![event_header].spacing(3);
+                    let mut event_content = column![].spacing(5).width(Length::Fill);
                     if let Some(document) = &event.markdown_document {
                         event_content = event_content.push(self.markdown_document_view(
                             document,
@@ -27064,10 +28935,26 @@ impl DesktopProgram {
                         event_content =
                             event_content.push(text(summary.clone()).size(11).color(colors.muted));
                     }
-                    if let Some(actions) =
-                        self.timeline_selection_actions(popup.id, &event.id, tokens)
-                    {
-                        event_content = event_content.push(actions);
+                    let show_copy = event.message_role.as_deref() != Some("user")
+                        && (event.message_role.as_deref() != Some("assistant")
+                            || self.timeline_hovered_event.as_deref() == Some(event.id.as_str()));
+                    if let Some(value) = event.markdown_plain_text.as_ref().filter(|_| show_copy) {
+                        let copied = self
+                            .last_copied_markdown
+                            .as_ref()
+                            .is_some_and(|(event_id, _)| event_id == &event.id);
+                        event_content = event_content.push(
+                            row![
+                                space().width(Length::Fill),
+                                button(text(if copied { "已复制" } else { "复制" }).size(10))
+                                    .on_press(Message::CopyTimelineMarkdown {
+                                        event_id: event.id.clone(),
+                                        text: value.clone(),
+                                    })
+                                    .style(button_style(tokens, ButtonKind::Text)),
+                            ]
+                            .align_y(Alignment::Center),
+                        );
                     }
                     if !event.attachments.is_empty() {
                         let mut attachments = column![].spacing(3).width(Length::Fill);
@@ -27077,8 +28964,12 @@ impl DesktopProgram {
                         }
                         event_content = event_content.push(attachments);
                     }
-                    timeline =
-                        timeline.push(ListItem::new(event_content).auto_height().view(tokens));
+                    timeline = timeline.push(timeline_event_shell(
+                        event,
+                        event_content.into(),
+                        timeline_event_is_expanded(event, &self.timeline_toggled_events),
+                        tokens,
+                    ));
                 }
                 if window.trailing_extent > 0.0 {
                     timeline = timeline.push(space().height(window.trailing_extent));
@@ -27413,7 +29304,7 @@ impl DesktopProgram {
             .spacing(10),
         );
         content = content.push(self.debug_timeline_panel(popup_id, true, tokens));
-        let mut timeline = column![].spacing(6).width(Length::Fill);
+        let mut timeline = column![].spacing(0).width(Length::Fill);
         if session.timeline_has_more_before {
             timeline = timeline.push(
                 button(text("加载更早记录").size(11))
@@ -27435,23 +29326,18 @@ impl DesktopProgram {
                 timeline = timeline.push(space().height(window.leading_extent));
             }
             for event in &session.timeline[window.range.clone()] {
-                let mut event_header = row![
-                    text(event.title.clone())
-                        .size(12)
-                        .width(Length::Fill)
-                        .color(colors.text),
-                    text(format!("{} · {}", event.kind, event.status))
-                        .size(10)
-                        .color(colors.muted),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center);
-                if let Some(value) = &event.markdown_plain_text {
+                let hovered = self.timeline_hovered_event.as_deref() == Some(event.id.as_str());
+                let mut event_actions = row![space().width(Length::Fill)]
+                    .spacing(4)
+                    .align_y(Alignment::Center);
+                let show_copy = event.message_role.as_deref() != Some("user")
+                    && (event.message_role.as_deref() != Some("assistant") || hovered);
+                if let Some(value) = event.markdown_plain_text.as_ref().filter(|_| show_copy) {
                     let copied = self
                         .last_copied_markdown
                         .as_ref()
                         .is_some_and(|(event_id, _)| event_id == &event.id);
-                    event_header = event_header.push(
+                    event_actions = event_actions.push(
                         button(text(if copied { "已复制" } else { "复制" }).size(10))
                             .on_press(Message::CopyTimelineMarkdown {
                                 event_id: event.id.clone(),
@@ -27461,7 +29347,7 @@ impl DesktopProgram {
                     );
                 }
                 if can_retry_timeline && event.can_retry {
-                    event_header = event_header.push(
+                    event_actions = event_actions.push(
                         button(text("重试").size(10))
                             .on_press(Message::RetryTimelineEvent {
                                 window_id: popup_id,
@@ -27470,8 +29356,11 @@ impl DesktopProgram {
                             .style(button_style(tokens, ButtonKind::Text)),
                     );
                 }
-                if can_apply_timeline_suggestion && event.session_branch_turn_id.is_some() {
-                    event_header = event_header
+                if hovered
+                    && can_apply_timeline_suggestion
+                    && event.session_branch_turn_id.is_some()
+                {
+                    event_actions = event_actions
                         .push(
                             button(text("从这里继续").size(10))
                                 .on_press(Message::SetTimelineSessionBranch {
@@ -27492,7 +29381,7 @@ impl DesktopProgram {
                         );
                 }
                 if can_apply_timeline_suggestion && event.batch_apply.is_some() {
-                    event_header = event_header.push(
+                    event_actions = event_actions.push(
                         button(text("应用建议").size(10))
                             .on_press(Message::ApplyTimelineSuggestion {
                                 window_id: popup_id,
@@ -27501,7 +29390,7 @@ impl DesktopProgram {
                             .style(button_style(tokens, ButtonKind::Primary)),
                     );
                 }
-                let mut event_content = column![event_header].spacing(3);
+                let mut event_content = column![].spacing(5).width(Length::Fill);
                 if let Some(document) = &event.markdown_document {
                     event_content = event_content.push(self.markdown_document_view(
                         document,
@@ -27514,10 +29403,6 @@ impl DesktopProgram {
                     event_content =
                         event_content.push(text(summary.clone()).size(11).color(colors.muted));
                 }
-                if let Some(actions) = self.timeline_selection_actions(popup_id, &event.id, tokens)
-                {
-                    event_content = event_content.push(actions);
-                }
                 if !event.attachments.is_empty() {
                     let mut attachments = column![].spacing(3).width(Length::Fill);
                     for attachment in &event.attachments {
@@ -27526,24 +29411,44 @@ impl DesktopProgram {
                     }
                     event_content = event_content.push(attachments);
                 }
-                timeline = timeline.push(ListItem::new(event_content).auto_height().view(tokens));
+                let has_actions = (show_copy && event.markdown_plain_text.is_some())
+                    || (can_retry_timeline && event.can_retry)
+                    || (can_apply_timeline_suggestion
+                        && ((hovered && event.session_branch_turn_id.is_some())
+                            || event.batch_apply.is_some()));
+                if has_actions {
+                    event_content = event_content.push(event_actions);
+                }
+                timeline = timeline.push(timeline_event_shell(
+                    event,
+                    event_content.into(),
+                    timeline_event_is_expanded(event, &self.timeline_toggled_events),
+                    tokens,
+                ));
             }
             if window.trailing_extent > 0.0 {
                 timeline = timeline.push(space().height(window.trailing_extent));
             }
         }
         let timeline_surface = TimelineSurfaceKey::TaskPopup(popup_id);
-        content = content.push(
-            scrollable(timeline)
-                .id(timeline_surface.scrollable_id())
-                .on_scroll(move |viewport| Message::TimelineScrolled {
-                    surface: timeline_surface.clone(),
-                    offset: viewport.absolute_offset().y,
-                    viewport_extent: viewport.bounds().height,
-                })
-                .direction(vertical_scrollbar())
-                .height(Length::Fill),
-        );
+        let timeline_at_end = self.timeline_is_at_end(Some(&session), &timeline_surface, true);
+        let scroll_surface = timeline_surface.clone();
+        let timeline: Element<'static, Message> = scrollable(timeline)
+            .id(timeline_surface.scrollable_id())
+            .on_scroll(move |viewport| Message::TimelineScrolled {
+                surface: scroll_surface.clone(),
+                offset: viewport.absolute_offset().y,
+                viewport_extent: viewport.bounds().height,
+            })
+            .direction(vertical_scrollbar())
+            .height(Length::Fill)
+            .into();
+        content = content.push(timeline_with_latest_control(
+            timeline,
+            !timeline_at_end && !session.timeline.is_empty(),
+            timeline_surface,
+            tokens,
+        ));
         let mut pending_actions = column![].spacing(7).width(Length::Fill);
         for pending in session
             .pending
@@ -27937,29 +29842,39 @@ impl DesktopProgram {
         {
             content = content.push(applied_prompt_workflow_view(workflow, popup_id, tokens));
         }
-        let input_window_id = popup_id;
-        let input = Input::new("输入消息", composer_content.clone())
-            .on_input(move |value| Message::TaskPopupComposerChanged {
-                window_id: input_window_id,
-                value,
-            })
-            .view(tokens);
+        let input = HostedTextarea::new(&popup.composer_editor)
+            .id(target_ids::task_popup_composer(popup_id.0))
+            .placeholder(COMPOSER_PLACEHOLDER)
+            .height(composer_textarea_height(&popup.composer_editor))
+            .on_action(move |action| Message::TaskPopupComposerEdited {
+                window_id: popup_id,
+                action,
+            });
+        let input = if has_payload
+            && (!pending_blocks_send || turn_active)
+            && task_run_block.is_none()
+            && !review_target_pending
+        {
+            input.submit_on_enter(Message::TaskPopupSubmitTurn(popup_id))
+        } else {
+            input
+        }
+        .view(tokens);
         let action = if review_target_pending {
             button(text("请选择范围").size(11)).style(button_style(tokens, ButtonKind::Ghost))
         } else if turn_active && !has_payload {
-            button(text("停止").size(11))
+            button(text("■").size(13))
+                .width(Length::Fixed(32.0))
+                .height(Length::Fixed(32.0))
+                .padding(0)
                 .on_press(Message::TaskPopupInterruptTurn(popup_id))
-                .style(button_style(tokens, ButtonKind::Danger))
+                .style(composer_round_button_style(tokens, ButtonKind::Danger))
         } else {
-            let send = button(
-                text(if turn_active {
-                    "加入调度队列"
-                } else {
-                    "发送"
-                })
-                .size(11),
-            )
-            .style(button_style(tokens, ButtonKind::Primary));
+            let send = button(text("↑").size(17))
+                .width(Length::Fixed(32.0))
+                .height(Length::Fixed(32.0))
+                .padding(0)
+                .style(composer_round_button_style(tokens, ButtonKind::Primary));
             if !has_payload || (pending_blocks_send && !turn_active) || task_run_block.is_some() {
                 send
             } else {
@@ -27979,22 +29894,6 @@ impl DesktopProgram {
             .composer
             .as_ref()
             .is_some_and(|composer| composer.goal_mode);
-        let mut attach_file = button(row![
-            icon(Icon::File, 13.0, colors.muted),
-            text("文件").size(10),
-        ])
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let mut attach_directory = button(row![
-            icon(Icon::Folder, 13.0, colors.muted),
-            text("目录").size(10),
-        ])
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let mut paste_text =
-            button(text("文字").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-        let mut paste_image =
-            button(text("图片").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-        let mut paste_files =
-            button(text("粘文件").size(10)).style(button_style(tokens, ButtonKind::Ghost));
         let optimizing_prompt =
             self.prompt_optimization_is_busy(popup_id, popup.active_task_id.as_ref());
         let mut optimize_prompt = button(
@@ -28008,30 +29907,6 @@ impl DesktopProgram {
         .style(button_style(tokens, ButtonKind::Ghost));
         let mut permission_button = button(text(permission_label(permission)).size(10))
             .style(button_style(tokens, ButtonKind::Ghost));
-        let mut plan_button = button(
-            text(if plan_mode {
-                "计划：开"
-            } else {
-                "计划：关"
-            })
-            .size(10),
-        )
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let mut goal_button = button(
-            text(if goal_mode {
-                "目标：开"
-            } else {
-                "目标：关"
-            })
-            .size(10),
-        )
-        .style(button_style(tokens, ButtonKind::Ghost));
-        attach_file = attach_file.on_press(Message::TaskPopupPickAttachmentFiles(popup_id));
-        attach_directory =
-            attach_directory.on_press(Message::TaskPopupPickAttachmentDirectories(popup_id));
-        paste_text = paste_text.on_press(Message::TaskPopupPasteClipboardText(popup_id));
-        paste_image = paste_image.on_press(Message::TaskPopupPasteClipboardImage(popup_id));
-        paste_files = paste_files.on_press(Message::PasteClipboardFiles(popup_id));
         if !optimizing_prompt
             && !turn_active
             && !pending_blocks_send
@@ -28040,8 +29915,40 @@ impl DesktopProgram {
             optimize_prompt = optimize_prompt.on_press(Message::OptimizePrompt(popup_id));
         }
         permission_button = permission_button.on_press(Message::TaskPopupCyclePermission(popup_id));
-        plan_button = plan_button.on_press(Message::TaskPopupTogglePlanMode(popup_id));
-        goal_button = goal_button.on_press(Message::TaskPopupToggleGoalMode(popup_id));
+        let actions = self.composer_action_menu(
+            popup_id,
+            popup.composer.is_none(),
+            plan_mode,
+            goal_mode,
+            tokens,
+        );
+        let mut toolbar_left = row![actions, permission_button]
+            .spacing(3)
+            .align_y(Alignment::Center);
+        if let Some(worktree) = session.worktree.as_ref() {
+            toolbar_left = toolbar_left.push(
+                container(
+                    text(worktree.branch_name.clone())
+                        .size(10)
+                        .color(colors.muted),
+                )
+                .padding([4, 8]),
+            );
+        }
+        if plan_mode {
+            toolbar_left = toolbar_left.push(
+                button(text("计划 ×").size(10))
+                    .on_press(Message::TaskPopupTogglePlanMode(popup_id))
+                    .style(button_style(tokens, ButtonKind::Subtle)),
+            );
+        }
+        if goal_mode {
+            toolbar_left = toolbar_left.push(
+                button(text("Goal ×").size(10))
+                    .on_press(Message::TaskPopupToggleGoalMode(popup_id))
+                    .style(button_style(tokens, ButtonKind::Subtle)),
+            );
+        }
         let model_controls = popup
             .composer
             .as_ref()
@@ -28054,21 +29961,19 @@ impl DesktopProgram {
                 )
             })
             .unwrap_or_else(|| space().into());
-        let mut composer_controls = column![
-            row![
-                attach_file,
-                attach_directory,
-                paste_text,
-                paste_image,
-                paste_files,
-                optimize_prompt
-            ]
-            .spacing(4),
-            row![input, action].spacing(6).align_y(Alignment::Center),
+        let composer_toolbar = row![
+            toolbar_left,
+            space().width(Length::Fill),
             model_controls,
-            row![permission_button, plan_button, goal_button].spacing(4),
+            optimize_prompt,
+            action,
         ]
-        .spacing(5);
+        .spacing(3)
+        .align_y(Alignment::Center);
+        let composer_controls = Card::new(column![input, composer_toolbar].spacing(7))
+            .padding(Padding::from([10, 12]))
+            .view(tokens);
+        let mut composer_controls = column![composer_controls].spacing(5);
         if let Some(reason) = task_run_block {
             composer_controls = composer_controls.push(text(reason).size(10).color(colors.warning));
         }
@@ -28101,256 +30006,1084 @@ impl DesktopProgram {
 
     fn projects_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
         let colors = tokens.colors;
-        let overview = SidebarRow::new("全部项目")
-            .leading(icon(Icon::Workspace, 14.0, colors.muted))
-            .state(if self.projects_overview_open {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::OpenProjectsOverview)
-            .view(tokens);
-        let inbox = SidebarRow::new("收集箱")
-            .leading(icon(Icon::Workspace, 14.0, colors.muted))
-            .state(if self.inbox_selected {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectInbox)
-            .view(tokens);
-        let mut body = column![overview, inbox].spacing(8);
-        match self.sidebar_display_mode {
-            NativeSidebarDisplayMode::Grouped => {
-                let mut section = SidebarSection::new("项目").count(self.projects.len());
-                for pinned in [true, false] {
-                    let items = self
-                        .projects
-                        .iter()
-                        .filter(|project| project.pinned == pinned)
-                        .map(|project| {
-                            ReorderItem::new(
-                                project.id.clone(),
-                                SidebarRow::new(project.name.clone())
-                                    .leading(icon(Icon::Folder, 14.0, colors.muted))
-                                    .state(if Some(&project.id) == self.selected_project.as_ref() {
-                                        SidebarRowState::Active
-                                    } else {
-                                        SidebarRowState::Idle
-                                    })
-                                    .view(tokens),
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    if items.is_empty() {
-                        continue;
-                    }
-                    let height = ControlSize::Small.height_in(tokens.metrics) * items.len() as f32
-                        + (items.len().saturating_sub(1)) as f32;
-                    section = section.push(
-                        container(
-                            ReorderList::new(items, Message::SelectProject)
-                                .on_reorder(|project_id, before_project_id| {
-                                    Message::ReorderProject {
-                                        project_id,
-                                        before_project_id,
-                                    }
-                                })
-                                .indicator(colors.accent)
-                                .view(),
-                        )
-                        .width(Length::Fill)
-                        .height(Length::Fixed(height)),
-                    );
-                }
-                body = body.push(section.view(tokens));
-                if !self.archived_projects.is_empty() {
-                    let mut archived =
-                        SidebarSection::new("已归档").count(self.archived_projects.len());
-                    for project in &self.archived_projects {
-                        archived = archived.push(
-                            SidebarRow::new(format!("恢复 · {}", project.name))
-                                .leading(icon(Icon::Folder, 14.0, colors.faint))
-                                .on_select(Message::RestoreProject(project.id.clone()))
-                                .view(tokens),
-                        );
-                    }
-                    body = body.push(archived.view(tokens));
-                }
-            }
-            NativeSidebarDisplayMode::Unified => {
-                let mut tasks = self.task_move_candidates.iter().collect::<Vec<_>>();
-                tasks.sort_by(|left, right| {
-                    right
-                        .pinned
-                        .cmp(&left.pinned)
-                        .then_with(|| right.created_at.cmp(&left.created_at))
-                        .then_with(|| left.sort_order.cmp(&right.sort_order))
-                });
-                let mut section = SidebarSection::new("会话").count(tasks.len());
-                if tasks.is_empty() {
-                    section = section.push(text("还没有会话").size(11).color(colors.faint));
-                } else {
-                    for task in tasks {
-                        let project_name = task
-                            .project_id
-                            .as_ref()
-                            .and_then(|project_id| {
-                                self.projects
-                                    .iter()
-                                    .find(|project| &project.id == project_id)
-                                    .map(|project| project.name.as_str())
-                                    .or_else(|| {
-                                        self.archived_projects
-                                            .iter()
-                                            .find(|project| &project.id == project_id)
-                                            .map(|project| project.name.as_str())
-                                    })
-                            })
-                            .unwrap_or("收集箱");
-                        section = section.push(
-                            ListItem::new(
-                                row![
-                                    text(if task.title.trim().is_empty() {
-                                        "未命名对话".to_owned()
-                                    } else {
-                                        task.title.clone()
-                                    })
-                                    .size(12)
-                                    .width(Length::Fill)
-                                    .color(colors.text),
-                                    text(format!("{project_name} · {}", status_label(task.status)))
-                                        .size(10)
-                                        .color(colors.muted),
-                                ]
-                                .spacing(8)
-                                .align_y(Alignment::Center),
-                            )
-                            .selected(Some(&task.id) == self.selected_task.as_ref())
-                            .on_select(Message::SelectTask(task.id.clone()))
-                            .view(tokens),
-                        );
-                    }
-                }
-                body = body.push(section.view(tokens));
-            }
-        }
-        if let Some(snapshot) = &self.project_files {
+        let top = self.projects_sidebar_top(tokens);
+        let mut body = column![].spacing(10).width(Length::Fill);
+        if self.sidebar_folder_drop_hovered {
             body = body.push(
-                project_files_tree(snapshot, tokens).map(|message| match message {
-                    ProjectFilesPanelMessage::ToggleExpand(path) => {
-                        Message::ToggleProjectFileExpand(path)
-                    }
-                    ProjectFilesPanelMessage::OpenPath(path) => Message::OpenProjectFile(path),
-                    ProjectFilesPanelMessage::Refresh => Message::RefreshProjectFiles,
+                container(text("松开以添加项目").size(11).color(colors.accent))
+                    .width(Length::Fill)
+                    .padding([6, 8])
+                    .style(canvas_style(tokens)),
+            );
+        }
+        if !self.sidebar_search_query.trim().is_empty() {
+            body = body.push(self.sidebar_search_results(tokens));
+        } else {
+            body = body.push(self.sidebar_running_section(tokens));
+            body = body.push(match self.sidebar_display_mode {
+                NativeSidebarDisplayMode::Grouped => self.grouped_projects_sidebar(tokens),
+                NativeSidebarDisplayMode::Unified => self.unified_conversations_sidebar(tokens),
+            });
+        }
+        if let Some(error) = self
+            .conversation_status_error
+            .as_ref()
+            .or(self.task_move_candidates_error.as_ref())
+            .or(self.error_message.as_ref())
+        {
+            let mut error_background = colors.danger;
+            error_background.a = 0.12;
+            body = body.push(
+                container(
+                    row![
+                        text(error.clone())
+                            .size(11)
+                            .color(colors.danger)
+                            .width(Length::Fill),
+                        IconButton::new("关闭提示", Icon::Close)
+                            .on_press(Message::DismissSidebarError)
+                            .size(ControlSize::Small)
+                            .view(tokens),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+                )
+                .padding([6, 8])
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(error_background.into()),
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
                 }),
             );
-        } else if self.selected_project.is_some() {
-            if let Some(error) = &self.project_files_error {
-                body = body.push(text(error.clone()).size(11).color(colors.danger));
-            }
         }
-        let mut footer = SidebarFooter::new()
-            .push(
-                SidebarFooterButton::new("新对话", Icon::Add)
-                    .on_press(Message::OpenMainConversationDraft)
-                    .view(tokens),
+        let (provider_status, provider_color, provider_icon) = self.provider_runtime_badge(colors);
+        let mut provider_background = provider_color;
+        provider_background.a = 0.12;
+        let provider = container(
+            button(
+                row![
+                    icon(provider_icon, 12.0, provider_color),
+                    text(provider_status).size(11).color(provider_color),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
             )
-            .push(
-                SidebarFooterButton::new("新建项目", Icon::Add)
-                    .on_press(Message::CreateProject)
-                    .view(tokens),
-            )
-            .push(
-                SidebarFooterButton::new("克隆仓库", Icon::Folder)
-                    .on_press(Message::OpenProjectClone)
-                    .view(tokens),
-            )
-            .push(
-                SidebarFooterButton::new("刷新项目", Icon::Workspace)
-                    .on_press(Message::RefreshProjects)
-                    .view(tokens),
-            );
-        if self.selected_project.is_some() {
-            footer = footer
-                .push(
-                    SidebarFooterButton::new("任务", Icon::Workspace)
-                        .on_press(Message::OpenProjectTasks)
-                        .view(tokens),
-                )
-                .push(
-                    SidebarFooterButton::new("文件", Icon::Folder)
-                        .on_press(Message::OpenProjectFiles)
-                        .view(tokens),
-                )
-                .push(
-                    SidebarFooterButton::new("路线图", Icon::Nodes)
-                        .on_press(Message::OpenRoadmap)
-                        .view(tokens),
-                )
-                .push(
-                    SidebarFooterButton::new("Memory", Icon::About)
-                        .on_press(Message::OpenMemory)
-                        .view(tokens),
-                )
-                .push(
-                    SidebarFooterButton::new("工具", Icon::Workspace)
-                        .on_press(Message::OpenCodingTools)
-                        .view(tokens),
-                )
-                .push(
-                    SidebarFooterButton::new("架构", Icon::Nodes)
-                        .on_press(Message::OpenArchitecture)
-                        .view(tokens),
-                );
-        }
-        if self.selected_task.is_some() && self.project_surface == ProjectSurface::Tasks {
-            footer = footer
-                .push(
-                    SidebarFooterButton::new("新窗口", Icon::Workspace)
-                        .on_press(Message::OpenSelectedTaskPopup)
-                        .view(tokens),
-                )
-                .push(
-                    SidebarFooterButton::new("询问", Icon::Add)
-                        .on_press(Message::OpenChildQuestionPopup {
-                            source_window: HostedWindowId::PRIMARY,
-                            parent_task_id: self
-                                .selected_task
-                                .clone()
-                                .expect("selected task was checked"),
-                        })
-                        .view(tokens),
-                )
-                .push(
-                    SidebarFooterButton::new("移至窗口", Icon::Workspace)
-                        .on_press(Message::MoveSelectedTaskToPopup)
-                        .view(tokens),
-                )
-                .push(
-                    SidebarFooterButton::new("检查器", Icon::About)
-                        .on_press(Message::ToggleTaskInspector)
-                        .view(tokens),
-                )
-                .push(
-                    SidebarFooterButton::new("浏览器", Icon::Eye)
-                        .on_press(Message::OpenIab)
-                        .view(tokens),
-                );
-        }
-        let footer = footer
-            .push(
-                SidebarFooterButton::new("自动化", Icon::Nodes)
-                    .on_press(Message::OpenAutomations)
-                    .view(tokens),
-            )
+            .on_press(Message::OpenSettings)
+            .height(Length::Fixed(20.0))
+            .padding([0, 7])
+            .style(move |_, status| {
+                let mut background = provider_background;
+                if status == iced::widget::button::Status::Hovered {
+                    background.a = 0.2;
+                }
+                iced::widget::button::Style {
+                    background: Some(background.into()),
+                    text_color: provider_color,
+                    border: iced::Border {
+                        radius: 999.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            }),
+        )
+        .padding(Padding {
+            top: 0.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 4.0,
+        });
+        let footer = SidebarFooter::new()
             .push(
                 SidebarFooterButton::new("设置", Icon::Settings)
+                    .selected(self.settings_open)
                     .on_press(Message::OpenSettings)
                     .view(tokens),
             )
+            .push(
+                SidebarFooterButton::new("自动化", Icon::Nodes)
+                    .selected(self.automations_open)
+                    .on_press(Message::OpenAutomations)
+                    .view(tokens),
+            )
+            .push(provider)
             .view(colors);
-        SidebarFrame::new(body).footer(footer).view(colors)
+        SidebarFrame::new(body).top(top).footer(footer).view(colors)
+    }
+
+    fn projects_sidebar_top(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        if self.sidebar_search_open {
+            return row![
+                container(
+                    Input::new("搜索项目和会话", self.sidebar_search_query.clone())
+                        .id(target_ids::SIDEBAR_SEARCH_INPUT)
+                        .on_input(Message::SidebarSearchChanged)
+                        .view(tokens),
+                )
+                .width(Length::Fill),
+                IconButton::new("关闭搜索", Icon::Close)
+                    .on_press(Message::ToggleSidebarSearch)
+                    .size(ControlSize::Small)
+                    .view(tokens),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center)
+            .into();
+        }
+        row![
+            button(
+                row![
+                    icon(Icon::Add, 15.0, colors.text),
+                    text("新对话").size(13).color(colors.text),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(30.0))
+            .padding([0, 8])
+            .on_press(Message::OpenSidebarInboxDraft)
+            .style(button_style(tokens, ButtonKind::Text)),
+            IconButton::new("搜索", Icon::Search)
+                .on_press(Message::ToggleSidebarSearch)
+                .size(ControlSize::Small)
+                .view(tokens),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    fn sidebar_running_section(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        let running = self
+            .conversation_status_entries
+            .iter()
+            .filter(|entry| runtime_phase_is_processing(&entry.runtime_phase))
+            .collect::<Vec<_>>();
+        if running.is_empty() {
+            return space().height(Length::Fixed(0.0)).into();
+        }
+        let mut section = SidebarSection::new("进行中");
+        for (index, entry) in running.into_iter().enumerate() {
+            let task_id = entry.task_id.clone();
+            let stop_id = task_id.clone();
+            let stopping = self.sidebar_stopping_tasks.contains(&entry.task_id);
+            let stop_icon: Element<'static, Message> = if stopping {
+                spinner_icon(self.sidebar_activity_phase, 13.0, colors.danger)
+            } else {
+                text("■").size(11).color(colors.danger).into()
+            };
+            let mut stop = button(stop_icon)
+                .width(Length::Fixed(22.0))
+                .height(Length::Fixed(22.0))
+                .padding(0)
+                .style(button_style(tokens, ButtonKind::Text));
+            if !stopping {
+                stop = stop.on_press(Message::SidebarStopTask(stop_id));
+            }
+            let row = SidebarRow::new(entry.title.clone())
+                .leading(icon(Icon::Nodes, 13.0, colors.accent))
+                .trailing(text(entry.project_name.clone()).size(9).color(colors.faint))
+                .tools(
+                    tooltip(
+                        stop,
+                        container(
+                            text(if stopping {
+                                "正在停止进程"
+                            } else {
+                                "强行停止进程"
+                            })
+                            .size(11),
+                        )
+                        .padding([4, 7]),
+                        tooltip::Position::Right,
+                    )
+                    .gap(6),
+                )
+                .on_select(Message::SelectTask(task_id))
+                .view(tokens);
+            section = section.push(container(row).width(Length::Fill));
+            let _ = index;
+        }
+        section.view(tokens)
+    }
+
+    fn grouped_projects_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        let all_expanded = !self.projects.is_empty()
+            && self
+                .projects
+                .iter()
+                .all(|project| self.sidebar_project_expanded(&project.id));
+        let header = row![
+            text("项目")
+                .size(11)
+                .font(ui_font(font::Weight::Bold))
+                .color(colors.faint)
+                .width(Length::Fill),
+            IconButton::new("项目总览", Icon::Workspace)
+                .on_press(Message::OpenProjectsOverview)
+                .size(ControlSize::Small)
+                .view(tokens),
+            IconButton::new(
+                if all_expanded {
+                    "全部折叠"
+                } else {
+                    "全部展开"
+                },
+                Icon::Nodes,
+            )
+            .on_press(Message::ToggleAllSidebarProjects)
+            .size(ControlSize::Small)
+            .view(tokens),
+            IconButton::new("添加项目", Icon::Add)
+                .on_press(Message::OpenSidebarMenu {
+                    target: SidebarMenuTarget::AddProject,
+                    anchor_y: 96.0,
+                })
+                .size(ControlSize::Small)
+                .view(tokens),
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center);
+        let mut items = Vec::new();
+        let mut row_index = 0usize;
+        for pinned in [true, false] {
+            for project in self
+                .projects
+                .iter()
+                .filter(|project| project.pinned == pinned)
+            {
+                let expanded = self.sidebar_project_expanded(&project.id);
+                let menu_id = project.id.clone();
+                let popup_id = project.id.clone();
+                let draft_id = project.id.clone();
+                let anchor_y = 126.0 + row_index as f32 * 29.0;
+                row_index += 1;
+                let tools = row![
+                    button(text("•••").size(10))
+                        .on_press(Message::OpenSidebarMenu {
+                            target: SidebarMenuTarget::Project(menu_id),
+                            anchor_y,
+                        })
+                        .width(Length::Fixed(22.0))
+                        .height(Length::Fixed(22.0))
+                        .padding(0)
+                        .style(button_style(tokens, ButtonKind::Text)),
+                    IconButton::new("新对话", Icon::Add)
+                        .on_press(Message::OpenSidebarProjectDraft(draft_id))
+                        .size(ControlSize::Small)
+                        .view(tokens),
+                ]
+                .spacing(1);
+                let right_menu_id = project.id.clone();
+                let project_row = SidebarRow::new(project.name.clone())
+                    .leading(icon(Icon::Folder, 14.0, colors.muted))
+                    .trailing(
+                        project
+                            .pinned
+                            .then(|| text("●").size(8).color(colors.accent))
+                            .map(Element::from)
+                            .unwrap_or_else(|| space().width(Length::Shrink).into()),
+                    )
+                    .tools(tools)
+                    .state(if Some(&project.id) == self.selected_project.as_ref() {
+                        if self.selected_task.is_some() {
+                            SidebarRowState::AncestorActive
+                        } else {
+                            SidebarRowState::Active
+                        }
+                    } else {
+                        SidebarRowState::Idle
+                    })
+                    .on_right_press(move |anchor| Message::OpenSidebarMenuAt {
+                        target: SidebarMenuTarget::Project(right_menu_id.clone()),
+                        anchor,
+                    })
+                    .on_middle_press(move |_| Message::OpenSidebarProjectPopup(popup_id.clone()))
+                    .view(tokens);
+                items.push(ReorderItem::new(
+                    SidebarTreeListItem::Node(SidebarTreeNode::Project(project.id.clone())),
+                    project_row,
+                ));
+                if expanded {
+                    let tasks = self.sidebar_project_tasks(Some(&project.id));
+                    let visible = self.sidebar_visible_project_tasks(&project.id, &tasks);
+                    for (task, depth) in visible {
+                        row_index += 1;
+                        items.push(ReorderItem::new(
+                            SidebarTreeListItem::Node(SidebarTreeNode::Task(task.id.clone())),
+                            self.sidebar_task_row(
+                                task,
+                                depth.saturating_add(1) as u16,
+                                None,
+                                false,
+                                tokens,
+                            ),
+                        ));
+                    }
+                    if tasks.len() > 4 && !self.sidebar_revealed_projects.contains(&project.id) {
+                        row_index += 1;
+                        items.push(
+                            ReorderItem::new(
+                                SidebarTreeListItem::Passive,
+                                SidebarRow::new("…")
+                                    .depth(1)
+                                    .on_select(Message::RevealSidebarProjectTasks(
+                                        project.id.clone(),
+                                    ))
+                                    .view(tokens),
+                            )
+                            .draggable(false),
+                        );
+                    } else if tasks.is_empty() {
+                        row_index += 1;
+                        items.push(
+                            ReorderItem::new(
+                                SidebarTreeListItem::Passive,
+                                container(text("还没有对话").size(10).color(colors.faint))
+                                    .padding([4, 30]),
+                            )
+                            .draggable(false),
+                        );
+                    }
+                }
+            }
+        }
+        if self.projects.is_empty() {
+            items.push(
+                ReorderItem::new(
+                    SidebarTreeListItem::Passive,
+                    container(text("暂无项目").size(12).color(colors.faint)).padding([6, 8]),
+                )
+                .draggable(false),
+            );
+        }
+        let inbox_header = row![
+            text("收集箱")
+                .size(11)
+                .font(ui_font(font::Weight::Bold))
+                .color(colors.faint)
+                .width(Length::Fill),
+            IconButton::new(
+                if self.sidebar_inbox_expanded() {
+                    "折叠收集箱"
+                } else {
+                    "展开收集箱"
+                },
+                Icon::Nodes,
+            )
+            .on_press(Message::ToggleSidebarInbox)
+            .size(ControlSize::Small)
+            .view(tokens),
+            IconButton::new("新对话", Icon::Add)
+                .on_press(Message::OpenSidebarInboxDraft)
+                .size(ControlSize::Small)
+                .view(tokens),
+        ]
+        .spacing(2)
+        .align_y(Alignment::Center);
+        items.push(
+            ReorderItem::new(
+                SidebarTreeListItem::Node(SidebarTreeNode::Inbox),
+                inbox_header,
+            )
+            .draggable(false)
+            .drop_target(true),
+        );
+        if self.sidebar_inbox_expanded() {
+            let tasks = self.sidebar_project_tasks(None);
+            let visible = self.sidebar_visible_tasks(&tasks, self.sidebar_inbox_revealed);
+            for (task, depth) in visible {
+                items.push(ReorderItem::new(
+                    SidebarTreeListItem::Node(SidebarTreeNode::Task(task.id.clone())),
+                    self.sidebar_task_row(task, depth as u16, None, false, tokens),
+                ));
+            }
+            if tasks.len() > 4 && !self.sidebar_inbox_revealed {
+                items.push(
+                    ReorderItem::new(
+                        SidebarTreeListItem::Passive,
+                        SidebarRow::new("…")
+                            .depth(1)
+                            .on_select(Message::RevealSidebarInboxTasks)
+                            .view(tokens),
+                    )
+                    .draggable(false),
+                );
+            } else if tasks.is_empty() {
+                items.push(
+                    ReorderItem::new(
+                        SidebarTreeListItem::Passive,
+                        container(text("没有未绑定的对话").size(10).color(colors.faint))
+                            .padding([4, 30]),
+                    )
+                    .draggable(false),
+                );
+            }
+        }
+        let tree = ReorderList::new(items, |item| match item {
+            SidebarTreeListItem::Node(SidebarTreeNode::Project(project_id)) => {
+                Message::ToggleSidebarProject(project_id)
+            }
+            SidebarTreeListItem::Node(SidebarTreeNode::Task(task_id)) => {
+                Message::SelectTask(task_id)
+            }
+            SidebarTreeListItem::Node(SidebarTreeNode::Inbox) => Message::ToggleSidebarInbox,
+            _ => Message::SidebarTreeInteraction,
+        })
+        .on_tree_drop(|source, intent| match (source, intent.target) {
+            (SidebarTreeListItem::Node(source), SidebarTreeListItem::Node(target)) => {
+                Message::SidebarTreeDrop {
+                    source,
+                    target,
+                    position: intent.position.into(),
+                }
+            }
+            _ => Message::SidebarTreeInteraction,
+        })
+        .spacing(1.0)
+        .indicator(colors.accent)
+        .view();
+        let mut content = column![header, tree].spacing(2).width(Length::Fill);
+        if !self.archived_projects.is_empty() {
+            let mut archived = SidebarSection::new("已归档").count(self.archived_projects.len());
+            for project in &self.archived_projects {
+                archived = archived.push(
+                    SidebarRow::new(format!("恢复 · {}", project.name))
+                        .leading(icon(Icon::Folder, 14.0, colors.faint))
+                        .on_select(Message::RestoreProject(project.id.clone()))
+                        .view(tokens),
+                );
+            }
+            content = content.push(archived.view(tokens));
+        }
+        content.into()
+    }
+
+    fn unified_conversations_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        let mut tasks = self
+            .task_move_candidates
+            .iter()
+            .filter(|task| !task.archived)
+            .collect::<Vec<_>>();
+        tasks.sort_by(|left, right| {
+            right
+                .pinned
+                .cmp(&left.pinned)
+                .then_with(|| right.created_at.cmp(&left.created_at))
+                .then_with(|| left.sort_order.cmp(&right.sort_order))
+        });
+        let empty = tasks.is_empty();
+        let mut section = SidebarSection::new("会话");
+        for task in tasks {
+            let project_name = task
+                .project_id
+                .as_ref()
+                .and_then(|project_id| {
+                    self.projects
+                        .iter()
+                        .find(|project| &project.id == project_id)
+                })
+                .map(|project| project.name.as_str())
+                .unwrap_or("收集箱");
+            section =
+                section.push(self.sidebar_task_row(task, 0, Some(project_name), true, tokens));
+        }
+        if empty {
+            section = section.push(text("还没有会话").size(11).color(colors.faint));
+        }
+        section.view(tokens)
+    }
+
+    fn sidebar_project_tasks<'a>(
+        &'a self,
+        project_id: Option<&ProjectId>,
+    ) -> Vec<(&'a ProductTask, usize)> {
+        let tasks = self
+            .task_move_candidates
+            .iter()
+            .filter(|task| !task.archived && task.project_id.as_ref() == project_id)
+            .collect::<Vec<_>>();
+        ordered_product_task_tree(tasks)
+    }
+
+    fn sidebar_visible_project_tasks<'a>(
+        &'a self,
+        project_id: &ProjectId,
+        tasks: &[(&'a ProductTask, usize)],
+    ) -> Vec<(&'a ProductTask, usize)> {
+        self.sidebar_visible_tasks(tasks, self.sidebar_revealed_projects.contains(project_id))
+    }
+
+    fn sidebar_visible_tasks<'a>(
+        &'a self,
+        tasks: &[(&'a ProductTask, usize)],
+        revealed: bool,
+    ) -> Vec<(&'a ProductTask, usize)> {
+        let active_index = self
+            .selected_task
+            .as_ref()
+            .and_then(|selected| tasks.iter().position(|(task, _)| &task.id == selected));
+        sidebar_visible_row_indices(tasks.len(), active_index, revealed)
+            .into_iter()
+            .filter_map(|index| tasks.get(index).copied())
+            .collect()
+    }
+
+    fn sidebar_task_row(
+        &self,
+        task: &ProductTask,
+        depth: u16,
+        project_label: Option<&str>,
+        selects_row: bool,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        let task_id = task.id.clone();
+        let popup_id = task.id.clone();
+        let menu_id = task.id.clone();
+        let pin_id = task.id.clone();
+        let archive_id = task.id.clone();
+        let archive_cancel_id = task.id.clone();
+        let merge_id = task.id.clone();
+        let archive_pending = self.sidebar_pending_task_archive.as_ref() == Some(&task.id);
+        let active = Some(&task.id) == self.selected_task.as_ref();
+        let child_count = self
+            .task_move_candidates
+            .iter()
+            .filter(|candidate| {
+                candidate.parent_id.as_ref() == Some(&task.id) && !candidate.archived
+            })
+            .count();
+        let runtime_phase = self
+            .conversation_status_entries
+            .iter()
+            .find(|entry| entry.task_id == task.id)
+            .map(|entry| entry.runtime_phase.as_str())
+            .unwrap_or("idle");
+        let show_activity = runtime_phase != "idle"
+            || matches!(
+                task.status,
+                ProductTaskStatus::Waiting
+                    | ProductTaskStatus::Blocked
+                    | ProductTaskStatus::Done
+                    | ProductTaskStatus::Cancelled
+            );
+        let activity_color = match runtime_phase {
+            "waiting_approval" | "waiting_interaction" => colors.warning,
+            phase if runtime_phase_is_processing(phase) => colors.accent,
+            _ if task.status == ProductTaskStatus::Done => colors.muted,
+            _ if matches!(
+                task.status,
+                ProductTaskStatus::Blocked | ProductTaskStatus::Cancelled
+            ) =>
+            {
+                colors.danger
+            }
+            _ => colors.muted,
+        };
+        let has_worktree = self
+            .application
+            .task_worktree(&task.id)
+            .is_ok_and(|worktree| worktree.is_some());
+        let mut tools = row![].spacing(1);
+        if has_worktree {
+            tools = tools.push(
+                IconButton::new("合并并删除工作树", Icon::Nodes)
+                    .on_press(Message::SidebarRequestTaskWorktreeMerge(merge_id))
+                    .size(ControlSize::Small)
+                    .view(tokens),
+            );
+        }
+        tools = tools.push(
+            IconButton::new(
+                if task.pinned {
+                    "取消置顶"
+                } else {
+                    "置顶"
+                },
+                Icon::Nodes,
+            )
+            .on_press(Message::SidebarToggleTaskPinned(pin_id))
+            .selected(task.pinned)
+            .size(ControlSize::Small)
+            .view(tokens),
+        );
+        if archive_pending {
+            tools = tools.push(
+                button(text("确认").size(10).color(colors.danger))
+                    .on_press(Message::SidebarArchiveTask(archive_id))
+                    .height(22)
+                    .padding([0, 5])
+                    .style(button_style(tokens, ButtonKind::Subtle)),
+            );
+        } else {
+            tools = tools.push(
+                IconButton::new("归档", Icon::Close)
+                    .on_press(Message::SidebarArchiveTask(archive_id))
+                    .size(ControlSize::Small)
+                    .view(tokens),
+            );
+        }
+        let mut row = SidebarRow::new(if task.title.trim().is_empty() {
+            "未命名对话".to_owned()
+        } else {
+            task.title.clone()
+        })
+        .depth(depth)
+        .tools(tools)
+        .state(if active {
+            SidebarRowState::Active
+        } else {
+            SidebarRowState::Idle
+        });
+        if selects_row {
+            row = row.on_select(Message::SelectTask(task_id));
+        }
+        let task_meta = if let Some(project) = project_label {
+            Some(project.to_owned())
+        } else {
+            let mut parts = Vec::new();
+            if task.parent_id.is_some() {
+                parts.push("子任务".to_owned());
+            }
+            if task.status == ProductTaskStatus::Blocked {
+                parts.push("阻塞".to_owned());
+            }
+            if !task.depends_on.is_empty() {
+                parts.push(format!("{} 依赖", task.depends_on.len()));
+            }
+            if child_count > 0 {
+                parts.push(format!("{child_count} 子任务"));
+            }
+            (!parts.is_empty()).then(|| parts.join(" · "))
+        };
+        let metadata: Element<'static, Message> = task_meta
+            .as_ref()
+            .map(|value| text(value.clone()).size(9).color(colors.faint).into())
+            .unwrap_or_else(|| space().width(Length::Shrink).into());
+        if show_activity && !active {
+            let activity: Element<'static, Message> = match runtime_phase {
+                phase if runtime_phase_is_processing(phase) => {
+                    spinner_icon(self.sidebar_activity_phase, 12.0, activity_color)
+                }
+                "waiting_approval" | "waiting_interaction" => {
+                    icon(Icon::About, 12.0, activity_color)
+                }
+                _ if task.status == ProductTaskStatus::Done => {
+                    icon(Icon::Appearance, 12.0, activity_color)
+                }
+                _ => icon(Icon::About, 12.0, activity_color),
+            };
+            row = row.trailing(
+                row![metadata, activity]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+            );
+        } else if task_meta.is_some() {
+            row = row.trailing(metadata);
+        }
+        let row = row
+            .on_right_press(move |anchor| Message::OpenSidebarMenuAt {
+                target: SidebarMenuTarget::Task(menu_id.clone()),
+                anchor,
+            })
+            .on_middle_press(move |_| Message::OpenSidebarTaskPopup(popup_id.clone()))
+            .view(tokens);
+        mouse_area(row)
+            .on_exit(Message::CancelSidebarTaskArchive(archive_cancel_id))
+            .into()
+    }
+
+    fn sidebar_search_targets(&self) -> Vec<SidebarSearchTarget> {
+        let query = self.sidebar_search_query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return Vec::new();
+        }
+        let session_hits = session_search_hit_ids(&self.application, &query);
+        let mut targets = Vec::new();
+        for project in self.projects.iter().filter(|project| {
+            project.name.to_ascii_lowercase().contains(&query)
+                || project
+                    .workspace_path
+                    .as_deref()
+                    .is_some_and(|path| path.to_ascii_lowercase().contains(&query))
+        }) {
+            targets.push(SidebarSearchTarget::Project(project.id.clone()));
+            if targets.len() == 20 {
+                return targets;
+            }
+        }
+        for task in self.task_move_candidates.iter().filter(|task| {
+            !task.archived
+                && (task.title.to_ascii_lowercase().contains(&query)
+                    || session_hits.contains(&task.id))
+        }) {
+            targets.push(SidebarSearchTarget::Task(task.id.clone()));
+            if targets.len() == 20 {
+                break;
+            }
+        }
+        targets
+    }
+
+    fn sidebar_search_results(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let colors = tokens.colors;
+        let mut section = SidebarSection::new("搜索结果");
+        let mut count = 0usize;
+        for (index, target) in self.sidebar_search_targets().into_iter().enumerate() {
+            let active = index == self.sidebar_search_selection;
+            let row = match target {
+                SidebarSearchTarget::Project(project_id) => {
+                    let Some(project) = self
+                        .projects
+                        .iter()
+                        .find(|project| project.id == project_id)
+                    else {
+                        continue;
+                    };
+                    SidebarRow::new(project.name.clone())
+                        .leading(icon(Icon::Folder, 14.0, colors.muted))
+                        .state(if active {
+                            SidebarRowState::Active
+                        } else {
+                            SidebarRowState::Idle
+                        })
+                        .on_select(Message::SelectProject(project.id.clone()))
+                        .view(tokens)
+                }
+                SidebarSearchTarget::Task(task_id) => {
+                    let Some(task) = self
+                        .task_move_candidates
+                        .iter()
+                        .find(|task| task.id == task_id)
+                    else {
+                        continue;
+                    };
+                    let project = task
+                        .project_id
+                        .as_ref()
+                        .and_then(|project_id| {
+                            self.projects
+                                .iter()
+                                .find(|project| &project.id == project_id)
+                        })
+                        .map(|project| project.name.clone())
+                        .unwrap_or_else(|| "收集箱".to_owned());
+                    SidebarRow::new(task.title.clone())
+                        .trailing(text(project).size(9).color(colors.faint))
+                        .state(if active {
+                            SidebarRowState::Active
+                        } else {
+                            SidebarRowState::Idle
+                        })
+                        .on_select(Message::SelectTask(task.id.clone()))
+                        .view(tokens)
+                }
+            };
+            section = section
+                .push(mouse_area(row).on_enter(Message::SidebarSearchSelectionChanged(index)));
+            count += 1;
+        }
+        if count == 0 {
+            section = section.push(text("没有匹配结果").size(11).color(colors.faint));
+        }
+        section.count(count).view(tokens)
+    }
+
+    fn sidebar_context_menu(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let menu = self.sidebar_menu.as_ref().expect("sidebar menu is open");
+        let pending = menu.pending.as_ref();
+        let geometry = self.workspace.viewport_geometry();
+        let action = |label: &'static str, icon: Icon, value: SidebarMenuAction| {
+            ActionMenuItem::new(label)
+                .leading(icon)
+                .on_press(Message::SidebarMenu(ContextMenuEvent::Select(value)))
+                .view(tokens)
+        };
+        let mut content = column![].spacing(1).width(Length::Fill);
+        let item_count = match &menu.target {
+            SidebarMenuTarget::AddProject => {
+                content = content
+                    .push(action(
+                        "使用本地文件夹",
+                        Icon::Folder,
+                        SidebarMenuAction::AddLocalFolder,
+                    ))
+                    .push(action(
+                        "从 GitHub clone",
+                        Icon::Nodes,
+                        SidebarMenuAction::CloneRepository,
+                    ))
+                    .push(action(
+                        "创建空分类",
+                        Icon::Add,
+                        SidebarMenuAction::CreateCategory,
+                    ));
+                3
+            }
+            SidebarMenuTarget::Project(project_id) => {
+                let project = self
+                    .projects
+                    .iter()
+                    .find(|project| &project.id == project_id);
+                let has_workspace = project
+                    .and_then(|project| project.workspace_path.as_ref())
+                    .is_some();
+                content = content
+                    .push(action(
+                        "进入项目",
+                        Icon::Workspace,
+                        SidebarMenuAction::OpenProject,
+                    ))
+                    .push(action(
+                        "在弹出窗口中创建对话",
+                        Icon::Add,
+                        SidebarMenuAction::OpenProjectPopup,
+                    ))
+                    .push(action(
+                        if project.is_some_and(|project| project.pinned) {
+                            "取消置顶"
+                        } else {
+                            "置顶项目"
+                        },
+                        Icon::Nodes,
+                        SidebarMenuAction::ToggleProjectPinned,
+                    ))
+                    .push(
+                        ActionMenuItem::new("在文件管理器中打开")
+                            .leading(Icon::Folder)
+                            .disabled(!has_workspace)
+                            .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
+                                SidebarMenuAction::OpenProjectFileManager,
+                            )))
+                            .view(tokens),
+                    )
+                    .push(
+                        ActionMenuItem::new("在 VS Code 中打开")
+                            .leading(Icon::Workspace)
+                            .disabled(!has_workspace)
+                            .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
+                                SidebarMenuAction::OpenProjectCodeEditor,
+                            )))
+                            .view(tokens),
+                    )
+                    .push(action(
+                        "重命名项目",
+                        Icon::About,
+                        SidebarMenuAction::RenameProject,
+                    ))
+                    .push(
+                        ActionMenuItem::new(
+                            if pending == Some(&SidebarMenuAction::ArchiveProjectConversations) {
+                                "再次点击确认归档"
+                            } else {
+                                "归档所有对话"
+                            },
+                        )
+                        .leading(Icon::Close)
+                        .danger(true)
+                        .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
+                            SidebarMenuAction::ArchiveProjectConversations,
+                        )))
+                        .view(tokens),
+                    )
+                    .push(
+                        ActionMenuItem::new(
+                            if pending == Some(&SidebarMenuAction::RemoveProject) {
+                                "再次点击确认移除"
+                            } else {
+                                "移除项目"
+                            },
+                        )
+                        .leading(Icon::Close)
+                        .danger(true)
+                        .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
+                            SidebarMenuAction::RemoveProject,
+                        )))
+                        .view(tokens),
+                    );
+                8
+            }
+            SidebarMenuTarget::Task(task_id) => {
+                let task = self
+                    .task_move_candidates
+                    .iter()
+                    .find(|task| &task.id == task_id);
+                let has_worktree = self
+                    .application
+                    .task_worktree(task_id)
+                    .is_ok_and(|value| value.is_some());
+                content = content
+                    .push(action(
+                        "在弹出窗口继续",
+                        Icon::Workspace,
+                        SidebarMenuAction::OpenTaskPopup,
+                    ))
+                    .push(action(
+                        "在弹出窗口询问",
+                        Icon::Add,
+                        SidebarMenuAction::AskTaskPopup,
+                    ))
+                    .push(action(
+                        if task.is_some_and(|task| task.pinned) {
+                            "取消置顶"
+                        } else {
+                            "置顶"
+                        },
+                        Icon::Nodes,
+                        SidebarMenuAction::ToggleTaskPinned,
+                    ));
+                if has_worktree {
+                    content = content.push(
+                        ActionMenuItem::new(
+                            if pending == Some(&SidebarMenuAction::MergeTaskWorktree) {
+                                "再次点击确认合并并删除"
+                            } else {
+                                "合并并删除"
+                            },
+                        )
+                        .leading(Icon::Nodes)
+                        .danger(true)
+                        .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
+                            SidebarMenuAction::MergeTaskWorktree,
+                        )))
+                        .view(tokens),
+                    );
+                }
+                content = content.push(
+                    ActionMenuItem::new(if pending == Some(&SidebarMenuAction::ArchiveTask) {
+                        "再次点击确认归档"
+                    } else {
+                        "归档"
+                    })
+                    .leading(Icon::Close)
+                    .danger(true)
+                    .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
+                        SidebarMenuAction::ArchiveTask,
+                    )))
+                    .view(tokens),
+                );
+                if has_worktree {
+                    5
+                } else {
+                    4
+                }
+            }
+        };
+        AnchoredActionMenu::new(
+            content,
+            AnchoredMenuPosition::new(menu.anchor).placement(AnchoredMenuPlacement::BottomStart),
+            Size::new(geometry.logical_size.0, geometry.logical_size.1),
+            Message::SidebarMenu(ContextMenuEvent::Dismiss),
+            Message::SidebarMenu(ContextMenuEvent::Interaction),
+        )
+        .menu_size(220.0, item_count as f32 * 29.0 + 8.0)
+        .view(tokens)
+    }
+
+    fn titlebar_action_menu(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let geometry = self.workspace.viewport_geometry();
+        let mut content = column![].spacing(1).width(Length::Fill);
+        let mut item_count = 0;
+        let item = |label: &'static str, icon: Icon, action: TitlebarMenuAction| {
+            ActionMenuItem::new(label)
+                .leading(icon)
+                .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(action)))
+                .view(tokens)
+        };
+        if self.selected_task.is_some() {
+            content = content
+                .push(item(
+                    "返回任务列表",
+                    Icon::ArrowLeft,
+                    TitlebarMenuAction::BackToTaskList,
+                ))
+                .push(item(
+                    "在弹出窗口继续",
+                    Icon::Workspace,
+                    TitlebarMenuAction::OpenTaskPopup,
+                ))
+                .push(item(
+                    "在弹出窗口询问",
+                    Icon::Add,
+                    TitlebarMenuAction::AskTaskPopup,
+                ))
+                .push(item(
+                    "浏览器",
+                    Icon::Eye,
+                    TitlebarMenuAction::OpenTaskBrowser,
+                ));
+            item_count += 4;
+        }
+        if let Some((_, active_item)) = self.integrated_product_shell_pane() {
+            let closable = active_item.is_some_and(|item_id| {
+                self.workspace_items
+                    .iter()
+                    .any(|item| item.id == item_id && item.capabilities.closable)
+            });
+            content = content
+                .push(item(
+                    "左右分栏",
+                    Icon::Sidebar,
+                    TitlebarMenuAction::SplitHorizontal,
+                ))
+                .push(item(
+                    "上下分栏",
+                    Icon::Nodes,
+                    TitlebarMenuAction::SplitVertical,
+                ))
+                .push(
+                    ActionMenuItem::new("关闭当前页")
+                        .leading(Icon::Close)
+                        .disabled(!closable)
+                        .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
+                            TitlebarMenuAction::CloseCurrentItem,
+                        )))
+                        .view(tokens),
+                );
+            item_count += 3;
+        }
+        content = content
+            .push(
+                ActionMenuItem::new("打开命令面板")
+                    .leading(Icon::Search)
+                    .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
+                        TitlebarMenuAction::OpenCommandPalette,
+                    )))
+                    .view(tokens),
+            )
+            .push(
+                ActionMenuItem::new("打开会话状态")
+                    .leading(Icon::Nodes)
+                    .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
+                        TitlebarMenuAction::OpenConversationStatus,
+                    )))
+                    .view(tokens),
+            );
+        item_count += 2;
+        let trailing_inset = if cfg!(target_os = "macos") {
+            12.0
+        } else {
+            144.0
+        };
+        let anchor = Point::new((geometry.logical_size.0 - trailing_inset).max(0.0), 34.0);
+        AnchoredActionMenu::new(
+            content,
+            AnchoredMenuPosition::new(anchor).placement(AnchoredMenuPlacement::BottomEnd),
+            Size::new(geometry.logical_size.0, geometry.logical_size.1),
+            Message::TitlebarMenu(ContextMenuEvent::Dismiss),
+            Message::TitlebarMenu(ContextMenuEvent::Interaction),
+        )
+        .menu_size(220.0, item_count as f32 * 29.0 + 8.0)
+        .view(tokens)
     }
 
     fn automations_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
@@ -31230,6 +33963,142 @@ impl DesktopProgram {
             .into()
     }
 
+    fn project_content_toolbar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
+        let Some(project) = self.selected_project.as_ref().and_then(|project_id| {
+            self.projects
+                .iter()
+                .find(|project| &project.id == project_id)
+        }) else {
+            return space().height(Length::Fixed(0.0)).into();
+        };
+        let colors = tokens.colors;
+        let compact = project_toolbar_is_compact(self.primary_chat_region_width());
+        let tab = |label: &'static str,
+                   icon_kind: Icon,
+                   active: bool,
+                   message: Message|
+         -> Element<'static, Message> {
+            if compact {
+                return IconButton::new(label, icon_kind)
+                    .on_press(message)
+                    .selected(active)
+                    .size(ControlSize::Small)
+                    .view(tokens);
+            }
+            button(
+                row![
+                    icon(
+                        icon_kind,
+                        13.0,
+                        if active { colors.accent } else { colors.muted }
+                    ),
+                    text(label).size(12),
+                ]
+                .spacing(5)
+                .align_y(Alignment::Center),
+            )
+            .on_press(message)
+            .style(button_style(
+                tokens,
+                if active {
+                    ButtonKind::Subtle
+                } else {
+                    ButtonKind::Text
+                },
+            ))
+            .into()
+        };
+        let project_title = container(
+            text(project.name.clone())
+                .size(14)
+                .font(ui_font(font::Weight::Semibold))
+                .color(colors.text)
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsis(iced::widget::text::Ellipsis::End)
+                .width(Length::Fixed(if compact { 120.0 } else { 200.0 })),
+        )
+        .width(Length::Shrink);
+        let navigation = row![
+            project_title,
+            tab(
+                "任务",
+                Icon::Workspace,
+                self.project_surface == ProjectSurface::Tasks,
+                Message::OpenProjectTasks,
+            ),
+            tab(
+                "文件",
+                Icon::File,
+                self.project_surface == ProjectSurface::Files,
+                Message::OpenProjectFiles,
+            ),
+            tab(
+                "路线图",
+                Icon::Nodes,
+                self.project_surface == ProjectSurface::Roadmap,
+                Message::OpenRoadmap,
+            ),
+            tab(
+                "Memory",
+                Icon::Appearance,
+                self.project_surface == ProjectSurface::Memory,
+                Message::OpenMemory,
+            ),
+            tab(
+                "架构",
+                Icon::Nodes,
+                self.project_surface == ProjectSurface::Architecture,
+                Message::OpenArchitecture,
+            ),
+            tab(
+                "设置",
+                Icon::Settings,
+                self.project_surface == ProjectSurface::Settings,
+                Message::OpenProjectSettings,
+            ),
+            space().width(Length::Fill),
+            IconButton::new("打开工具", Icon::Nodes)
+                .on_press(Message::OpenCodingTools)
+                .size(ControlSize::Small)
+                .view(tokens),
+        ]
+        .spacing(if compact { 4 } else { 8 })
+        .align_y(Alignment::Center);
+        column![
+            container(navigation)
+                .width(Length::Fill)
+                .padding(Padding {
+                    top: 14.0,
+                    right: 20.0,
+                    bottom: 0.0,
+                    left: 20.0,
+                })
+                .style(canvas_style(tokens)),
+            container(space())
+                .width(Length::Fill)
+                .height(Length::Fixed(1.0))
+                .style(move |_| {
+                    iced::widget::container::Style::default().background(colors.border_soft)
+                }),
+        ]
+        .spacing(0)
+        .into()
+    }
+
+    fn with_project_content_toolbar(
+        &self,
+        content: Element<'static, Message>,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        if self.selected_task.is_some() && self.project_surface == ProjectSurface::Tasks {
+            return content;
+        }
+        column![self.project_content_toolbar(tokens), content]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
     fn project_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
         let colors = tokens.colors;
         if let Some(message) = &self.error_message {
@@ -31262,7 +34131,8 @@ impl DesktopProgram {
         if self.inbox_selected {
             if let Some(session) = &self.task_session {
                 let session = self.task_session_with_debug_overlay(session);
-                return self.task_session_content("收集箱".to_owned(), &session, tokens);
+                let content = self.task_session_content("收集箱".to_owned(), &session, tokens);
+                return self.with_project_content_toolbar(content, tokens);
             }
             return self.inbox_content(tokens);
         }
@@ -31292,19 +34162,47 @@ impl DesktopProgram {
 
         match self.project_surface {
             ProjectSurface::Clone => return self.project_clone_content(tokens),
-            ProjectSurface::Roadmap => return self.roadmap_content(project, tokens),
-            ProjectSurface::Memory => return self.memory_content(project, tokens),
-            ProjectSurface::Architecture => return self.architecture_content(project, tokens),
-            ProjectSurface::Files => return self.project_files_content(tokens),
-            ProjectSurface::Tasks => {}
+            ProjectSurface::Roadmap => {
+                let content = self.roadmap_content(project, tokens);
+                return self.with_project_content_toolbar(content, tokens);
+            }
+            ProjectSurface::Memory => {
+                let content = self.memory_content(project, tokens);
+                return self.with_project_content_toolbar(content, tokens);
+            }
+            ProjectSurface::Architecture => {
+                let content = self.architecture_content(project, tokens);
+                return self.with_project_content_toolbar(content, tokens);
+            }
+            ProjectSurface::Files => {
+                let content = self.project_files_content(tokens);
+                return self.with_project_content_toolbar(content, tokens);
+            }
+            ProjectSurface::Tasks => {
+                let task_list = self.task_list_content(
+                    tokens,
+                    "暂无任务",
+                    "点左侧项目行的 + 开一段新对话，或在这里创建任务。",
+                );
+                let content = container(task_list)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(Padding::from([16, 20]))
+                    .style(canvas_style(tokens))
+                    .into();
+                return self.with_project_content_toolbar(content, tokens);
+            }
+            ProjectSurface::Settings => {}
         }
 
         if let Some(session) = &self.task_session {
             let session = self.task_session_with_debug_overlay(session);
-            return self.task_session_content(project.name.clone(), &session, tokens);
+            let content = self.task_session_content(project.name.clone(), &session, tokens);
+            return self.with_project_content_toolbar(content, tokens);
         }
 
         let project_name = Input::new("项目名称", self.project_name_edit.clone())
+            .id(target_ids::PROJECT_NAME)
             .on_input(Message::ProjectNameChanged)
             .view(tokens);
         let project_workspace =
@@ -31383,39 +34281,13 @@ impl DesktopProgram {
         .title("项目")
         .view(tokens);
 
-        let task_list =
-            self.task_list_content(tokens, "暂无任务", "输入标题创建这个项目的第一个任务。");
-        let path = project
-            .workspace_path
-            .clone()
-            .unwrap_or_else(|| "未设置工作区".to_owned());
-        let page = column![
-            row![
-                column![
-                    text(project.name.clone())
-                        .size(18)
-                        .font(ui_font(font::Weight::Semibold))
-                        .color(colors.text),
-                    text(path).size(12).color(colors.muted),
-                ]
-                .spacing(3)
-                .width(Length::Fill),
-                text(format!("任务 {}", self.tasks.len()))
-                    .size(12)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.muted),
-            ]
-            .align_y(Alignment::Center),
-            project_editor,
-            task_list,
-        ]
-        .spacing(14);
-        container(page)
+        let content = container(project_editor)
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(Padding::from([20, 24]))
             .style(canvas_style(tokens))
-            .into()
+            .into();
+        self.with_project_content_toolbar(content, tokens)
     }
 
     fn projects_overview_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
@@ -34137,6 +37009,132 @@ impl DesktopProgram {
             .into()
     }
 
+    fn compact_composer_toolbar(&self, window_id: HostedWindowId) -> bool {
+        composer_toolbar_is_compact(window_id, self.primary_chat_region_width())
+    }
+
+    fn primary_chat_region_width(&self) -> f32 {
+        self.workspace
+            .viewport_geometry()
+            .region(&RegionId::Primary)
+            .map(|region| region.logical.width)
+            .unwrap_or_else(|| self.workspace.viewport_geometry().logical_size.0)
+    }
+
+    fn primary_chat_content_width(&self, horizontal_inset: f32) -> f32 {
+        (self.primary_chat_region_width() - horizontal_inset).clamp(1.0, CHAT_CONTENT_MAX_WIDTH)
+    }
+
+    fn primary_chat_timeline_width(&self, horizontal_inset: f32) -> f32 {
+        (self.primary_chat_region_width() - horizontal_inset).clamp(1.0, CHAT_TIMELINE_MAX_WIDTH)
+    }
+
+    fn composer_action_menu(
+        &self,
+        window_id: HostedWindowId,
+        disabled: bool,
+        plan_mode: bool,
+        goal_mode: bool,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let item = |label: &'static str, icon_kind: Icon, action: ComposerAction| {
+            ActionMenuItem::new(label)
+                .leading(icon_kind)
+                .disabled(disabled)
+                .on_press(Message::ComposerAction { window_id, action })
+                .view(tokens)
+        };
+        let content = column![
+            item("添加文件", Icon::File, ComposerAction::AddFile),
+            item("添加目录", Icon::Folder, ComposerAction::AddDirectory),
+            item(
+                "引用其他对话",
+                Icon::Workspace,
+                ComposerAction::ReferenceConversation,
+            ),
+            item("粘贴文字", Icon::File, ComposerAction::PasteText),
+            item("粘贴图片", Icon::Eye, ComposerAction::PasteImage),
+            item("粘贴文件", Icon::Nodes, ComposerAction::PasteFiles),
+            item(
+                if plan_mode {
+                    "关闭计划模式"
+                } else {
+                    "开启计划模式"
+                },
+                Icon::Nodes,
+                ComposerAction::TogglePlanMode,
+            ),
+            item(
+                if goal_mode {
+                    "关闭目标模式"
+                } else {
+                    "开启目标模式"
+                },
+                Icon::Workspace,
+                ComposerAction::ToggleGoalMode,
+            ),
+        ]
+        .spacing(1)
+        .width(Length::Fill);
+        let trigger = container(icon(Icon::Add, 16.0, tokens.colors.muted))
+            .width(Length::Fixed(28.0))
+            .height(Length::Fixed(28.0))
+            .center_x(Length::Fill)
+            .center_y(Length::Fill);
+        Popover::new(
+            trigger,
+            content,
+            self.composer_action_menu_window == Some(window_id),
+            Message::ToggleComposerActionMenu(window_id),
+            Message::CloseComposerActionMenu,
+            tokens,
+        )
+        .placement(PopoverPlacement::Top)
+        .gap(4.0)
+        .width(220.0)
+        .view()
+    }
+
+    fn composer_toolbar_action(
+        &self,
+        label: impl Into<String>,
+        icon_kind: Icon,
+        compact: bool,
+        message: Option<Message>,
+        selected: bool,
+        tokens: ThemeTokens,
+    ) -> Element<'static, Message> {
+        let label = label.into();
+        if compact {
+            let mut action = IconButton::new(label, icon_kind)
+                .size(ControlSize::Small)
+                .selected(selected)
+                .disabled(message.is_none());
+            if let Some(message) = message {
+                action = action.on_press(message);
+            }
+            return action.view(tokens);
+        }
+        button(
+            row![
+                icon(icon_kind, 13.0, tokens.colors.muted),
+                text(label).size(10),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .on_press_maybe(message)
+        .style(button_style(
+            tokens,
+            if selected {
+                ButtonKind::Primary
+            } else {
+                ButtonKind::Ghost
+            },
+        ))
+        .into()
+    }
+
     fn task_session_with_debug_overlay(&self, session: &TaskSessionView) -> TaskSessionView {
         let Some(task_id) = self.selected_task.as_ref() else {
             return session.clone();
@@ -34221,36 +37219,12 @@ impl DesktopProgram {
             .composer
             .as_ref()
             .is_some_and(|composer| composer.goal_mode);
-        let pending = if session.open_pending_count > 0 {
-            text(format!("待处理 {}", session.open_pending_count))
-                .size(12)
-                .color(colors.warning)
-        } else {
-            text("无未决事项").size(12).color(colors.muted)
-        };
-        let status = Card::new(
-            row![
-                text(format!("产物 {}", session.artifact_count))
-                    .size(12)
-                    .color(colors.muted),
-                text(format!("Todo {}", session.todo_count))
-                    .size(12)
-                    .color(colors.muted),
-                text(format!("交互 {}", session.pending_count))
-                    .size(12)
-                    .color(colors.muted),
-                pending,
-            ]
-            .spacing(16)
-            .align_y(Alignment::Center),
-        )
-        .title("会话状态")
-        .view(tokens);
         let can_apply_timeline_suggestion =
             !self.composer_is_locked() && session.run_block.is_none();
         let can_retry_timeline = session.run_block.is_none();
 
-        let mut timeline = column![].spacing(6).width(Length::Fill);
+        let timeline_empty = session.timeline.is_empty() && !session.timeline_has_more_before;
+        let mut timeline = column![].spacing(0).width(Length::Fill);
         if session.timeline_has_more_before {
             timeline = timeline.push(
                 button(text("加载更早记录").size(12))
@@ -34258,36 +37232,24 @@ impl DesktopProgram {
                     .style(button_style(tokens, ButtonKind::Ghost)),
             );
         }
-        if session.timeline.is_empty() {
-            timeline = timeline.push(
-                EmptyState::new("暂无时间线")
-                    .message("这个任务还没有会话事件。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            );
-        } else {
+        if !session.timeline.is_empty() {
             let window = self.timeline_window(session, &TimelineSurfaceKey::Main, true);
             if window.leading_extent > 0.0 {
                 timeline = timeline.push(space().height(window.leading_extent));
             }
             for event in &session.timeline[window.range.clone()] {
-                let mut event_header = row![
-                    text(event.title.clone())
-                        .size(13)
-                        .width(Length::Fill)
-                        .color(colors.text),
-                    text(format!("{} · {}", event.kind, event.status))
-                        .size(11)
-                        .color(colors.muted),
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center);
-                if let Some(value) = &event.markdown_plain_text {
+                let hovered = self.timeline_hovered_event.as_deref() == Some(event.id.as_str());
+                let mut event_actions = row![space().width(Length::Fill)]
+                    .spacing(4)
+                    .align_y(Alignment::Center);
+                let show_copy = event.message_role.as_deref() != Some("user")
+                    && (event.message_role.as_deref() != Some("assistant") || hovered);
+                if let Some(value) = event.markdown_plain_text.as_ref().filter(|_| show_copy) {
                     let copied = self
                         .last_copied_markdown
                         .as_ref()
                         .is_some_and(|(event_id, _)| event_id == &event.id);
-                    event_header = event_header.push(
+                    event_actions = event_actions.push(
                         button(text(if copied { "已复制" } else { "复制" }).size(11))
                             .on_press(Message::CopyTimelineMarkdown {
                                 event_id: event.id.clone(),
@@ -34297,7 +37259,7 @@ impl DesktopProgram {
                     );
                 }
                 if can_retry_timeline && event.can_retry {
-                    event_header = event_header.push(
+                    event_actions = event_actions.push(
                         button(text("重试").size(11))
                             .on_press(Message::RetryTimelineEvent {
                                 window_id: HostedWindowId::PRIMARY,
@@ -34306,8 +37268,11 @@ impl DesktopProgram {
                             .style(button_style(tokens, ButtonKind::Text)),
                     );
                 }
-                if can_apply_timeline_suggestion && event.session_branch_turn_id.is_some() {
-                    event_header = event_header
+                if hovered
+                    && can_apply_timeline_suggestion
+                    && event.session_branch_turn_id.is_some()
+                {
+                    event_actions = event_actions
                         .push(
                             button(text("从这里继续").size(11))
                                 .on_press(Message::SetTimelineSessionBranch {
@@ -34328,7 +37293,7 @@ impl DesktopProgram {
                         );
                 }
                 if can_apply_timeline_suggestion && event.batch_apply.is_some() {
-                    event_header = event_header.push(
+                    event_actions = event_actions.push(
                         button(text("应用建议").size(11))
                             .on_press(Message::ApplyTimelineSuggestion {
                                 window_id: HostedWindowId::PRIMARY,
@@ -34337,9 +37302,9 @@ impl DesktopProgram {
                             .style(button_style(tokens, ButtonKind::Primary)),
                     );
                 }
-                let mut content = column![event_header].spacing(3);
+                let mut body = column![].spacing(5).width(Length::Fill);
                 if let Some(document) = &event.markdown_document {
-                    content = content.push(self.markdown_document_view(
+                    body = body.push(self.markdown_document_view(
                         document,
                         HostedWindowId::PRIMARY,
                         &event.id,
@@ -34347,12 +37312,7 @@ impl DesktopProgram {
                         tokens,
                     ));
                 } else if let Some(summary) = &event.summary {
-                    content = content.push(text(summary.clone()).size(12).color(colors.muted));
-                }
-                if let Some(actions) =
-                    self.timeline_selection_actions(HostedWindowId::PRIMARY, &event.id, tokens)
-                {
-                    content = content.push(actions);
+                    body = body.push(text(summary.clone()).size(12).color(colors.muted));
                 }
                 if !event.attachments.is_empty() {
                     let mut attachments = column![].spacing(3).width(Length::Fill);
@@ -34363,9 +37323,23 @@ impl DesktopProgram {
                             tokens,
                         ));
                     }
-                    content = content.push(attachments);
+                    body = body.push(attachments);
                 }
-                timeline = timeline.push(ListItem::new(content).auto_height().view(tokens));
+                let has_actions = (show_copy && event.markdown_plain_text.is_some())
+                    || (can_retry_timeline && event.can_retry)
+                    || (can_apply_timeline_suggestion
+                        && ((hovered && event.session_branch_turn_id.is_some())
+                            || event.batch_apply.is_some()));
+                if has_actions {
+                    body = body.push(event_actions);
+                }
+
+                timeline = timeline.push(timeline_event_shell(
+                    event,
+                    body.into(),
+                    timeline_event_is_expanded(event, &self.timeline_toggled_events),
+                    tokens,
+                ));
             }
             if window.trailing_extent > 0.0 {
                 timeline = timeline.push(space().height(window.trailing_extent));
@@ -34508,38 +37482,47 @@ impl DesktopProgram {
         let pending_blocks_send = session.blocking_pending_count > 0;
         let task_run_block = session.run_block.as_ref().map(ToString::to_string);
         let review_target_pending = self.pending_review_slash_workflow.is_some();
-        let input = Input::new("输入消息", composer_content.clone())
-            .on_input(Message::ComposerChanged)
-            .view(tokens);
         let has_payload = self
             .composer
             .as_ref()
             .is_some_and(composer_has_turn_payload);
+        let input = HostedTextarea::new(&self.composer_editor)
+            .id(target_ids::COMPOSER_INPUT)
+            .placeholder(COMPOSER_PLACEHOLDER)
+            .height(composer_textarea_height(&self.composer_editor))
+            .on_action(Message::ComposerEdited)
+            .disabled(self.composer_input_is_locked());
+        let input = if has_payload
+            && (!pending_blocks_send || turn_active)
+            && task_run_block.is_none()
+            && !review_target_pending
+        {
+            input.submit_on_enter(Message::SubmitTurn)
+        } else {
+            input
+        }
+        .view(tokens);
         let action_button = if review_target_pending {
             button(text("请选择范围").size(12)).style(button_style(tokens, ButtonKind::Ghost))
         } else if turn_active && !has_payload {
-            button(text("停止").size(12))
+            button(text("■").size(13))
+                .width(Length::Fixed(32.0))
+                .height(Length::Fixed(32.0))
+                .padding(0)
                 .on_press(Message::InterruptTurn)
-                .style(button_style(tokens, ButtonKind::Danger))
+                .style(composer_round_button_style(tokens, ButtonKind::Danger))
         } else {
-            let send = button(
-                text(if turn_active {
-                    "加入调度队列"
-                } else {
-                    "发送"
-                })
-                .size(12),
-            )
-            .style(button_style(tokens, ButtonKind::Primary));
+            let send = button(text("↑").size(17))
+                .width(Length::Fixed(32.0))
+                .height(Length::Fixed(32.0))
+                .padding(0)
+                .style(composer_round_button_style(tokens, ButtonKind::Primary));
             if !has_payload || (pending_blocks_send && !turn_active) || task_run_block.is_some() {
                 send
             } else {
                 send.on_press(Message::SubmitTurn)
             }
         };
-        let composer = row![input, action_button]
-            .spacing(8)
-            .align_y(Alignment::Center);
         let mut composer_surface = column![].spacing(6).width(Length::Fill);
         if let Some(pending) = self
             .pending_session_branch
@@ -34825,117 +37808,78 @@ impl DesktopProgram {
             }
             composer_surface = composer_surface.push(references);
         }
-        let mut attach_file = button(
-            row![icon(Icon::File, 13.0, colors.muted), text("文件").size(11),]
-                .spacing(5)
-                .align_y(Alignment::Center),
-        )
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let mut attach_directory = button(
-            row![
-                icon(Icon::Folder, 13.0, colors.muted),
-                text("目录").size(11),
-            ]
-            .spacing(5)
-            .align_y(Alignment::Center),
-        )
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let mut paste_text = button(
-            row![icon(Icon::File, 13.0, colors.muted), text("文字").size(11),]
-                .spacing(5)
-                .align_y(Alignment::Center),
-        )
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let mut paste_image =
-            button(text("图片").size(11)).style(button_style(tokens, ButtonKind::Ghost));
-        let mut paste_files =
-            button(text("粘文件").size(11)).style(button_style(tokens, ButtonKind::Ghost));
+        let compact_toolbar = self.compact_composer_toolbar(HostedWindowId::PRIMARY);
+        let composer_locked = self.composer_input_is_locked();
         let optimizing_prompt =
             self.prompt_optimization_is_busy(HostedWindowId::PRIMARY, self.selected_task.as_ref());
-        let mut optimize_prompt = button(
-            text(if optimizing_prompt {
-                "优化中"
+        let available = !composer_locked;
+        let optimize_prompt = self.composer_toolbar_action(
+            if optimizing_prompt {
+                "正在优化提示"
             } else {
                 "优化提示"
-            })
-            .size(11),
-        )
-        .style(button_style(tokens, ButtonKind::Ghost));
-        if !self.composer_input_is_locked() {
-            attach_file = attach_file.on_press(Message::PickAttachmentFiles);
-            attach_directory = attach_directory.on_press(Message::PickAttachmentDirectories);
-            paste_text = paste_text.on_press(Message::PasteClipboardText);
-            paste_image = paste_image.on_press(Message::PasteClipboardImage);
-            paste_files =
-                paste_files.on_press(Message::PasteClipboardFiles(HostedWindowId::PRIMARY));
-        }
-        if !optimizing_prompt && !self.composer_is_locked() && !composer_content.trim().is_empty() {
-            optimize_prompt =
-                optimize_prompt.on_press(Message::OptimizePrompt(HostedWindowId::PRIMARY));
-        }
-        let composer_locked = self.composer_input_is_locked();
-        let mut plan_mode = button(
-            text(if composer_plan_mode {
-                "计划：开"
-            } else {
-                "计划"
-            })
-            .size(11),
-        )
-        .style(button_style(
-            tokens,
-            if composer_plan_mode {
-                ButtonKind::Primary
-            } else {
-                ButtonKind::Ghost
             },
-        ));
-        let mut goal_mode = button(
-            text(if composer_goal_mode {
-                "Goal：开"
-            } else {
-                "Goal"
-            })
-            .size(11),
-        )
-        .style(button_style(
+            Icon::Appearance,
+            compact_toolbar,
+            (!optimizing_prompt
+                && !self.composer_is_locked()
+                && !composer_content.trim().is_empty())
+            .then_some(Message::OptimizePrompt(HostedWindowId::PRIMARY)),
+            optimizing_prompt,
             tokens,
-            if composer_goal_mode {
-                ButtonKind::Primary
-            } else {
-                ButtonKind::Ghost
-            },
-        ));
-        let mut permission = button(text(permission_label(composer_permission)).size(11))
-            .style(button_style(tokens, ButtonKind::Ghost));
-        if !composer_locked {
-            plan_mode = plan_mode.on_press(Message::TogglePlanMode);
-            goal_mode = goal_mode.on_press(Message::ToggleGoalMode);
-            permission = permission.on_press(Message::CyclePermission);
+        );
+        let actions = self.composer_action_menu(
+            HostedWindowId::PRIMARY,
+            !available,
+            composer_plan_mode,
+            composer_goal_mode,
+            tokens,
+        );
+        let permission = self.composer_toolbar_action(
+            format!("权限：{}", permission_label(composer_permission)),
+            Icon::About,
+            compact_toolbar,
+            available.then_some(Message::CyclePermission),
+            false,
+            tokens,
+        );
+        let mut toolbar_left = row![actions, permission]
+            .spacing(3)
+            .align_y(Alignment::Center);
+        if let Some(worktree) = session.worktree.as_ref() {
+            toolbar_left = toolbar_left.push(
+                button(
+                    row![
+                        icon(Icon::Nodes, 13.0, colors.muted),
+                        text(worktree.branch_name.clone()).size(10),
+                    ]
+                    .spacing(4)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::OpenWorktree)
+                .style(button_style(tokens, ButtonKind::Ghost)),
+            );
         }
-        if let Some(composer) = self.composer.as_ref() {
-            composer_surface = composer_surface.push(self.composer_model_controls(
-                HostedWindowId::PRIMARY,
-                composer,
-                composer_locked,
+        if composer_plan_mode {
+            toolbar_left = toolbar_left.push(self.composer_toolbar_action(
+                "计划 ×",
+                Icon::Nodes,
+                compact_toolbar,
+                available.then_some(Message::TogglePlanMode),
+                true,
                 tokens,
             ));
         }
-        composer_surface = composer_surface.push(
-            row![
-                attach_file,
-                attach_directory,
-                paste_text,
-                paste_image,
-                paste_files,
-                optimize_prompt,
-                plan_mode,
-                goal_mode,
-                permission
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center),
-        );
+        if composer_goal_mode {
+            toolbar_left = toolbar_left.push(self.composer_toolbar_action(
+                "Goal ×",
+                Icon::Workspace,
+                compact_toolbar,
+                available.then_some(Message::ToggleGoalMode),
+                true,
+                tokens,
+            ));
+        }
         if let Some(usage) = session.context_usage.as_ref() {
             let mut compact =
                 button(text("压缩上下文").size(10)).style(button_style(tokens, ButtonKind::Ghost));
@@ -34954,40 +37898,101 @@ impl DesktopProgram {
                 .align_y(Alignment::Center),
             );
         }
-        composer_surface = composer_surface.push(composer);
-
-        let back = button(
-            row![
-                icon(Icon::ArrowLeft, 14.0, colors.muted),
-                text("任务列表").size(12),
+        let model_controls = self
+            .composer
+            .as_ref()
+            .map(|composer| {
+                self.composer_model_controls(
+                    HostedWindowId::PRIMARY,
+                    composer,
+                    composer_locked,
+                    tokens,
+                )
+            })
+            .unwrap_or_else(|| space().into());
+        let toolbar: Element<'static, Message> = if compact_toolbar {
+            column![
+                toolbar_left,
+                row![
+                    space().width(Length::Fill),
+                    model_controls,
+                    optimize_prompt,
+                    action_button,
+                ]
+                .spacing(3)
+                .align_y(Alignment::Center),
             ]
-            .spacing(6)
-            .align_y(Alignment::Center),
+            .spacing(4)
+            .into()
+        } else {
+            row![
+                toolbar_left,
+                space().width(Length::Fill),
+                model_controls,
+                optimize_prompt,
+                action_button,
+            ]
+            .spacing(3)
+            .align_y(Alignment::Center)
+            .into()
+        };
+        let composer_card = Card::new(column![input, toolbar].spacing(7))
+            .padding(Padding::from([10, 12]))
+            .view(tokens);
+        let composer_controls: Element<'static, Message> =
+            if let Some(todo_float) = self.task_todo_float(session, tokens) {
+                column![todo_float, composer_card].spacing(0).into()
+            } else {
+                composer_card
+            };
+        composer_surface = composer_surface.push(composer_controls);
+        let composer_surface = container(
+            container(composer_surface).width(Length::Fixed(self.primary_chat_content_width(48.0))),
         )
-        .on_press(Message::BackToTaskList)
-        .style(button_style(tokens, ButtonKind::Ghost));
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .padding(Padding {
+            top: 4.0,
+            right: 0.0,
+            bottom: 8.0,
+            left: 0.0,
+        });
+
         let debug_panel = self.debug_timeline_panel(
             HostedWindowId::PRIMARY,
             self.selected_task.is_some(),
             tokens,
         );
-        let page = column![
-            back,
-            column![
-                text(session.task_title.clone())
-                    .size(18)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                text(location_name).size(12).color(colors.muted),
-            ]
-            .spacing(3),
-            status,
-            debug_panel,
-            text("时间线")
-                .size(12)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.muted),
-            scrollable(timeline)
+        let timeline_at_end =
+            self.timeline_is_at_end(Some(session), &TimelineSurfaceKey::Main, true);
+        let timeline_surface: Element<'static, Message> = if timeline_empty {
+            let headline = conversation_empty_headline(
+                (location_name != "收集箱").then_some(location_name.as_str()),
+                false,
+            );
+            container(
+                column![
+                    space().height(Length::FillPortion(3)),
+                    text(headline)
+                        .size(24)
+                        .font(ui_font(font::Weight::Medium))
+                        .color(colors.text),
+                    space().height(Length::FillPortion(4)),
+                ]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(Alignment::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        } else {
+            let timeline = container(
+                container(timeline).width(Length::Fixed(self.primary_chat_timeline_width(48.0))),
+            )
+            .width(Length::Fill)
+            .center_x(Length::Fill);
+            let timeline: Element<'static, Message> = scrollable(timeline)
                 .id(TimelineSurfaceKey::Main.scrollable_id())
                 .on_scroll(|viewport| Message::TimelineScrolled {
                     surface: TimelineSurfaceKey::Main,
@@ -34996,17 +38001,203 @@ impl DesktopProgram {
                 })
                 .direction(vertical_scrollbar())
                 .width(Length::Fill)
-                .height(Length::Fill),
-            pending_actions,
-            composer_surface,
-        ]
-        .spacing(14);
+                .height(Length::Fill)
+                .into();
+            timeline_with_latest_control(
+                timeline,
+                !timeline_at_end,
+                TimelineSurfaceKey::Main,
+                tokens,
+            )
+        };
+        let pending_actions = container(
+            container(pending_actions).width(Length::Fixed(self.primary_chat_content_width(48.0))),
+        )
+        .width(Length::Fill)
+        .center_x(Length::Fill);
+        let mut page = column![]
+            .spacing(8)
+            .width(Length::Fill)
+            .height(Length::Fill);
+        if self.agent_interaction_settings.debug && self.selected_task.is_some() {
+            page = page.push(debug_panel);
+        }
+        page = page.push(timeline_surface);
+        if session.open_pending_count > 0 {
+            page = page.push(pending_actions);
+        }
+        page = page.push(composer_surface);
         container(page)
             .width(Length::Fill)
             .height(Length::Fill)
             .padding(Padding::from([20, 24]))
             .style(canvas_style(tokens))
             .into()
+    }
+
+    fn task_todo_float(
+        &self,
+        session: &TaskSessionView,
+        tokens: ThemeTokens,
+    ) -> Option<Element<'static, Message>> {
+        let visible_todos = session
+            .todos
+            .iter()
+            .filter(|todo| todo_float_item_is_visible(todo))
+            .collect::<Vec<_>>();
+        let total_count = visible_todos.len() + usize::from(session.goal.is_some());
+        if total_count == 0 {
+            return None;
+        }
+
+        const MAX_VISIBLE_ROWS: usize = 6;
+        let colors = tokens.colors;
+        let locked = self.composer_is_locked();
+        let inspector_open =
+            self.inspector_surface == InspectorSurface::Task && self.inspector_region_is_visible();
+        let mut rows = column![].spacing(2).width(Length::Fill);
+        let mut shown = 0usize;
+
+        if let Some(goal) = &session.goal {
+            let inspector: Element<'static, Message> = if inspector_open {
+                text("检查器").size(10).color(colors.faint).into()
+            } else {
+                button(text("编辑").size(10))
+                    .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
+                        TitlebarMenuAction::ToggleTaskInspector,
+                    )))
+                    .style(button_style(tokens, ButtonKind::Text))
+                    .into()
+            };
+            let mut refresh = IconButton::new("刷新 Goal", Icon::Restore).size(ControlSize::Small);
+            let mut clear = IconButton::new("清除 Goal", Icon::Close).size(ControlSize::Small);
+            if !locked {
+                refresh = refresh.on_press(Message::RefreshGoal);
+                clear = clear.on_press(Message::ClearGoal);
+            }
+            rows = rows.push(
+                container(
+                    row![
+                        icon(Icon::Nodes, 13.0, colors.accent),
+                        text(goal.objective.clone())
+                            .size(12)
+                            .width(Length::Fill)
+                            .color(colors.text),
+                        text(format!(
+                            "{} · {} tokens",
+                            goal_status_label(goal.status),
+                            goal.tokens_used
+                        ))
+                        .size(10)
+                        .color(colors.muted),
+                        inspector,
+                        refresh.view(tokens),
+                        clear.view(tokens),
+                    ]
+                    .spacing(5)
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .height(Length::Fixed(28.0))
+                .padding([0, 4])
+                .style(move |_| {
+                    iced::widget::container::Style::default().background(colors.subtle)
+                }),
+            );
+            shown += 1;
+        }
+
+        for todo in visible_todos
+            .into_iter()
+            .take(MAX_VISIBLE_ROWS.saturating_sub(shown))
+        {
+            let is_guide = todo.source == DesktopTodoSource::Lilia;
+            let source_icon = if is_guide {
+                Icon::Appearance
+            } else {
+                Icon::About
+            };
+            let status = if is_guide {
+                match todo.guide_status {
+                    Some(DesktopTodoGuideStatus::Queued) => "排队中".to_owned(),
+                    _ => todo_priority_label(todo.priority).to_owned(),
+                }
+            } else {
+                format!("Agent · {}", todo_priority_label(todo.priority))
+            };
+            let mut actions = row![].spacing(1).align_y(Alignment::Center);
+            if is_guide && todo.guide_status == Some(DesktopTodoGuideStatus::Pending) {
+                let mut send =
+                    button(text("发送").size(10)).style(button_style(tokens, ButtonKind::Text));
+                let mut delete = IconButton::new("删除引导", Icon::Close).size(ControlSize::Small);
+                if !locked {
+                    send = send.on_press(Message::DispatchTodoGuide(todo.id.clone()));
+                    delete = delete.on_press(Message::DeleteTodo(todo.id.clone()));
+                }
+                actions = actions.push(send).push(delete.view(tokens));
+            }
+            rows = rows.push(
+                container(
+                    row![
+                        icon(source_icon, 13.0, colors.faint),
+                        text(todo.text.clone())
+                            .size(12)
+                            .width(Length::Fill)
+                            .color(colors.text),
+                        text(status).size(10).color(colors.muted),
+                        actions,
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center),
+                )
+                .width(Length::Fill)
+                .height(Length::Fixed(28.0))
+                .padding([0, 4]),
+            );
+            shown += 1;
+        }
+
+        if total_count > shown {
+            let label = format!("还有 {} 项 · 在检查器查看", total_count - shown);
+            rows = if inspector_open {
+                rows.push(container(text(label).size(10).color(colors.faint)).padding([4, 8]))
+            } else {
+                rows.push(
+                    button(text(label).size(10))
+                        .width(Length::Fill)
+                        .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
+                            TitlebarMenuAction::ToggleTaskInspector,
+                        )))
+                        .style(button_style(tokens, ButtonKind::Text)),
+                )
+            };
+        }
+
+        Some(
+            container(rows)
+                .width(Length::Fill)
+                .padding([6, 8])
+                .style(move |_| iced::widget::container::Style {
+                    background: Some(colors.surface.into()),
+                    border: iced::Border {
+                        color: colors.border,
+                        width: 1.0,
+                        radius: iced::border::Radius {
+                            top_left: 10.0,
+                            top_right: 10.0,
+                            bottom_right: 0.0,
+                            bottom_left: 0.0,
+                        },
+                    },
+                    shadow: iced::Shadow {
+                        color: iced::Color::from_rgba8(0, 0, 0, 0.16),
+                        offset: iced::Vector::new(0.0, 2.0),
+                        blur_radius: 10.0,
+                    },
+                    ..iced::widget::container::Style::default()
+                })
+                .into(),
+        )
     }
 
     fn inspector_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
@@ -35638,14 +38829,21 @@ impl DesktopProgram {
     ) -> Element<'static, Message> {
         let pane_is_active = self.panel_layout.active_pane() == pane_id;
         let active_item = active_item.cloned();
-        let mut options = vec![SelectionOption::new(None, "项目概览")
-            .icon(Icon::Workspace)
-            .draggable(false)];
-        for item_id in item_ids {
-            if let Some(item) = self.workspace_items.iter().find(|item| &item.id == item_id) {
+        let compact_product_tabs = self.uses_compact_product_shell_tabs(item_ids);
+        let mut options = Vec::new();
+        if !compact_product_tabs || active_item.is_none() {
+            options.push(
+                SelectionOption::new(None, "项目概览")
+                    .icon(Icon::Workspace)
+                    .draggable(false),
+            );
+        }
+        for item_id in self.visible_main_workspace_tab_item_ids(item_ids, active_item.as_ref()) {
+            if let Some(item) = self.workspace_items.iter().find(|item| item.id == item_id) {
                 options.push(
                     SelectionOption::new(Some(item.id.clone()), item.title.clone())
-                        .icon(Icon::Workspace),
+                        .icon(Icon::Workspace)
+                        .draggable(!compact_product_tabs),
                 );
             }
         }
@@ -35798,9 +38996,55 @@ impl DesktopProgram {
         } else {
             self.workspace_inactive_pane_content(active_item.as_ref(), tokens)
         };
+        if self.integrated_product_shell_pane().is_some() {
+            return body;
+        }
         PaneChrome::new(tabs, body, pane_actions, tokens)
             .active(pane_is_active)
             .view()
+    }
+
+    fn uses_compact_product_shell_tabs(&self, item_ids: &[WorkspaceItemId]) -> bool {
+        self.panel_layout.pane_ids().len() == 1
+            && item_ids.iter().all(|item_id| {
+                self.workspace_items
+                    .iter()
+                    .find(|item| &item.id == item_id)
+                    .is_some_and(is_product_shell_workspace_item)
+            })
+    }
+
+    fn visible_main_workspace_tab_item_ids(
+        &self,
+        item_ids: &[WorkspaceItemId],
+        active_item: Option<&WorkspaceItemId>,
+    ) -> Vec<WorkspaceItemId> {
+        if !self.uses_compact_product_shell_tabs(item_ids) {
+            return item_ids.to_vec();
+        }
+        active_item
+            .filter(|active_item| item_ids.contains(active_item))
+            .cloned()
+            .into_iter()
+            .collect()
+    }
+
+    fn integrated_product_shell_pane(&self) -> Option<(PaneId, Option<WorkspaceItemId>)> {
+        if self.workspace.viewport_geometry().logical_size.0 < 940.0 {
+            return None;
+        }
+        let pane_id = self.panel_layout.active_pane().clone();
+        let item_ids = self.panel_layout.pane_items(&pane_id).ok()?;
+        self.uses_compact_product_shell_tabs(item_ids).then(|| {
+            (
+                pane_id.clone(),
+                self.panel_layout
+                    .active_item(&pane_id)
+                    .ok()
+                    .flatten()
+                    .cloned(),
+            )
+        })
     }
 
     fn workspace_inactive_pane_content(
@@ -35889,24 +39133,13 @@ impl DesktopProgram {
         let colors = tokens.colors;
         let mut timeline = column![].spacing(6).width(Length::Fill);
         for event in session.timeline.iter().rev().take(8).rev() {
-            timeline = timeline.push(
-                ListItem::new(
-                    column![
-                        text(event.title.clone()).size(12).color(colors.text),
-                        text(
-                            event
-                                .summary
-                                .clone()
-                                .unwrap_or_else(|| format!("{} · {}", event.kind, event.status))
-                        )
-                        .size(10)
-                        .color(colors.muted),
-                    ]
-                    .spacing(3),
-                )
-                .auto_height()
-                .view(tokens),
-            );
+            let mut event_content =
+                column![text(event.title.clone()).size(12).color(colors.text)].spacing(3);
+            if let Some(summary) = &event.summary {
+                event_content =
+                    event_content.push(text(summary.clone()).size(10).color(colors.muted));
+            }
+            timeline = timeline.push(ListItem::new(event_content).auto_height().view(tokens));
         }
         if session.timeline.is_empty() {
             timeline = timeline.push(
@@ -36428,9 +39661,31 @@ impl DesktopProgram {
         } else {
             shell
         };
+        let base = if self.sidebar_menu.is_some() {
+            stack![base, self.sidebar_context_menu(tokens)].into()
+        } else {
+            base
+        };
+        let base = if self.titlebar_menu_open {
+            stack![base, self.titlebar_action_menu(tokens)].into()
+        } else {
+            base
+        };
         let base = self.with_command_palette(HostedWindowId::PRIMARY, base, tokens);
         self.with_command_keymap(HostedWindowId::PRIMARY, base)
     }
+}
+
+fn sync_hosted_textarea(state: &HostedTextareaState, value: &str) {
+    if state.text() != value {
+        state.set_text(value);
+    }
+}
+
+fn composer_textarea_height(state: &HostedTextareaState) -> f32 {
+    let additional_lines = state.line_count().saturating_sub(1) as f32;
+    (COMPOSER_TEXTAREA_MIN_HEIGHT + additional_lines * COMPOSER_TEXTAREA_LINE_HEIGHT)
+        .min(COMPOSER_TEXTAREA_MAX_HEIGHT)
 }
 
 enum LiliaDesktopState {
@@ -36862,6 +40117,8 @@ impl HostedProgram for DesktopProgram {
             .map_err(|error| error.to_string())?;
         let update_configured = crate::updater::is_configured();
         let main_window_geometry = load_window_state(&home);
+        let sidebar_tree_state = load_sidebar_tree_state(&home);
+        let workspace = initial_workspace(&sidebar_tree_state);
         let window_state = NativeWindowStateWriter::start(&home, main_window_geometry)?;
         let conversation_status_window = load_conversation_status_state(&home);
         let conversation_status_state_writer = NativeConversationStatusStateWriter::start(&home)?;
@@ -36894,7 +40151,7 @@ impl HostedProgram for DesktopProgram {
             data_import_target_identity,
             data_import,
             home,
-            workspace: initial_workspace(),
+            workspace,
             workspace_items: Vec::new(),
             panel_layout: PanelLayoutSnapshot::default(),
             action_registry,
@@ -36974,6 +40231,7 @@ impl HostedProgram for DesktopProgram {
             terminal_scrollback: BTreeMap::new(),
             terminal_notices: BTreeMap::new(),
             composer: None,
+            composer_editor: HostedTextareaState::new(),
             slash_commands: Vec::new(),
             conversation_reference_results: Vec::new(),
             context_attachment_results: Vec::new(),
@@ -37153,6 +40411,21 @@ impl HostedProgram for DesktopProgram {
             message_sender,
             appearance,
             sidebar_display_mode,
+            sidebar_tree_state,
+            sidebar_revealed_projects: BTreeSet::new(),
+            sidebar_inbox_revealed: false,
+            sidebar_search_open: false,
+            sidebar_search_query: String::new(),
+            sidebar_search_selection: 0,
+            timeline_toggled_events: BTreeSet::new(),
+            timeline_hovered_event: None,
+            sidebar_menu: None,
+            titlebar_menu_open: false,
+            composer_action_menu_window: None,
+            sidebar_pending_task_archive: None,
+            sidebar_stopping_tasks: BTreeSet::new(),
+            sidebar_folder_drop_hovered: false,
+            sidebar_activity_phase: 0,
             debug_timeline: NativeDebugTimeline::default(),
             theme,
             error_message: None,
@@ -37213,13 +40486,19 @@ impl HostedProgram for DesktopProgram {
             },
             window_commands,
             ui_commands,
+            capture_input: false,
             exit,
         }
     }
 
     fn view(&self, _native_material: bool) -> Element<'static, Self::Message> {
         let tokens = self.theme_tokens();
-        self.with_markdown_image_preview(HostedWindowId::PRIMARY, self.view_shell(), tokens)
+        let content = self.with_timeline_selection_toolbar(
+            HostedWindowId::PRIMARY,
+            self.view_shell(),
+            tokens,
+        );
+        self.with_markdown_image_preview(HostedWindowId::PRIMARY, content, tokens)
     }
 
     fn view_window(
@@ -37241,6 +40520,7 @@ impl HostedProgram for DesktopProgram {
             let content = self.task_popup_content(popup, tokens);
             let content = self.with_command_palette(id, content, tokens);
             let content = self.with_command_keymap(id, content);
+            let content = self.with_timeline_selection_toolbar(id, content, tokens);
             self.with_markdown_image_preview(id, content, tokens)
         } else {
             self.view_shell()
@@ -37268,7 +40548,18 @@ impl HostedProgram for DesktopProgram {
     }
 
     fn next_wakeup(&self) -> Option<std::time::Instant> {
-        self.shell.next_wakeup()
+        let shell = self.shell.next_wakeup();
+        let activity = (self
+            .conversation_status_entries
+            .iter()
+            .any(|entry| runtime_phase_is_processing(&entry.runtime_phase))
+            || !self.sidebar_stopping_tasks.is_empty())
+        .then(|| std::time::Instant::now() + Duration::from_millis(100));
+        match (shell, activity) {
+            (Some(shell), Some(activity)) => Some(shell.min(activity)),
+            (Some(wakeup), None) | (None, Some(wakeup)) => Some(wakeup),
+            (None, None) => None,
+        }
     }
 
     fn wake(
@@ -37277,7 +40568,17 @@ impl HostedProgram for DesktopProgram {
         _context: &HostedProgramContext<Self::Message>,
     ) -> HostedProgramUpdate {
         self.shell.pump_platform_events();
-        HostedProgramUpdate::default()
+        if !self.sidebar_stopping_tasks.is_empty()
+            || self
+                .conversation_status_entries
+                .iter()
+                .any(|entry| runtime_phase_is_processing(&entry.runtime_phase))
+        {
+            self.sidebar_activity_phase = (self.sidebar_activity_phase + 1) % 8;
+            HostedProgramUpdate::redraw()
+        } else {
+            HostedProgramUpdate::default()
+        }
     }
 
     #[cfg(debug_assertions)]
@@ -37317,8 +40618,13 @@ impl HostedProgram for DesktopProgram {
                 }
                 HostedWindowEvent::VisibilityChanged { .. }
                 | HostedWindowEvent::FocusChanged { .. }
+                | HostedWindowEvent::Ime { .. }
+                | HostedWindowEvent::Closed { .. }
+                | HostedWindowEvent::KeyPressed { .. }
                 | HostedWindowEvent::FileHovered { .. }
+                | HostedWindowEvent::FilesHovered { .. }
                 | HostedWindowEvent::FileDropped { .. }
+                | HostedWindowEvent::FilesDropped { .. }
                 | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
                 HostedWindowEvent::CloseRequested { .. } => {
                     self.conversation_status_open = false;
@@ -37367,8 +40673,13 @@ impl HostedProgram for DesktopProgram {
                 }
                 HostedWindowEvent::Moved { .. }
                 | HostedWindowEvent::FocusChanged { .. }
+                | HostedWindowEvent::Ime { .. }
+                | HostedWindowEvent::Closed { .. }
+                | HostedWindowEvent::KeyPressed { .. }
                 | HostedWindowEvent::FileHovered { .. }
+                | HostedWindowEvent::FilesHovered { .. }
                 | HostedWindowEvent::FileDropped { .. }
+                | HostedWindowEvent::FilesDropped { .. }
                 | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
             };
         }
@@ -37403,8 +40714,19 @@ impl HostedProgram for DesktopProgram {
                     HostedProgramUpdate::default()
                 }
                 HostedWindowEvent::VisibilityChanged { .. }
-                | HostedWindowEvent::FocusChanged { .. } => HostedProgramUpdate::default(),
+                | HostedWindowEvent::FocusChanged { .. }
+                | HostedWindowEvent::Ime { .. }
+                | HostedWindowEvent::Closed { .. }
+                | HostedWindowEvent::KeyPressed { .. } => HostedProgramUpdate::default(),
                 HostedWindowEvent::FileHovered { id, .. } => {
+                    if self.window_accepts_attachment_drop(id) {
+                        self.file_drop_hovered_windows.insert(id);
+                        HostedProgramUpdate::redraw_window(id)
+                    } else {
+                        HostedProgramUpdate::default()
+                    }
+                }
+                HostedWindowEvent::FilesHovered { id, .. } => {
                     if self.window_accepts_attachment_drop(id) {
                         self.file_drop_hovered_windows.insert(id);
                         HostedProgramUpdate::redraw_window(id)
@@ -37416,6 +40738,15 @@ impl HostedProgram for DesktopProgram {
                     self.file_drop_hovered_windows.remove(&id);
                     if self.window_accepts_attachment_drop(id) {
                         self.add_dropped_attachment(id, path);
+                    }
+                    HostedProgramUpdate::redraw_window(id)
+                }
+                HostedWindowEvent::FilesDropped { id, paths, .. } => {
+                    self.file_drop_hovered_windows.remove(&id);
+                    if self.window_accepts_attachment_drop(id) {
+                        for path in paths {
+                            self.add_dropped_attachment(id, path);
+                        }
                     }
                     HostedProgramUpdate::redraw_window(id)
                 }
@@ -37432,6 +40763,42 @@ impl HostedProgram for DesktopProgram {
                     }
                 }
             };
+        }
+        if let HostedWindowEvent::KeyPressed { id, stroke, .. } = &event {
+            if *id == HostedWindowId::PRIMARY && self.sidebar_search_open {
+                match stroke.key.as_str() {
+                    "Escape" => {
+                        self.close_sidebar_search();
+                        return HostedProgramUpdate::redraw().capture_input();
+                    }
+                    "ArrowDown" | "ArrowUp" => {
+                        let count = self.sidebar_search_targets().len();
+                        self.sidebar_search_selection = move_sidebar_search_selection(
+                            self.sidebar_search_selection,
+                            count,
+                            stroke.key == "ArrowDown",
+                        );
+                        return HostedProgramUpdate::redraw().capture_input();
+                    }
+                    "Enter" => {
+                        let target = self
+                            .sidebar_search_targets()
+                            .get(self.sidebar_search_selection)
+                            .cloned();
+                        if let Some(target) = target {
+                            let message = match target {
+                                SidebarSearchTarget::Project(project_id) => {
+                                    Message::SelectProject(project_id)
+                                }
+                                SidebarSearchTarget::Task(task_id) => Message::SelectTask(task_id),
+                            };
+                            let _ = self.update_message(message);
+                        }
+                        return HostedProgramUpdate::redraw().capture_input();
+                    }
+                    _ => {}
+                }
+            }
         }
         match event {
             HostedWindowEvent::Ready { geometry, .. }
@@ -37494,24 +40861,82 @@ impl HostedProgram for DesktopProgram {
                 HostedProgramUpdate::default()
             }
             HostedWindowEvent::VisibilityChanged { .. }
-            | HostedWindowEvent::FocusChanged { .. } => HostedProgramUpdate::default(),
-            HostedWindowEvent::FileHovered { id, .. } => {
-                if self.window_accepts_attachment_drop(id) {
+            | HostedWindowEvent::FocusChanged { .. }
+            | HostedWindowEvent::Ime { .. }
+            | HostedWindowEvent::Closed { .. }
+            | HostedWindowEvent::KeyPressed { .. } => HostedProgramUpdate::default(),
+            HostedWindowEvent::FileHovered {
+                id, path, position, ..
+            } => {
+                self.sidebar_folder_drop_hovered =
+                    self.sidebar_accepts_folder_drop(id, &path, position);
+                if self.sidebar_folder_drop_hovered {
+                    self.file_drop_hovered_windows.remove(&id);
+                    HostedProgramUpdate::redraw()
+                } else if self.window_accepts_attachment_drop(id) {
                     self.file_drop_hovered_windows.insert(id);
                     HostedProgramUpdate::redraw()
                 } else {
                     HostedProgramUpdate::default()
                 }
             }
-            HostedWindowEvent::FileDropped { id, path, .. } => {
+            HostedWindowEvent::FileDropped {
+                id, path, position, ..
+            } => {
                 self.file_drop_hovered_windows.remove(&id);
-                if self.window_accepts_attachment_drop(id) {
+                let sidebar_folder = self.sidebar_accepts_folder_drop(id, &path, position);
+                self.sidebar_folder_drop_hovered = false;
+                if sidebar_folder {
+                    self.add_sidebar_project_folder(path);
+                } else if self.window_accepts_attachment_drop(id) {
                     self.add_dropped_attachment(id, path);
+                }
+                HostedProgramUpdate::redraw()
+            }
+            HostedWindowEvent::FilesHovered {
+                id,
+                paths,
+                position,
+                ..
+            } => {
+                self.sidebar_folder_drop_hovered = paths
+                    .iter()
+                    .any(|path| self.sidebar_accepts_folder_drop(id, path, position));
+                if self.sidebar_folder_drop_hovered {
+                    self.file_drop_hovered_windows.remove(&id);
+                    HostedProgramUpdate::redraw()
+                } else if self.window_accepts_attachment_drop(id) {
+                    self.file_drop_hovered_windows.insert(id);
+                    HostedProgramUpdate::redraw()
+                } else {
+                    HostedProgramUpdate::default()
+                }
+            }
+            HostedWindowEvent::FilesDropped {
+                id,
+                paths,
+                position,
+                ..
+            } => {
+                self.file_drop_hovered_windows.remove(&id);
+                let sidebar_folder = paths
+                    .iter()
+                    .any(|path| self.sidebar_accepts_folder_drop(id, path, position));
+                self.sidebar_folder_drop_hovered = false;
+                if sidebar_folder {
+                    for path in paths.into_iter().filter(|path| path.is_dir()) {
+                        self.add_sidebar_project_folder(path);
+                    }
+                } else if self.window_accepts_attachment_drop(id) {
+                    for path in paths {
+                        self.add_dropped_attachment(id, path);
+                    }
                 }
                 HostedProgramUpdate::redraw()
             }
             HostedWindowEvent::FileHoverCancelled { id, .. } => {
                 self.file_drop_hovered_windows.remove(&id);
+                self.sidebar_folder_drop_hovered = false;
                 HostedProgramUpdate::redraw()
             }
             HostedWindowEvent::CloseRequested { .. } => HostedProgramUpdate::exit(),
@@ -37705,12 +41130,31 @@ fn workspace_tab_drag_surface(
     }
 }
 
-fn initial_workspace() -> WorkspaceController {
+fn is_product_shell_workspace_item(item: &WorkspaceItem) -> bool {
+    item.task_id().is_ok_and(|task_id| task_id.is_some())
+        || item
+            .application_surface()
+            .is_ok_and(|surface| surface.is_some())
+        || item
+            .project_surface()
+            .is_ok_and(|surface| surface.is_some())
+}
+
+fn initial_workspace(sidebar_state: &NativeSidebarTreeState) -> WorkspaceController {
+    let requested_sidebar_width = if sidebar_state.sidebar_width == 0 {
+        SIDEBAR_DEFAULT_WIDTH
+    } else {
+        f32::from(sidebar_state.sidebar_width)
+    };
+    let sidebar_width = requested_sidebar_width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
     let layout = WorkspaceLayout::new([
         RegionState::new(RegionId::Resources, RegionRole::Resources)
-            .size(232.0)
-            .min_size(232.0)
-            .max_size(232.0),
+            .size(sidebar_width)
+            .min_size(SIDEBAR_MIN_WIDTH)
+            .max_size(SIDEBAR_MAX_WIDTH)
+            .collapsible(true)
+            .resizable(true)
+            .collapsed(sidebar_state.sidebar_collapsed),
         RegionState::new(RegionId::Primary, RegionRole::Primary),
         RegionState::new(RegionId::Inspector, RegionRole::Inspector)
             .size(300.0)
@@ -37991,6 +41435,261 @@ fn context_usage_color(usage: &ChatContextUsage, colors: Colors) -> iced::Color 
         Some(percent) if percent >= 90.0 => colors.danger,
         Some(percent) if percent >= 75.0 => colors.warning,
         _ => colors.muted,
+    }
+}
+
+fn timeline_status_color(status: &str, colors: Colors) -> iced::Color {
+    match status {
+        "completed" | "done" | "success" | "succeeded" => colors.success,
+        "failed" | "error" | "cancelled" | "canceled" => colors.danger,
+        "requires_action" | "waiting" | "waiting_interaction" => colors.warning,
+        "running" | "started" | "in_progress" => colors.accent,
+        _ => colors.muted,
+    }
+}
+
+fn timeline_event_has_details(event: &TaskTimelineItem) -> bool {
+    event.markdown_document.is_some()
+        || event
+            .summary
+            .as_deref()
+            .is_some_and(|value| !value.trim().is_empty())
+        || !event.attachments.is_empty()
+        || event.can_retry
+        || event.batch_apply.is_some()
+        || event.session_branch_turn_id.is_some()
+}
+
+fn timeline_content_extent(session: &TaskSessionView, includes_load_earlier_control: bool) -> f32 {
+    session.timeline_layout.total_extent()
+        + if includes_load_earlier_control && session.timeline_has_more_before {
+            TIMELINE_LOAD_EARLIER_EXTENT
+        } else {
+            0.0
+        }
+}
+
+fn timeline_viewport_is_at_end(viewport: TimelineViewport, content_extent: f32) -> bool {
+    let maximum_offset = (content_extent - viewport.extent).max(0.0);
+    viewport.offset >= (maximum_offset - TIMELINE_TAIL_TOLERANCE).max(0.0)
+}
+
+fn timeline_with_latest_control(
+    timeline: Element<'static, Message>,
+    visible: bool,
+    surface: TimelineSurfaceKey,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    if !visible {
+        return timeline;
+    }
+    let latest = button(
+        row![text("↓").size(12), text("最新消息").size(11)]
+            .spacing(5)
+            .align_y(Alignment::Center),
+    )
+    .padding([6.0, 10.0])
+    .on_press(Message::ScrollTimelineToEnd(surface))
+    .style(button_style(tokens, ButtonKind::Subtle));
+    stack![
+        timeline,
+        container(latest)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::End)
+            .padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 8.0,
+                left: 0.0,
+            }),
+    ]
+    .into()
+}
+
+fn timeline_event_is_toggleable(event: &TaskTimelineItem) -> bool {
+    event.message_role.is_none() && timeline_event_has_details(event)
+}
+
+fn timeline_event_default_expanded(event: &TaskTimelineItem) -> bool {
+    event.message_role.as_deref() == Some("assistant")
+        || matches!(
+            event.status.as_str(),
+            "running"
+                | "started"
+                | "in_progress"
+                | "requires_action"
+                | "waiting"
+                | "waiting_interaction"
+                | "failed"
+                | "error"
+                | "cancelled"
+                | "canceled"
+        )
+}
+
+fn timeline_event_is_expanded(event: &TaskTimelineItem, toggled_events: &BTreeSet<String>) -> bool {
+    let default = timeline_event_default_expanded(event);
+    if toggled_events.contains(&event.id) {
+        !default
+    } else {
+        default
+    }
+}
+
+fn timeline_event_shell(
+    event: &TaskTimelineItem,
+    body: Element<'static, Message>,
+    expanded: bool,
+    tokens: ThemeTokens,
+) -> Element<'static, Message> {
+    let colors = tokens.colors;
+    let event_id = event.id.clone();
+    let content: Element<'static, Message> = match event.message_role.as_deref() {
+        Some("user") => {
+            let bubble = container(body).padding([10.0, 14.0]).style(move |_| {
+                iced::widget::container::Style {
+                    background: Some(colors.accent_soft.into()),
+                    border: iced::Border {
+                        radius: iced::border::Radius {
+                            top_left: 12.0,
+                            top_right: 12.0,
+                            bottom_right: 4.0,
+                            bottom_left: 12.0,
+                        },
+                        ..Default::default()
+                    },
+                    text_color: Some(colors.text),
+                    ..Default::default()
+                }
+            });
+            container(
+                row![
+                    space().width(Length::FillPortion(1)),
+                    container(bubble)
+                        .width(Length::FillPortion(3))
+                        .align_x(iced::alignment::Horizontal::Right)
+                ]
+                .width(Length::Fill)
+                .align_y(Alignment::Center),
+            )
+            .padding([7.0, 0.0])
+            .into()
+        }
+        Some("assistant") => container(body)
+            .padding(Padding {
+                top: 7.0,
+                right: 0.0,
+                bottom: 7.0,
+                left: 28.0,
+            })
+            .into(),
+        _ => {
+            let status_color = timeline_status_color(&event.status, colors);
+            let title_color = match event.status.as_str() {
+                "failed" | "error" | "cancelled" | "canceled" => colors.danger,
+                "running" | "started" | "in_progress" => colors.text,
+                _ => colors.muted,
+            };
+            let rail_line = container(space())
+                .width(Length::Fixed(1.0))
+                .height(Length::Fill)
+                .style(move |_| {
+                    iced::widget::container::Style::default().background(colors.border_soft)
+                });
+            let rail = stack![
+                container(rail_line)
+                    .width(28)
+                    .height(Length::Fill)
+                    .center_x(28),
+                container(icon(timeline_event_icon(&event.kind), 13.0, status_color))
+                    .width(28)
+                    .height(22)
+                    .center_x(28)
+                    .center_y(22),
+            ]
+            .width(Length::Fixed(28.0))
+            .height(Length::Fill);
+            let has_details = timeline_event_is_toggleable(event);
+            let title: Element<'static, Message> = if has_details {
+                button(
+                    row![
+                        text(event.title.clone())
+                            .size(13)
+                            .font(ui_font(font::Weight::Medium))
+                            .color(title_color),
+                        text(if expanded { "⌄" } else { "›" })
+                            .size(12)
+                            .color(colors.faint),
+                    ]
+                    .spacing(5)
+                    .align_y(Alignment::Center),
+                )
+                .on_press(Message::ToggleTimelineEvent(event.id.clone()))
+                .padding(0)
+                .style(button_style(tokens, ButtonKind::Ghost))
+                .into()
+            } else {
+                text(event.title.clone())
+                    .size(13)
+                    .font(ui_font(font::Weight::Medium))
+                    .color(title_color)
+                    .into()
+            };
+            let mut header = row![title]
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .width(Length::Fill);
+            if !expanded {
+                if let Some(preview) = event
+                    .summary
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|preview| !preview.is_empty() && *preview != event.title.as_str())
+                {
+                    header = header.push(
+                        text(preview.to_owned())
+                            .size(11)
+                            .width(Length::Fill)
+                            .wrapping(iced::widget::text::Wrapping::None)
+                            .ellipsis(iced::widget::text::Ellipsis::End)
+                            .color(colors.faint),
+                    );
+                }
+            }
+            let mut process = column![container(header).height(22).center_y(22)]
+                .spacing(7)
+                .width(Length::Fill);
+            if expanded && has_details {
+                process = process.push(body);
+            }
+            let process = process.padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 7.0,
+                left: 0.0,
+            });
+            row![rail, process]
+                .spacing(0)
+                .align_y(Alignment::Start)
+                .width(Length::Fill)
+                .into()
+        }
+    };
+    mouse_area(content)
+        .on_enter(Message::TimelineEventHover(Some(event_id)))
+        .on_exit(Message::TimelineEventHover(None))
+        .into()
+}
+
+fn timeline_event_icon(kind: &str) -> Icon {
+    match kind {
+        "file" | "file_read" | "file_change" | "document" => Icon::File,
+        "reasoning" | "thinking" => Icon::Appearance,
+        "error" => Icon::About,
+        "workspace" | "project" => Icon::Workspace,
+        _ => Icon::Nodes,
     }
 }
 
@@ -38487,6 +42186,63 @@ fn status_label(status: ProductTaskStatus) -> &'static str {
     }
 }
 
+fn conversation_empty_headline(location_name: Option<&str>, continuation: bool) -> String {
+    if continuation {
+        return "继续这个对话".to_owned();
+    }
+    location_name.map_or_else(
+        || "今天想做什么？".to_owned(),
+        |name| format!("要在 {name} 中构建什么？"),
+    )
+}
+
+fn runtime_phase_is_processing(phase: &str) -> bool {
+    matches!(
+        phase,
+        "queued"
+            | "starting"
+            | "running"
+            | "resolving_approval"
+            | "resolving_interaction"
+            | "finishing"
+            | "cancelling"
+    )
+}
+
+fn composer_toolbar_is_compact(window_id: HostedWindowId, primary_width: f32) -> bool {
+    window_id != HostedWindowId::PRIMARY || primary_width < CHAT_COMPACT_TOOLBAR_WIDTH
+}
+
+fn composer_round_button_style(
+    tokens: ThemeTokens,
+    kind: ButtonKind,
+) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style + 'static {
+    button_style_overridden(
+        tokens,
+        kind,
+        ButtonPaintOverride {
+            border_radius: Some(999.0),
+            ..ButtonPaintOverride::default()
+        },
+    )
+}
+
+fn move_sidebar_search_selection(current: usize, count: usize, forward: bool) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let current = current.min(count - 1);
+    if forward {
+        (current + 1) % count
+    } else {
+        (current + count - 1) % count
+    }
+}
+
+fn project_toolbar_is_compact(primary_width: f32) -> bool {
+    primary_width < PROJECT_COMPACT_TOOLBAR_WIDTH
+}
+
 fn worktree_selection_mode_label(mode: DesktopWorktreeSelectionMode) -> &'static str {
     match mode {
         DesktopWorktreeSelectionMode::Current => "当前仓库",
@@ -38522,10 +42278,13 @@ fn runtime_phase_label(phase: &str) -> &'static str {
     }
 }
 
-fn ordered_task_tree_indices(tasks: &[DesktopWorkspaceTask]) -> Vec<(usize, usize)> {
+fn ordered_tree_indices<Id>(ids: &[Id], parent_ids: &[Option<Id>]) -> Vec<(usize, usize)>
+where
+    Id: Clone + Ord,
+{
     fn append_subtree(
         root: usize,
-        tasks: &[DesktopWorkspaceTask],
+        children: &BTreeMap<usize, Vec<usize>>,
         visited: &mut BTreeSet<usize>,
         output: &mut Vec<(usize, usize)>,
     ) {
@@ -38535,42 +42294,73 @@ fn ordered_task_tree_indices(tasks: &[DesktopWorkspaceTask]) -> Vec<(usize, usiz
                 continue;
             }
             output.push((index, depth));
-            let parent_id = &tasks[index].id;
-            let children = tasks
-                .iter()
-                .enumerate()
-                .filter(|(_, task)| task.parent_id.as_ref() == Some(parent_id))
-                .map(|(child, _)| child)
-                .collect::<Vec<_>>();
-            for child in children.into_iter().rev() {
-                stack.push((child, depth.saturating_add(1)));
+            if let Some(child_indices) = children.get(&index) {
+                for child in child_indices.iter().rev() {
+                    stack.push((*child, depth.saturating_add(1)));
+                }
             }
         }
     }
 
-    let known_ids = tasks
-        .iter()
-        .map(|task| task.id.clone())
-        .collect::<BTreeSet<_>>();
-    let roots = tasks
+    if ids.len() != parent_ids.len() {
+        return Vec::new();
+    }
+    let indices = ids
         .iter()
         .enumerate()
-        .filter(|(_, task)| {
-            task.parent_id
-                .as_ref()
-                .is_none_or(|parent_id| parent_id == &task.id || !known_ids.contains(parent_id))
-        })
-        .map(|(index, _)| index)
-        .collect::<Vec<_>>();
-    let mut visited = BTreeSet::new();
-    let mut output = Vec::with_capacity(tasks.len());
-    for root in roots {
-        append_subtree(root, tasks, &mut visited, &mut output);
+        .map(|(index, id)| (id, index))
+        .collect::<BTreeMap<_, _>>();
+    let mut roots = Vec::new();
+    let mut children = BTreeMap::<usize, Vec<usize>>::new();
+    for (index, (id, parent_id)) in ids.iter().zip(parent_ids).enumerate() {
+        let Some(parent_index) = parent_id
+            .as_ref()
+            .filter(|parent_id| *parent_id != id)
+            .and_then(|parent_id| indices.get(parent_id).copied())
+        else {
+            roots.push(index);
+            continue;
+        };
+        children.entry(parent_index).or_default().push(index);
     }
-    for index in 0..tasks.len() {
-        append_subtree(index, tasks, &mut visited, &mut output);
+    let mut visited = BTreeSet::new();
+    let mut output = Vec::with_capacity(ids.len());
+    for root in roots {
+        append_subtree(root, &children, &mut visited, &mut output);
+    }
+    for index in 0..ids.len() {
+        append_subtree(index, &children, &mut visited, &mut output);
     }
     output
+}
+
+fn ordered_task_tree_indices(tasks: &[DesktopWorkspaceTask]) -> Vec<(usize, usize)> {
+    let ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
+    let parent_ids = tasks
+        .iter()
+        .map(|task| task.parent_id.clone())
+        .collect::<Vec<_>>();
+    ordered_tree_indices(&ids, &parent_ids)
+}
+
+fn ordered_product_task_tree(mut tasks: Vec<&ProductTask>) -> Vec<(&ProductTask, usize)> {
+    tasks.sort_by(|left, right| {
+        right
+            .pinned
+            .cmp(&left.pinned)
+            .then_with(|| left.sort_order.cmp(&right.sort_order))
+            .then_with(|| left.created_at.cmp(&right.created_at))
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let ids = tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>();
+    let parent_ids = tasks
+        .iter()
+        .map(|task| task.parent_id.clone())
+        .collect::<Vec<_>>();
+    ordered_tree_indices(&ids, &parent_ids)
+        .into_iter()
+        .filter_map(|(index, depth)| tasks.get(index).copied().map(|task| (task, depth)))
+        .collect()
 }
 
 fn task_is_descendant_of(
@@ -38627,6 +42417,21 @@ fn session_search_hit_ids(application: &DesktopApplication, search: &str) -> BTr
         .ok()
         .map(|results| results.into_iter().map(|result| result.task_id).collect())
         .unwrap_or_default()
+}
+
+fn sidebar_visible_row_indices(
+    row_count: usize,
+    active_index: Option<usize>,
+    revealed: bool,
+) -> Vec<usize> {
+    if revealed || row_count <= 4 {
+        return (0..row_count).collect();
+    }
+    let mut visible = (0..4).collect::<Vec<_>>();
+    if let Some(active_index) = active_index.filter(|index| *index < row_count && *index >= 4) {
+        visible[3] = active_index;
+    }
+    visible
 }
 
 fn task_matches_search(
@@ -39910,6 +43715,18 @@ fn composer_context_query(content: &str) -> Option<String> {
     Some(query)
 }
 
+fn composer_content_with_trigger(content: &str, marker: char) -> String {
+    if content.ends_with(marker) {
+        return content.to_owned();
+    }
+    let mut content = content.to_owned();
+    if !content.is_empty() && !content.chars().last().is_some_and(char::is_whitespace) {
+        content.push(' ');
+    }
+    content.push(marker);
+    content
+}
+
 fn composer_trailing_trigger_query(
     content: &str,
     marker: char,
@@ -40066,6 +43883,15 @@ fn next_todo_priority(priority: DesktopTodoPriority) -> DesktopTodoPriority {
         DesktopTodoPriority::High => DesktopTodoPriority::Normal,
         DesktopTodoPriority::Normal => DesktopTodoPriority::Low,
         DesktopTodoPriority::Low => DesktopTodoPriority::High,
+    }
+}
+
+fn todo_float_item_is_visible(todo: &DesktopTaskTodo) -> bool {
+    match todo.source {
+        DesktopTodoSource::Agent => !todo.done,
+        DesktopTodoSource::Lilia => {
+            todo.guide_status.is_some() && todo.guide_status != Some(DesktopTodoGuideStatus::Sent)
+        }
     }
 }
 
@@ -41393,6 +45219,38 @@ where
     (reordered != values).then_some(reordered)
 }
 
+fn relative_before_id<T>(
+    values: &[T],
+    source: &T,
+    target: &T,
+    position: SidebarTreeDropPosition,
+) -> Option<T>
+where
+    T: Clone + PartialEq,
+{
+    if source == target || position == SidebarTreeDropPosition::Inside {
+        return None;
+    }
+    let remaining = values
+        .iter()
+        .filter(|value| *value != source)
+        .cloned()
+        .collect::<Vec<_>>();
+    let target_index = remaining.iter().position(|value| value == target)?;
+    match position {
+        SidebarTreeDropPosition::Before => Some(target.clone()),
+        SidebarTreeDropPosition::After => remaining.get(target_index + 1).cloned(),
+        SidebarTreeDropPosition::Inside => None,
+    }
+}
+
+fn sidebar_folder_drop_hit(bounds: LogicalRect, position: Point) -> bool {
+    position.x >= bounds.x
+        && position.x <= bounds.x + bounds.width
+        && position.y >= bounds.y
+        && position.y <= bounds.y + (bounds.height - 56.0).max(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -41524,6 +45382,156 @@ mod tests {
             &TaskId::new("parent").unwrap(),
             &TaskId::new("child").unwrap()
         ));
+    }
+
+    #[test]
+    fn sidebar_task_tree_keeps_children_with_their_parent_and_orders_siblings() {
+        let mut child = product_task("child-a", Some("root-a"));
+        child.sort_order = 3;
+        let mut root_b = product_task("root-b", None);
+        root_b.sort_order = 2;
+        let mut root_a = product_task("root-a", None);
+        root_a.sort_order = 1;
+        let mut child_pinned = product_task("child-pinned", Some("root-a"));
+        child_pinned.pinned = true;
+        child_pinned.sort_order = 4;
+        let tasks = vec![child, root_b, root_a, child_pinned];
+
+        let ordered = ordered_product_task_tree(tasks.iter().collect())
+            .into_iter()
+            .map(|(task, depth)| (task.id.as_str().to_owned(), depth))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            ordered,
+            vec![
+                ("root-a".to_owned(), 0),
+                ("child-pinned".to_owned(), 1),
+                ("child-a".to_owned(), 1),
+                ("root-b".to_owned(), 0),
+            ]
+        );
+    }
+
+    #[test]
+    fn composer_toolbar_uses_the_actual_primary_region_width() {
+        assert!(!composer_toolbar_is_compact(
+            HostedWindowId::PRIMARY,
+            CHAT_COMPACT_TOOLBAR_WIDTH,
+        ));
+        assert!(composer_toolbar_is_compact(
+            HostedWindowId::PRIMARY,
+            CHAT_COMPACT_TOOLBAR_WIDTH - 1.0,
+        ));
+        assert!(composer_toolbar_is_compact(
+            HostedWindowId(42),
+            CHAT_COMPACT_TOOLBAR_WIDTH + 400.0,
+        ));
+    }
+
+    #[test]
+    fn sidebar_search_keyboard_selection_wraps_in_both_directions() {
+        assert_eq!(move_sidebar_search_selection(0, 0, true), 0);
+        assert_eq!(move_sidebar_search_selection(0, 3, false), 2);
+        assert_eq!(move_sidebar_search_selection(2, 3, true), 0);
+        assert_eq!(move_sidebar_search_selection(99, 3, false), 1);
+    }
+
+    #[test]
+    fn timeline_process_details_collapse_after_completion_and_toggle_by_stable_id() {
+        let mut event = TaskTimelineItem {
+            id: "event-tool-1".to_owned(),
+            sequence: 1,
+            kind: "tool".to_owned(),
+            title: "读取文件".to_owned(),
+            message_role: None,
+            summary: Some("src/main.rs".to_owned()),
+            markdown: None,
+            markdown_document: None,
+            markdown_plain_text: None,
+            markdown_table_count: 0,
+            attachments: Vec::new(),
+            status: "completed".to_owned(),
+            batch_apply: None,
+            session_branch_turn_id: None,
+            selectable_reply: false,
+            can_retry: false,
+        };
+        let mut toggled = BTreeSet::new();
+        assert!(timeline_event_has_details(&event));
+        assert!(!timeline_event_is_expanded(&event, &toggled));
+
+        toggled.insert(event.id.clone());
+        assert!(timeline_event_is_expanded(&event, &toggled));
+
+        toggled.clear();
+        event.status = "running".to_owned();
+        assert!(timeline_event_is_expanded(&event, &toggled));
+        toggled.insert(event.id.clone());
+        assert!(!timeline_event_is_expanded(&event, &toggled));
+    }
+
+    #[test]
+    fn timeline_tail_following_stops_only_after_the_user_leaves_the_end() {
+        let short_content = TimelineViewport {
+            offset: 0.0,
+            extent: 720.0,
+        };
+        assert!(timeline_viewport_is_at_end(short_content, 400.0));
+
+        let near_tail = TimelineViewport {
+            offset: 258.0,
+            extent: 720.0,
+        };
+        assert!(timeline_viewport_is_at_end(near_tail, 1_000.0));
+
+        let reading_history = TimelineViewport {
+            offset: 120.0,
+            extent: 720.0,
+        };
+        assert!(!timeline_viewport_is_at_end(reading_history, 1_000.0));
+    }
+
+    #[test]
+    fn project_toolbar_compacts_before_tabs_can_overflow_the_primary_region() {
+        assert!(!project_toolbar_is_compact(PROJECT_COMPACT_TOOLBAR_WIDTH));
+        assert!(project_toolbar_is_compact(
+            PROJECT_COMPACT_TOOLBAR_WIDTH - 1.0
+        ));
+    }
+
+    #[test]
+    fn sidebar_shell_restores_legacy_width_range_and_collapsed_state() {
+        let mut state = NativeSidebarTreeState::default();
+        let workspace = initial_workspace(&state);
+        let sidebar = workspace
+            .layout()
+            .region(&RegionId::Resources)
+            .expect("resources sidebar");
+        assert_eq!(sidebar.extent(), SIDEBAR_DEFAULT_WIDTH);
+        assert_eq!(sidebar.min_size_value(), SIDEBAR_MIN_WIDTH);
+        assert_eq!(sidebar.max_size_value(), SIDEBAR_MAX_WIDTH);
+        assert!(sidebar.resizable_value());
+        assert!(sidebar.collapsible_value());
+        assert!(!sidebar.collapsed_value());
+
+        state.sidebar_width = u16::MAX;
+        state.sidebar_collapsed = true;
+        let workspace = initial_workspace(&state);
+        let sidebar = workspace
+            .layout()
+            .region(&RegionId::Resources)
+            .expect("resources sidebar");
+        assert_eq!(sidebar.extent(), SIDEBAR_MAX_WIDTH);
+        assert!(sidebar.collapsed_value());
+    }
+
+    #[test]
+    fn sidebar_folder_drop_tracks_resized_geometry_and_excludes_the_footer() {
+        let bounds = LogicalRect::new(0.0, 36.0, 312.0, 864.0);
+        assert!(sidebar_folder_drop_hit(bounds, Point::new(311.0, 400.0)));
+        assert!(!sidebar_folder_drop_hit(bounds, Point::new(313.0, 400.0)));
+        assert!(!sidebar_folder_drop_hit(bounds, Point::new(120.0, 860.0)));
     }
 
     #[test]
@@ -42275,6 +46283,124 @@ mod tests {
         assert_eq!(
             context_usage_label(&exact),
             "上下文：4096 / 8192 tokens（50%）"
+        );
+    }
+
+    #[test]
+    fn sidebar_four_row_limit_keeps_the_active_conversation_visible() {
+        assert_eq!(sidebar_visible_row_indices(3, None, false), vec![0, 1, 2]);
+        assert_eq!(
+            sidebar_visible_row_indices(7, Some(5), false),
+            vec![0, 1, 2, 5]
+        );
+        assert_eq!(
+            sidebar_visible_row_indices(7, Some(1), false),
+            vec![0, 1, 2, 3]
+        );
+        assert_eq!(
+            sidebar_visible_row_indices(7, Some(5), true),
+            vec![0, 1, 2, 3, 4, 5, 6]
+        );
+    }
+
+    #[test]
+    fn composer_grows_with_content_and_stops_at_three_visible_lines() {
+        let one_line = HostedTextareaState::with_text("第一行");
+        let two_lines = HostedTextareaState::with_text("第一行\n第二行");
+        let four_lines = HostedTextareaState::with_text("一\n二\n三\n四");
+
+        assert_eq!(composer_textarea_height(&one_line), 32.0);
+        assert_eq!(composer_textarea_height(&two_lines), 52.0);
+        assert_eq!(composer_textarea_height(&four_lines), 72.0);
+    }
+
+    #[test]
+    fn composer_todo_float_shows_open_agent_items_and_unsent_guides_only() {
+        let task_id = TaskId::new("todo-float-task").unwrap();
+        let todo =
+            |id: &str,
+             source: DesktopTodoSource,
+             done: bool,
+             guide_status: Option<DesktopTodoGuideStatus>| DesktopTaskTodo {
+                id: id.to_owned(),
+                task_id: task_id.clone(),
+                text: id.to_owned(),
+                done,
+                order: 0,
+                source,
+                priority: DesktopTodoPriority::Normal,
+                guide_status,
+                attachments: Vec::new(),
+                conversation_references: Vec::new(),
+                workflow: None,
+                created_at: 1,
+                updated_at: 1,
+            };
+
+        assert!(todo_float_item_is_visible(&todo(
+            "agent-open",
+            DesktopTodoSource::Agent,
+            false,
+            None,
+        )));
+        assert!(!todo_float_item_is_visible(&todo(
+            "agent-done",
+            DesktopTodoSource::Agent,
+            true,
+            None,
+        )));
+        assert!(todo_float_item_is_visible(&todo(
+            "guide-pending",
+            DesktopTodoSource::Lilia,
+            false,
+            Some(DesktopTodoGuideStatus::Pending),
+        )));
+        assert!(todo_float_item_is_visible(&todo(
+            "guide-queued",
+            DesktopTodoSource::Lilia,
+            false,
+            Some(DesktopTodoGuideStatus::Queued),
+        )));
+        assert!(!todo_float_item_is_visible(&todo(
+            "guide-sent",
+            DesktopTodoSource::Lilia,
+            false,
+            Some(DesktopTodoGuideStatus::Sent),
+        )));
+    }
+
+    #[test]
+    fn composer_reference_action_opens_a_real_trailing_trigger() {
+        assert_eq!(composer_content_with_trigger("", '#'), "#");
+        assert_eq!(composer_content_with_trigger("比较实现", '#'), "比较实现 #");
+        assert_eq!(
+            composer_content_with_trigger("比较实现 #", '#'),
+            "比较实现 #"
+        );
+        assert_eq!(
+            composer_conversation_query("比较实现 #"),
+            Some(String::new())
+        );
+    }
+
+    #[test]
+    fn sidebar_tree_relative_drop_resolves_before_and_after_without_source() {
+        let ids = vec!["a", "b", "c", "d"];
+        assert_eq!(
+            relative_before_id(&ids, &"a", &"c", SidebarTreeDropPosition::Before),
+            Some("c")
+        );
+        assert_eq!(
+            relative_before_id(&ids, &"a", &"c", SidebarTreeDropPosition::After),
+            Some("d")
+        );
+        assert_eq!(
+            relative_before_id(&ids, &"d", &"c", SidebarTreeDropPosition::After),
+            None
+        );
+        assert_eq!(
+            relative_before_id(&ids, &"a", &"c", SidebarTreeDropPosition::Inside),
+            None
         );
     }
 

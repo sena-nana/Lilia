@@ -93,6 +93,7 @@ impl NativeDebugTimeline {
                 sequence: u64::MAX.saturating_sub(10_000).saturating_add(sequence),
                 kind: kind.to_owned(),
                 title: title.to_owned(),
+                message_role: None,
                 summary: Some(summary.to_owned()),
                 markdown,
                 markdown_document,

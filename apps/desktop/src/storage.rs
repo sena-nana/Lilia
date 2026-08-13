@@ -16,6 +16,7 @@ const HOME_ENV: &str = "LILIA_HOME";
 const THEME_FILE: &str = "appearance.theme";
 const APPEARANCE_FILE: &str = "appearance.settings.json";
 const SIDEBAR_DISPLAY_MODE_FILE: &str = "sidebar-display-mode.json";
+const SIDEBAR_TREE_STATE_FILE: &str = "sidebar-tree-state.json";
 const MEMORY_SETTINGS_FILE: &str = "memory.settings.json";
 const WINDOW_STATE_FILE: &str = "main-window-state.json";
 const CONVERSATION_STATUS_STATE_FILE: &str = "conversation-status-window.json";
@@ -39,6 +40,30 @@ pub enum NativeSidebarDisplayMode {
     #[default]
     Grouped,
     Unified,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeSidebarTreeState {
+    #[serde(default)]
+    pub expanded_project_ids: Vec<String>,
+    #[serde(default = "default_true")]
+    pub inbox_expanded: bool,
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: u16,
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
+}
+
+impl Default for NativeSidebarTreeState {
+    fn default() -> Self {
+        Self {
+            expanded_project_ids: Vec::new(),
+            inbox_expanded: true,
+            sidebar_width: default_sidebar_width(),
+            sidebar_collapsed: false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -234,6 +259,29 @@ pub fn save_sidebar_display_mode(
         .map_err(|error| format!("failed to serialize Native sidebar display mode: {error}"))?;
     fs::write(home.join(SIDEBAR_DISPLAY_MODE_FILE), value)
         .map_err(|error| format!("failed to persist Native sidebar display mode: {error}"))
+}
+
+pub fn load_sidebar_tree_state(home: &Path) -> NativeSidebarTreeState {
+    fs::read_to_string(home.join(SIDEBAR_TREE_STATE_FILE))
+        .ok()
+        .and_then(|value| serde_json::from_str(&value).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_sidebar_tree_state(home: &Path, state: &NativeSidebarTreeState) -> Result<(), String> {
+    fs::create_dir_all(home).map_err(|error| format!("failed to create Lilia home: {error}"))?;
+    let value = serde_json::to_vec(state)
+        .map_err(|error| format!("failed to serialize Native sidebar tree state: {error}"))?;
+    fs::write(home.join(SIDEBAR_TREE_STATE_FILE), value)
+        .map_err(|error| format!("failed to persist Native sidebar tree state: {error}"))
+}
+
+const fn default_true() -> bool {
+    true
+}
+
+const fn default_sidebar_width() -> u16 {
+    220
 }
 
 pub fn is_restorable_window_state(state: &NativeWindowState) -> bool {
@@ -923,6 +971,48 @@ mod tests {
         assert_eq!(
             load_sidebar_display_mode(&directory),
             NativeSidebarDisplayMode::Grouped
+        );
+
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn sidebar_tree_expansion_round_trips_and_legacy_state_keeps_inbox_visible() {
+        let directory = std::env::temp_dir().join(format!(
+            "lilia-native-sidebar-tree-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+
+        assert_eq!(
+            load_sidebar_tree_state(&directory),
+            NativeSidebarTreeState::default()
+        );
+        let state = NativeSidebarTreeState {
+            expanded_project_ids: vec!["project-a".to_owned(), "project-b".to_owned()],
+            inbox_expanded: false,
+            sidebar_width: 312,
+            sidebar_collapsed: true,
+        };
+        save_sidebar_tree_state(&directory, &state).unwrap();
+        assert_eq!(load_sidebar_tree_state(&directory), state);
+
+        fs::write(
+            directory.join(SIDEBAR_TREE_STATE_FILE),
+            br#"{"expandedProjectIds":["legacy-project"]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            load_sidebar_tree_state(&directory),
+            NativeSidebarTreeState {
+                expanded_project_ids: vec!["legacy-project".to_owned()],
+                inbox_expanded: true,
+                sidebar_width: 220,
+                sidebar_collapsed: false,
+            }
         );
 
         fs::remove_dir_all(directory).unwrap();

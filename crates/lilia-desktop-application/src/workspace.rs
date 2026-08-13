@@ -491,13 +491,6 @@ impl DesktopWorkspaceSession {
             }
         }
 
-        if next.selected_task.is_some() && next.selected_task != state.selected_task {
-            let task_inspector = crate::PanelId::new(crate::TASK_INSPECTOR_PANEL_ID)?;
-            if next.panel_layout.panel(&task_inspector).is_some() {
-                next.panel_layout.activate_panel(&task_inspector)?;
-            }
-        }
-
         let changed = !state.same_content(&next);
         if changed {
             next.revision = state.revision.checked_add(1).ok_or(
@@ -940,6 +933,14 @@ mod tests {
             .execute_command(DesktopCommand::SelectTask(task_a.clone()))
             .unwrap();
         assert_eq!(selected.workspace.selected_task, Some(task_a));
+        assert!(
+            selected
+                .workspace
+                .panel_layout
+                .active_panel(crate::DockSlot::Right)
+                .is_none(),
+            "opening a conversation must keep optional inspector panels closed"
+        );
 
         let switched = app
             .execute_command(DesktopCommand::SelectProject(project_b))

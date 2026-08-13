@@ -16,6 +16,7 @@ pub(crate) struct TaskTimelineItem {
     pub(crate) sequence: u64,
     pub(crate) kind: String,
     pub(crate) title: String,
+    pub(crate) message_role: Option<String>,
     pub(crate) summary: Option<String>,
     pub(crate) markdown: Option<String>,
     pub(crate) markdown_document: Option<NativeMarkdown>,
@@ -274,10 +275,9 @@ impl TaskSessionView {
 }
 
 fn estimate_timeline_item_extent(event: &TaskTimelineItem) -> f32 {
-    const BASE_EXTENT: f32 = 58.0;
     const LINE_EXTENT: f32 = 18.0;
     const ATTACHMENT_EXTENT: f32 = 38.0;
-    const ITEM_SPACING: f32 = 6.0;
+    const ACTION_EXTENT: f32 = 26.0;
     const MAX_TEXT_LINES: usize = 24;
 
     let text = event
@@ -290,10 +290,18 @@ fn estimate_timeline_item_extent(event: &TaskTimelineItem) -> f32 {
         .map(|line| line.chars().count().max(1).div_ceil(72))
         .sum::<usize>()
         .min(MAX_TEXT_LINES);
-    BASE_EXTENT
+    let shell_extent = match event.message_role.as_deref() {
+        Some("user" | "assistant") => 14.0,
+        _ => 36.0,
+    };
+    let action_extent = event
+        .markdown_plain_text
+        .as_ref()
+        .map_or(0.0, |_| ACTION_EXTENT);
+    shell_extent
         + wrapped_lines as f32 * LINE_EXTENT
+        + action_extent
         + event.attachments.len() as f32 * ATTACHMENT_EXTENT
-        + ITEM_SPACING
 }
 
 #[cfg(test)]
@@ -334,11 +342,21 @@ fn task_timeline_item_with_retry(
     let batch_apply = timeline_batch_apply(&event);
     let session_branch_turn_id = timeline_session_branch_turn_id(&event);
     let selectable_reply = timeline_selectable_reply(&event);
+    let message_role = if event.kind == "message" {
+        event
+            .payload
+            .get("role")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    } else {
+        None
+    };
     TaskTimelineItem {
         id: event.id.as_str().to_owned(),
         sequence: event.sequence,
         kind: event.kind.clone(),
         title: event.title,
+        message_role,
         markdown,
         markdown_document,
         markdown_plain_text,
@@ -470,6 +488,7 @@ mod tests {
                     sequence: 2,
                     kind: "message".to_owned(),
                     title: "完成".to_owned(),
+                    message_role: Some("assistant".to_owned()),
                     summary: None,
                     markdown: None,
                     markdown_document: None,
@@ -487,6 +506,7 @@ mod tests {
                     sequence: 1,
                     kind: "command".to_owned(),
                     title: "开始".to_owned(),
+                    message_role: None,
                     summary: Some("准备环境".to_owned()),
                     markdown: None,
                     markdown_document: None,
@@ -646,11 +666,13 @@ mod tests {
 
         let reply = task_timeline_item(event.clone());
         assert_eq!(reply.session_branch_turn_id.as_deref(), Some("turn-anchor"));
+        assert_eq!(reply.message_role.as_deref(), Some("assistant"));
         assert!(reply.selectable_reply);
 
         event.payload["role"] = json!("user");
         let user = task_timeline_item(event);
         assert!(user.session_branch_turn_id.is_none());
+        assert_eq!(user.message_role.as_deref(), Some("user"));
         assert!(!user.selectable_reply);
     }
 
