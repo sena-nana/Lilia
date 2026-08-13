@@ -1,7 +1,7 @@
-use lilia_desktop_application::DesktopApplication;
+use base64::{engine::general_purpose, Engine as _};
+use lilia_desktop_application::{DesktopApplication, DesktopClipboardEncodedImage};
 use tauri::State;
 
-use crate::chat::attachments::clipboard::{save_clipboard_image, save_clipboard_text};
 use crate::chat::attachments::context_search::search_context_attachments;
 use crate::chat::attachments::describe::describe_attachment_path;
 use crate::chat::types::{
@@ -33,13 +33,30 @@ pub fn chat_read_clipboard_file_paths(
 }
 
 #[tauri::command]
-pub fn chat_save_clipboard_image(input: ClipboardImageInput) -> Result<ChatAttachment, String> {
-    save_clipboard_image(input)
+pub fn chat_save_clipboard_image(
+    input: ClipboardImageInput,
+    application: State<'_, DesktopApplication>,
+) -> Result<ChatAttachment, String> {
+    let bytes = general_purpose::STANDARD
+        .decode(input.bytes_base64.trim())
+        .map_err(|error| format!("解析剪贴板图片失败：{error}"))?;
+    application
+        .cache_encoded_clipboard_image_attachment(DesktopClipboardEncodedImage {
+            bytes,
+            mime: input.mime,
+            name: input.name,
+        })
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn chat_save_clipboard_text(input: ClipboardTextInput) -> Result<ChatAttachment, String> {
-    save_clipboard_text(input)
+pub fn chat_save_clipboard_text(
+    input: ClipboardTextInput,
+    application: State<'_, DesktopApplication>,
+) -> Result<ChatAttachment, String> {
+    application
+        .cache_clipboard_text_attachment(&input.text)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
