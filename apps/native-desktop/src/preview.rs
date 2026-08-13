@@ -19,16 +19,17 @@ use lilia_contracts::{
 #[cfg(debug_assertions)]
 use lilia_desktop_application::DesktopTodoGuideStatus;
 use lilia_desktop_application::{
-    default_panel_states, describe_attachment_paths, preview_automatic_turn_selection,
-    ApplicationWorkspaceSurface, ArchitectureBackend, ArchitectureChangeStatus,
-    ArchitecturePermission, AutomationBeginRunInput, AutomationNode, AutomationNodePosition,
-    AutomationResumeRunInput, AutomationRunDetail, AutomationRunStatus, AutomationRunSummary,
-    AutomationSaveDraftInput, AutomationScopeFilter, AutomationSignalEnvelope, AutomationWorkflow,
-    ChatAttachment, ChatAttachmentKind, ChatContextSearchResult, ChatContextUsage,
-    ChatConversationReference, CredentialImportDecision, DesktopAgentInteractionError,
-    DesktopAgentInteractionSettings, DesktopAgentInteractionSettingsUpdate,
-    DesktopAgentRuntimeSettings, DesktopAgentRuntimeSettingsUpdate, DesktopApplication,
-    DesktopApplicationConfig, DesktopApplicationError, DesktopApplicationSuggestionModelPort,
+    clipboard_text_should_be_attachment, default_panel_states, describe_attachment_paths,
+    preview_automatic_turn_selection, ApplicationWorkspaceSurface, ArchitectureBackend,
+    ArchitectureChangeStatus, ArchitecturePermission, AutomationBeginRunInput, AutomationNode,
+    AutomationNodePosition, AutomationResumeRunInput, AutomationRunDetail, AutomationRunStatus,
+    AutomationRunSummary, AutomationSaveDraftInput, AutomationScopeFilter,
+    AutomationSignalEnvelope, AutomationWorkflow, ChatAttachment, ChatAttachmentKind,
+    ChatContextSearchResult, ChatContextUsage, ChatConversationReference, CredentialImportDecision,
+    DesktopAgentInteractionError, DesktopAgentInteractionSettings,
+    DesktopAgentInteractionSettingsUpdate, DesktopAgentRuntimeSettings,
+    DesktopAgentRuntimeSettingsUpdate, DesktopApplication, DesktopApplicationConfig,
+    DesktopApplicationError, DesktopApplicationSuggestionModelPort,
     DesktopArchitectureInteractionDecision, DesktopAssistantAiModelsResult,
     DesktopAssistantAiProbeInput, DesktopAssistantAiTestResult, DesktopAutomaticTurnSelection,
     DesktopCodeSearchMode, DesktopCodeSearchScope, DesktopCodingServicesSnapshot, DesktopCommand,
@@ -72,7 +73,8 @@ use lilia_desktop_application::{
     ProjectArchitectureGraph, ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery,
     ProjectRoadmap, ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput,
     RemoteControlStatus, SplitAxis, TaskQuery, WorkspaceItem, WorkspaceItemId,
-    CODING_TOOLS_PANEL_ID, IAB_PANEL_ID, TASK_INSPECTOR_PANEL_ID, TITLE_UPDATE_ACTION_KIND,
+    CODING_TOOLS_PANEL_ID, IAB_PANEL_ID, MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES,
+    TASK_INSPECTOR_PANEL_ID, TITLE_UPDATE_ACTION_KIND,
 };
 use nana_ui::widgets::{button_style, canvas_style, vertical_scrollbar};
 use nana_ui::{
@@ -154,7 +156,6 @@ use nana_ui::GraphTarget;
 pub const PRODUCT_NAME: &str = "LiliaCode Native Preview";
 const CONVERSATION_STATUS_WINDOW_ID: HostedWindowId = HostedWindowId(1);
 const FIRST_TASK_POPUP_WINDOW_ID: u64 = 100;
-const MAX_CLIPBOARD_TEXT_BYTES: usize = 8 * 1024 * 1024;
 const TIMELINE_PAGE_SIZE: usize = 100;
 const TIMELINE_DEFAULT_VIEWPORT_EXTENT: f32 = 720.0;
 const TIMELINE_OVERSCAN_EXTENT: f32 = 480.0;
@@ -172,6 +173,11 @@ const SETTINGS_ACTION: &str = "workspace.settings";
 const TOGGLE_RESOURCES_ACTION: &str = "workspace.toggle_resources";
 const SAVE_DOCUMENT_ACTION: &str = "document.save";
 const TOGGLE_THEME_ACTION: &str = "appearance.toggle_theme";
+
+enum ClipboardTextPaste {
+    Inline(String),
+    Attachment(ChatAttachment),
+}
 
 fn native_action_registry() -> Result<ActionRegistry, String> {
     let mut registry = ActionRegistry::new();
@@ -11532,32 +11538,49 @@ impl PreviewProgram {
         })
     }
 
-    fn read_clipboard_text(&self) -> Result<Option<String>, String> {
-        match self
+    fn capture_clipboard_text_paste(&self) -> Result<Option<ClipboardTextPaste>, String> {
+        let value = match self
             .application
             .execute_host(DesktopHostAction::ReadClipboardText)
         {
-            Ok(DesktopHostResult::ClipboardText(Some(value))) if value.is_empty() => Ok(None),
-            Ok(DesktopHostResult::ClipboardText(Some(value)))
-                if value.len() > MAX_CLIPBOARD_TEXT_BYTES =>
-            {
-                Err("剪贴板文本过大，无法粘贴。".to_owned())
+            Ok(DesktopHostResult::ClipboardText(Some(value))) if value.is_empty() => {
+                return Ok(None)
             }
-            Ok(DesktopHostResult::ClipboardText(value)) => Ok(value),
-            Ok(_) => Err("剪贴板返回了无法识别的内容，请重试。".to_owned()),
+            Ok(DesktopHostResult::ClipboardText(Some(value)))
+                if value.len() > MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES =>
+            {
+                return Err("剪贴板文本过大，无法粘贴。".to_owned());
+            }
+            Ok(DesktopHostResult::ClipboardText(Some(value))) => value,
+            Ok(DesktopHostResult::ClipboardText(None)) => return Ok(None),
+            Ok(_) => return Err("剪贴板返回了无法识别的内容，请重试。".to_owned()),
             Err(error) => {
                 eprintln!("failed to read Native clipboard text: {error}");
-                Err("无法读取剪贴板，请重试。".to_owned())
+                return Err("无法读取剪贴板，请重试。".to_owned());
             }
+        };
+        if !clipboard_text_should_be_attachment(&value) {
+            return Ok(Some(ClipboardTextPaste::Inline(value)));
         }
+        self.application
+            .cache_clipboard_text_attachment(&value)
+            .map(ClipboardTextPaste::Attachment)
+            .map(Some)
+            .map_err(|error| {
+                eprintln!("failed to cache Native clipboard text: {error}");
+                "无法保存剪贴板文本，请重试。".to_owned()
+            })
     }
 
     fn paste_clipboard_into_composer(&mut self) {
         if self.composer_input_is_locked() {
             return;
         }
-        match self.read_clipboard_text() {
-            Ok(Some(value)) => {
+        match self.capture_clipboard_text_paste() {
+            Ok(Some(ClipboardTextPaste::Attachment(attachment))) => {
+                self.add_composer_attachments(vec![attachment]);
+            }
+            Ok(Some(ClipboardTextPaste::Inline(value))) => {
                 let content = self
                     .main_surface_composer()
                     .map(|composer| composer.content.as_str())
@@ -25328,8 +25351,11 @@ impl PreviewProgram {
         }) else {
             return;
         };
-        match self.read_clipboard_text() {
-            Ok(Some(value)) => {
+        match self.capture_clipboard_text_paste() {
+            Ok(Some(ClipboardTextPaste::Attachment(attachment))) => {
+                self.add_task_popup_attachments(window_id, vec![attachment]);
+            }
+            Ok(Some(ClipboardTextPaste::Inline(value))) => {
                 self.task_popup_composer_command(
                     window_id,
                     DesktopComposerCommand::SetContent(format!("{content}{value}")),
