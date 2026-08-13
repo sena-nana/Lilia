@@ -102,8 +102,10 @@ pub use assistant_ai_probe::{
     DesktopAssistantAiModelsResult, DesktopAssistantAiProbeInput, DesktopAssistantAiTestResult,
 };
 pub use attachment::{
-    describe_attachment_path, describe_attachment_paths, save_clipboard_image_attachment,
-    DesktopAttachmentError,
+    clipboard_text_should_be_attachment, describe_attachment_path, describe_attachment_paths,
+    save_clipboard_image_attachment, save_clipboard_text_attachment,
+    save_encoded_clipboard_image_attachment, DesktopAttachmentError, DesktopClipboardEncodedImage,
+    LONG_CLIPBOARD_TEXT_ATTACHMENT_THRESHOLD, MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES,
 };
 pub use auto_turn::{preview_automatic_turn_selection, DesktopAutoTurnDecisionError};
 pub use automation::{
