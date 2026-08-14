@@ -20,6 +20,7 @@ mod milestone;
 mod project;
 mod projection;
 mod revision;
+mod sidebar;
 mod task;
 mod workflow;
 
@@ -76,6 +77,11 @@ pub use projection::{
     TIMELINE_UI_CACHE_KIND,
 };
 pub use revision::{ExpectedRevision, ProductRevision};
+pub use sidebar::{
+    SidebarNavigationContribution, SidebarNavigationContributionError,
+    SidebarNavigationContributionSet, SidebarNavigationIcon, SidebarNavigationTarget,
+    SIDEBAR_NAVIGATION_EXTENSION_ID, SIDEBAR_NAVIGATION_SCHEMA_VERSION,
+};
 pub use task::{
     ProductTask, ProductTaskArchiveConversationEntry, ProductTaskArchiveInput,
     ProductTaskArchiveOutcome, ProductTaskMoveInput, ProductTaskMoveOutcome, ProductTaskPriority,

@@ -22,6 +22,7 @@ mod config;
 mod context_compaction;
 mod context_search;
 mod context_usage;
+mod contributions;
 mod conversation_reference;
 mod conversation_suggestions;
 mod diagnostics;

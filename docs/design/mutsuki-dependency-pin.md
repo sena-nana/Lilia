@@ -10,12 +10,12 @@ LiliaCode 通过根 `Cargo.toml` 的 `[workspace.dependencies]` 统一 pin Host 
 根 `Cargo.toml` 当前为 **GIT pin**：
 
 - `git = "https://github.com/sena-nana/Mutsuki.git"`
-- `rev = "fea58012240dac944c688f5e164ccf454614db7b"`（短写 `fea5801`）
+- `rev = "bb728d20e89ef65dffda882c70e5c9f70ee48b11"`（短写 `bb728d2`）
 
 ```toml
 mutsuki-agent-adapter-anthropic = {
   git = "https://github.com/sena-nana/Mutsuki.git",
-  rev = "fea58012240dac944c688f5e164ccf454614db7b",
+  rev = "bb728d20e89ef65dffda882c70e5c9f70ee48b11",
   package = "mutsuki-agent-adapter-anthropic",
 }
 # …其余 mutsuki-* 同一 git + rev…

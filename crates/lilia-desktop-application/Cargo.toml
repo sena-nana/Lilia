@@ -15,6 +15,9 @@ lilia-contracts = { workspace = true }
 lilia-service = { workspace = true }
 lilia-storage = { workspace = true }
 mutsuki-agent-contracts = { workspace = true }
+mutsuki-runtime-contracts = { workspace = true }
+mutsuki-runtime-host = { workspace = true }
+mutsuki-runtime-sdk = { workspace = true }
 portable-pty = { workspace = true }
 rusqlite = { workspace = true, features = ["backup"] }
 reqwest = { workspace = true, features = ["form", "query"] }

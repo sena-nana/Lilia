@@ -15,7 +15,8 @@ use iced::widget::{
 use iced::{font, Alignment, ContentFit, Element, Length, Padding, Point, Rectangle, Size};
 use lilia_contracts::{
     LiliaAgentWorkflow, LiliaReviewTarget, PendingProjectionStatus, ProductTask,
-    ProductTaskPriority, ProductTaskStatus, Project, ProjectArchiveState, ProjectId, TaskId,
+    ProductTaskPriority, ProductTaskStatus, Project, ProjectArchiveState, ProjectId,
+    SidebarNavigationIcon, SidebarNavigationTarget, TaskId,
 };
 use lilia_desktop_application::DesktopTodoGuideStatus;
 use lilia_desktop_application::{
@@ -1121,6 +1122,7 @@ pub enum Message {
     ClearTaskParent,
     ArchiveTask,
     RestoreTask(TaskId),
+    OpenSidebarNavigation(SidebarNavigationTarget),
     OpenAutomations,
     CloseAutomations,
     RefreshAutomations,
@@ -2179,6 +2181,31 @@ pub struct DesktopProgram {
     #[cfg(debug_assertions)]
     pending_debug_frame_response: Option<PendingDebugFrameResponse>,
     window_chrome: WindowChromeState,
+}
+
+fn sidebar_navigation_target(target: SidebarNavigationTarget) -> DesktopNavigationTarget {
+    match target {
+        SidebarNavigationTarget::Settings => DesktopNavigationTarget::Settings,
+        SidebarNavigationTarget::Automations => DesktopNavigationTarget::Automations,
+    }
+}
+
+fn sidebar_navigation_icon(icon: SidebarNavigationIcon) -> Icon {
+    match icon {
+        SidebarNavigationIcon::Settings => Icon::Settings,
+        SidebarNavigationIcon::Automations => Icon::Nodes,
+    }
+}
+
+fn sidebar_navigation_selected(
+    target: SidebarNavigationTarget,
+    settings_open: bool,
+    automations_open: bool,
+) -> bool {
+    match target {
+        SidebarNavigationTarget::Settings => settings_open,
+        SidebarNavigationTarget::Automations => automations_open,
+    }
 }
 
 impl DesktopProgram {
@@ -8628,6 +8655,9 @@ impl DesktopProgram {
             Message::ClearTaskParent => self.apply_selected_task_parent(None),
             Message::ArchiveTask => self.archive_task(),
             Message::RestoreTask(task_id) => self.restore_task(task_id),
+            Message::OpenSidebarNavigation(target) => {
+                self.navigate(sidebar_navigation_target(target));
+            }
             Message::OpenAutomations => {
                 self.settings_open = false;
                 self.open_application_surface(ApplicationWorkspaceSurface::Automations);
@@ -17731,14 +17761,16 @@ impl DesktopProgram {
             self.update_message(Message::OpenSidebarInboxDraft);
             return true;
         }
-        if target_id == target_ids::SIDEBAR_FOOTER_AUTOMATIONS {
-            self.update_message(Message::OpenAutomations);
+        if let Some(contribution) = self
+            .application
+            .sidebar_navigation_contributions()
+            .into_iter()
+            .find(|contribution| contribution.id == target_id)
+        {
+            self.update_message(Message::OpenSidebarNavigation(contribution.target));
             return true;
         }
-        if matches!(
-            target_id,
-            target_ids::SIDEBAR_FOOTER_SETTINGS | target_ids::SIDEBAR_FOOTER_PROVIDER
-        ) {
+        if target_id == target_ids::SIDEBAR_FOOTER_PROVIDER {
             self.update_message(Message::OpenSettings);
             return true;
         }
@@ -21924,10 +21956,14 @@ impl DesktopProgram {
                 target_ids::SIDEBAR_PROJECTS_ADD.to_owned(),
                 target_ids::SIDEBAR_INBOX_TOGGLE.to_owned(),
                 target_ids::SIDEBAR_INBOX_NEW_CONVERSATION.to_owned(),
-                target_ids::SIDEBAR_FOOTER_AUTOMATIONS.to_owned(),
-                target_ids::SIDEBAR_FOOTER_SETTINGS.to_owned(),
                 target_ids::SIDEBAR_FOOTER_PROVIDER.to_owned(),
             ]);
+            targets.extend(
+                self.application
+                    .sidebar_navigation_contributions()
+                    .into_iter()
+                    .map(|contribution| contribution.id),
+            );
             if self.sidebar_search_open {
                 targets.push(target_ids::SIDEBAR_SEARCH_INPUT.to_owned());
             }
@@ -30096,21 +30132,23 @@ impl DesktopProgram {
             bottom: 0.0,
             left: 4.0,
         });
-        let footer = SidebarFooter::new()
-            .push(
-                SidebarFooterButton::new("设置", Icon::Settings)
-                    .selected(self.settings_open)
-                    .on_press(Message::OpenSettings)
-                    .view(tokens),
-            )
-            .push(
-                SidebarFooterButton::new("自动化", Icon::Nodes)
-                    .selected(self.automations_open)
-                    .on_press(Message::OpenAutomations)
-                    .view(tokens),
-            )
-            .push(provider)
-            .view(colors);
+        let mut footer = SidebarFooter::new();
+        for contribution in self.application.sidebar_navigation_contributions() {
+            footer = footer.push(
+                SidebarFooterButton::new(
+                    contribution.label,
+                    sidebar_navigation_icon(contribution.icon),
+                )
+                .selected(sidebar_navigation_selected(
+                    contribution.target,
+                    self.settings_open,
+                    self.automations_open,
+                ))
+                .on_press(Message::OpenSidebarNavigation(contribution.target))
+                .view(tokens),
+            );
+        }
+        let footer = footer.push(provider).view(colors);
         SidebarFrame::new(body).top(top).footer(footer).view(colors)
     }
 
@@ -46402,6 +46440,33 @@ mod tests {
             relative_before_id(&ids, &"a", &"c", SidebarTreeDropPosition::Inside),
             None
         );
+    }
+
+    #[test]
+    fn sidebar_navigation_contributions_keep_existing_targets_and_active_state() {
+        assert_eq!(
+            sidebar_navigation_target(SidebarNavigationTarget::Settings),
+            DesktopNavigationTarget::Settings
+        );
+        assert_eq!(
+            sidebar_navigation_target(SidebarNavigationTarget::Automations),
+            DesktopNavigationTarget::Automations
+        );
+        assert!(sidebar_navigation_selected(
+            SidebarNavigationTarget::Settings,
+            true,
+            false
+        ));
+        assert!(sidebar_navigation_selected(
+            SidebarNavigationTarget::Automations,
+            false,
+            true
+        ));
+        assert!(!sidebar_navigation_selected(
+            SidebarNavigationTarget::Settings,
+            false,
+            true
+        ));
     }
 
     #[test]

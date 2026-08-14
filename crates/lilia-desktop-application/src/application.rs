@@ -5,8 +5,8 @@ use std::sync::{Mutex, RwLock};
 
 use lilia_contracts::{
     ArtifactProjection, ChatContextUsage, PendingProjection, ProductError, ProductTask, Project,
-    ProjectArchiveState, ProjectId, TaskId, TimelineProjectionCursor, TimelineProjectionEvent,
-    TimelineProjectionPage, TodoProjection,
+    ProjectArchiveState, ProjectId, SidebarNavigationContribution, TaskId,
+    TimelineProjectionCursor, TimelineProjectionEvent, TimelineProjectionPage, TodoProjection,
 };
 use lilia_service::{ServiceAuthority, ServiceAuthorityError};
 use serde::{Deserialize, Serialize};
@@ -82,6 +82,7 @@ pub(crate) struct DesktopApplicationInner {
     pub(crate) cli_requests: Mutex<()>,
     pub(crate) extension_registry: Mutex<()>,
     pub(crate) hook_executions: crate::hooks::DesktopHookExecutionStore,
+    pub(crate) contribution_host: crate::contributions::LiliaContributionHost,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -248,6 +249,8 @@ impl DesktopApplication {
                 message: error.to_string(),
                 rollback_failed: None,
             })?;
+        let contribution_host = crate::contributions::LiliaContributionHost::bootstrap()
+            .map_err(|error| DesktopApplicationError::Contribution(error.to_string()))?;
         Ok(Self {
             inner: Arc::new(DesktopApplicationInner {
                 config,
@@ -292,6 +295,7 @@ impl DesktopApplication {
                 cli_requests: Mutex::new(()),
                 extension_registry: Mutex::new(()),
                 hook_executions,
+                contribution_host,
             }),
         })
     }
@@ -463,6 +467,10 @@ impl DesktopApplication {
         self.inner.events.subscribe()
     }
 
+    pub fn sidebar_navigation_contributions(&self) -> Vec<SidebarNavigationContribution> {
+        self.inner.contribution_host.sidebar_navigation()
+    }
+
     pub fn emit_event(&self, kind: DesktopEventKind) -> DesktopEvent {
         self.inner
             .events
@@ -494,6 +502,8 @@ pub enum DesktopApplicationError {
     },
     #[error("Native Agent operation failed: {0}")]
     Agent(String),
+    #[error("Lilia contribution composition failed: {0}")]
+    Contribution(String),
     #[error("task handoff failed: {0}")]
     TaskHandoff(String),
     #[error("desktop update operation is already running")]

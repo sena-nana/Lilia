@@ -569,6 +569,12 @@ mod tests {
                 "branch": "main",
                 "generation": 3
             },
+            "state": {
+                "head_commit": "abcdef",
+                "head_ref": "main",
+                "index_hash": "index-1",
+                "worktree_hash": "worktree-1"
+            },
             "clean": false,
             "changes": [{
                 "path": "src/main.rs",

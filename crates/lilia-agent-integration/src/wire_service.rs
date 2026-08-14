@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use lilia_contracts::{AgentSessionRef, ProductApprovalDecision, TaskId};
@@ -8,9 +8,11 @@ use mutsuki_agent_client::{
     InProcessAgentService,
 };
 use mutsuki_agent_contracts::{
-    AgentEventEnvelope, AgentMessage, AgentSession, AgentSessionCreateRequest, AgentWireError,
-    AgentWireRequestEnvelope, AgentWireResponseEnvelope, InteractionResolution, PermissionDecision,
-    PermissionDecisionKind, ResourceRef,
+    AgentBudget, AgentEvent, AgentEventEnvelope, AgentMessage, AgentSession,
+    AgentSessionCreateRequest, AgentSessionState, AgentSessionStatus, AgentToolCall,
+    AgentTurnState, AgentTurnStatus, AgentUsage, AgentWireError, AgentWireRequestEnvelope,
+    AgentWireResponseEnvelope, InteractionResolution, PendingApproval, PermissionDecision,
+    PermissionDecisionKind, ResourceRef, SessionVersion,
 };
 use serde_json::Value;
 
@@ -53,6 +55,14 @@ impl AgentWireRuntime for NativeWireRuntime {
             .map_err(port_error)?;
         session.title = request.title;
         Ok(session)
+    }
+
+    fn session_state(&self, session_id: &str) -> Result<AgentSessionState, AgentWireError> {
+        let session = self
+            .runtime
+            .session_snapshot(session_id)
+            .map_err(port_error)?;
+        Ok(session_state_from_snapshot(session))
     }
 
     fn submit_turn(
@@ -195,6 +205,125 @@ impl AgentWireRuntime for NativeWireRuntime {
             ),
             ("event_resume".into(), caps.supports_resume.to_string()),
         ]))
+    }
+}
+
+fn session_state_from_snapshot(session: AgentSession) -> AgentSessionState {
+    let version = SessionVersion(session.turn_count.saturating_add(1));
+    let mut turn_order = Vec::new();
+    let mut turn_statuses = BTreeMap::new();
+    let mut usage = AgentUsage::default();
+    let mut approvals = BTreeMap::new();
+    let mut interactions = BTreeMap::new();
+    for envelope in &session.events {
+        match &envelope.event {
+            AgentEvent::TurnState { turn_id, status } => {
+                if !turn_statuses.contains_key(turn_id) {
+                    turn_order.push(turn_id.clone());
+                }
+                turn_statuses.insert(turn_id.clone(), turn_status(status));
+            }
+            AgentEvent::Usage {
+                usage: event_usage, ..
+            } => usage.add(event_usage),
+            AgentEvent::ApprovalRequest { request } => {
+                approvals.insert(
+                    request.action_id.clone(),
+                    PendingApproval {
+                        request: request.clone(),
+                        tool_call: AgentToolCall {
+                            call_id: request.action_id.clone(),
+                            name: request.tool.clone(),
+                            input: Value::Null,
+                        },
+                    },
+                );
+            }
+            AgentEvent::InteractionRequested { interaction, .. } => {
+                interactions.insert(interaction.interaction_id.clone(), interaction.clone());
+            }
+            AgentEvent::InteractionResolved { resolution, .. } => {
+                interactions.remove(&resolution.interaction_id);
+            }
+            _ => {}
+        }
+    }
+    let turns = turn_order
+        .into_iter()
+        .map(|turn_id| AgentTurnState {
+            status: turn_statuses
+                .get(&turn_id)
+                .cloned()
+                .unwrap_or(AgentTurnStatus::Created),
+            turn_id,
+            expected_version: version,
+            steps: Vec::new(),
+            stop_reason: None,
+        })
+        .collect::<Vec<_>>();
+    let status = turns
+        .last()
+        .map(|turn| session_status(&turn.status))
+        .unwrap_or(AgentSessionStatus::Active);
+    let waiting_turns = turns
+        .iter()
+        .filter(|turn| {
+            matches!(
+                turn.status,
+                AgentTurnStatus::WaitingApproval | AgentTurnStatus::Generating
+            )
+        })
+        .map(|turn| turn.turn_id.as_str())
+        .collect::<BTreeSet<_>>();
+    let pending_approvals = approvals
+        .into_values()
+        .filter(|pending| waiting_turns.contains(pending.request.turn_id.as_str()))
+        .collect();
+    let pending_interactions = interactions
+        .into_values()
+        .filter(|pending| waiting_turns.contains(pending.turn_id.as_str()))
+        .collect();
+
+    AgentSessionState {
+        session_id: session.session_id,
+        profile_id: session.profile_id,
+        version,
+        status,
+        budget: AgentBudget::default(),
+        usage,
+        cost_microunits: 0,
+        snapshot: session.resource,
+        turns,
+        pending_approvals,
+        pending_interactions,
+        completed_attempts: BTreeSet::new(),
+        committed_side_effects: BTreeSet::new(),
+    }
+}
+
+fn turn_status(status: &str) -> AgentTurnStatus {
+    match status {
+        "collecting_context" | "starting" => AgentTurnStatus::CollectingContext,
+        "running_tools" => AgentTurnStatus::RunningTools,
+        "waiting_approval" | "waiting_interaction" => AgentTurnStatus::WaitingApproval,
+        "completed" => AgentTurnStatus::Completed,
+        "cancelled" => AgentTurnStatus::Cancelled,
+        "failed" => AgentTurnStatus::Failed,
+        "running" | "resumed" => AgentTurnStatus::Generating,
+        _ => AgentTurnStatus::Created,
+    }
+}
+
+fn session_status(status: &AgentTurnStatus) -> AgentSessionStatus {
+    match status {
+        AgentTurnStatus::WaitingApproval => AgentSessionStatus::WaitingApproval,
+        AgentTurnStatus::Completed => AgentSessionStatus::Completed,
+        AgentTurnStatus::Cancelled => AgentSessionStatus::Cancelled,
+        AgentTurnStatus::Failed => AgentSessionStatus::Failed,
+        AgentTurnStatus::Created
+        | AgentTurnStatus::CollectingContext
+        | AgentTurnStatus::Generating
+        | AgentTurnStatus::RunningTools => AgentSessionStatus::Active,
     }
 }
 
@@ -527,6 +656,10 @@ mod tests {
             .unwrap();
         server.join().unwrap();
         assert_eq!(version, SessionVersion(2));
+        let state = client.get_session_state(&session.session_id).unwrap();
+        assert_eq!(state.status, AgentSessionStatus::Completed);
+        assert_eq!(state.turns.len(), 1);
+        assert_eq!(state.usage.total_tokens, 2);
         assert_eq!(
             client
                 .submit_turn(
