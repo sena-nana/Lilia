@@ -3587,24 +3587,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lilia-cli"
-version = "0.1.0"
-dependencies = [
- "lilia-agent-integration",
- "lilia-client",
- "lilia-contracts",
- "lilia-core",
- "lilia-service",
- "lilia-storage",
- "mutsuki-agent-client",
- "mutsuki-agent-contracts",
- "rusqlite",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
-]
-
-[[package]]
 name = "lilia-client"
 version = "0.1.0"
 dependencies = [

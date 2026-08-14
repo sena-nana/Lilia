@@ -13,13 +13,14 @@ LiliaCode uses the Lilia product protocol implemented by Mutsuki AgentKit. Its N
 ## Repository
 
 - `apps/desktop`: the only desktop application, built with Rust, NanaUI, and WGPU
-- `apps/cli`: the `liliacode` command-line entry
 - `apps/service`: the shared service entry
 - `apps/android`: the experimental Android remote companion; Gradle remains the platform build system
 - `crates/lilia-desktop-application`: host-independent desktop application services
 - `crates/lilia-contracts/contracts`: canonical product contracts consumed by Rust
 - `xtask`: repository verification, debug, performance, Android, and release orchestration
 - `docs`: Markdown design and product documentation; no documentation site is built or published
+
+The `liliacode` command-line arguments are handled by `apps/desktop` only for application launch, project opening, explicit import, task handoff, and single-instance forwarding. LiliaCode does not provide a TUI, an Agent CLI, or a second command-line Agent host.
 
 ## Development
 

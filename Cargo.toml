@@ -9,7 +9,6 @@ members = [
     "crates/lilia-service",
     "crates/lilia-desktop-application",
     "apps/service",
-    "apps/cli",
     "apps/desktop",
     "xtask",
 ]

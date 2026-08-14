@@ -8,7 +8,7 @@ use crate::remote_observe::{RemoteObserveError, ServiceHttpEndpoint};
 /// Canonical Agent Client backend over the Lilia Service HTTP carrier.
 ///
 /// The payload is the unmodified Mutsuki Agent Wire envelope; HTTP is only the
-/// carrier, so Desktop, CLI and remote clients share negotiation, versions,
+/// carrier, so Desktop, Service and remote clients share negotiation, versions,
 /// approval binding, idempotency and event cursor behavior.
 #[derive(Clone, Debug)]
 pub struct AgentWireHttpBackend {

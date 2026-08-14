@@ -8,7 +8,6 @@ LiliaCode is a Cargo-first Native repository. The only desktop product is the Na
 LiliaCode/
 ├── apps/
 │   ├── desktop/                 # Production Native desktop app
-│   ├── cli/                     # liliacode CLI
 │   ├── service/                 # Service entry
 │   └── android/                 # Android companion (Gradle/Kotlin)
 ├── crates/
@@ -19,6 +18,8 @@ LiliaCode/
 ├── xtask/                       # Development, verification, and release tasks
 └── docs/                        # Markdown documentation
 ```
+
+The `liliacode` command-line arguments belong to `apps/desktop` and only launch the application, open projects, perform explicit imports or task handoffs, and forward requests to the active instance. The repository does not provide a TUI, an Agent CLI, or a second command-line Agent host.
 
 ## Local development
 

@@ -76,7 +76,7 @@ flowchart TB
 
 | 层 | 所有者 | 主要落点 |
 | --- | --- | --- |
-| 用户 Task 面 | Lilia 产品 | `apps/desktop` · `apps/service` · `apps/cli` · 产品 SQLite |
+| 用户 Task 面 | Lilia 产品 | `apps/desktop` · `apps/service` · 产品 SQLite |
 | Lilia Protocol | `crates/lilia-contracts` | `ChatWorkflow` · `ChatRuntimeCommand` · Interaction · RuntimeOptions |
 | 防腐层 | `lilia-core` · `lilia-agent-integration` | profile 装配、Wire 服务、Task↔Session 绑定、事件投影 |
 | Model 管理 / 分流 | 产品配置 + contracts 自动选择 + 运行时 profile | 目录、tier/预设、本轮 model 覆盖 |
@@ -88,7 +88,7 @@ flowchart LR
   subgraph product [Lilia 产品]
     TaskUI[Task / Timeline / UI]
     Contracts[contracts 协议]
-    Host[Desktop / CLI / Service host]
+    Host[Desktop / Service host]
     Anti[防腐层 integration]
   end
   subgraph mutsuki [Mutsuki]
@@ -201,7 +201,7 @@ flowchart LR
 
 > **实现状态（已落地）**：内置角色预设 `default` / `plan` / `fast` / `review` 可绑定模型与思考强度；支持**自定义预设组增删**；自动分流按 protocol 信号选内置角色（见 `model-selection-defaults.json` 的 `autoPresetRules`）。  
 > 旧 `ModelTier`（`light` / `normal` / `deep`）仍作兼容镜像与辅助映射。发送前可手动覆盖。  
-> **发送路径**：前端 `selectModelForTurn` 在 send 前写入 `runtimeOptions.common.modelSelection`（含 `presetId`）；Rust 在关闭「辅助模型决策」时同样跑本地预设路由，保证 CLI/自动化与桌面一致。
+> **发送路径**：前端 `selectModelForTurn` 在 send 前写入 `runtimeOptions.common.modelSelection`（含 `presetId`）；Rust 在关闭「辅助模型决策」时同样跑本地预设路由，保证自动化与桌面一致。
 
 ### 5.3 分流器输入 / 输出
 
@@ -285,7 +285,7 @@ flowchart LR
 2. **AgentMessage** + turn metadata（含产品侧 prompt / control 片段）  
 3. **Agent Wire** 请求（`AgentWireRequestEnvelope`），经 `NativeAgentWireService` / `AgentWireAuthority`
 
-CLI / 远程路径直接消费**未改动的** Mutsuki Wire envelope；HTTP 只做传输，不另起一套 Agent 协议。
+远程路径直接消费**未改动的** Mutsuki Wire envelope；HTTP 只做传输，不另起一套 Agent 协议。`liliacode` 命令行入口只处理程序业务参数，不承载 Agent Wire 或交互式 Agent 能力。
 
 ### 6.3 ChatWorkflow（用户可见意图）
 
@@ -423,7 +423,7 @@ UI 不解析 `providerContext` 内部字段，只 round-trip。旧 brand 专属�
 
 - 权威：`AgentWireAuthority`（version、idempotency、approval/cancel replay、fork、reconnect）。  
 - 产品：`AgentWireRuntime` + 持久化（`NativeAgentWireService` / `NativeAgentKitRuntime`）。  
-- 进程内：`InProcessAgentClient`；跨进程 / CLI：`AgentClient` + 未改 envelope 的传输。
+- 进程内：`InProcessAgentClient`；跨进程远程客户端：`AgentClient` + 未改 envelope 的传输。
 
 ### 8.2 Session / Turn / Approval
 

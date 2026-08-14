@@ -1,4 +1,4 @@
-//! Shared Lilia data-path assembly for Desktop / Service / CLI (#56 / #47).
+//! Shared Lilia data-path assembly for Desktop / Service (#56 / #47).
 //!
 //! All hosts that open the product projection DB must resolve through this
 //! module so Embedded Desktop and Service authority share one file layout.

@@ -11,7 +11,7 @@ use std::io::{self, Read};
 
 use crate::{health_http_response, ServiceAuthority, ServiceAuthorityStatus, ServiceHealthReport};
 
-/// Read-only product/Agent observation surface for Remote / CLI.
+/// Read-only product/Agent observation surface for remote clients.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteObserveStatus {
@@ -167,7 +167,7 @@ pub fn read_http_request(reader: &mut impl Read) -> io::Result<String> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
 }
 
-/// Serve the Service HTTP surface used by Remote / CLI clients.
+/// Serve the Service HTTP surface used by remote clients.
 ///
 /// Routes:
 /// - `GET /health`

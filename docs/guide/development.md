@@ -8,7 +8,6 @@ LiliaCode 是 Cargo-first Native 仓库。桌面产品只有 `apps/desktop` 中�
 LiliaCode/
 ├── apps/
 │   ├── desktop/                 # 正式 Native 桌面应用
-│   ├── cli/                     # liliacode CLI
 │   ├── service/                 # Service 入口
 │   └── android/                 # Android remote companion（Gradle/Kotlin）
 ├── crates/
@@ -19,6 +18,8 @@ LiliaCode/
 ├── xtask/                       # 开发、验证、发布编排
 └── docs/                        # 直接阅读的 Markdown 文档
 ```
+
+`liliacode` 命令行参数归 `apps/desktop` 所有，只负责启动程序、打开项目、显式导入、任务 handoff 与向活动实例转发请求。仓库不提供 TUI、Agent CLI 或第二套命令行 Agent 宿主。
 
 ## 本地运行
 

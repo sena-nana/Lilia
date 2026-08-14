@@ -14,7 +14,8 @@
 
 - LiliaCode 是 Cargo-first Native 仓库；`apps/desktop` 是唯一 NanaUI/WGPU 桌面实现。
 - `crates/lilia-desktop-application` 持有宿主无关的桌面应用服务，`crates/lilia-contracts/contracts` 持有 Rust 消费的产品契约。
-- `apps/cli`、`apps/service` 和 `apps/android` 继续保留；Android 平台构建使用 Gradle/JDK，其任务编排仍由 `cargo xtask android ...` 负责。
+- `apps/service` 和 `apps/android` 继续保留；Android 平台构建使用 Gradle/JDK，其任务编排仍由 `cargo xtask android ...` 负责。
+- `liliacode` 命令行参数由 `apps/desktop` 处理，只用于启动、项目打开、显式导入、任务 handoff 与单实例转发；不建设 TUI、Agent CLI 或第二套 Agent 宿主。
 - Markdown 是仓库内文档，不构建或发布文档站。
 - 禁止重新引入 Web 桌面宿主、JavaScript 包管理器或编辑器扩展实现。
 

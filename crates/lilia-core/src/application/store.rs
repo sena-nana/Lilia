@@ -18,7 +18,7 @@ use crate::domain::ensure_expected_revision;
 /// Host-neutral Product Core persistence port.
 ///
 /// Application services own validation and concurrency semantics; repositories
-/// provide one durable fact surface for Desktop, CLI, Remote, and Service hosts.
+/// provide one durable fact surface for Desktop, Remote, and Service hosts.
 pub trait ProductRepository: Send + Sync {
     fn create_entity(&self, entity: ProductEntity) -> ProductResult<ProductEntity>;
     fn update_entity(

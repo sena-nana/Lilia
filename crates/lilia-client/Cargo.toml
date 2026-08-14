@@ -1,6 +1,6 @@
 [package]
 name = "lilia-client"
-description = "Unified LiliaClient facade for Desktop, CLI, Remote, and Service hosts"
+description = "Unified LiliaClient facade for Desktop, Remote, and Service hosts"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

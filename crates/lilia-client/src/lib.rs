@@ -1,4 +1,4 @@
-//! Unified `LiliaClient` facade. Desktop / CLI / Remote / Service share this contract.
+//! Unified `LiliaClient` facade. Desktop / Remote / Service share this contract.
 //!
 //! Product timeline reads go through `lilia-storage` projection store (#46 / #56),
 //! not Desktop SQLite.
@@ -231,7 +231,7 @@ impl<P: AgentKitClientPort> LiliaClient<P> {
         self.products.replace_binding_for_task(binding)
     }
 
-    /// Submit a turn through the shared AgentKit client port (Desktop / CLI / Service).
+    /// Submit a turn through the shared AgentKit client port (Desktop / Remote / Service).
     pub fn submit_turn(
         &self,
         session: &lilia_contracts::AgentSessionRef,
