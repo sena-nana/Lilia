@@ -60,4 +60,4 @@ Debug 协议不进入 Release。离屏测试可验证确定性状态，但不能
 
 `cargo xtask performance` 对 Composer、resize、千条时间线、冷启动及空闲 CPU/RSS 使用固定 corpus，分别判断绝对阈值和历史基线。
 
-Windows 发布由 `cargo xtask release windows --tag <tag>` 生成 `liliacode.exe`、`liliacode_host.dll`、NSIS 安装包、签名更新归档和 `latest.json`。随后 `cargo xtask installer-smoke --tag <tag>` 验证安装、启动、CLI、单实例、覆盖升级、卸载与 PATH 清理，并确认用户数据未被删除。
+各桌面平台的入口都是薄启动器：先显示应用图标，再加载同目录宿主库。Windows 发布由 `cargo xtask release windows --tag <tag>` 生成 `liliacode.exe`、`liliacode_host.dll`、NSIS 安装包、签名更新归档和 `latest.json`。随后 `cargo xtask installer-smoke --tag <tag>` 验证安装、启动、CLI、单实例、覆盖升级、卸载与 PATH 清理，并确认用户数据未被删除。
