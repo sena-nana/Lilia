@@ -18,6 +18,7 @@ pub(crate) struct HostStack {
     grow: Option<f32>,
     shrink: Option<f32>,
     padding: Option<f32>,
+    max_width: Option<LengthSpec>,
 }
 
 impl HostStack {
@@ -34,6 +35,7 @@ impl HostStack {
             grow: None,
             shrink: None,
             padding: None,
+            max_width: None,
         }
     }
 
@@ -139,6 +141,16 @@ impl HostStack {
         self.padding = Some(padding);
         self
     }
+
+    pub(crate) fn max_width(mut self, width: f32) -> Self {
+        self.max_width = Some(LengthSpec::Px(width));
+        self
+    }
+
+    pub(crate) fn align(mut self, align: AlignSpec) -> Self {
+        self.align = align;
+        self
+    }
 }
 
 impl ComponentView for HostStack {
@@ -167,6 +179,7 @@ impl ComponentView for HostStack {
         if let Some(padding) = self.padding {
             layout.padding = Some(LengthSpec::Px(padding));
         }
+        layout.max_width = self.max_width;
         if let Some(grow) = self.grow {
             layout.flex_grow = Some(grow);
         }

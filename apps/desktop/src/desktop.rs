@@ -68,6 +68,7 @@ use lilia_desktop_application::{
     ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery, ProjectRoadmap,
     ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput, RemoteControlStatus, SplitAxis,
     TaskQuery, WorkspaceItem, WorkspaceItemId, CODING_TOOLS_PANEL_ID, IAB_PANEL_ID,
+    TASK_WORKSPACE_ITEM_KIND,
     MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES, TASK_INSPECTOR_PANEL_ID, TITLE_UPDATE_ACTION_KIND,
 };
 use nana_ui::runtime::RuntimeDocument;
@@ -77,7 +78,8 @@ use nana_ui::{
     CommandPaletteItem, ContextPredicate, DropdownEvent, DropdownOption,
     GraphCanvasEvent, GraphEdge as CanvasGraphEdge, GraphEndpoint, GraphModel,
     GraphNode as CanvasGraphNode, GraphPoint, GraphPort, GraphPortKind, GraphPortSide,
-    GraphSelection, GraphSize, GraphViewport, Icon, KeyBinding, KeyCaptureEvent,
+    GraphSelection, GraphSize, GraphViewport, Icon, KeyBinding, KeyCaptureEvent, KeyCaptureLayer,
+    KeyInput,
     KeyContext, KeyModifiers, KeyStroke, Keymap, KeymapMatch, KeymapState, LogicalRect,
     MarkdownImage, NarrowBehavior, NativeMarkdown, PaneTreeNode, RegionId, RegionRole, RegionState,
     RuntimeProgram, RuntimeRedraw, SettingsModel, SettingsState, SettingsTab, SettingsTabId,
@@ -899,6 +901,27 @@ impl SidebarMenuAction {
     }
 }
 
+fn sidebar_menu_action_label(action: SidebarMenuAction) -> &'static str {
+    match action {
+        SidebarMenuAction::AddLocalFolder => "使用本地文件夹",
+        SidebarMenuAction::CloneRepository => "从 GitHub clone",
+        SidebarMenuAction::CreateCategory => "创建空分类",
+        SidebarMenuAction::OpenProject => "进入项目",
+        SidebarMenuAction::OpenProjectPopup => "在弹出窗口中创建对话",
+        SidebarMenuAction::ToggleProjectPinned => "置顶项目",
+        SidebarMenuAction::OpenProjectFileManager => "在文件管理器中打开",
+        SidebarMenuAction::OpenProjectCodeEditor => "在 VS Code 中打开",
+        SidebarMenuAction::RenameProject => "重命名项目",
+        SidebarMenuAction::ArchiveProjectConversations => "归档所有对话",
+        SidebarMenuAction::RemoveProject => "移除项目",
+        SidebarMenuAction::OpenTaskPopup => "在弹出窗口继续",
+        SidebarMenuAction::AskTaskPopup => "在弹出窗口询问",
+        SidebarMenuAction::ToggleTaskPinned => "置顶",
+        SidebarMenuAction::MergeTaskWorktree => "合并并删除",
+        SidebarMenuAction::ArchiveTask => "归档",
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SidebarTreeNode {
     Project(ProjectId),
@@ -985,6 +1008,7 @@ pub(crate) enum TitlebarMenuAction {
     CloseCurrentItem,
     OpenCommandPalette,
     OpenConversationStatus,
+    OpenTaskBrowser,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1547,6 +1571,7 @@ pub enum Message {
     TogglePlanMode,
     ToggleGoalMode,
     CyclePermission,
+    SetComposerPermission(DesktopExecutionPermission),
     SubmitTurn,
     CompactContext,
     InterruptTurn,
@@ -2249,6 +2274,478 @@ impl DesktopProgram {
             }
             crate::runtime_shell::ShellIntent::NewConversation => Message::OpenSidebarInboxDraft,
             crate::runtime_shell::ShellIntent::SelectTask(task_id) => Message::SelectTask(task_id),
+            crate::runtime_shell::ShellIntent::ToggleSidebarSearch => Message::ToggleSidebarSearch,
+            crate::runtime_shell::ShellIntent::SidebarSearchChanged(value) => {
+                Message::SidebarSearchChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::ToggleSidebarProject(id) => {
+                match self
+                    .projects
+                    .iter()
+                    .find(|project| project.id.as_str() == id)
+                    .map(|project| project.id.clone())
+                {
+                    Some(project_id) => Message::ToggleSidebarProject(project_id),
+                    None => return None,
+                }
+            }
+            crate::runtime_shell::ShellIntent::ToggleSidebarInbox => Message::ToggleSidebarInbox,
+            crate::runtime_shell::ShellIntent::RevealSidebarProject(id) => {
+                match self
+                    .projects
+                    .iter()
+                    .find(|project| project.id.as_str() == id)
+                    .map(|project| project.id.clone())
+                {
+                    Some(project_id) => Message::RevealSidebarProjectTasks(project_id),
+                    None => return None,
+                }
+            }
+            crate::runtime_shell::ShellIntent::RevealSidebarInbox => Message::RevealSidebarInboxTasks,
+            crate::runtime_shell::ShellIntent::OpenProjectsOverview => Message::OpenProjectsOverview,
+            crate::runtime_shell::ShellIntent::OpenAddProjectMenu => {
+                Message::OpenSidebarMenu {
+                    target: SidebarMenuTarget::AddProject,
+                    anchor_y: 96.0,
+                }
+            }
+            crate::runtime_shell::ShellIntent::OpenProjectMenu(id) => {
+                match self
+                    .projects
+                    .iter()
+                    .find(|project| project.id.as_str() == id)
+                    .map(|project| project.id.clone())
+                {
+                    Some(project_id) => Message::OpenSidebarMenu {
+                        target: SidebarMenuTarget::Project(project_id),
+                        anchor_y: 126.0,
+                    },
+                    None => return None,
+                }
+            }
+            crate::runtime_shell::ShellIntent::OpenProjectDraft(id) => {
+                match self
+                    .projects
+                    .iter()
+                    .find(|project| project.id.as_str() == id)
+                    .map(|project| project.id.clone())
+                {
+                    Some(project_id) => Message::OpenSidebarProjectDraft(project_id),
+                    None => return None,
+                }
+            }
+            crate::runtime_shell::ShellIntent::RestoreProject(id) => {
+                match self
+                    .archived_projects
+                    .iter()
+                    .find(|project| project.id.as_str() == id)
+                    .map(|project| project.id.clone())
+                {
+                    Some(project_id) => Message::RestoreProject(project_id),
+                    None => return None,
+                }
+            }
+            crate::runtime_shell::ShellIntent::SelectProject(id) => {
+                match self
+                    .projects
+                    .iter()
+                    .find(|project| project.id.as_str() == id)
+                    .map(|project| project.id.clone())
+                {
+                    Some(project_id) => Message::SelectProject(project_id),
+                    None => return None,
+                }
+            }
+            crate::runtime_shell::ShellIntent::StopSidebarTask(task_id) => {
+                Message::SidebarStopTask(task_id)
+            }
+            crate::runtime_shell::ShellIntent::SidebarMenuAction(id) => {
+                let Some((_, action)) = self
+                    .sidebar_menu_debug_targets()
+                    .into_iter()
+                    .find(|(target, _)| target == &id)
+                else {
+                    return None;
+                };
+                self.update_sidebar_menu(HostedContextMenuEvent::Select(action));
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::OpenAutomations => Message::OpenAutomations,
+            crate::runtime_shell::ShellIntent::CloseAutomations => Message::CloseAutomations,
+            crate::runtime_shell::ShellIntent::ConfirmDestructive => {
+                if self.project_archive_confirmation.is_some() {
+                    Message::ConfirmProjectConversationArchive
+                } else if self.project_removal.is_some() {
+                    Message::ConfirmProjectRemoval
+                } else if matches!(self.update_state, DesktopUpdateState::Failed { .. }) {
+                    Message::CheckForUpdate
+                } else {
+                    Message::InstallUpdate
+                }
+            }
+            crate::runtime_shell::ShellIntent::CancelDestructive => {
+                if self.project_archive_confirmation.is_some() {
+                    Message::CancelProjectConversationArchive
+                } else if self.project_removal.is_some() {
+                    Message::CancelProjectRemoval
+                } else {
+                    Message::DismissUpdatePrompt
+                }
+            }
+            crate::runtime_shell::ShellIntent::SelectPaneTab { item_id, pane_id } => {
+                let item_id = item_id
+                    .filter(|id| id != "conversation")
+                    .and_then(|id| WorkspaceItemId::new(id).ok())
+                    .or_else(|| self.conversation_workspace_item_id());
+                let Some(item_id) = item_id else {
+                    return self.update_message(Message::SelectWorkspacePaneTab {
+                        pane_id: self.panel_layout.active_pane().clone(),
+                        item_id: None,
+                    });
+                };
+                let pane_id = if pane_id == "active" {
+                    self.panel_layout
+                        .pane_for_item(&item_id)
+                        .cloned()
+                        .unwrap_or_else(|| self.panel_layout.active_pane().clone())
+                } else {
+                    PaneId::new(pane_id).unwrap_or_else(|_| self.panel_layout.active_pane().clone())
+                };
+                Message::SelectWorkspacePaneTab {
+                    pane_id,
+                    item_id: Some(item_id),
+                }
+            }
+            crate::runtime_shell::ShellIntent::ReorderPaneTab {
+                pane_id,
+                item_id,
+                before,
+            } => {
+                let pane_id = if pane_id == "active" {
+                    self.panel_layout.active_pane().clone()
+                } else {
+                    PaneId::new(pane_id).unwrap_or_else(|_| self.panel_layout.active_pane().clone())
+                };
+                match WorkspaceItemId::new(item_id) {
+                    Ok(item_id) => Message::ReorderWorkspacePaneTab {
+                        pane_id,
+                        item_id,
+                        before: before.and_then(|id| WorkspaceItemId::new(id).ok()),
+                    },
+                    Err(_) => Message::FocusWorkspacePane(pane_id),
+                }
+            }
+            crate::runtime_shell::ShellIntent::IabUrlChanged(value) => {
+                Message::Iab(IabPanelMessage::DraftUrlChanged(value))
+            }
+            crate::runtime_shell::ShellIntent::IabNavigate => Message::Iab(IabPanelMessage::Navigate),
+            crate::runtime_shell::ShellIntent::IabOpenWindow => {
+                Message::Iab(IabPanelMessage::OpenWindow)
+            }
+            crate::runtime_shell::ShellIntent::OpenTaskBrowser => {
+                self.open_iab();
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::ToggleComposerPlus => {
+                Message::ToggleComposerActionMenu(HostedWindowId::PRIMARY)
+            }
+            crate::runtime_shell::ShellIntent::ComposerPlus(action) => {
+                let action = match action.as_str() {
+                    "add-file" => ComposerAction::AddFile,
+                    "add-directory" => ComposerAction::AddDirectory,
+                    "reference" => ComposerAction::ReferenceConversation,
+                    "paste-text" => ComposerAction::PasteText,
+                    "paste-image" => ComposerAction::PasteImage,
+                    "paste-files" => ComposerAction::PasteFiles,
+                    "plan" => ComposerAction::TogglePlanMode,
+                    "goal" => ComposerAction::ToggleGoalMode,
+                    _ => return None,
+                };
+                Message::ComposerAction {
+                    window_id: HostedWindowId::PRIMARY,
+                    action,
+                }
+            }
+            crate::runtime_shell::ShellIntent::SetPermission(value) => {
+                Message::SetComposerPermission(match value.as_str() {
+                    "readonly" => DesktopExecutionPermission::Readonly,
+                    "full" => DesktopExecutionPermission::Full,
+                    _ => DesktopExecutionPermission::Ask,
+                })
+            }
+            crate::runtime_shell::ShellIntent::ApplySlash(name) => {
+                match self
+                    .slash_commands
+                    .iter()
+                    .find(|item| item.command.name == name)
+                    .map(|item| item.command.clone())
+                {
+                    Some(command) => Message::SelectSlashCommand(command),
+                    None => return None,
+                }
+            }
+            crate::runtime_shell::ShellIntent::SelectMention(relative_path) => {
+                Message::SelectContextAttachment(relative_path)
+            }
+            crate::runtime_shell::ShellIntent::ToggleTimelineExpand(event_id) => {
+                Message::ToggleTimelineEvent(event_id)
+            }
+            crate::runtime_shell::ShellIntent::StartGitHubBinding => Message::StartGitHubBinding,
+            crate::runtime_shell::ShellIntent::CancelGitHubBinding => Message::CancelGitHubBinding,
+            crate::runtime_shell::ShellIntent::BeginShortcutCapture => {
+                Message::BeginShellShortcutCapture
+            }
+            crate::runtime_shell::ShellIntent::SaveShortcut => Message::SaveShellShortcut,
+            crate::runtime_shell::ShellIntent::ClearShortcut => Message::ClearShellShortcut,
+            crate::runtime_shell::ShellIntent::CodingQueryChanged(value) => {
+                Message::CodingQueryChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::SearchCoding => Message::SearchCodingTools,
+            crate::runtime_shell::ShellIntent::RefreshCoding => Message::RefreshCodingTools,
+            crate::runtime_shell::ShellIntent::CycleCodingMode => Message::CycleCodingSearchMode,
+            crate::runtime_shell::ShellIntent::ToggleCodingScope => Message::ToggleCodingSearchScope,
+            crate::runtime_shell::ShellIntent::OpenCodingHit(key) => {
+                match self.coding_search.as_ref().and_then(|result| {
+                    result
+                        .hits
+                        .iter()
+                        .find(|hit| coding_hit_key(hit) == key)
+                        .cloned()
+                }) {
+                    Some(hit) => Message::OpenCodingSearchHit(hit),
+                    None => Message::SearchCodingTools,
+                }
+            }
+            crate::runtime_shell::ShellIntent::OpenCodingWorkspace => Message::OpenProjectWorkspace,
+            crate::runtime_shell::ShellIntent::OpenCodingTerminal => {
+                Message::OpenNativeProjectTerminal
+            }
+            crate::runtime_shell::ShellIntent::SelectRoadmapMilestone(id) => {
+                Message::SelectMilestone(id)
+            }
+            crate::runtime_shell::ShellIntent::RefreshArchitecture => Message::RefreshArchitecture,
+            crate::runtime_shell::ShellIntent::RollbackArchitecture => Message::RollbackArchitecture,
+            crate::runtime_shell::ShellIntent::ArchitectureGraph(event) => {
+                Message::ArchitectureGraph(event)
+            }
+            crate::runtime_shell::ShellIntent::RespondApproval { request_id, approved } => {
+                Message::RespondApproval {
+                    request_id,
+                    approved,
+                }
+            }
+            crate::runtime_shell::ShellIntent::RespondTitle { request_id, accepted } => {
+                Message::RespondTitleUpdate {
+                    request_id,
+                    accepted,
+                }
+            }
+            crate::runtime_shell::ShellIntent::RespondArchitecture { request_id, approved } => {
+                Message::RespondArchitecture {
+                    request_id,
+                    decision: if approved {
+                        DesktopArchitectureInteractionDecision::Allow
+                    } else {
+                        DesktopArchitectureInteractionDecision::Deny
+                    },
+                }
+            }
+            crate::runtime_shell::ShellIntent::RespondPlan { request_id, action } => {
+                let draft = self
+                    .interaction_drafts
+                    .get(&request_id)
+                    .cloned()
+                    .unwrap_or_default();
+                let (accepted, response) = match action.as_str() {
+                    "revise" => (
+                        true,
+                        serde_json::json!({ "action": "revise", "feedback": draft }),
+                    ),
+                    "decline" => (false, serde_json::json!({ "action": "decline" })),
+                    _ => (true, serde_json::json!({ "action": "approve" })),
+                };
+                Message::RespondInteraction {
+                    request_id,
+                    accepted,
+                    response,
+                }
+            }
+            crate::runtime_shell::ShellIntent::RespondToolConsent { request_id, approved } => {
+                Message::RespondToolConsent {
+                    window_id: HostedWindowId::PRIMARY,
+                    request_id,
+                    decision: if approved {
+                        DesktopToolConsentDecision::Allow
+                    } else {
+                        DesktopToolConsentDecision::Deny
+                    },
+                }
+            }
+            crate::runtime_shell::ShellIntent::ToolConsentDraftChanged {
+                request_id,
+                command,
+                message,
+            } => Message::ToolConsentDraftChanged {
+                window_id: HostedWindowId::PRIMARY,
+                request_id,
+                command,
+                message,
+            },
+            crate::runtime_shell::ShellIntent::AskUserPending {
+                request_id,
+                action,
+                value,
+            } => Message::AskUserDraftAction {
+                window_id: HostedWindowId::PRIMARY,
+                request_id,
+                action: match action.as_str() {
+                    "submit" => AskUserAction::Submit,
+                    "skip" => AskUserAction::Skip,
+                    "back" => AskUserAction::Back,
+                    "cancel" => AskUserAction::Cancel,
+                    "reject" => AskUserAction::Reject,
+                    "freeform" => AskUserAction::SetFreeform(value),
+                    _ => AskUserAction::Select(value),
+                },
+            },
+            crate::runtime_shell::ShellIntent::PendingDraftChanged { request_id, value } => {
+                match self.shell_pending().map(|pending| pending.kind) {
+                    Some(crate::runtime_shell::ShellPendingKind::AskUser) => {
+                        Message::AskUserDraftAction {
+                            window_id: HostedWindowId::PRIMARY,
+                            request_id,
+                            action: AskUserAction::SetFreeform(value),
+                        }
+                    }
+                    _ => Message::InteractionDraftChanged { request_id, value },
+                }
+            }
+            crate::runtime_shell::ShellIntent::SelectPendingOption { request_id, option_id } => {
+                Message::AskUserDraftAction {
+                    window_id: HostedWindowId::PRIMARY,
+                    request_id,
+                    action: AskUserAction::Select(option_id),
+                }
+            }
+            crate::runtime_shell::ShellIntent::RespondMcp { request_id, action } => {
+                let mcp_action = match action.as_str() {
+                    "accept" => DesktopMcpElicitationAction::Accept,
+                    "decline" => DesktopMcpElicitationAction::Decline,
+                    _ => DesktopMcpElicitationAction::Cancel,
+                };
+                let pending = self.task_session.as_ref().and_then(|session| {
+                    session.pending.iter().find(|pending| {
+                        pending.request_id == request_id && pending.kind == "mcp_elicitation"
+                    })
+                });
+                if let Some(pending) = pending {
+                    let draft = mcp_elicitation_draft(
+                        pending,
+                        self.mcp_elicitation_drafts.get(&request_id),
+                    );
+                    match mcp_elicitation_response(pending, &draft, mcp_action) {
+                        Ok((accepted, response)) => Message::RespondInteraction {
+                            request_id,
+                            accepted,
+                            response,
+                        },
+                        Err(_) => Message::RespondInteraction {
+                            request_id,
+                            accepted: false,
+                            response: serde_json::json!({ "action": "cancel" }),
+                        },
+                    }
+                } else {
+                    Message::RespondInteraction {
+                        request_id,
+                        accepted: false,
+                        response: serde_json::json!({ "action": mcp_action.as_str() }),
+                    }
+                }
+            }
+            crate::runtime_shell::ShellIntent::McpFieldChanged {
+                request_id,
+                field_key,
+                value,
+            } => Message::McpFieldChanged {
+                window_id: HostedWindowId::PRIMARY,
+                request_id,
+                field_key,
+                value,
+            },
+            crate::runtime_shell::ShellIntent::McpRawJsonChanged { request_id, value } => {
+                Message::McpRawJsonChanged {
+                    window_id: HostedWindowId::PRIMARY,
+                    request_id,
+                    value,
+                }
+            }
+            crate::runtime_shell::ShellIntent::McpToggleOption {
+                request_id,
+                field_key,
+                value,
+                multi,
+            } => Message::McpToggleOption {
+                window_id: HostedWindowId::PRIMARY,
+                request_id,
+                field_key,
+                value,
+                multi,
+            },
+            crate::runtime_shell::ShellIntent::McpToggleBoolean {
+                request_id,
+                field_key,
+            } => Message::McpToggleBoolean {
+                window_id: HostedWindowId::PRIMARY,
+                request_id,
+                field_key,
+            },
+            crate::runtime_shell::ShellIntent::OpenMarkdownLink(uri) => {
+                Message::OpenMarkdownLink(uri)
+            }
+            crate::runtime_shell::ShellIntent::CloneRepositoryChanged(value) => {
+                Message::ProjectCloneRepositoryChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::PickCloneParent => Message::PickProjectCloneParent,
+            crate::runtime_shell::ShellIntent::StartClone => Message::StartProjectClone,
+            crate::runtime_shell::ShellIntent::CancelClone => Message::CancelProjectClone,
+            crate::runtime_shell::ShellIntent::MilestoneTitleChanged(value) => {
+                Message::MilestoneTitleChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::CreateMilestone => Message::CreateMilestone,
+            crate::runtime_shell::ShellIntent::SaveMilestone => Message::SaveMilestone,
+            crate::runtime_shell::ShellIntent::LoadEarlierTimeline => Message::LoadEarlierTimeline,
+            crate::runtime_shell::ShellIntent::CopyTimeline(event_id) => {
+                let text = self
+                    .task_session
+                    .as_ref()
+                    .and_then(|session| {
+                        session.timeline.iter().find(|event| event.id == event_id)
+                    })
+                    .and_then(|event| {
+                        event
+                            .markdown_plain_text
+                            .clone()
+                            .or_else(|| event.markdown.clone())
+                            .or_else(|| event.summary.clone())
+                            .or_else(|| Some(event.title.clone()).filter(|title| !title.is_empty()))
+                    })
+                    .filter(|text| !text.is_empty())
+                    .unwrap_or_else(|| event_id.clone());
+                Message::CopyTimelineMarkdown { event_id, text }
+            }
+            crate::runtime_shell::ShellIntent::RetryTimeline(event_id) => {
+                Message::RetryTimelineEvent {
+                    window_id: HostedWindowId::PRIMARY,
+                    event_id,
+                }
+            }
+            crate::runtime_shell::ShellIntent::MovePaneToWindow => {
+                Message::MoveWorkspaceItemToNewWindow(self.require_movable_workspace_item_id())
+            }
+            crate::runtime_shell::ShellIntent::MovePaneToNext => {
+                Message::MoveWorkspaceItemToNextPane(self.require_movable_workspace_item_id())
+            }
             crate::runtime_shell::ShellIntent::OpenSettings => Message::OpenSettings,
             crate::runtime_shell::ShellIntent::CloseSettings => Message::CloseSettings,
             crate::runtime_shell::ShellIntent::ComposerChanged(value) => {
@@ -2301,16 +2798,9 @@ impl DesktopProgram {
             }
             crate::runtime_shell::ShellIntent::ExecuteDataImport => Message::ExecuteDataImport,
             crate::runtime_shell::ShellIntent::ResetDataImport => Message::ResetDataImport,
-            crate::runtime_shell::ShellIntent::PickAttachmentFiles => Message::PickAttachmentFiles,
-            crate::runtime_shell::ShellIntent::PickAttachmentDirectories => {
-                Message::PickAttachmentDirectories
-            }
             crate::runtime_shell::ShellIntent::RemoveAttachment(id) => {
                 Message::RemoveAttachment(id)
             }
-            crate::runtime_shell::ShellIntent::TogglePlanMode => Message::TogglePlanMode,
-            crate::runtime_shell::ShellIntent::ToggleGoalMode => Message::ToggleGoalMode,
-            crate::runtime_shell::ShellIntent::CyclePermission => Message::CyclePermission,
             crate::runtime_shell::ShellIntent::ApplySuggestion(prompt) => {
                 Message::ApplyConversationSuggestion {
                     window_id: HostedWindowId::PRIMARY,
@@ -2560,6 +3050,984 @@ impl DesktopProgram {
         self.terminal_snapshot_for_item(item).map(|snapshot| snapshot.id)
     }
 
+    fn shell_titlebar_copy(&self) -> (String, String) {
+        if self.settings_open {
+            return (PRODUCT_NAME.to_owned(), "设置".to_owned());
+        }
+        if self.automations_open {
+            return (PRODUCT_NAME.to_owned(), "自动化".to_owned());
+        }
+        if let Some(task) = self.selected_task.as_ref().and_then(|task_id| {
+            self.task_move_candidates
+                .iter()
+                .find(|task| &task.id == task_id)
+        }) {
+            let project_name = task
+                .project_id
+                .as_ref()
+                .and_then(|project_id| {
+                    self.projects
+                        .iter()
+                        .find(|project| &project.id == project_id)
+                })
+                .map(|project| project.name.clone())
+                .unwrap_or_else(|| "收集箱".to_owned());
+            let title = if task.title.trim().is_empty() {
+                "未命名会话".to_owned()
+            } else {
+                task.title.clone()
+            };
+            return (project_name, title);
+        }
+        let project = self
+            .projects
+            .iter()
+            .find(|project| Some(&project.id) == self.selected_project.as_ref())
+            .map_or_else(|| "项目".to_owned(), |project| project.name.clone());
+        let context = match self.project_surface {
+            ProjectSurface::Tasks => project,
+            ProjectSurface::Settings => format!("{project} · 设置"),
+            ProjectSurface::Clone => "克隆仓库".to_owned(),
+            ProjectSurface::Roadmap => format!("{project} · 路线图"),
+            ProjectSurface::Memory => format!("{project} · Memory"),
+            ProjectSurface::Architecture => format!("{project} · 架构"),
+            ProjectSurface::Files => format!("{project} · 文件"),
+        };
+        (PRODUCT_NAME.to_owned(), context)
+    }
+
+    fn shell_sidebar_rows(&self) -> Vec<crate::runtime_shell::ShellSidebarRow> {
+        use crate::runtime_shell::{ShellSidebarKind, ShellSidebarRow};
+        use crate::storage::NativeSidebarDisplayMode;
+        let mut rows = Vec::new();
+        if self.sidebar_folder_drop_hovered {
+            rows.push(ShellSidebarRow {
+                id: "drop-hint".to_owned(),
+                label: "松开以添加项目".to_owned(),
+                kind: ShellSidebarKind::DropHint,
+                selected: false,
+                ancestor: false,
+                depth: 0,
+                expanded: None,
+                icon: Icon::Folder,
+                can_stop: false,
+                can_menu: false,
+                can_draft: false,
+            });
+        }
+        if !self.sidebar_search_query.trim().is_empty() {
+            for target in self.sidebar_search_targets() {
+                match target {
+                    SidebarSearchTarget::Project(project_id) => {
+                        let name = self
+                            .projects
+                            .iter()
+                            .find(|project| project.id == project_id)
+                            .map(|project| project.name.clone())
+                            .unwrap_or_else(|| "项目".to_owned());
+                        rows.push(ShellSidebarRow {
+                            id: project_id.as_str().to_owned(),
+                            label: name,
+                            kind: ShellSidebarKind::SearchProject,
+                            selected: self.selected_project.as_ref() == Some(&project_id),
+                            ancestor: false,
+                            depth: 0,
+                            expanded: None,
+                            icon: Icon::Folder,
+                            can_stop: false,
+                            can_menu: false,
+                            can_draft: false,
+                        });
+                    }
+                    SidebarSearchTarget::Task(task_id) => {
+                        let title = self
+                            .task_move_candidates
+                            .iter()
+                            .find(|task| task.id == task_id)
+                            .map(|task| {
+                                if task.title.trim().is_empty() {
+                                    "未命名会话".to_owned()
+                                } else {
+                                    task.title.clone()
+                                }
+                            })
+                            .unwrap_or_else(|| "会话".to_owned());
+                        rows.push(ShellSidebarRow {
+                            id: task_id.as_str().to_owned(),
+                            label: title,
+                            kind: ShellSidebarKind::SearchTask,
+                            selected: self.selected_task.as_ref() == Some(&task_id),
+                            ancestor: false,
+                            depth: 0,
+                            expanded: None,
+                            icon: Icon::Workspace,
+                            can_stop: false,
+                            can_menu: false,
+                            can_draft: false,
+                        });
+                    }
+                }
+            }
+            return rows;
+        }
+        for entry in self
+            .conversation_status_entries
+            .iter()
+            .filter(|entry| runtime_phase_is_processing(&entry.runtime_phase))
+        {
+            rows.push(ShellSidebarRow {
+                id: entry.task_id.as_str().to_owned(),
+                label: if entry.title.trim().is_empty() {
+                    "未命名会话".to_owned()
+                } else {
+                    entry.title.clone()
+                },
+                kind: ShellSidebarKind::Running,
+                selected: self.selected_task.as_ref() == Some(&entry.task_id),
+                ancestor: false,
+                depth: 0,
+                expanded: None,
+                icon: Icon::Nodes,
+                can_stop: true,
+                can_menu: false,
+                can_draft: false,
+            });
+        }
+        if self.sidebar_display_mode == NativeSidebarDisplayMode::Unified {
+            let mut tasks = self
+                .task_move_candidates
+                .iter()
+                .filter(|task| !task.archived)
+                .collect::<Vec<_>>();
+            tasks.sort_by(|left, right| {
+                right
+                    .pinned
+                    .cmp(&left.pinned)
+                    .then_with(|| right.created_at.cmp(&left.created_at))
+                    .then_with(|| left.sort_order.cmp(&right.sort_order))
+            });
+            if tasks.is_empty() {
+                rows.push(ShellSidebarRow {
+                    id: "sessions-empty".to_owned(),
+                    label: "还没有会话".to_owned(),
+                    kind: ShellSidebarKind::Empty,
+                    selected: false,
+                    ancestor: false,
+                    depth: 0,
+                    expanded: None,
+                    icon: Icon::Workspace,
+                    can_stop: false,
+                    can_menu: false,
+                    can_draft: false,
+                });
+            }
+            for task in tasks {
+                rows.push(ShellSidebarRow {
+                    id: task.id.as_str().to_owned(),
+                    label: if task.title.trim().is_empty() {
+                        "未命名会话".to_owned()
+                    } else {
+                        task.title.clone()
+                    },
+                    kind: ShellSidebarKind::Task,
+                    selected: self.selected_task.as_ref() == Some(&task.id),
+                    ancestor: false,
+                    depth: 0,
+                    expanded: None,
+                    icon: Icon::Workspace,
+                    can_stop: false,
+                    can_menu: false,
+                    can_draft: false,
+                });
+            }
+            return rows;
+        }
+        rows.push(ShellSidebarRow {
+            id: "projects-header".to_owned(),
+            label: "项目".to_owned(),
+            kind: ShellSidebarKind::Header,
+            selected: false,
+            ancestor: false,
+            depth: 0,
+            expanded: None,
+            icon: Icon::Workspace,
+            can_stop: false,
+            can_menu: false,
+            can_draft: false,
+        });
+        if self.projects.is_empty() {
+            rows.push(ShellSidebarRow {
+                id: "projects-empty".to_owned(),
+                label: "暂无项目".to_owned(),
+                kind: ShellSidebarKind::Empty,
+                selected: false,
+                ancestor: false,
+                depth: 0,
+                expanded: None,
+                icon: Icon::Folder,
+                can_stop: false,
+                can_menu: false,
+                can_draft: false,
+            });
+        }
+        for pinned in [true, false] {
+            for project in self
+                .projects
+                .iter()
+                .filter(|project| project.pinned == pinned)
+            {
+                let expanded = self.sidebar_project_expanded(&project.id);
+                rows.push(ShellSidebarRow {
+                    id: project.id.as_str().to_owned(),
+                    label: project.name.clone(),
+                    kind: ShellSidebarKind::Project,
+                    selected: self.selected_project.as_ref() == Some(&project.id)
+                        && self.selected_task.is_none(),
+                    ancestor: self.selected_project.as_ref() == Some(&project.id)
+                        && self.selected_task.is_some(),
+                    depth: 0,
+                    expanded: Some(expanded),
+                    icon: Icon::Folder,
+                    can_stop: false,
+                    can_menu: true,
+                    can_draft: true,
+                });
+                if !expanded {
+                    continue;
+                }
+                let tasks = self.sidebar_project_tasks(Some(&project.id));
+                let visible = self.sidebar_visible_project_tasks(&project.id, &tasks);
+                for (task, depth) in visible {
+                    rows.push(ShellSidebarRow {
+                        id: task.id.as_str().to_owned(),
+                        label: if task.title.trim().is_empty() {
+                            "未命名会话".to_owned()
+                        } else {
+                            task.title.clone()
+                        },
+                        kind: ShellSidebarKind::Task,
+                        selected: self.selected_task.as_ref() == Some(&task.id),
+                        ancestor: false,
+                        depth: (depth.saturating_add(1)) as u16,
+                        expanded: None,
+                        icon: Icon::Workspace,
+                        can_stop: false,
+                        can_menu: false,
+                        can_draft: false,
+                    });
+                }
+                if tasks.len() > 4 && !self.sidebar_revealed_projects.contains(&project.id) {
+                    rows.push(ShellSidebarRow {
+                        id: format!("reveal-{}", project.id.as_str()),
+                        label: "…".to_owned(),
+                        kind: ShellSidebarKind::Reveal,
+                        selected: false,
+                        ancestor: false,
+                        depth: 1,
+                        expanded: None,
+                        icon: Icon::Nodes,
+                        can_stop: false,
+                        can_menu: false,
+                        can_draft: false,
+                    });
+                } else if tasks.is_empty() {
+                    rows.push(ShellSidebarRow {
+                        id: format!("empty-{}", project.id.as_str()),
+                        label: "还没有对话".to_owned(),
+                        kind: ShellSidebarKind::Empty,
+                        selected: false,
+                        ancestor: false,
+                        depth: 1,
+                        expanded: None,
+                        icon: Icon::Workspace,
+                        can_stop: false,
+                        can_menu: false,
+                        can_draft: false,
+                    });
+                }
+            }
+        }
+        rows.push(ShellSidebarRow {
+            id: "inbox".to_owned(),
+            label: "收集箱".to_owned(),
+            kind: ShellSidebarKind::Inbox,
+            selected: self.selected_project.is_none() && self.selected_task.is_none(),
+            ancestor: false,
+            depth: 0,
+            expanded: Some(self.sidebar_inbox_expanded()),
+            icon: Icon::Workspace,
+            can_stop: false,
+            can_menu: false,
+            can_draft: false,
+        });
+        if self.sidebar_inbox_expanded() {
+            let tasks = self.sidebar_project_tasks(None);
+            let visible = self.sidebar_visible_tasks(&tasks, self.sidebar_inbox_revealed);
+            for (task, depth) in visible {
+                rows.push(ShellSidebarRow {
+                    id: task.id.as_str().to_owned(),
+                    label: if task.title.trim().is_empty() {
+                        "未命名会话".to_owned()
+                    } else {
+                        task.title.clone()
+                    },
+                    kind: ShellSidebarKind::Task,
+                    selected: self.selected_task.as_ref() == Some(&task.id),
+                    ancestor: false,
+                    depth: depth as u16,
+                    expanded: None,
+                    icon: Icon::Workspace,
+                    can_stop: false,
+                    can_menu: false,
+                    can_draft: false,
+                });
+            }
+            if tasks.len() > 4 && !self.sidebar_inbox_revealed {
+                rows.push(ShellSidebarRow {
+                    id: "inbox-reveal".to_owned(),
+                    label: "…".to_owned(),
+                    kind: ShellSidebarKind::Reveal,
+                    selected: false,
+                    ancestor: false,
+                    depth: 1,
+                    expanded: None,
+                    icon: Icon::Nodes,
+                    can_stop: false,
+                    can_menu: false,
+                    can_draft: false,
+                });
+            } else if tasks.is_empty() {
+                rows.push(ShellSidebarRow {
+                    id: "inbox-empty".to_owned(),
+                    label: "没有未绑定的对话".to_owned(),
+                    kind: ShellSidebarKind::Empty,
+                    selected: false,
+                    ancestor: false,
+                    depth: 1,
+                    expanded: None,
+                    icon: Icon::Workspace,
+                    can_stop: false,
+                    can_menu: false,
+                    can_draft: false,
+                });
+            }
+        }
+        for project in &self.archived_projects {
+            rows.push(ShellSidebarRow {
+                id: project.id.as_str().to_owned(),
+                label: format!("恢复 · {}", project.name),
+                kind: ShellSidebarKind::Archived,
+                selected: false,
+                ancestor: false,
+                depth: 0,
+                expanded: None,
+                icon: Icon::Folder,
+                can_stop: false,
+                can_menu: false,
+                can_draft: false,
+            });
+        }
+        rows
+    }
+
+    fn shell_confirm(&self) -> Option<crate::runtime_shell::ShellConfirm> {
+        use crate::runtime_shell::{ShellConfirm, ShellConfirmKind};
+        if let Some(archive) = &self.project_archive_confirmation {
+            return Some(ShellConfirm {
+                kind: ShellConfirmKind::ArchiveConversations,
+                title: "归档全部对话".to_owned(),
+                message: format!("确认归档“{}”中的全部对话？", archive.project_name),
+                confirm_label: "归档".to_owned(),
+                cancel_label: "取消".to_owned(),
+                danger: true,
+                busy: false,
+            });
+        }
+        if let Some(removal) = &self.project_removal {
+            return Some(ShellConfirm {
+                kind: ShellConfirmKind::RemoveProject,
+                title: "移除项目".to_owned(),
+                message: format!(
+                    "确认移除“{}”？{} 个任务和 {} 个会话将移入收集箱。",
+                    removal.project_name,
+                    removal.active_task_count,
+                    removal.active_conversation_count
+                ),
+                confirm_label: "移除".to_owned(),
+                cancel_label: "取消".to_owned(),
+                danger: true,
+                busy: false,
+            });
+        }
+        if !self.update_prompt_is_visible() {
+            return None;
+        }
+        match &self.update_state {
+            DesktopUpdateState::Available { version, .. } => Some(ShellConfirm {
+                kind: ShellConfirmKind::Update,
+                title: "发现更新".to_owned(),
+                message: format!("LiliaCode {version} 已就绪，现在安装并重启？"),
+                confirm_label: "更新并重启".to_owned(),
+                cancel_label: "稍后".to_owned(),
+                danger: false,
+                busy: self.update_prompt_is_busy(),
+            }),
+            DesktopUpdateState::Failed { .. } => Some(ShellConfirm {
+                kind: ShellConfirmKind::Update,
+                title: "更新未完成".to_owned(),
+                message: "检查或安装更新时没有完成。可以现在重试，也可以稍后继续。".to_owned(),
+                confirm_label: "重试".to_owned(),
+                cancel_label: "稍后".to_owned(),
+                danger: false,
+                busy: self.update_prompt_is_busy(),
+            }),
+            DesktopUpdateState::Downloading { .. }
+            | DesktopUpdateState::Installing { .. }
+            | DesktopUpdateState::Restarting { .. } => Some(ShellConfirm {
+                kind: ShellConfirmKind::Update,
+                title: "正在更新".to_owned(),
+                message: "正在下载或安装更新。".to_owned(),
+                confirm_label: "更新并重启".to_owned(),
+                cancel_label: "稍后".to_owned(),
+                danger: false,
+                busy: true,
+            }),
+            _ => None,
+        }
+    }
+
+    fn shell_pending(&self) -> Option<crate::runtime_shell::ShellPending> {
+        use crate::runtime_shell::{ShellPending, ShellPendingKind, ShellPendingOption};
+        let session = self.task_session.as_ref()?;
+        let pending = session.pending.iter().find(|item| {
+            item.status == PendingProjectionStatus::Open
+                && matches!(
+                    item.kind.as_str(),
+                    "permission_approval"
+                        | "plan_approval"
+                        | "ask_user"
+                        | "tool_consent"
+                        | "mcp_elicitation"
+                        | "architecture_change"
+                        | "title_update"
+                )
+        })?;
+        let kind = match pending.kind.as_str() {
+            "permission_approval" => ShellPendingKind::PermissionApproval,
+            "plan_approval" => ShellPendingKind::PlanApproval,
+            "ask_user" => ShellPendingKind::AskUser,
+            "tool_consent" => ShellPendingKind::ToolConsent,
+            "mcp_elicitation" => ShellPendingKind::McpElicitation,
+            "architecture_change" => ShellPendingKind::ArchitectureChange,
+            _ => ShellPendingKind::TitleUpdate,
+        };
+        let title = match kind {
+            ShellPendingKind::PermissionApproval => "确认权限",
+            ShellPendingKind::PlanApproval => "确认计划",
+            ShellPendingKind::AskUser => "需要回答",
+            ShellPendingKind::ToolConsent => "确认工具",
+            ShellPendingKind::McpElicitation => "扩展请求",
+            ShellPendingKind::ArchitectureChange => "架构变更",
+            ShellPendingKind::TitleUpdate => "更新标题",
+        };
+        let spec = AskUserSpec::from_payload(&pending.payload);
+        let ask_draft = self
+            .ask_user_drafts
+            .get(&pending.request_id)
+            .cloned()
+            .unwrap_or_default();
+        let plan_draft = self
+            .interaction_drafts
+            .get(&pending.request_id)
+            .cloned()
+            .unwrap_or_default();
+        let draft = match kind {
+            ShellPendingKind::PlanApproval => plan_draft,
+            ShellPendingKind::AskUser => ask_draft.freeform().to_owned(),
+            _ => String::new(),
+        };
+        let (options, ask) = if kind == ShellPendingKind::AskUser {
+            if let Some(spec) = spec.as_ref() {
+                let question = ask_draft.question(spec);
+                let options = question
+                    .map(|question| {
+                        question
+                            .options
+                            .iter()
+                            .enumerate()
+                            .map(|(index, option)| {
+                                let id = option.id(index);
+                                crate::runtime_shell::ShellPendingOption {
+                                    id: id.clone(),
+                                    label: if ask_draft.selected(&id) {
+                                        format!("✓ {}", option.label)
+                                    } else {
+                                        option.label.clone()
+                                    },
+                                    selected: ask_draft.selected(&id),
+                                    danger: option.danger,
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let confirm_mode = question.is_some_and(|question| question.mode == AskUserMode::Confirm);
+                let last_question = ask_draft.question_index() + 1 == spec.questions.len();
+                let ask = crate::runtime_shell::ShellAskUserPending {
+                    show_other: question.is_some_and(|question| {
+                        question.mode != AskUserMode::Confirm && question.allow_other
+                    }),
+                    other_selected: ask_draft.other_selected(),
+                    freeform: ask_draft.freeform().to_owned(),
+                    show_freeform: question.is_some_and(|question| {
+                        question.allow_other && ask_draft.other_selected()
+                    }),
+                    show_skip: spec.questions.len() > 1
+                        && question.is_some_and(|question| question.skippable != Some(false)),
+                    show_back: ask_draft.question_index() > 0,
+                    show_cancel: spec.is_dismissable(),
+                    show_reject: confirm_mode,
+                    can_submit: ask_draft.can_submit(spec),
+                    submit_label: if confirm_mode {
+                        question
+                            .and_then(|question| question.confirm_label.clone())
+                            .unwrap_or_else(|| "好的".to_owned())
+                    } else if last_question {
+                        "完成".to_owned()
+                    } else {
+                        "继续".to_owned()
+                    },
+                    reject_label: question
+                        .and_then(|question| question.cancel_label.clone())
+                        .unwrap_or_else(|| "不要".to_owned()),
+                };
+                (options, Some(ask))
+            } else {
+                (Vec::new(), None)
+            }
+        } else {
+            (Vec::new(), None)
+        };
+        let tool = if kind == ShellPendingKind::ToolConsent {
+            let consent = lilia_desktop_application::DesktopToolConsent::from_payload(&pending.payload).ok();
+            let draft = tool_consent_draft(
+                pending,
+                self.tool_consent_drafts.get(&pending.request_id),
+            );
+            let command_editable = consent
+                .as_ref()
+                .is_some_and(|consent| consent.editable_command().is_some());
+            Some(crate::runtime_shell::ShellToolConsentPending {
+                can_allow: !command_editable || !draft.command.trim().is_empty(),
+                can_deny: !draft.message.trim().is_empty(),
+                command: draft.command,
+                message: draft.message,
+                command_editable,
+            })
+        } else {
+            None
+        };
+        let mcp = if kind == ShellPendingKind::McpElicitation {
+            let stored = self.mcp_elicitation_drafts.get(&pending.request_id);
+            let draft = mcp_elicitation_draft(pending, stored);
+            let elicitation =
+                lilia_desktop_application::DesktopMcpElicitation::from_payload(&pending.payload).ok();
+            let can_accept =
+                mcp_elicitation_response(pending, &draft, DesktopMcpElicitationAction::Accept)
+                    .is_ok();
+            Some(crate::runtime_shell::ShellMcpPending {
+                url: elicitation
+                    .as_ref()
+                    .filter(|elicitation| elicitation.mode == DesktopMcpElicitationMode::Url)
+                    .and_then(|elicitation| elicitation.url.clone()),
+                raw_json: elicitation.as_ref().and_then(|elicitation| {
+                    (elicitation.mode == DesktopMcpElicitationMode::Form
+                        && elicitation.fields().is_empty())
+                    .then(|| {
+                        draft
+                            .get(MCP_RAW_JSON_DRAFT_KEY)
+                            .and_then(Value::as_str)
+                            .unwrap_or("{}")
+                            .to_owned()
+                    })
+                }),
+                fields: elicitation
+                    .as_ref()
+                    .map(|elicitation| {
+                        elicitation
+                            .fields()
+                            .into_iter()
+                            .map(|field| {
+                                let multi = field.kind == DesktopMcpFormFieldKind::Array;
+                                crate::runtime_shell::ShellMcpField {
+                                    key: field.key.clone(),
+                                    label: field.label,
+                                    kind: match field.kind {
+                                        DesktopMcpFormFieldKind::Boolean => "boolean".to_owned(),
+                                        DesktopMcpFormFieldKind::Array => "array".to_owned(),
+                                        _ => "text".to_owned(),
+                                    },
+                                    value: draft
+                                        .get(&field.key)
+                                        .map(|value| match value {
+                                            Value::String(value) => value.clone(),
+                                            value if value.is_null() => String::new(),
+                                            value => value.to_string(),
+                                        })
+                                        .unwrap_or_default(),
+                                    enabled: draft
+                                        .get(&field.key)
+                                        .and_then(Value::as_bool)
+                                        .unwrap_or(false),
+                                    options: field
+                                        .options
+                                        .into_iter()
+                                        .map(|option| {
+                                            let selected = if multi {
+                                                draft
+                                                    .get(&field.key)
+                                                    .and_then(Value::as_array)
+                                                    .is_some_and(|values| {
+                                                        values.iter().any(|value| {
+                                                            value.as_str()
+                                                                == Some(option.value.as_str())
+                                                        })
+                                                    })
+                                            } else {
+                                                draft.get(&field.key).and_then(Value::as_str)
+                                                    == Some(option.value.as_str())
+                                            };
+                                            crate::runtime_shell::ShellMcpFieldOption {
+                                                value: option.value,
+                                                label: if selected {
+                                                    format!("✓ {}", option.label)
+                                                } else {
+                                                    option.label
+                                                },
+                                                selected,
+                                                multi,
+                                            }
+                                        })
+                                        .collect(),
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                can_accept,
+            })
+        } else {
+            None
+        };
+        Some(ShellPending {
+            request_id: pending.request_id.clone(),
+            kind,
+            title: title.to_owned(),
+            prompt: pending.prompt.clone(),
+            draft,
+            options,
+            tool,
+            ask,
+            mcp,
+        })
+    }
+
+    fn shell_inspector_body(&self) -> String {
+        if !self.inspector_region_is_visible() {
+            return String::new();
+        }
+        match self.inspector_surface {
+            InspectorSurface::CodingTools => String::new(),
+            InspectorSurface::Task => self
+                .task_session
+                .as_ref()
+                .map(|session| {
+                    let goal = session
+                        .goal
+                        .as_ref()
+                        .map(|goal| goal.objective.clone())
+                        .filter(|title| !title.trim().is_empty());
+                    let worktree = session
+                        .worktree
+                        .as_ref()
+                        .map(|worktree| worktree.worktree_path.clone())
+                        .filter(|path| !path.trim().is_empty());
+                    [
+                        goal.map(|title| format!("目标 {title}")),
+                        worktree.map(|path| format!("工作树 {path}")),
+                        Some(format!(
+                            "待办 {} · 产物 {} · 待处理 {}",
+                            session.todo_count, session.artifact_count, session.pending_count
+                        )),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                })
+                .unwrap_or_default(),
+            InspectorSurface::Iab => self.iab.active_url().to_owned(),
+        }
+    }
+
+    fn shell_inspector_todos(&self) -> Vec<crate::runtime_shell::ShellTodoRow> {
+        self.task_session
+            .as_ref()
+            .map(|session| {
+                session
+                    .todos
+                    .iter()
+                    .filter(|todo| todo_float_item_is_visible(todo))
+                    .map(|todo| crate::runtime_shell::ShellTodoRow {
+                        id: todo.id.clone(),
+                        label: todo.text.clone(),
+                        done: todo.done,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn shell_project_page(&self) -> Option<crate::runtime_shell::ShellProjectPage> {
+        use crate::runtime_shell::ShellProjectPage;
+        if self.settings_open || self.automations_open || self.selected_task.is_some() {
+            return None;
+        }
+        if self.projects_overview_open {
+            return Some(ShellProjectPage::Overview);
+        }
+        match self.project_surface {
+            ProjectSurface::Tasks => None,
+            ProjectSurface::Settings => Some(ShellProjectPage::Settings),
+            ProjectSurface::Clone => Some(ShellProjectPage::Clone),
+            ProjectSurface::Roadmap => Some(ShellProjectPage::Roadmap),
+            ProjectSurface::Memory => Some(ShellProjectPage::Memory),
+            ProjectSurface::Architecture => Some(ShellProjectPage::Architecture),
+            ProjectSurface::Files => Some(ShellProjectPage::Files),
+        }
+    }
+
+    fn shell_project_page_title(&self) -> String {
+        match self.shell_project_page() {
+            Some(crate::runtime_shell::ShellProjectPage::Settings) => "项目设置".to_owned(),
+            Some(crate::runtime_shell::ShellProjectPage::Clone) => "克隆仓库".to_owned(),
+            Some(crate::runtime_shell::ShellProjectPage::Roadmap) => "路线图".to_owned(),
+            Some(crate::runtime_shell::ShellProjectPage::Memory) => "Memory".to_owned(),
+            Some(crate::runtime_shell::ShellProjectPage::Architecture) => "架构".to_owned(),
+            Some(crate::runtime_shell::ShellProjectPage::Files) => "项目文件".to_owned(),
+            Some(crate::runtime_shell::ShellProjectPage::Overview) => "项目".to_owned(),
+            None => String::new(),
+        }
+    }
+
+    fn shell_project_page_body(&self) -> String {
+        match self.shell_project_page() {
+            Some(crate::runtime_shell::ShellProjectPage::Clone) => {
+                self.project_clone_detail.clone().unwrap_or_default()
+            }
+            Some(crate::runtime_shell::ShellProjectPage::Roadmap) => self
+                .roadmap_error
+                .clone()
+                .unwrap_or_else(|| {
+                    self.roadmap
+                        .milestones
+                        .iter()
+                        .map(|milestone| milestone.title.clone())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                }),
+            Some(crate::runtime_shell::ShellProjectPage::Memory) => self
+                .memories
+                .iter()
+                .map(|memory| memory.title.clone())
+                .collect::<Vec<_>>()
+                .join("\n"),
+            Some(crate::runtime_shell::ShellProjectPage::Architecture) => self
+                .architecture_error
+                .clone()
+                .unwrap_or_else(|| self.architecture.summary.clone()),
+            Some(crate::runtime_shell::ShellProjectPage::Settings) => {
+                self.project_settings_error.clone().unwrap_or_default()
+            }
+            _ => String::new(),
+        }
+    }
+
+    fn active_workspace_item_id(&self) -> Option<WorkspaceItemId> {
+        let pane_id = self.panel_layout.active_pane();
+        self.panel_layout
+            .active_item(pane_id)
+            .ok()
+            .flatten()
+            .cloned()
+    }
+
+    fn active_workspace_item(&self) -> Option<&WorkspaceItem> {
+        let item_id = self.active_workspace_item_id()?;
+        self.workspace_items.iter().find(|item| item.id == item_id)
+    }
+
+    fn conversation_workspace_item_id(&self) -> Option<WorkspaceItemId> {
+        let task_id = self.selected_task.as_ref()?;
+        self.workspace_items.iter().find_map(|item| {
+            (item.kind.as_str() == TASK_WORKSPACE_ITEM_KIND
+                && item.task_id().ok().flatten().as_ref() == Some(task_id))
+            .then(|| item.id.clone())
+        })
+    }
+
+    fn movable_workspace_item_id(&self) -> Option<WorkspaceItemId> {
+        self.active_workspace_item_id().or_else(|| {
+            let pane_id = self.panel_layout.active_pane();
+            self.panel_layout
+                .pane_items(pane_id)
+                .ok()
+                .and_then(|items| items.first().cloned())
+        })
+    }
+
+    fn require_movable_workspace_item_id(&self) -> WorkspaceItemId {
+        self.movable_workspace_item_id()
+            .or_else(|| self.workspace_items.first().map(|item| item.id.clone()))
+            .unwrap_or_else(|| {
+                WorkspaceItemId::new("workspace-item:move").unwrap_or_else(|_| {
+                    self.panel_layout
+                        .active_item(self.panel_layout.active_pane())
+                        .ok()
+                        .flatten()
+                        .cloned()
+                        .expect("pane move requires a workspace item")
+                })
+            })
+    }
+
+    fn shell_coding_snapshot(&self) -> Option<crate::runtime_shell::ShellCodingSnapshot> {
+        if !self.inspector_region_is_visible()
+            || self.inspector_surface != InspectorSurface::CodingTools
+        {
+            return None;
+        }
+        Some(crate::runtime_shell::ShellCodingSnapshot {
+            query: self.coding_query.clone(),
+            mode_label: match self.coding_search_mode {
+                DesktopCodeSearchMode::Symbol => "符号".to_owned(),
+                DesktopCodeSearchMode::Regex => "正则".to_owned(),
+                DesktopCodeSearchMode::Semantic => "语义".to_owned(),
+                DesktopCodeSearchMode::Text => "文本".to_owned(),
+            },
+            scope_label: if self.coding_search_all_projects {
+                "全部项目".to_owned()
+            } else {
+                "当前项目".to_owned()
+            },
+            busy: self.coding_busy,
+            git: self
+                .coding_git
+                .as_ref()
+                .map(|status| {
+                    let branch = status
+                        .branch
+                        .clone()
+                        .unwrap_or_else(|| "detached HEAD".to_owned());
+                    if status.clean {
+                        format!("{branch} · 工作区干净")
+                    } else {
+                        format!("{branch} · {} 项更改", status.changes.len())
+                    }
+                })
+                .unwrap_or_default(),
+            files: self
+                .coding_workspace
+                .as_ref()
+                .map(|listing| {
+                    listing
+                        .entries
+                        .iter()
+                        .take(24)
+                        .map(|entry| crate::runtime_shell::ShellCodingFile {
+                            path: entry.path.clone(),
+                            kind: entry.kind.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            hits: self
+                .coding_search
+                .as_ref()
+                .map(|result| {
+                    result
+                        .hits
+                        .iter()
+                        .map(|hit| crate::runtime_shell::ShellCodingHit {
+                            id: coding_hit_key(hit),
+                            label: hit.hit.start_line.map_or_else(
+                                || format!("{} · {}", hit.project_name, hit.hit.path),
+                                |line| {
+                                    format!(
+                                        "{} · {}:{}",
+                                        hit.project_name,
+                                        hit.hit.path,
+                                        line.saturating_add(1)
+                                    )
+                                },
+                            ),
+                            summary: hit.hit.summary.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            terminals: self
+                .terminal_snapshots
+                .values()
+                .map(|snapshot| crate::runtime_shell::ShellActionRow {
+                    id: snapshot.id.to_string(),
+                    label: snapshot.command_label.clone(),
+                })
+                .collect(),
+            tasks: self
+                .coding_project_tasks
+                .as_ref()
+                .map(|catalog| {
+                    catalog
+                        .tasks
+                        .iter()
+                        .map(|task| crate::runtime_shell::ShellActionRow {
+                            id: task.id.clone(),
+                            label: task.label.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        })
+    }
+
+    fn shell_nav_items(&self) -> Vec<crate::runtime_shell::ShellNavItem> {
+        self.application
+            .sidebar_navigation_contributions()
+            .into_iter()
+            .map(|contribution| crate::runtime_shell::ShellNavItem {
+                id: contribution.id.clone(),
+                label: contribution.label.to_owned(),
+                settings: matches!(contribution.target, SidebarNavigationTarget::Settings),
+                selected: sidebar_navigation_selected(
+                    contribution.target,
+                    self.settings_open,
+                    self.automations_open,
+                ),
+            })
+            .collect()
+    }
+
+    fn shell_sidebar_menu_items(&self) -> Vec<crate::runtime_shell::ShellMenuItem> {
+        self.sidebar_menu_debug_targets()
+            .into_iter()
+            .map(|(id, action)| crate::runtime_shell::ShellMenuItem {
+                id,
+                label: sidebar_menu_action_label(action).to_owned(),
+            })
+            .collect()
+    }
+
     fn primary_shell_snapshot(&self) -> crate::runtime_shell::PrimaryShellSnapshot {
         let selected = self.selected_task.as_ref();
         let tasks = self
@@ -2583,17 +4051,12 @@ impl DesktopProgram {
                 session
                     .timeline
                     .iter()
-                    .rev()
-                    .take(24)
-                    .rev()
-                    .map(|item| crate::runtime_shell::ShellTimelineRow {
-                        id: item.id.clone(),
-                        markdown: item
-                            .markdown
-                            .clone()
-                            .or_else(|| item.summary.clone())
-                            .filter(|text| !text.trim().is_empty())
-                            .unwrap_or_else(|| item.title.clone()),
+                    .map(|item| {
+                        shell_timeline_row(
+                            item,
+                            self.timeline_toggled_events.contains(&item.id),
+                            item.can_retry && session.run_block.is_none(),
+                        )
                     })
                     .collect()
             })
@@ -2609,23 +4072,38 @@ impl DesktopProgram {
             .as_ref()
             .map(|draft| &draft.composer)
             .or(self.composer.as_ref());
+        let pending_blocks_send = self
+            .task_session
+            .as_ref()
+            .is_some_and(|session| session.blocking_pending_count > 0);
         let can_send = composer_state.is_some_and(composer_has_turn_payload)
             && !self.composer_input_is_locked()
+            && !pending_blocks_send
             && (self.main_conversation_draft.is_some() || !self.composer_is_locked());
-        let heading = if self.settings_open {
-            "设置".to_owned()
+        let (title_parent, title_context) = self.shell_titlebar_copy();
+        let location_name = self
+            .selected_project
+            .as_ref()
+            .and_then(|project_id| {
+                self.projects
+                    .iter()
+                    .find(|project| &project.id == project_id)
+                    .map(|project| project.name.as_str())
+            });
+        let heading = if self.settings_open || self.automations_open {
+            String::new()
         } else if self.main_conversation_draft.is_some() {
-            "新会话".to_owned()
-        } else if let Some(session) = self.task_session.as_ref() {
-            if session.task_title.trim().is_empty() {
-                "会话".to_owned()
+            conversation_empty_headline(location_name, false)
+        } else if self.selected_task.is_some() {
+            if timeline.is_empty() {
+                conversation_empty_headline(location_name, true)
             } else {
-                session.task_title.clone()
+                String::new()
             }
         } else {
-            "选择一个会话".to_owned()
+            conversation_empty_headline(location_name, false)
         };
-        let empty_hint = if self.settings_open {
+        let empty_hint = if self.settings_open || self.automations_open {
             String::new()
         } else if self.selected_task.is_none() && self.main_conversation_draft.is_none() {
             "从左侧打开会话，或新建会话。".to_owned()
@@ -2634,9 +4112,12 @@ impl DesktopProgram {
         } else {
             String::new()
         };
+        let (provider_badge, _, _) = self.provider_runtime_badge(self.theme_tokens().colors);
         crate::runtime_shell::PrimaryShellSnapshot {
             theme: self.theme,
             title: PRODUCT_NAME.to_owned(),
+            title_parent,
+            title_context,
             heading,
             empty_hint,
             error: self
@@ -2649,10 +4130,17 @@ impl DesktopProgram {
                 .layout()
                 .region(&RegionId::Resources)
                 .is_some_and(nana_ui::RegionState::collapsed_value),
+            sidebar_search_open: self.sidebar_search_open,
+            sidebar_search_query: self.sidebar_search_query.clone(),
+            provider_badge,
+            nav_items: self.shell_nav_items(),
+            sidebar_rows: self.shell_sidebar_rows(),
+            sidebar_menu: self.shell_sidebar_menu_items(),
             workspace: self.workspace.model().clone(),
             tasks,
             timeline,
             composer,
+            composer_height: composer_textarea_height(&self.composer_editor),
             composer_placeholder: COMPOSER_PLACEHOLDER.to_owned(),
             composer_disabled: self.composer_input_is_locked(),
             can_send,
@@ -2660,6 +4148,10 @@ impl DesktopProgram {
                 .turn_state
                 .as_ref()
                 .is_some_and(|(_, state)| turn_state_is_active(state)),
+            pending_blocks_send,
+            clone_repository: self.project_clone_repository.clone(),
+            clone_parent: self.project_clone_parent.clone(),
+            milestone_title: self.milestone_title.clone(),
             attachments: composer_state
                 .map(|composer| {
                     composer
@@ -2703,7 +4195,7 @@ impl DesktopProgram {
                 match self.inspector_surface {
                     InspectorSurface::CodingTools => "编码工具".to_owned(),
                     InspectorSurface::Task => "会话详情".to_owned(),
-                    InspectorSurface::Iab => String::new(),
+                    InspectorSurface::Iab => "浏览器".to_owned(),
                 }
             } else {
                 String::new()
@@ -2754,6 +4246,7 @@ impl DesktopProgram {
                                     == Some(&item.id),
                                 id: item.id.as_str().to_owned(),
                                 title: item.title.clone(),
+                                kind: item.kind.as_str().to_owned(),
                             })
                         })
                         .collect();
@@ -2765,28 +4258,102 @@ impl DesktopProgram {
                 }
                 panes
             },
-            inspector_body: if self.inspector_region_is_visible() {
-                match self.inspector_surface {
-                    InspectorSurface::CodingTools => self
-                        .coding_error
+            inspector_body: self.shell_inspector_body(),
+            inspector_todos: self.shell_inspector_todos(),
+            iab_url: self.iab.draft_url().to_owned(),
+            confirm: self.shell_confirm(),
+            pending: self.shell_pending(),
+            slash_items: self
+                .slash_commands
+                .iter()
+                .map(|item| crate::runtime_shell::ShellSlashItem {
+                    name: item.command.name.clone(),
+                    label: if item.command.description.trim().is_empty() {
+                        item.command.title.clone()
+                    } else {
+                        item.command.description.clone()
+                    },
+                })
+                .collect(),
+            mention_items: self
+                .context_attachment_results
+                .iter()
+                .map(|result| crate::runtime_shell::ShellMentionItem {
+                    id: result.relative_path.clone(),
+                    label: result.attachment.name.clone(),
+                })
+                .collect(),
+            timeline_can_load_earlier: self
+                .task_session
+                .as_ref()
+                .is_some_and(|session| session.timeline_has_more_before),
+            composer_plus_open: self.composer_action_menu_window == Some(HostedWindowId::PRIMARY),
+            project_page: self.shell_project_page(),
+            project_page_title: self.shell_project_page_title(),
+            project_page_body: self.shell_project_page_body(),
+            project_cards: self
+                .projects
+                .iter()
+                .map(|project| crate::runtime_shell::ShellProjectCard {
+                    id: project.id.as_str().to_owned(),
+                    title: project.name.clone(),
+                    subtitle: project
+                        .workspace_path
                         .clone()
-                        .or_else(|| self.coding_notice.clone())
-                        .unwrap_or_else(|| "打开文件、终端或代码搜索。".to_owned()),
-                    InspectorSurface::Task => self
-                        .task_session
-                        .as_ref()
-                        .map(|session| {
-                            format!(
-                                "待办 {} · 待处理 {}",
-                                session.todo_count, session.pending_count
-                            )
-                        })
-                        .unwrap_or_default(),
-                    InspectorSurface::Iab => String::new(),
+                        .unwrap_or_else(|| "未设置工作区".to_owned()),
+                })
+                .collect(),
+            roadmap_cards: self
+                .roadmap
+                .milestones
+                .iter()
+                .map(|milestone| crate::runtime_shell::ShellRoadmapCard {
+                    id: milestone.id.clone(),
+                    title: milestone.title.clone(),
+                    status: milestone_status_label(milestone.status).to_owned(),
+                    date: milestone
+                        .due_date
+                        .map(|due| due.to_string())
+                        .unwrap_or_else(|| "无截止日期".to_owned()),
+                })
+                .collect(),
+            architecture_records: self
+                .architecture_history
+                .iter()
+                .map(|record| crate::runtime_shell::ShellArchitectureRecord {
+                    id: record
+                        .event
+                        .id
+                        .clone()
+                        .unwrap_or_else(|| record.event.created_at.unwrap_or_default().to_string()),
+                    title: record
+                        .event
+                        .changes
+                        .iter()
+                        .map(architecture_change_label)
+                        .collect::<Vec<_>>()
+                        .join(" · "),
+                    status: architecture_status_label(record.event.status).to_owned(),
+                })
+                .collect(),
+            architecture_graph: self.architecture_graph.clone(),
+            architecture_viewport: self.architecture_viewport,
+            architecture_selection: self.architecture_selection.clone(),
+            inspector_kind: if self.inspector_region_is_visible() {
+                match self.inspector_surface {
+                    InspectorSurface::CodingTools => "coding".to_owned(),
+                    InspectorSurface::Iab => "iab".to_owned(),
+                    InspectorSurface::Task => "task".to_owned(),
                 }
             } else {
                 String::new()
             },
+            coding: self.shell_coding_snapshot(),
+            pane_can_move_window: self.active_workspace_item().is_some_and(|item| {
+                item.capabilities.movable_across_windows
+            }),
+            pane_can_move_next: self.panel_layout.pane_ids().len() > 1
+                && self.active_workspace_item_id().is_some(),
         }
     }
 
@@ -2796,7 +4363,7 @@ impl DesktopProgram {
             model: self.settings_model.clone(),
             state: self.settings_state.clone(),
             appearance: self.appearance,
-            material_status: nana_ui::platform_material_support().hint().to_owned(),
+            material_status: String::new(),
             project_name: self.project_name_edit.clone(),
             project_workspace: self.project_workspace_edit.clone(),
             project_error: self.project_settings_error.clone(),
@@ -3030,6 +4597,20 @@ impl DesktopProgram {
                     enabled: editor.enabled,
                 }
             }),
+            github_state: self.github_binding.state.clone(),
+            github_login: self
+                .github_binding
+                .binding
+                .as_ref()
+                .map(|binding| binding.login.clone())
+                .unwrap_or_default(),
+            github_busy: self.github_binding_busy,
+            github_can_bind: !self.github_binding_busy
+                && self.github_binding.state == "unbound"
+                && self.github_binding.client_id_configured,
+            shortcut: self.shell_shortcut_edit.clone(),
+            shortcut_capturing: self.shell_shortcut_capturing,
+            shortcut_registered: self.shell.shortcut_active(),
         }
     }
 
@@ -3166,14 +4747,12 @@ impl DesktopProgram {
                     .rev()
                     .take(24)
                     .rev()
-                    .map(|item| crate::runtime_shell::ShellTimelineRow {
-                        id: item.id.clone(),
-                        markdown: item
-                            .markdown
-                            .clone()
-                            .or_else(|| item.summary.clone())
-                            .filter(|text| !text.trim().is_empty())
-                            .unwrap_or_else(|| item.title.clone()),
+                    .map(|item| {
+                        shell_timeline_row(
+                            item,
+                            false,
+                            item.can_retry && popup.session.as_ref().is_some_and(|session| session.run_block.is_none()),
+                        )
                     })
                     .collect()
             })
@@ -3787,6 +5366,7 @@ impl DesktopProgram {
                     TitlebarMenuAction::OpenConversationStatus => {
                         self.refresh_conversation_status();
                     }
+                    TitlebarMenuAction::OpenTaskBrowser => self.open_iab(),
                 }
             }
         }
@@ -6743,7 +8323,7 @@ fn open_application_surface(&mut self, surface: ApplicationWorkspaceSurface) {
                 CODING_TOOLS_PANEL_ID => {
                     self.selected_project.is_some() && self.project_surface == ProjectSurface::Tasks
                 }
-                IAB_PANEL_ID => false,
+                IAB_PANEL_ID => self.selected_task.is_some(),
                 _ => false,
             }
         });
@@ -10451,6 +12031,9 @@ fn refresh_archived_records(&mut self) {
                 self.execute_composer_command(DesktopComposerCommand::SetPermission(
                     next_permission(permission),
                 ));
+            }
+            Message::SetComposerPermission(permission) => {
+                self.execute_composer_command(DesktopComposerCommand::SetPermission(permission));
             }
             Message::SubmitTurn => self.submit_turn(),
             Message::CompactContext => self.compact_context(),
@@ -28699,14 +30282,33 @@ impl RuntimeProgram for DesktopProgram {
         _context: &HostedProgramContext<Self::Message>,
     ) -> Result<HostedProgramUpdate, nana_ui::runtime::FrameworkError> {
         if let nana_ui_platform::InputEvent::Keyboard {
-            pressed: true,
+            pressed,
             key,
             modifiers,
-            repeat: false,
+            repeat,
             ..
         } = event
         {
-            if modifiers.meta || modifiers.control {
+            if self.shell_shortcut_capturing {
+                let key_input = KeyInput::new(
+                    *pressed,
+                    key,
+                    modifiers.alt,
+                    modifiers.control,
+                    modifiers.shift,
+                    modifiers.meta,
+                    *repeat,
+                );
+                let mut layer = KeyCaptureLayer::new().recording(true);
+                if let Some(capture) = layer.handle_key(&key_input) {
+                    self.update_message(Message::ShellShortcutCaptured(capture));
+                    return Ok(HostedProgramUpdate::redraw(id));
+                }
+                if layer.should_consume(&key_input) {
+                    return Ok(HostedProgramUpdate::redraw(id));
+                }
+            }
+            if *pressed && !*repeat && (modifiers.meta || modifiers.control) {
                 self.update_message(Message::CommandKeyStroke {
                     window_id: id,
                     item_id: self.active_item_for_window(id),
@@ -31162,6 +32764,50 @@ fn provider_operation_error_message(error: &DesktopApplicationError) -> &'static
 
 fn composer_conversation_query(content: &str) -> Option<String> {
     composer_trailing_trigger_query(content, '#', true)
+}
+
+fn shell_timeline_row(
+    item: &TaskTimelineItem,
+    expanded: bool,
+    can_retry: bool,
+) -> crate::runtime_shell::ShellTimelineRow {
+    let full = item
+        .markdown
+        .clone()
+        .or_else(|| item.summary.clone())
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or_else(|| item.title.clone());
+    let preview = item
+        .summary
+        .clone()
+        .filter(|text| !text.trim().is_empty())
+        .unwrap_or_else(|| item.title.clone());
+    let can_expand = item.markdown.as_ref().is_some_and(|markdown| {
+        item.summary
+            .as_ref()
+            .is_some_and(|summary| summary != markdown)
+            || item.title != *markdown
+    });
+    crate::runtime_shell::ShellTimelineRow {
+        id: item.id.clone(),
+        markdown: if expanded || !can_expand {
+            full
+        } else {
+            preview
+        },
+        expanded,
+        can_expand,
+        can_retry,
+        can_copy: item
+            .markdown_plain_text
+            .as_ref()
+            .or(item.markdown.as_ref())
+            .is_some_and(|text| !text.trim().is_empty()),
+    }
+}
+
+fn coding_hit_key(hit: &DesktopWorkspaceCodeSearchHit) -> String {
+    format!("{}:{}", hit.project_id.as_str(), hit.hit.path)
 }
 
 fn composer_context_query(content: &str) -> Option<String> {

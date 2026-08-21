@@ -52,6 +52,10 @@ impl IabPanelState {
         false
     }
 
+    pub fn draft_url(&self) -> &str {
+        &self.draft_url
+    }
+
     pub fn active_url(&self) -> &str {
         &self.active_url
     }
