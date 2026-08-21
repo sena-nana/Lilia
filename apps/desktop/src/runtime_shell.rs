@@ -22,6 +22,7 @@ use crate::runtime_layout::{reconcile_children, HostStack};
 use crate::target_ids;
 
 const PRIMARY_DOCUMENT: u64 = 1;
+const SESSIONS_EMPTY_TEXT: &str = "还没有会话";
 
 #[derive(Debug, Clone)]
 pub struct ShellTaskRow {
@@ -363,6 +364,7 @@ pub struct ShellHandles {
     title_leading: Entity<HostStack>,
     title_trailing: Entity<HostStack>,
     conversation_sidebar: Entity<SidebarFrame>,
+    conversation_section: Entity<SidebarSection>,
     task_body: Entity<List>,
     task_rows: HashMap<String, Entity<SidebarRow>>,
     conversation: Entity<HostStack>,
@@ -552,7 +554,9 @@ pub fn mount_primary_shell(
         )?;
     }
 
-    let mut spec = nana_ui::runtime::SidebarSection::new("会话").count(snapshot.tasks.len());
+    let mut spec = nana_ui::runtime::SidebarSection::new("会话")
+        .count(snapshot.tasks.len())
+        .empty_text(SESSIONS_EMPTY_TEXT);
     let section_title = context.create_detached_component(document_id, spec.title_label())?;
     spec = spec.title_slot(section_title.stable_id());
     let header = context.create_detached_component(document_id, spec.header_item())?;
@@ -599,6 +603,8 @@ pub fn mount_primary_shell(
 
     let conversation = context
         .create_detached_component(document_id, HostStack::fill_column(12.0).padding(16.0))?;
+    let conversation_body =
+        context.create_detached_component(document_id, HostStack::fill_column(12.0))?;
     let heading =
         context.create_detached_component(document_id, Text::new(snapshot.heading.clone()))?;
     let empty_hint =
@@ -609,6 +615,11 @@ pub fn mount_primary_shell(
     )?;
     let timeline_scroll =
         context.create_detached_component(document_id, ScrollView::new(ScrollAxes::Vertical))?;
+    context.append_child(conversation_body, heading)?;
+    context.append_child(conversation_body, empty_hint)?;
+    context.append_child(conversation_body, error)?;
+    context.append_child(conversation_body, timeline_scroll)?;
+    let composer_dock = context.create_detached_component(document_id, HostStack::column(8.0))?;
     let composer = context.create_detached_component(
         document_id,
         TextArea::new(snapshot.composer.clone())
@@ -623,8 +634,8 @@ pub fn mount_primary_shell(
             ShellIntent::ComposerChanged(event.value.clone()),
         );
     })?;
-    let extras = context.create_detached_component(document_id, HostStack::fill_row(8.0))?;
-    let actions = context.create_detached_component(document_id, HostStack::fill_row(8.0))?;
+    let extras = context.create_detached_component(document_id, HostStack::bar(8.0))?;
+    let actions = context.create_detached_component(document_id, HostStack::bar(8.0))?;
     let send = context.create_detached_component(document_id, send_button(snapshot.can_send))?;
     let interrupt =
         context.create_detached_component(document_id, interrupt_button(snapshot.can_interrupt))?;
@@ -637,13 +648,11 @@ pub fn mount_primary_shell(
     )?;
     context.append_child(actions, send)?;
     context.append_child(actions, interrupt)?;
-    context.append_child(conversation, heading)?;
-    context.append_child(conversation, empty_hint)?;
-    context.append_child(conversation, error)?;
-    context.append_child(conversation, timeline_scroll)?;
-    context.append_child(conversation, composer)?;
-    context.append_child(conversation, extras)?;
-    context.append_child(conversation, actions)?;
+    context.append_child(composer_dock, composer)?;
+    context.append_child(composer_dock, extras)?;
+    context.append_child(composer_dock, actions)?;
+    context.append_child(conversation, conversation_body)?;
+    context.append_child(conversation, composer_dock)?;
 
     let settings_sidebar = context.create_detached_component(
         document_id,
@@ -837,6 +846,7 @@ pub fn mount_primary_shell(
         title_leading,
         title_trailing,
         conversation_sidebar,
+        conversation_section: section,
         task_body,
         task_rows: HashMap::new(),
         conversation,
@@ -898,6 +908,13 @@ pub fn mount_primary_shell(
     Ok((document, handles))
 }
 
+fn has_workspace_primary_content(snapshot: &PrimaryShellSnapshot) -> bool {
+    snapshot.document.is_some()
+        || snapshot.files.is_some()
+        || snapshot.terminal.is_some()
+        || snapshot.panes.iter().any(|pane| !pane.items.is_empty())
+}
+
 fn primary_content_id(
     snapshot: &PrimaryShellSnapshot,
     conversation: Entity<HostStack>,
@@ -909,11 +926,7 @@ fn primary_content_id(
         settings_page.stable_id()
     } else if snapshot.automations_open {
         automations_page.stable_id()
-    } else if snapshot.document.is_some()
-        || snapshot.files.is_some()
-        || snapshot.terminal.is_some()
-        || !snapshot.panes.is_empty()
-    {
+    } else if has_workspace_primary_content(snapshot) {
         workspace_page.stable_id()
     } else {
         conversation.stable_id()
@@ -1068,6 +1081,10 @@ impl ShellHandles {
             .map(|node| node.document)
             .ok_or(FrameworkError::MissingView(self.task_body.stable_id()))?;
         self.reconcile_task_rows(context, document_id, snapshot)?;
+        context.update_component(self.conversation_section, |section, _| {
+            section.count = Some(snapshot.tasks.len());
+            section.empty_text = Some(Arc::from(SESSIONS_EMPTY_TEXT));
+        })?;
         self.reconcile_timeline(context, document_id, snapshot)?;
         self.reconcile_composer_extras(context, document_id, snapshot)
     }
@@ -2607,10 +2624,223 @@ mod tests {
         }
     }
 
+    fn snapshot_with_empty_primary_pane() -> PrimaryShellSnapshot {
+        let mut snapshot = empty_snapshot();
+        snapshot.panes = vec![ShellPaneRow {
+            id: "primary".to_owned(),
+            active: true,
+            items: Vec::new(),
+        }];
+        snapshot
+    }
+
+    fn mounted_primary(
+        snapshot: &PrimaryShellSnapshot,
+    ) -> (nana_ui::runtime::RuntimeDocument, ShellHandles, Option<StableNodeId>) {
+        let (mut document, handles) =
+            mount_primary_shell(snapshot, Arc::new(|_| {})).expect("mount shell");
+        let primary = document
+            .context_mut()
+            .read(handles.shell, |shell| shell.primary)
+            .expect("read shell primary");
+        (document, handles, primary)
+    }
+
     #[test]
     fn mounts_a_primary_shell_document() {
         let (document, _handles) =
             mount_primary_shell(&empty_snapshot(), Arc::new(|_| {})).expect("mount shell");
         assert_eq!(document.document(), DocumentId::new(1).unwrap());
+    }
+
+    #[test]
+    fn default_empty_layout_selects_conversation_primary() {
+        let (document, handles, primary) = mounted_primary(&snapshot_with_empty_primary_pane());
+        assert_eq!(primary, Some(handles.conversation.stable_id()));
+        assert_ne!(primary, Some(handles.workspace_page.stable_id()));
+
+        let timeline = handles.timeline_scroll.stable_id();
+        let heading = handles.heading.stable_id();
+        let body = document
+            .context()
+            .world()
+            .node(timeline)
+            .and_then(|node| node.parent)
+            .expect("conversation body");
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .node(heading)
+                .and_then(|node| node.parent),
+            Some(body)
+        );
+        let body_layout = &document
+            .context()
+            .world()
+            .node_style(body)
+            .expect("conversation body style")
+            .layout;
+        assert_eq!(body_layout.flex_grow, Some(1.0));
+        assert_eq!(
+            body_layout.min_height,
+            Some(nana_ui::runtime::LengthSpec::Px(0.0))
+        );
+
+        let composer = handles.composer.stable_id();
+        let extras = handles.extras.stable_id();
+        let actions = handles.send.stable_id();
+        let dock = document
+            .context()
+            .world()
+            .node(composer)
+            .and_then(|node| node.parent)
+            .expect("composer dock");
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .node(extras)
+                .and_then(|node| node.parent),
+            Some(dock)
+        );
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .node(actions)
+                .and_then(|node| node.parent)
+                .and_then(|parent| document.context().world().node(parent)?.parent),
+            Some(dock)
+        );
+        let dock_layout = &document
+            .context()
+            .world()
+            .node_style(dock)
+            .expect("composer dock style")
+            .layout;
+        assert_eq!(dock_layout.flex_grow, Some(0.0));
+        assert_eq!(dock_layout.height, Some(nana_ui::runtime::LengthSpec::Shrink));
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .node(handles.conversation.stable_id())
+                .map(|node| node.children),
+            Some(vec![body, dock])
+        );
+    }
+
+    #[test]
+    fn open_document_selects_workspace_primary() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.document = Some(ShellDocumentSnapshot {
+            item_id: "doc-1".to_owned(),
+            title: "notes.md".to_owned(),
+            text: String::new(),
+            status: String::new(),
+            read_only: false,
+            dirty: false,
+        });
+        let (_document, handles, primary) = mounted_primary(&snapshot);
+        assert_eq!(primary, Some(handles.workspace_page.stable_id()));
+    }
+
+    #[test]
+    fn open_files_selects_workspace_primary() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.files = Some(ShellFilesSnapshot {
+            tree: TreeView::new(Vec::new()),
+            preview: None,
+        });
+        let (_document, handles, primary) = mounted_primary(&snapshot);
+        assert_eq!(primary, Some(handles.workspace_page.stable_id()));
+    }
+
+    #[test]
+    fn open_terminal_selects_workspace_primary() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.terminal = Some(ShellTerminalSnapshot {
+            output: String::new(),
+            input: String::new(),
+            notice: None,
+        });
+        let (_document, handles, primary) = mounted_primary(&snapshot);
+        assert_eq!(primary, Some(handles.workspace_page.stable_id()));
+    }
+
+    #[test]
+    fn pane_with_workspace_item_selects_workspace_primary() {
+        let mut snapshot = empty_snapshot();
+        snapshot.panes = vec![ShellPaneRow {
+            id: "primary".to_owned(),
+            active: true,
+            items: vec![ShellPaneItem {
+                id: "item-1".to_owned(),
+                title: "main.rs".to_owned(),
+                selected: true,
+            }],
+        }];
+        let (_document, handles, primary) = mounted_primary(&snapshot);
+        assert_eq!(primary, Some(handles.workspace_page.stable_id()));
+    }
+
+    #[test]
+    fn settings_open_selects_settings_primary() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.settings_open = true;
+        let (_document, handles, primary) = mounted_primary(&snapshot);
+        assert_eq!(primary, Some(handles.settings_page.stable_id()));
+    }
+
+    #[test]
+    fn automations_open_selects_automations_primary() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.automations_open = true;
+        let (_document, handles, primary) = mounted_primary(&snapshot);
+        assert_eq!(primary, Some(handles.automations_page.stable_id()));
+    }
+
+    #[test]
+    fn empty_session_sidebar_uses_section_empty_state() {
+        let (document, handles, _primary) = mounted_primary(&snapshot_with_empty_primary_pane());
+        let empty_text = document
+            .context()
+            .read(handles.conversation_section, |section| section.empty_text.clone())
+            .expect("read session section");
+        assert_eq!(empty_text.as_deref(), Some(SESSIONS_EMPTY_TEXT));
+        let children = document
+            .context()
+            .world()
+            .node(handles.task_body.stable_id())
+            .map(|node| node.children.len())
+            .unwrap_or(usize::MAX);
+        assert_eq!(children, 0);
+    }
+
+    #[test]
+    fn session_rows_replace_sidebar_empty_state() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.tasks = vec![ShellTaskRow {
+            id: TaskId::new("task-1").expect("task id"),
+            title: "设计稿".to_owned(),
+            selected: true,
+        }];
+        let (document, handles, _primary) = mounted_primary(&snapshot);
+        let children = document
+            .context()
+            .world()
+            .node(handles.task_body.stable_id())
+            .map(|node| node.children.clone())
+            .unwrap_or_default();
+        assert_eq!(children.len(), 1);
+        assert_eq!(
+            children[0],
+            handles
+                .task_rows
+                .get("task-1")
+                .expect("task row")
+                .stable_id()
+        );
     }
 }

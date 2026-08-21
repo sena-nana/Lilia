@@ -67,6 +67,32 @@ impl HostStack {
         .shrink(1.0)
     }
 
+    pub(crate) fn column(gap: f32) -> Self {
+        Self::base(
+            FlexDirection::Column,
+            gap,
+            AlignSpec::Stretch,
+            JustifySpec::Start,
+        )
+        .width(LengthSpec::Fill)
+        .height(LengthSpec::Shrink)
+        .min_width(LengthSpec::Px(0.0))
+        .grow(0.0)
+        .shrink(0.0)
+    }
+
+    pub(crate) fn bar(gap: f32) -> Self {
+        Self::base(
+            FlexDirection::Row,
+            gap,
+            AlignSpec::Center,
+            JustifySpec::Start,
+        )
+        .width(LengthSpec::Fill)
+        .grow(0.0)
+        .shrink(0.0)
+    }
+
     pub(crate) fn fill_row(gap: f32) -> Self {
         Self::base(
             FlexDirection::Row,
