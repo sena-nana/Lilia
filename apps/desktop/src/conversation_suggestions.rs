@@ -1,9 +1,5 @@
-use iced::widget::{button, column, row, text};
-use iced::{Alignment, Element, Length};
 use lilia_contracts::TaskId;
 use lilia_desktop_application::DesktopSuggestionItem;
-use nana_ui::widgets::button_style;
-use nana_ui::{ui_font, ButtonKind, Card, ThemeTokens};
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ConversationSuggestionState {
@@ -92,64 +88,6 @@ impl ConversationSuggestionState {
             .find(|item| item.id == item_id)
             .map(|item| item.prompt.clone())
     }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) enum ConversationSuggestionViewMessage {
-    Refresh,
-    Apply(String),
-}
-
-pub(crate) fn conversation_suggestions_view(
-    state: &ConversationSuggestionState,
-    tokens: ThemeTokens,
-) -> Option<Element<'static, ConversationSuggestionViewMessage>> {
-    if !state.should_show() {
-        return None;
-    }
-    let colors = tokens.colors;
-    let mut content = column![].spacing(5).width(Length::Fill);
-    if state.loading {
-        content = content.push(text("正在寻找灵感…").size(11).color(colors.muted));
-    } else if state.error {
-        content = content.push(
-            row![
-                text("暂时无法获取建议").size(11).color(colors.muted),
-                button(text("重试").size(10))
-                    .on_press(ConversationSuggestionViewMessage::Refresh)
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        );
-    } else {
-        for item in &state.items {
-            content = content.push(
-                button(
-                    column![
-                        text(item.summary.clone())
-                            .size(11)
-                            .font(ui_font(iced::font::Weight::Semibold))
-                            .color(colors.text),
-                        text(item.reason.clone()).size(10).color(colors.muted),
-                    ]
-                    .spacing(2)
-                    .width(Length::Fill),
-                )
-                .width(Length::Fill)
-                .on_press(ConversationSuggestionViewMessage::Apply(
-                    item.prompt.clone(),
-                ))
-                .style(button_style(tokens, ButtonKind::Ghost)),
-            );
-        }
-        content = content.push(
-            button(text("换一组").size(10))
-                .on_press(ConversationSuggestionViewMessage::Refresh)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        );
-    }
-    Some(Card::new(content).title("继续对话").view(tokens))
 }
 
 #[cfg(test)]

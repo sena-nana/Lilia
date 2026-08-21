@@ -1,18 +1,11 @@
-use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(debug_assertions)]
 use std::{sync::mpsc, time::Instant};
 
-use iced::widget::{
-    button, column, container, image, mouse_area, row, scrollable, slider, space, stack, svg, text,
-    text_editor, tooltip,
-};
-use iced::{font, Alignment, ContentFit, Element, Length, Padding, Point, Rectangle, Size};
 use lilia_contracts::{
     LiliaAgentWorkflow, LiliaReviewTarget, PendingProjectionStatus, ProductTask,
     ProductTaskPriority, ProductTaskStatus, Project, ProjectArchiveState, ProjectId,
@@ -45,8 +38,8 @@ use lilia_desktop_application::{
     DesktopGitHubRepoSummary, DesktopGitStatus, DesktopGoalStatus, DesktopHookDocumentUpdate,
     DesktopHookDocumentView, DesktopHookHandlerUpdate, DesktopHookScope, DesktopHookSourceView,
     DesktopHooksOverview, DesktopHostAction, DesktopHostResult, DesktopImportExecutionOptions,
-    DesktopImportPlan, DesktopImportPlanItemStatus, DesktopImportPlanStatus, DesktopImportReport,
-    DesktopImportReportItemStatus, DesktopImportReportStatus, DesktopInitialWorktreeSelection,
+    DesktopImportPlan, DesktopImportPlanStatus, DesktopImportReport, DesktopImportReportStatus,
+    DesktopInitialWorktreeSelection,
     DesktopMcpActivationReport, DesktopMcpCredentialKind, DesktopMcpElicitation,
     DesktopMcpElicitationAction, DesktopMcpElicitationMode, DesktopMcpFormFieldKind,
     DesktopMcpPromptGetView, DesktopMcpResourceReadView, DesktopMcpServerUpsert,
@@ -57,10 +50,10 @@ use lilia_desktop_application::{
     DesktopProjectPatch, DesktopProjectRemovalPreview, DesktopProjectSettings,
     DesktopProjectTaskCatalog, DesktopProjectTaskError, DesktopPromptOptimizeInput,
     DesktopPromptOptimizeResult, DesktopPromptRoute, DesktopProviderCredentialInput,
-    DesktopProviderError, DesktopProviderSnapshot, DesktopRemoteQuotaState, DesktopSecret,
+    DesktopProviderError, DesktopProviderSnapshot, DesktopSecret,
     DesktopSessionBranchAnchor, DesktopSessionBranchMode, DesktopSkillCreate, DesktopSkillScope,
     DesktopSlashCommand, DesktopSlashCommandAction, DesktopSlashCommandSearchResult,
-    DesktopSlashCommandSource, DesktopSuggestionItem, DesktopTaskCreate, DesktopTaskMove,
+    DesktopSuggestionItem, DesktopTaskCreate, DesktopTaskMove,
     DesktopTaskPatch, DesktopTaskRuntimeSnapshot, DesktopTaskTodo, DesktopTerminalRestoration,
     DesktopTerminalScope, DesktopTerminalSessionId, DesktopTerminalSnapshot, DesktopTodoCreate,
     DesktopTodoPriority, DesktopTodoSource, DesktopTodoUpdate, DesktopToolConsent,
@@ -77,35 +70,30 @@ use lilia_desktop_application::{
     TaskQuery, WorkspaceItem, WorkspaceItemId, CODING_TOOLS_PANEL_ID, IAB_PANEL_ID,
     MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES, TASK_INSPECTOR_PANEL_ID, TITLE_UPDATE_ACTION_KIND,
 };
-use nana_ui::widgets::{button_style, button_style_overridden, canvas_style, vertical_scrollbar};
+use nana_ui::runtime::RuntimeDocument;
 use nana_ui::{
-    app_shell, icon, spinner_icon, ui_font, workspace_view, Absolute, ActionDescriptor, ActionId,
-    ActionMenuItem, ActionPickerState, ActionRegistry, AnchoredActionMenu, AnchoredMenuPlacement,
-    AnchoredMenuPosition, AppTitleBar, AppearanceEvent, AppearanceSection, AppearanceSettings,
-    BackdropTarget, ButtonKind, ButtonPaintOverride, Card, Colors, CommandPalette,
-    CommandPaletteEvent, CommandPaletteItem, ConfirmDialog, ContextMenuEvent, ContextPredicate,
-    ControlSize, Dropdown, DropdownEvent, DropdownOption, EmptyState, GraphCanvas,
+    window_material_effect, ActionDescriptor, ActionId, ActionPickerState, ActionRegistry,
+    AppearanceEvent, AppearanceSettings, ButtonKind, Colors, CommandPaletteEvent,
+    CommandPaletteItem, ContextPredicate, DropdownEvent, DropdownOption,
     GraphCanvasEvent, GraphEdge as CanvasGraphEdge, GraphEndpoint, GraphModel,
     GraphNode as CanvasGraphNode, GraphPoint, GraphPort, GraphPortKind, GraphPortSide,
-    GraphSelection, GraphSize, GraphViewport, HostedBrowserCommand, HostedBrowserEvent,
-    HostedBrowserId, HostedProgram, HostedProgramContext, HostedProgramUpdate, HostedRedraw,
-    HostedRuntimeEvent, HostedTextarea, HostedTextareaState, HostedUiCommand, HostedWindowAction,
+    GraphSelection, GraphSize, GraphViewport, Icon, KeyBinding, KeyCaptureEvent,
+    KeyContext, KeyModifiers, KeyStroke, Keymap, KeymapMatch, KeymapState, LogicalRect,
+    MarkdownImage, NarrowBehavior, NativeMarkdown, PaneTreeNode, RegionId, RegionRole, RegionState,
+    RuntimeProgram, RuntimeRedraw, SettingsModel, SettingsState, SettingsTab, SettingsTabId,
+    TabDragGroup, TabDragSurface, TextSelectionSnapshot, ThemeMode, ThemeModeExt, ThemeTokens,
+    TreeDropPosition as NanaTreeDropPosition, WindowChromeEvent, WindowChromeState, WorkspaceAction,
+    WorkspaceController, WorkspaceLayout, SplitAxis as NanaSplitAxis, SplitPaneAction,
+    SplitPaneController,
+};
+use nana_ui_platform::WindowId;
+use crate::iab_panel::HostedBrowserId;
+use crate::runtime_compat::{
+    HostedProgramContext, HostedProgramUpdate, HostedUiCommand, HostedUpdateExt, HostedWindowAction,
     HostedWindowCaptureId, HostedWindowCommand, HostedWindowEvent, HostedWindowGeometry,
-    HostedWindowId, HostedWindowSettings, Icon, IconButton, ImageViewer, ImageViewerSource, Input,
-    KeyBinding, KeyCaptureEvent, KeyCaptureLayer, KeyContext, KeyModifiers, KeyStroke, Keymap,
-    KeymapLayer, KeymapMatch, KeymapState, ListItem, LogicalRect, MarkdownImage, NarrowBehavior,
-    NativeMarkdown, PaneChrome, PaneChromeAction, PaneChromeActionKind, PaneTree, PaneTreeNode,
-    Popover, PopoverPlacement, QrCodeCanvas, RegionId, RegionRole, RegionState, ReorderItem,
-    ReorderList, SelectionOption, SettingsCard, SettingsModel, SettingsState, SettingsTab,
-    SettingsTabId, SidebarFooter, SidebarFooterButton, SidebarFrame, SidebarRow, SidebarRowState,
-    SidebarSection, TabDragGroup, TabDragSurface, Tabs, TextSelectionSnapshot, ThemeMode,
-    ThemeModeExt, ThemeTokens, TimeSeriesChart, TreeDropPosition as NanaTreeDropPosition,
-    WindowChromeEvent, WindowChromeState, WindowMaterialMode, WorkspaceAction, WorkspaceController,
-    WorkspaceLayout, WorkspaceRegions,
+    HostedWindowId, HostedWindowSettings, tool_window_settings, window_event_id,
 };
-use nana_ui::{
-    ratio_pane_split, split_pane, SplitAxis as NanaSplitAxis, SplitPaneAction, SplitPaneController,
-};
+use crate::text_editor_state::TextEditorState;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -117,23 +105,19 @@ use crate::agent_debug::{
 };
 use crate::ask_user::{AskUserAction, AskUserDraft, AskUserMode, AskUserOutcome, AskUserSpec};
 use crate::conversation_suggestions::{
-    conversation_suggestions_view, ConversationSuggestionState, ConversationSuggestionViewMessage,
+    ConversationSuggestionState,
 };
-use crate::data_import::{
-    item_label as import_item_label, legacy_instance_identity, plan_item_status_label,
-    plan_status_label, report_item_status_label, report_status_label, NativeDataImportState,
-};
+use crate::data_import::{legacy_instance_identity, NativeDataImportState};
 use crate::debug_timeline::{DebugTimelineAction, NativeDebugTimeline};
 use crate::document_editor::{
-    document_editor_content, document_editor_cursor_offset, document_editor_inactive_preview,
-    is_document_editor_item, select_document_editor_offsets, select_document_editor_range,
-    DocumentEditorActions, DocumentEditorViewState,
+    document_editor_cursor_offset, is_document_editor_item, select_document_editor_offsets,
+    select_document_editor_range, DocumentEditorViewState,
 };
 use crate::host::NativeDesktopHost;
 use crate::iab_panel::{IabPanelMessage, IabPanelState};
 use crate::iab_window::{IabWindowMessage, IabWindowState};
 use crate::markdown_images::{load_markdown_image, LoadedMarkdownImage};
-use crate::project_files_panel::{self, project_files_center, ProjectFilesPanelMessage};
+use crate::project_files_panel;
 use crate::provider_ai_settings::ProviderAiSettingsState;
 use crate::shell_integration::{NativeShellIntegration, ShellCommand};
 use crate::storage::{
@@ -150,14 +134,52 @@ use crate::storage::{
 };
 use crate::target_ids;
 use crate::task_session::{PendingActionView, TaskSessionView, TaskTimelineItem};
-use crate::terminal_view::{
-    terminal_content, terminal_inactive_preview, terminal_plain_text, TerminalViewMessage,
-};
-#[cfg(debug_assertions)]
-use nana_ui::GraphTarget;
+use crate::terminal_view::{terminal_plain_text, TerminalViewMessage};
+
+#[derive(Clone, Debug, PartialEq)]
+enum HostedContextMenuEvent<T> {
+    Dismiss,
+    Select(T),
+    Search(String),
+}
 
 pub const PRODUCT_NAME: &str = "LiliaCode";
-const CONVERSATION_STATUS_WINDOW_ID: HostedWindowId = HostedWindowId(1);
+const CONVERSATION_STATUS_WINDOW_ID: HostedWindowId = WindowId(1);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Point {
+    x: f32,
+    y: f32,
+}
+
+impl Point {
+    const fn new(x: f32, y: f32) -> Self {
+        Self { x, y }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Size {
+    width: f32,
+    height: f32,
+}
+
+impl Size {
+    const fn new(width: f32, height: f32) -> Self {
+        Self { width, height }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Rectangle {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Length;
 const FIRST_TASK_POPUP_WINDOW_ID: u64 = 100;
 const TIMELINE_PAGE_SIZE: usize = 100;
 const TIMELINE_DEFAULT_VIEWPORT_EXTENT: f32 = 720.0;
@@ -354,7 +376,7 @@ struct ProjectWorkspaceEditorState {
     memories: Vec<DesktopMemory>,
     selected_memory: Option<String>,
     memory_title: String,
-    memory_body: HostedTextareaState,
+    memory_body: TextEditorState,
     memory_tags: String,
     memory_scope: MemoryScope,
     memory_updated_at: Option<i64>,
@@ -698,7 +720,7 @@ struct TaskPopupWindow {
     task_sessions: BTreeMap<TaskId, TaskSessionView>,
     session: Option<TaskSessionView>,
     composer: Option<DesktopComposerState>,
-    composer_editor: HostedTextareaState,
+    composer_editor: TextEditorState,
     slash_commands: Vec<DesktopSlashCommandSearchResult>,
     conversation_reference_results: Vec<ChatConversationReference>,
     context_attachment_results: Vec<ChatContextSearchResult>,
@@ -722,7 +744,7 @@ struct TaskPopupWindow {
 struct MainConversationDraft {
     task: DesktopTaskCreate,
     composer: DesktopComposerState,
-    composer_editor: HostedTextareaState,
+    composer_editor: TextEditorState,
     worktree: DraftWorktreeSelection,
     suggestions: ConversationSuggestionState,
     error: Option<String>,
@@ -738,7 +760,7 @@ struct ConversationDraftSurface<'a> {
     task: &'a DesktopTaskCreate,
     worktree: &'a DraftWorktreeSelection,
     composer: Option<&'a DesktopComposerState>,
-    composer_editor: &'a HostedTextareaState,
+    composer_editor: &'a TextEditorState,
     suggestions: &'a ConversationSuggestionState,
     error: Option<&'a str>,
 }
@@ -958,7 +980,6 @@ pub(crate) enum TitlebarMenuAction {
     OpenTaskPopup,
     AskTaskPopup,
     ToggleTaskInspector,
-    OpenTaskBrowser,
     SplitHorizontal,
     SplitVertical,
     CloseCurrentItem,
@@ -1067,9 +1088,9 @@ pub enum Message {
         target: SidebarMenuTarget,
         anchor_y: f32,
     },
-    SidebarMenu(ContextMenuEvent<SidebarMenuAction>),
+    SidebarMenu(HostedContextMenuEvent<SidebarMenuAction>),
     ToggleTitlebarMenu,
-    TitlebarMenu(ContextMenuEvent<TitlebarMenuAction>),
+    TitlebarMenu(HostedContextMenuEvent<TitlebarMenuAction>),
     ToggleComposerActionMenu(HostedWindowId),
     CloseComposerActionMenu,
     ComposerAction {
@@ -1175,11 +1196,11 @@ pub enum Message {
     SelectMemory(String),
     NewMemory,
     MemoryTitleChanged(String),
-    MemoryBodyEdited(text_editor::Action),
+    MemoryBodyEdited(String),
     MemoryBodyReplaced(String),
     DocumentEditorEdited {
         item_id: WorkspaceItemId,
-        action: text_editor::Action,
+        action: String,
     },
     DocumentDiagnosticsFinished {
         document_id: lilia_desktop_application::DocumentId,
@@ -1371,7 +1392,7 @@ pub enum Message {
     },
     TaskPopupComposerEdited {
         window_id: HostedWindowId,
-        action: text_editor::Action,
+        action: String,
     },
     TaskPopupDraftProjectSelection {
         window_id: HostedWindowId,
@@ -1477,7 +1498,7 @@ pub enum Message {
         value: String,
     },
     ComposerChanged(String),
-    ComposerEdited(text_editor::Action),
+    ComposerEdited(String),
     SelectSlashCommand(DesktopSlashCommand),
     SelectReviewWorkflowTarget {
         window_id: HostedWindowId,
@@ -1608,6 +1629,7 @@ pub enum Message {
     },
     OpenSettings,
     CloseSettings,
+    FromShell(crate::runtime_shell::ShellIntent),
     SelectSettingsTab(SettingsTabId),
     Appearance(AppearanceEvent),
     SetSidebarDisplayMode(NativeSidebarDisplayMode),
@@ -1618,7 +1640,7 @@ pub enum Message {
     CycleProjectWorktreeMode,
     ProjectWorktreeParentChanged(String),
     PickProjectWorktreeParent,
-    ProjectWorktreeInstructionsEdited(text_editor::Action),
+    ProjectWorktreeInstructionsEdited(String),
     ToggleProjectWorktreeCleanup,
     SaveProjectSettings,
     PickDataImportSource,
@@ -1695,7 +1717,7 @@ pub enum Message {
     ToggleAgentInteraction(AgentInteractionToggle),
     AgentNameChanged(String),
     AgentDescriptionChanged(String),
-    AgentInstructionEdited(text_editor::Action),
+    AgentInstructionEdited(String),
     EditCustomAgent(String),
     NewCustomAgent,
     SaveCustomAgent,
@@ -1875,7 +1897,7 @@ struct WorkspaceWindowPaneChrome<'a> {
     pane_id: &'a PaneId,
     item_ids: &'a [WorkspaceItemId],
     active_item: Option<&'a WorkspaceItemId>,
-    body: Element<'static, Message>,
+    body: (),
     active: bool,
 }
 
@@ -1978,7 +2000,7 @@ pub struct DesktopProgram {
     project_workspace_previews: BTreeMap<WorkspaceItemId, ProjectWorkspacePreview>,
     main_conversation_draft: Option<MainConversationDraft>,
     composer: Option<DesktopComposerState>,
-    composer_editor: HostedTextareaState,
+    composer_editor: TextEditorState,
     slash_commands: Vec<DesktopSlashCommandSearchResult>,
     conversation_reference_results: Vec<ChatConversationReference>,
     context_attachment_results: Vec<ChatContextSearchResult>,
@@ -2050,7 +2072,7 @@ pub struct DesktopProgram {
     memories: Vec<DesktopMemory>,
     selected_memory: Option<String>,
     memory_title: String,
-    memory_body: HostedTextareaState,
+    memory_body: TextEditorState,
     memory_tags: String,
     memory_scope: MemoryScope,
     memory_updated_at: Option<i64>,
@@ -2076,7 +2098,7 @@ pub struct DesktopProgram {
     settings_model: SettingsModel,
     settings_state: SettingsState,
     project_settings: DesktopProjectSettings,
-    project_worktree_instructions: HostedTextareaState,
+    project_worktree_instructions: TextEditorState,
     project_settings_error: Option<String>,
     provider: DesktopProviderSnapshot,
     provider_runtime_settings: DesktopAgentRuntimeSettings,
@@ -2097,7 +2119,7 @@ pub struct DesktopProgram {
     editing_custom_agent: Option<String>,
     custom_agent_name: String,
     custom_agent_description: String,
-    custom_agent_instruction: HostedTextareaState,
+    custom_agent_instruction: TextEditorState,
     agent_interaction_error: Option<String>,
     selected_provider: Option<String>,
     provider_secret: String,
@@ -2181,6 +2203,10 @@ pub struct DesktopProgram {
     #[cfg(debug_assertions)]
     pending_debug_frame_response: Option<PendingDebugFrameResponse>,
     window_chrome: WindowChromeState,
+    documents: HashMap<WindowId, RuntimeDocument>,
+    runtime_shell: Option<crate::runtime_shell::ShellHandles>,
+    conversation_status_shell: Option<crate::runtime_windows::ConversationStatusHandles>,
+    task_popup_shells: BTreeMap<WindowId, crate::runtime_windows::TaskPopupHandles>,
 }
 
 fn sidebar_navigation_target(target: SidebarNavigationTarget) -> DesktopNavigationTarget {
@@ -2209,6 +2235,1047 @@ fn sidebar_navigation_selected(
 }
 
 impl DesktopProgram {
+    fn message_from_shell_intent(intent: crate::runtime_shell::ShellIntent) -> Message {
+        Message::FromShell(intent)
+    }
+
+    fn apply_shell_intent(
+        &mut self,
+        intent: crate::runtime_shell::ShellIntent,
+    ) -> Option<HostedWindowAction> {
+        let message = match intent {
+            crate::runtime_shell::ShellIntent::ToggleSidebar => {
+                Message::Workspace(WorkspaceAction::ToggleRegion(RegionId::Resources))
+            }
+            crate::runtime_shell::ShellIntent::NewConversation => Message::OpenSidebarInboxDraft,
+            crate::runtime_shell::ShellIntent::SelectTask(task_id) => Message::SelectTask(task_id),
+            crate::runtime_shell::ShellIntent::OpenSettings => Message::OpenSettings,
+            crate::runtime_shell::ShellIntent::CloseSettings => Message::CloseSettings,
+            crate::runtime_shell::ShellIntent::ComposerChanged(value) => {
+                Message::ComposerChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::SubmitTurn => Message::SubmitTurn,
+            crate::runtime_shell::ShellIntent::InterruptTurn => Message::InterruptTurn,
+            crate::runtime_shell::ShellIntent::WindowChrome(event) => Message::WindowChrome(event),
+            crate::runtime_shell::ShellIntent::ToggleCommandPalette => {
+                Message::ToggleCommandPalette
+            }
+            crate::runtime_shell::ShellIntent::CommandPalette(event) => {
+                Message::CommandPalette(event)
+            }
+            crate::runtime_shell::ShellIntent::SelectSettingsTab(tab) => {
+                Message::SelectSettingsTab(tab)
+            }
+            crate::runtime_shell::ShellIntent::Appearance(event) => Message::Appearance(event),
+            crate::runtime_shell::ShellIntent::ProjectNameChanged(value) => {
+                Message::ProjectNameChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::SaveProjectSettings => Message::SaveProjectSettings,
+            crate::runtime_shell::ShellIntent::PickProjectWorkspace => {
+                Message::PickProjectWorkspace
+            }
+            crate::runtime_shell::ShellIntent::SelectProvider(id) => Message::SelectProvider(id),
+            crate::runtime_shell::ShellIntent::RefreshProvider => Message::RefreshProvider,
+            crate::runtime_shell::ShellIntent::ToggleAgent(id) => {
+                Message::ToggleAgentInteraction(match id.as_str() {
+                    "debug" => AgentInteractionToggle::Debug,
+                    "subagents" => AgentInteractionToggle::Subagents,
+                    "auto_turn" => AgentInteractionToggle::AutoTurn,
+                    "auto_model_tier" => AgentInteractionToggle::AutoModelTier,
+                    "auto_reasoning" => AgentInteractionToggle::AutoReasoningEffort,
+                    "auto_plan" => AgentInteractionToggle::AutoPlanMode,
+                    "auto_goal" => AgentInteractionToggle::AutoGoalMode,
+                    "auto_fork" => AgentInteractionToggle::AutoSessionFork,
+                    _ => AgentInteractionToggle::NonInterrupt,
+                })
+            }
+            crate::runtime_shell::ShellIntent::RefreshQuota => Message::RefreshQuota,
+            crate::runtime_shell::ShellIntent::RefreshExtensions => Message::RefreshExtensions,
+            crate::runtime_shell::ShellIntent::ToggleRemoteHost => Message::ToggleRemoteHost,
+            crate::runtime_shell::ShellIntent::ToggleRemoteKeepAwake => {
+                Message::ToggleRemoteKeepAwake
+            }
+            crate::runtime_shell::ShellIntent::CheckForUpdate => Message::CheckForUpdate,
+            crate::runtime_shell::ShellIntent::PickDataImportSource => {
+                Message::PickDataImportSource
+            }
+            crate::runtime_shell::ShellIntent::ExecuteDataImport => Message::ExecuteDataImport,
+            crate::runtime_shell::ShellIntent::ResetDataImport => Message::ResetDataImport,
+            crate::runtime_shell::ShellIntent::PickAttachmentFiles => Message::PickAttachmentFiles,
+            crate::runtime_shell::ShellIntent::PickAttachmentDirectories => {
+                Message::PickAttachmentDirectories
+            }
+            crate::runtime_shell::ShellIntent::RemoveAttachment(id) => {
+                Message::RemoveAttachment(id)
+            }
+            crate::runtime_shell::ShellIntent::TogglePlanMode => Message::TogglePlanMode,
+            crate::runtime_shell::ShellIntent::ToggleGoalMode => Message::ToggleGoalMode,
+            crate::runtime_shell::ShellIntent::CyclePermission => Message::CyclePermission,
+            crate::runtime_shell::ShellIntent::ApplySuggestion(prompt) => {
+                Message::ApplyConversationSuggestion {
+                    window_id: HostedWindowId::PRIMARY,
+                    prompt,
+                }
+            }
+            crate::runtime_shell::ShellIntent::RefreshSuggestions => {
+                Message::RefreshConversationSuggestions {
+                    window_id: HostedWindowId::PRIMARY,
+                    force: true,
+                }
+            }
+            crate::runtime_shell::ShellIntent::DocumentChanged(value) => {
+                let Some(item_id) = self.active_document_item_id() else {
+                    return None;
+                };
+                Message::DocumentEditorEdited {
+                    item_id,
+                    action: value,
+                }
+            }
+            crate::runtime_shell::ShellIntent::SaveDocument => {
+                let Some(item_id) = self.active_document_item_id() else {
+                    return None;
+                };
+                Message::SaveDocumentEditor(item_id)
+            }
+            crate::runtime_shell::ShellIntent::DiscardDocument => {
+                let Some(item_id) = self.active_document_item_id() else {
+                    return None;
+                };
+                Message::DiscardDocumentEditor(item_id)
+            }
+            crate::runtime_shell::ShellIntent::TerminalInput(value) => {
+                let Some(session_id) = self.active_terminal_session_id() else {
+                    return None;
+                };
+                Message::Terminal(TerminalViewMessage::InputChanged(session_id, value))
+            }
+            crate::runtime_shell::ShellIntent::TerminalSubmit => {
+                let Some(session_id) = self.active_terminal_session_id() else {
+                    return None;
+                };
+                Message::Terminal(TerminalViewMessage::Submit(session_id))
+            }
+            crate::runtime_shell::ShellIntent::TerminalInterrupt => {
+                let Some(session_id) = self.active_terminal_session_id() else {
+                    return None;
+                };
+                Message::Terminal(TerminalViewMessage::Interrupt(session_id))
+            }
+            crate::runtime_shell::ShellIntent::ToggleProjectFile(path) => {
+                Message::ToggleProjectFileExpand(path)
+            }
+            crate::runtime_shell::ShellIntent::OpenProjectFile(path) => {
+                Message::OpenProjectFile(path)
+            }
+            crate::runtime_shell::ShellIntent::RefreshProjectFiles => Message::RefreshProjectFiles,
+            crate::runtime_shell::ShellIntent::ProviderSecretChanged(value) => {
+                Message::ProviderSecretChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::SaveProviderCredential => {
+                Message::SaveProviderCredential
+            }
+            crate::runtime_shell::ShellIntent::RevokeProviderCredential {
+                credential_id,
+                revision,
+            } => Message::RevokeProviderCredential {
+                credential_id,
+                revision,
+            },
+            crate::runtime_shell::ShellIntent::ProviderModelChanged(value) => {
+                Message::ProviderModelChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::ProviderOpenAiEndpointChanged(value) => {
+                Message::ProviderOpenAiEndpointChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::ProviderAnthropicEndpointChanged(value) => {
+                Message::ProviderAnthropicEndpointChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::SaveProviderRuntimeSettings => {
+                Message::SaveProviderRuntimeSettings
+            }
+            crate::runtime_shell::ShellIntent::ResetProviderRuntimeSettings => {
+                Message::ResetProviderRuntimeSettings
+            }
+            crate::runtime_shell::ShellIntent::AgentNameChanged(value) => {
+                Message::AgentNameChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::AgentDescriptionChanged(value) => {
+                Message::AgentDescriptionChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::AgentInstructionChanged(value) => {
+                Message::AgentInstructionEdited(value)
+            }
+            crate::runtime_shell::ShellIntent::NewCustomAgent => Message::NewCustomAgent,
+            crate::runtime_shell::ShellIntent::EditCustomAgent(id) => Message::EditCustomAgent(id),
+            crate::runtime_shell::ShellIntent::SaveCustomAgent => Message::SaveCustomAgent,
+            crate::runtime_shell::ShellIntent::CancelCustomAgentEdit => {
+                Message::CancelCustomAgentEdit
+            }
+            crate::runtime_shell::ShellIntent::ToggleCustomAgent(id) => {
+                Message::ToggleCustomAgent(id)
+            }
+            crate::runtime_shell::ShellIntent::DeleteCustomAgent(id) => {
+                Message::DeleteCustomAgent(id)
+            }
+            crate::runtime_shell::ShellIntent::CycleQuotaDays => Message::CycleQuotaDays,
+            crate::runtime_shell::ShellIntent::CycleQuotaBackend => Message::CycleQuotaBackend,
+            crate::runtime_shell::ShellIntent::SkillIdChanged(value) => {
+                Message::SkillIdChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::SkillDescriptionChanged(value) => {
+                Message::SkillDescriptionChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::CreateSkill => Message::CreateSkill,
+            crate::runtime_shell::ShellIntent::ToggleSkill(id) => Message::ToggleSkill(id),
+            crate::runtime_shell::ShellIntent::NewMcpServer => Message::NewMcpServer,
+            crate::runtime_shell::ShellIntent::EditMcpServer(id) => Message::EditMcpServer(id),
+            crate::runtime_shell::ShellIntent::McpServerIdChanged(value) => {
+                Message::McpServerIdChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::CycleMcpTransport => Message::CycleMcpTransport,
+            crate::runtime_shell::ShellIntent::McpLocationChanged(value) => {
+                Message::McpLocationChanged(value)
+            }
+            crate::runtime_shell::ShellIntent::McpArgsChanged(value) => Message::McpArgsChanged(value),
+            crate::runtime_shell::ShellIntent::ToggleMcpEditorEnabled => {
+                Message::ToggleMcpEditorEnabled
+            }
+            crate::runtime_shell::ShellIntent::SaveMcpServer => Message::SaveMcpServer,
+            crate::runtime_shell::ShellIntent::CancelMcpEditor => Message::CancelMcpEditor,
+            crate::runtime_shell::ShellIntent::ToggleMcpServer(id) => Message::ToggleMcpServer(id),
+            crate::runtime_shell::ShellIntent::ToggleTitlebarMenu => Message::ToggleTitlebarMenu,
+            crate::runtime_shell::ShellIntent::BackToTaskList => {
+                self.update_titlebar_menu(HostedContextMenuEvent::Select(
+                    TitlebarMenuAction::BackToTaskList,
+                ));
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::OpenTaskPopup => {
+                self.update_titlebar_menu(HostedContextMenuEvent::Select(
+                    TitlebarMenuAction::OpenTaskPopup,
+                ));
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::AskTaskPopup => {
+                self.update_titlebar_menu(HostedContextMenuEvent::Select(
+                    TitlebarMenuAction::AskTaskPopup,
+                ));
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::ToggleTaskInspector => {
+                self.update_titlebar_menu(HostedContextMenuEvent::Select(
+                    TitlebarMenuAction::ToggleTaskInspector,
+                ));
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::SplitWorkspaceHorizontal => {
+                self.update_titlebar_menu(HostedContextMenuEvent::Select(
+                    TitlebarMenuAction::SplitHorizontal,
+                ));
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::SplitWorkspaceVertical => {
+                self.update_titlebar_menu(HostedContextMenuEvent::Select(
+                    TitlebarMenuAction::SplitVertical,
+                ));
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::CloseCurrentWorkspaceItem => {
+                self.update_titlebar_menu(HostedContextMenuEvent::Select(
+                    TitlebarMenuAction::CloseCurrentItem,
+                ));
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::OpenConversationStatus => {
+                Message::OpenConversationStatus
+            }
+            crate::runtime_shell::ShellIntent::CloseConversationStatus => {
+                Message::CloseConversationStatus
+            }
+            crate::runtime_shell::ShellIntent::ToggleConversationStatusPin => {
+                Message::ToggleConversationStatusAlwaysOnTop
+            }
+            crate::runtime_shell::ShellIntent::OpenConversationStatusNewChat => {
+                Message::OpenConversationStatusNewChat
+            }
+            crate::runtime_shell::ShellIntent::OpenStatusTask(task_id) => {
+                self.open_task_popup_with_transfer(task_id, false);
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::StopStatusTask(task_id) => {
+                Message::StopConversationStatusTask(task_id)
+            }
+            crate::runtime_shell::ShellIntent::ActivateWorkspaceItem(id) => {
+                if let Ok(item_id) = WorkspaceItemId::new(id) {
+                    if let Some(pane_id) = self.panel_layout.pane_for_item(&item_id).cloned() {
+                        self.execute_workspace_command(DesktopCommand::ActivateWorkspaceItem {
+                            pane_id,
+                            item_id,
+                        });
+                    }
+                }
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::FocusWorkspacePane(id) => {
+                if let Ok(pane_id) = PaneId::new(id) {
+                    self.execute_workspace_command(DesktopCommand::FocusPane(pane_id));
+                }
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::SelectAutomation(id) => Message::SelectAutomation(id),
+            crate::runtime_shell::ShellIntent::CreateAutomation => Message::CreateAutomation,
+            crate::runtime_shell::ShellIntent::SaveAutomationDraft => Message::SaveAutomationDraft,
+            crate::runtime_shell::ShellIntent::RunAutomation => Message::RunAutomation,
+            crate::runtime_shell::ShellIntent::RefreshAutomations => Message::RefreshAutomations,
+            crate::runtime_shell::ShellIntent::AutomationGraph(event) => {
+                Message::AutomationGraph(event)
+            }
+            crate::runtime_shell::ShellIntent::CloseTaskPopup(window_id) => {
+                Message::CloseTaskPopup(window_id)
+            }
+            crate::runtime_shell::ShellIntent::TaskPopupComposerChanged { window_id, value } => {
+                Message::TaskPopupComposerChanged { window_id, value }
+            }
+            crate::runtime_shell::ShellIntent::TaskPopupSubmit(window_id) => {
+                Message::TaskPopupSubmitTurn(window_id)
+            }
+            crate::runtime_shell::ShellIntent::TaskPopupInterrupt(window_id) => {
+                Message::TaskPopupInterruptTurn(window_id)
+            }
+        };
+        self.update_message(message)
+    }
+
+    fn active_document_item_id(&self) -> Option<WorkspaceItemId> {
+        let item_id = self.panel_layout.active_workspace_item().ok().flatten()?;
+        self.document_editors
+            .contains_key(item_id)
+            .then(|| item_id.clone())
+    }
+
+    fn active_terminal_session_id(&self) -> Option<DesktopTerminalSessionId> {
+        let item_id = self.panel_layout.active_workspace_item().ok().flatten()?;
+        let item = self.workspace_items.iter().find(|item| &item.id == item_id)?;
+        self.terminal_snapshot_for_item(item).map(|snapshot| snapshot.id)
+    }
+
+    fn primary_shell_snapshot(&self) -> crate::runtime_shell::PrimaryShellSnapshot {
+        let selected = self.selected_task.as_ref();
+        let tasks = self
+            .tasks
+            .iter()
+            .take(80)
+            .map(|task| crate::runtime_shell::ShellTaskRow {
+                selected: selected.is_some_and(|selected| selected == &task.id),
+                id: task.id.clone(),
+                title: if task.title.trim().is_empty() {
+                    "未命名会话".to_owned()
+                } else {
+                    task.title.clone()
+                },
+            })
+            .collect();
+        let timeline: Vec<crate::runtime_shell::ShellTimelineRow> = self
+            .task_session
+            .as_ref()
+            .map(|session| {
+                session
+                    .timeline
+                    .iter()
+                    .rev()
+                    .take(24)
+                    .rev()
+                    .map(|item| crate::runtime_shell::ShellTimelineRow {
+                        id: item.id.clone(),
+                        markdown: item
+                            .markdown
+                            .clone()
+                            .or_else(|| item.summary.clone())
+                            .filter(|text| !text.trim().is_empty())
+                            .unwrap_or_else(|| item.title.clone()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let composer = self
+            .main_conversation_draft
+            .as_ref()
+            .map(|draft| draft.composer.content.clone())
+            .or_else(|| self.composer.as_ref().map(|composer| composer.content.clone()))
+            .unwrap_or_else(|| self.composer_editor.text());
+        let composer_state = self
+            .main_conversation_draft
+            .as_ref()
+            .map(|draft| &draft.composer)
+            .or(self.composer.as_ref());
+        let can_send = composer_state.is_some_and(composer_has_turn_payload)
+            && !self.composer_input_is_locked()
+            && (self.main_conversation_draft.is_some() || !self.composer_is_locked());
+        let heading = if self.settings_open {
+            "设置".to_owned()
+        } else if self.main_conversation_draft.is_some() {
+            "新会话".to_owned()
+        } else if let Some(session) = self.task_session.as_ref() {
+            if session.task_title.trim().is_empty() {
+                "会话".to_owned()
+            } else {
+                session.task_title.clone()
+            }
+        } else {
+            "选择一个会话".to_owned()
+        };
+        let empty_hint = if self.settings_open {
+            String::new()
+        } else if self.selected_task.is_none() && self.main_conversation_draft.is_none() {
+            "从左侧打开会话，或新建会话。".to_owned()
+        } else if timeline.is_empty() {
+            "还没有消息。".to_owned()
+        } else {
+            String::new()
+        };
+        crate::runtime_shell::PrimaryShellSnapshot {
+            theme: self.theme,
+            title: PRODUCT_NAME.to_owned(),
+            heading,
+            empty_hint,
+            error: self
+                .error_message
+                .clone()
+                .or_else(|| self.task_action_error.clone()),
+            settings_open: self.settings_open,
+            sidebar_collapsed: self
+                .workspace
+                .layout()
+                .region(&RegionId::Resources)
+                .is_some_and(nana_ui::RegionState::collapsed_value),
+            workspace: self.workspace.model().clone(),
+            tasks,
+            timeline,
+            composer,
+            composer_placeholder: COMPOSER_PLACEHOLDER.to_owned(),
+            composer_disabled: self.composer_input_is_locked(),
+            can_send,
+            can_interrupt: self
+                .turn_state
+                .as_ref()
+                .is_some_and(|(_, state)| turn_state_is_active(state)),
+            attachments: composer_state
+                .map(|composer| {
+                    composer
+                        .attachments
+                        .iter()
+                        .map(|attachment| crate::runtime_shell::ShellAttachmentRow {
+                            id: attachment.id.clone(),
+                            label: attachment.name.clone(),
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            plan_mode: composer_state.is_some_and(|composer| composer.plan_mode),
+            goal_mode: composer_state.is_some_and(|composer| composer.goal_mode),
+            permission_label: composer_state
+                .map(|composer| permission_label(composer.permission).to_owned())
+                .unwrap_or_else(|| permission_label(DesktopExecutionPermission::Ask).to_owned()),
+            suggestions: self
+                .conversation_suggestions
+                .visible_item_ids()
+                .filter_map(|id| {
+                    self.conversation_suggestions
+                        .prompt_for(id)
+                        .map(|prompt| crate::runtime_shell::ShellSuggestionRow {
+                            id: id.to_owned(),
+                            label: prompt.chars().take(24).collect(),
+                            prompt,
+                        })
+                })
+                .collect(),
+            suggestions_can_refresh: self.conversation_suggestions.can_refresh(),
+            command_palette_open: self.command_picker.is_open(),
+            command_palette_query: self.command_picker.query().to_owned(),
+            command_palette_selected: self.command_picker.selected(),
+            command_palette_items: self.command_palette_items(),
+            settings: self.settings_shell_snapshot(),
+            document: self.active_document_shell_snapshot(),
+            files: self.project_files_shell_snapshot(),
+            terminal: self.active_terminal_shell_snapshot(),
+            inspector_title: if self.inspector_region_is_visible() {
+                match self.inspector_surface {
+                    InspectorSurface::CodingTools => "编码工具".to_owned(),
+                    InspectorSurface::Task => "会话详情".to_owned(),
+                    InspectorSurface::Iab => String::new(),
+                }
+            } else {
+                String::new()
+            },
+            titlebar_menu_open: self.titlebar_menu_open,
+            titlebar_has_task: self.selected_task.is_some(),
+            titlebar_can_split: self.integrated_product_shell_pane().is_some(),
+            titlebar_can_close: self.integrated_product_shell_pane().is_some_and(|(_, item_id)| {
+                item_id.is_some_and(|item_id| {
+                    self.workspace_items
+                        .iter()
+                        .any(|item| item.id == item_id && item.capabilities.closable)
+                })
+            }),
+            automations_open: self.automations_open,
+            automations: self
+                .automations
+                .iter()
+                .map(|workflow| crate::runtime_shell::ShellAutomationRow {
+                    selected: self.selected_automation.as_deref() == Some(workflow.id.as_str()),
+                    id: workflow.id.clone(),
+                    label: if workflow.name.trim().is_empty() {
+                        "未命名自动化".to_owned()
+                    } else {
+                        workflow.name.clone()
+                    },
+                })
+                .collect(),
+            automation_graph: self.automation_graph.clone(),
+            automation_viewport: self.automation_viewport,
+            automation_selection: self.automation_selection.clone(),
+            panes: {
+                let mut panes = Vec::new();
+                for pane_id in self.panel_layout.pane_ids() {
+                    let items = self
+                        .panel_layout
+                        .pane_items(&pane_id)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(|item_id| {
+                            let item = self.workspace_items.iter().find(|item| item.id == *item_id)?;
+                            Some(crate::runtime_shell::ShellPaneItem {
+                                selected: self
+                                    .panel_layout
+                                    .active_item(&pane_id)
+                                    .ok()
+                                    .flatten()
+                                    == Some(&item.id),
+                                id: item.id.as_str().to_owned(),
+                                title: item.title.clone(),
+                            })
+                        })
+                        .collect();
+                    panes.push(crate::runtime_shell::ShellPaneRow {
+                        active: *self.panel_layout.active_pane() == pane_id,
+                        id: pane_id.as_str().to_owned(),
+                        items,
+                    });
+                }
+                panes
+            },
+            inspector_body: if self.inspector_region_is_visible() {
+                match self.inspector_surface {
+                    InspectorSurface::CodingTools => self
+                        .coding_error
+                        .clone()
+                        .or_else(|| self.coding_notice.clone())
+                        .unwrap_or_else(|| "打开文件、终端或代码搜索。".to_owned()),
+                    InspectorSurface::Task => self
+                        .task_session
+                        .as_ref()
+                        .map(|session| {
+                            format!(
+                                "待办 {} · 待处理 {}",
+                                session.todo_count, session.pending_count
+                            )
+                        })
+                        .unwrap_or_default(),
+                    InspectorSurface::Iab => String::new(),
+                }
+            } else {
+                String::new()
+            },
+        }
+    }
+
+    fn settings_shell_snapshot(&self) -> crate::runtime_shell::SettingsSnapshot {
+        let auto = &self.agent_interaction_settings.auto_turn_decision;
+        crate::runtime_shell::SettingsSnapshot {
+            model: self.settings_model.clone(),
+            state: self.settings_state.clone(),
+            appearance: self.appearance,
+            material_status: nana_ui::platform_material_support().hint().to_owned(),
+            project_name: self.project_name_edit.clone(),
+            project_workspace: self.project_workspace_edit.clone(),
+            project_error: self.project_settings_error.clone(),
+            providers: self
+                .provider
+                .providers
+                .iter()
+                .map(|provider| crate::runtime_shell::ShellProviderRow {
+                    selected: self.selected_provider.as_deref() == Some(provider.provider_id.as_str()),
+                    id: provider.provider_id.clone(),
+                    label: provider.display_name.clone(),
+                })
+                .collect(),
+            provider_status: self
+                .provider_error
+                .clone()
+                .unwrap_or_else(|| {
+                    if self.provider.broker_ready {
+                        "模型服务可用。".to_owned()
+                    } else {
+                        "模型服务未就绪。".to_owned()
+                    }
+                }),
+            agent_actions: vec![
+                crate::runtime_shell::ShellActionRow {
+                    id: "non_interrupt".into(),
+                    label: if self.agent_interaction_settings.non_interrupt_mode {
+                        "非中断：开".into()
+                    } else {
+                        "非中断：关".into()
+                    },
+                },
+                crate::runtime_shell::ShellActionRow {
+                    id: "debug".into(),
+                    label: if self.agent_interaction_settings.debug {
+                        "调试：开".into()
+                    } else {
+                        "调试：关".into()
+                    },
+                },
+                crate::runtime_shell::ShellActionRow {
+                    id: "subagents".into(),
+                    label: if self.agent_interaction_settings.subagent_mode.enabled {
+                        "子代理：开".into()
+                    } else {
+                        "子代理：关".into()
+                    },
+                },
+                crate::runtime_shell::ShellActionRow {
+                    id: "auto_turn".into(),
+                    label: if auto.enabled {
+                        "自动回合：开".into()
+                    } else {
+                        "自动回合：关".into()
+                    },
+                },
+                crate::runtime_shell::ShellActionRow {
+                    id: "auto_plan".into(),
+                    label: if auto.allow_plan_mode {
+                        "自动计划：开".into()
+                    } else {
+                        "自动计划：关".into()
+                    },
+                },
+                crate::runtime_shell::ShellActionRow {
+                    id: "auto_goal".into(),
+                    label: if auto.allow_goal_mode {
+                        "自动目标：开".into()
+                    } else {
+                        "自动目标：关".into()
+                    },
+                },
+            ],
+            quota_status: self.quota_error.clone().unwrap_or_else(|| {
+                self.quota_usage
+                    .as_ref()
+                    .map(|stats| format!("{} 天 · {}", stats.days, stats.backend))
+                    .unwrap_or_else(|| "尚未读取用量。".to_owned())
+            }),
+            extensions_status: self.extensions_error.clone().unwrap_or_else(|| {
+                self.extensions
+                    .as_ref()
+                    .map(|snapshot| {
+                        format!(
+                            "技能 {} · 插件 {} · MCP {}",
+                            snapshot.skills.len(),
+                            snapshot.plugins.len(),
+                            snapshot.mcp_servers.len()
+                        )
+                    })
+                    .unwrap_or_else(|| "尚未读取扩展。".to_owned())
+            }),
+            remote_status: self.remote_error.clone().unwrap_or_else(|| {
+                self.remote
+                    .as_ref()
+                    .map(|status| format!("{} · {}", status.pc_name, status.state))
+                    .unwrap_or_else(|| "远程控制未连接。".to_owned())
+            }),
+            remote_host_enabled: self.remote.as_ref().is_some_and(|status| status.host_enabled),
+            remote_keep_awake: self
+                .remote
+                .as_ref()
+                .is_some_and(|status| status.keep_awake_enabled),
+            desktop_status: match &self.update_state {
+                DesktopUpdateState::Idle => "未检查更新。".to_owned(),
+                DesktopUpdateState::Checking => "正在检查更新。".to_owned(),
+                DesktopUpdateState::UpToDate => "已是最新版本。".to_owned(),
+                DesktopUpdateState::Available { version, .. } => {
+                    format!("可更新到 {version}")
+                }
+                DesktopUpdateState::Downloading { version, .. } => {
+                    format!("正在下载 {version}")
+                }
+                DesktopUpdateState::Installing { version } => format!("正在安装 {version}"),
+                DesktopUpdateState::Restarting { version } => format!("即将重启到 {version}"),
+                DesktopUpdateState::Failed { message } => message.clone(),
+            },
+            data_status: self
+                .data_import
+                .error
+                .clone()
+                .unwrap_or_else(|| {
+                    if self.data_import.restart_required {
+                        "导入完成，需要重启。".to_owned()
+                    } else if self.data_import.busy {
+                        "正在处理导入。".to_owned()
+                    } else if self.data_import.plan.is_some() {
+                        "导入计划已就绪。".to_owned()
+                    } else {
+                        "选择旧数据目录后导入。".to_owned()
+                    }
+                }),
+            data_can_import: self.data_import.can_execute(),
+            provider_secret: self.provider_secret.clone(),
+            provider_model: self.provider_model.clone(),
+            provider_openai_endpoint: self.provider_openai_endpoint.clone(),
+            provider_anthropic_endpoint: self.provider_anthropic_endpoint.clone(),
+            can_save_credential: !self.provider_busy && !self.provider_secret.trim().is_empty(),
+            credentials: self
+                .provider
+                .credentials
+                .iter()
+                .filter(|credential| {
+                    self.selected_provider
+                        .as_deref()
+                        .is_some_and(|provider_id| credential.provider_id == provider_id)
+                })
+                .map(|credential| crate::runtime_shell::ShellCredentialRow {
+                    id: credential.credential_id.clone(),
+                    revision: credential.revision,
+                    label: credential
+                        .account_label
+                        .clone()
+                        .unwrap_or_else(|| "已保存凭据".to_owned()),
+                })
+                .collect(),
+            custom_agents: self
+                .custom_agents
+                .agents
+                .iter()
+                .map(|agent| crate::runtime_shell::ShellAgentRow {
+                    id: agent.id.clone(),
+                    label: agent.name.clone(),
+                    enabled: agent.enabled,
+                })
+                .collect(),
+            custom_agent_editor_open: self.custom_agent_editor_open,
+            custom_agent_name: self.custom_agent_name.clone(),
+            custom_agent_description: self.custom_agent_description.clone(),
+            custom_agent_instruction: self.custom_agent_instruction.text(),
+            quota_days_label: format!("{} 天", self.quota_days),
+            quota_backend_label: if self.quota_backend.trim().is_empty() {
+                "切换后端".to_owned()
+            } else {
+                self.quota_backend.clone()
+            },
+            quota_values: self
+                .quota_usage
+                .as_ref()
+                .map(|stats| {
+                    stats
+                        .daily
+                        .iter()
+                        .map(|bucket| bucket.total_tokens as f64)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            skills: self
+                .extensions
+                .as_ref()
+                .map(|snapshot| {
+                    snapshot
+                        .skills
+                        .iter()
+                        .map(|skill| crate::runtime_shell::ShellSkillRow {
+                            id: skill.skill_id.clone(),
+                            label: if skill.description.trim().is_empty() {
+                                skill.skill_id.clone()
+                            } else {
+                                skill.description.clone()
+                            },
+                            enabled: skill.enabled,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            skill_id: self.skill_id_input.clone(),
+            skill_description: self.skill_description_input.clone(),
+            can_create_skill: !self.extensions_busy && !self.skill_id_input.trim().is_empty(),
+            mcp_servers: self
+                .extensions
+                .as_ref()
+                .map(|snapshot| {
+                    snapshot
+                        .mcp_servers
+                        .iter()
+                        .map(|server| crate::runtime_shell::ShellMcpRow {
+                            id: server.server_id.clone(),
+                            label: server.server_id.clone(),
+                            enabled: server.enabled,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            mcp_editor: self.mcp_editor.as_ref().map(|editor| {
+                crate::runtime_shell::ShellMcpEditor {
+                    server_id: editor.server_id.clone(),
+                    transport: editor.transport.as_registry().to_owned(),
+                    location: editor.location.clone(),
+                    args: editor.args_json.clone(),
+                    enabled: editor.enabled,
+                }
+            }),
+        }
+    }
+
+    fn active_document_shell_snapshot(&self) -> Option<crate::runtime_shell::ShellDocumentSnapshot> {
+        let item_id = self.active_document_item_id()?;
+        let state = self.document_editors.get(&item_id)?;
+        Some(crate::runtime_shell::ShellDocumentSnapshot {
+            item_id: item_id.as_str().to_owned(),
+            title: state.path_label.clone(),
+            text: state.editor.text(),
+            status: state
+                .conflict_message
+                .clone()
+                .or_else(|| state.status_message.clone())
+                .unwrap_or_else(|| {
+                    if state.dirty {
+                        "未保存".to_owned()
+                    } else {
+                        state.language_label.clone()
+                    }
+                }),
+            read_only: state.read_only,
+            dirty: state.dirty,
+        })
+    }
+
+    fn project_files_shell_snapshot(&self) -> Option<crate::runtime_shell::ShellFilesSnapshot> {
+        if self.project_surface != ProjectSurface::Files {
+            return None;
+        }
+        let snapshot = self.project_files.as_ref()?;
+        let selected = self
+            .opened_project_document
+            .as_ref()
+            .map(|document| document.canonical_path.display().to_string());
+        Some(crate::runtime_shell::ShellFilesSnapshot {
+            tree: project_files_panel::project_files_tree(snapshot, selected.as_deref()),
+            preview: self.project_files_error.clone().or(selected),
+        })
+    }
+
+    fn active_terminal_shell_snapshot(&self) -> Option<crate::runtime_shell::ShellTerminalSnapshot> {
+        if self.active_document_item_id().is_some() || self.project_surface == ProjectSurface::Files {
+            return None;
+        }
+        let item_id = self.panel_layout.active_workspace_item().ok().flatten()?;
+        let item = self.workspace_items.iter().find(|item| &item.id == item_id)?;
+        let snapshot = self.terminal_snapshot_for_item(item)?;
+        Some(crate::runtime_shell::ShellTerminalSnapshot {
+            output: terminal_plain_text(&snapshot),
+            input: self
+                .terminal_inputs
+                .get(&snapshot.id)
+                .cloned()
+                .unwrap_or_default(),
+            notice: self.terminal_notices.get(&snapshot.id).cloned(),
+        })
+    }
+
+    fn mount_primary_shell(&mut self) {
+        let snapshot = self.primary_shell_snapshot();
+        let sender = Arc::clone(&self.message_sender);
+        match crate::runtime_shell::mount_primary_shell(
+            &snapshot,
+            Arc::new(move |intent| {
+                let _ = sender(Self::message_from_shell_intent(intent));
+            }),
+        ) {
+            Ok((document, handles)) => {
+                self.documents.insert(WindowId::PRIMARY, document);
+                self.runtime_shell = Some(handles);
+            }
+            Err(error) => {
+                eprintln!("{PRODUCT_NAME} failed to mount workspace shell: {error}");
+            }
+        }
+    }
+
+    fn sync_primary_shell(&mut self) {
+        let snapshot = self.primary_shell_snapshot();
+        let commands = std::mem::take(&mut self.pending_ui_commands);
+        let Some(document) = self.documents.get_mut(&WindowId::PRIMARY) else {
+            return;
+        };
+        if let Some(handles) = self.runtime_shell.as_mut() {
+            if let Err(error) = handles.sync(document, &snapshot) {
+                eprintln!("{PRODUCT_NAME} failed to update workspace shell: {error}");
+            }
+            if let Err(error) = handles.apply_ui_commands(document, WindowId::PRIMARY, commands) {
+                eprintln!("{PRODUCT_NAME} failed to apply workspace focus: {error}");
+            }
+        }
+    }
+
+    fn conversation_status_snapshot(
+        &self,
+    ) -> crate::runtime_windows::ConversationStatusSnapshot {
+        crate::runtime_windows::ConversationStatusSnapshot {
+            theme: self.theme,
+            pinned: self.conversation_status_window.always_on_top,
+            error: self.conversation_status_error.clone(),
+            entries: self
+                .conversation_status_entries
+                .iter()
+                .map(|entry| crate::runtime_windows::ConversationStatusRow {
+                    task_id: entry.task_id.clone(),
+                    title: if entry.title.trim().is_empty() {
+                        "未命名会话".to_owned()
+                    } else {
+                        entry.title.clone()
+                    },
+                    project_name: entry.project_name.clone(),
+                    status: status_label(entry.product_status).to_owned(),
+                    phase: runtime_phase_label(&entry.runtime_phase).to_owned(),
+                    can_stop: runtime_phase_is_processing(&entry.runtime_phase)
+                        && !self.sidebar_stopping_tasks.contains(&entry.task_id),
+                })
+                .collect(),
+        }
+    }
+
+    fn task_popup_snapshot(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<crate::runtime_windows::TaskPopupSnapshot> {
+        let popup = self.task_popups.get(&window_id)?;
+        let timeline = popup
+            .session
+            .as_ref()
+            .map(|session| {
+                session
+                    .timeline
+                    .iter()
+                    .rev()
+                    .take(24)
+                    .rev()
+                    .map(|item| crate::runtime_shell::ShellTimelineRow {
+                        id: item.id.clone(),
+                        markdown: item
+                            .markdown
+                            .clone()
+                            .or_else(|| item.summary.clone())
+                            .filter(|text| !text.trim().is_empty())
+                            .unwrap_or_else(|| item.title.clone()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let composer = popup
+            .composer
+            .as_ref()
+            .map(|composer| composer.content.clone())
+            .unwrap_or_else(|| popup.composer_editor.text());
+        Some(crate::runtime_windows::TaskPopupSnapshot {
+            window_id,
+            theme: self.theme,
+            title: popup.title.clone(),
+            heading: popup.title.clone(),
+            error: popup.error.clone(),
+            timeline,
+            composer,
+            composer_disabled: popup.composer.is_none(),
+            can_send: popup
+                .composer
+                .as_ref()
+                .is_some_and(composer_has_turn_payload),
+            can_interrupt: popup
+                .turn_state
+                .as_ref()
+                .is_some_and(|(_, state)| turn_state_is_active(state)),
+        })
+    }
+
+    fn sync_secondary_windows(&mut self) {
+        let sender = Arc::clone(&self.message_sender);
+        if self.conversation_status_open {
+            let snapshot = self.conversation_status_snapshot();
+            if self.conversation_status_shell.is_none() {
+                match crate::runtime_windows::mount_conversation_status(
+                    &snapshot,
+                    Arc::new({
+                        let sender = Arc::clone(&sender);
+                        move |intent| {
+                            let _ = sender(Self::message_from_shell_intent(intent));
+                        }
+                    }),
+                ) {
+                    Ok((document, handles)) => {
+                        self.documents
+                            .insert(CONVERSATION_STATUS_WINDOW_ID, document);
+                        self.conversation_status_shell = Some(handles);
+                    }
+                    Err(error) => {
+                        eprintln!("{PRODUCT_NAME} failed to mount conversation status: {error}");
+                    }
+                }
+            }
+            if let Some(handles) = self.conversation_status_shell.as_mut() {
+                if let Some(document) = self.documents.get_mut(&CONVERSATION_STATUS_WINDOW_ID) {
+                    if let Err(error) = handles.sync(document, &snapshot) {
+                        eprintln!("{PRODUCT_NAME} failed to update conversation status: {error}");
+                    }
+                }
+            }
+        } else {
+            self.conversation_status_shell = None;
+            self.documents.remove(&CONVERSATION_STATUS_WINDOW_ID);
+        }
+
+        let popup_ids: Vec<_> = self.task_popups.keys().copied().collect();
+        self.task_popup_shells
+            .retain(|id, _| popup_ids.contains(id));
+        for window_id in popup_ids {
+            let Some(snapshot) = self.task_popup_snapshot(window_id) else {
+                continue;
+            };
+            if !self.task_popup_shells.contains_key(&window_id) {
+                match crate::runtime_windows::mount_task_popup(
+                    &snapshot,
+                    Arc::new({
+                        let sender = Arc::clone(&sender);
+                        move |intent| {
+                            let _ = sender(Self::message_from_shell_intent(intent));
+                        }
+                    }),
+                ) {
+                    Ok((document, handles)) => {
+                        self.documents.insert(window_id, document);
+                        self.task_popup_shells.insert(window_id, handles);
+                    }
+                    Err(error) => {
+                        eprintln!("{PRODUCT_NAME} failed to mount task window: {error}");
+                        continue;
+                    }
+                }
+            }
+            if let Some(handles) = self.task_popup_shells.get_mut(&window_id) {
+                if let Some(document) = self.documents.get_mut(&window_id) {
+                    if let Err(error) = handles.sync(document, &snapshot) {
+                        eprintln!("{PRODUCT_NAME} failed to update task window: {error}");
+                    }
+                }
+            }
+        }
+    }
+
     fn theme_tokens(&self) -> ThemeTokens {
         ThemeTokens::new(self.theme.colors(), self.appearance.metrics())
             .with_workspace_corners(self.appearance.workspace_corners_enabled())
@@ -2232,7 +3299,7 @@ impl DesktopProgram {
         context
     }
 
-    fn command_palette_items(&self) -> Vec<CommandPaletteItem<'static>> {
+    fn command_palette_items(&self) -> Vec<CommandPaletteItem> {
         let context = self.command_context(
             self.command_source_window,
             self.command_source_item.as_ref(),
@@ -2294,7 +3361,7 @@ impl DesktopProgram {
         self.command_picker.open(restore_focus);
         self.pending_ui_commands.push(HostedUiCommand::Focus {
             window_id,
-            target: nana_ui::COMMAND_PALETTE_INPUT_ID.to_owned(),
+            target: target_ids::COMMAND_PALETTE_INPUT.to_owned(),
         });
     }
 
@@ -2323,7 +3390,6 @@ impl DesktopProgram {
                 self.command_picker.navigate(navigation, count);
             }
             CommandPaletteEvent::Dismiss => self.dismiss_command_palette(),
-            CommandPaletteEvent::Interaction => {}
         }
     }
 
@@ -2580,12 +3646,11 @@ impl DesktopProgram {
             })
     }
 
-    fn update_sidebar_menu(&mut self, event: ContextMenuEvent<SidebarMenuAction>) {
+    fn update_sidebar_menu(&mut self, event: HostedContextMenuEvent<SidebarMenuAction>) {
         match event {
-            ContextMenuEvent::Dismiss => self.sidebar_menu = None,
-            ContextMenuEvent::Interaction | ContextMenuEvent::Search(_) => {}
-            ContextMenuEvent::OpenSubmenu(_) => {}
-            ContextMenuEvent::Select(action) => {
+            HostedContextMenuEvent::Dismiss => self.sidebar_menu = None,
+            HostedContextMenuEvent::Search(_) => {}
+            HostedContextMenuEvent::Select(action) => {
                 let Some(menu) = self.sidebar_menu.as_mut() else {
                     return;
                 };
@@ -2675,13 +3740,11 @@ impl DesktopProgram {
         }
     }
 
-    fn update_titlebar_menu(&mut self, event: ContextMenuEvent<TitlebarMenuAction>) {
+    fn update_titlebar_menu(&mut self, event: HostedContextMenuEvent<TitlebarMenuAction>) {
         match event {
-            ContextMenuEvent::Dismiss => self.titlebar_menu_open = false,
-            ContextMenuEvent::Interaction
-            | ContextMenuEvent::Search(_)
-            | ContextMenuEvent::OpenSubmenu(_) => {}
-            ContextMenuEvent::Select(action) => {
+            HostedContextMenuEvent::Dismiss => self.titlebar_menu_open = false,
+            HostedContextMenuEvent::Search(_) => {}
+            HostedContextMenuEvent::Select(action) => {
                 self.titlebar_menu_open = false;
                 match action {
                     TitlebarMenuAction::BackToTaskList => {
@@ -2695,7 +3758,6 @@ impl DesktopProgram {
                         }
                     }
                     TitlebarMenuAction::ToggleTaskInspector => self.toggle_task_inspector(),
-                    TitlebarMenuAction::OpenTaskBrowser => self.open_iab(),
                     TitlebarMenuAction::SplitHorizontal => {
                         if let Some((pane_id, _)) = self.integrated_product_shell_pane() {
                             self.split_workspace_pane(pane_id, SplitAxis::Horizontal);
@@ -4173,7 +5235,7 @@ impl DesktopProgram {
         let worktree = self.initial_draft_worktree(task.project_id.as_ref());
         let composer = DesktopComposerState::transient(task.id.clone());
         self.main_conversation_draft = Some(MainConversationDraft {
-            composer_editor: HostedTextareaState::with_text(&composer.content),
+            composer_editor: TextEditorState::with_text(&composer.content),
             composer,
             task,
             worktree,
@@ -5074,55 +6136,7 @@ impl DesktopProgram {
         }
     }
 
-    fn project_files_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        if let Some(error) = &self.project_files_error {
-            return container(
-                EmptyState::new("无法读取项目文件")
-                    .message(error.clone())
-                    .icon(Icon::Folder)
-                    .action(
-                        button(text("重试").size(12))
-                            .on_press(Message::RefreshProjectFiles)
-                            .style(button_style(tokens, ButtonKind::Subtle)),
-                    )
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        }
-        let Some(snapshot) = &self.project_files else {
-            return container(
-                EmptyState::new("选择项目以浏览文件")
-                    .message("需要有工作区路径的项目。")
-                    .icon(Icon::Folder)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        };
-        let opened_path = snapshot.view.selected_path.as_deref();
-        let opened_preview = self
-            .opened_project_document
-            .as_ref()
-            .map(|document| document.buffer.text.as_str());
-        project_files_center(snapshot, opened_path, opened_preview, tokens).map(|message| {
-            match message {
-                ProjectFilesPanelMessage::ToggleExpand(path) => {
-                    Message::ToggleProjectFileExpand(path)
-                }
-                ProjectFilesPanelMessage::OpenPath(path) => Message::OpenProjectFile(path),
-                ProjectFilesPanelMessage::Refresh => Message::RefreshProjectFiles,
-            }
-        })
-    }
-
-    fn open_application_surface(&mut self, surface: ApplicationWorkspaceSurface) {
+fn open_application_surface(&mut self, surface: ApplicationWorkspaceSurface) {
         let existing_window = self.task_popups.values().find_map(|popup| {
             let snapshot = popup.workspace.snapshot().ok()?;
             snapshot.workspace_items.iter().find_map(|item| {
@@ -5729,9 +6743,7 @@ impl DesktopProgram {
                 CODING_TOOLS_PANEL_ID => {
                     self.selected_project.is_some() && self.project_surface == ProjectSurface::Tasks
                 }
-                IAB_PANEL_ID => {
-                    self.selected_task.is_some() && self.project_surface == ProjectSurface::Tasks
-                }
+                IAB_PANEL_ID => false,
                 _ => false,
             }
         });
@@ -5831,9 +6843,7 @@ impl DesktopProgram {
             }
             _ => {}
         }
-        let commands = self.iab.update(message, HostedWindowId::PRIMARY);
-        self.pending_window_commands
-            .extend(commands.into_iter().map(HostedWindowCommand::Browser));
+        self.iab.update(message, HostedWindowId::PRIMARY);
     }
 
     fn open_iab_window(&mut self) {
@@ -5847,10 +6857,8 @@ impl DesktopProgram {
         {
             let url = self.iab.active_url().to_owned();
             if let Some(window) = self.iab_windows.get_mut(&window_id) {
-                let mut commands = window.update_browser(IabPanelMessage::DraftUrlChanged(url));
-                commands.extend(window.update_browser(IabPanelMessage::Navigate));
-                self.pending_window_commands
-                    .extend(commands.into_iter().map(HostedWindowCommand::Browser));
+                window.update_browser(IabPanelMessage::DraftUrlChanged(url));
+                window.update_browser(IabPanelMessage::Navigate);
             }
             self.pending_window_commands
                 .push(HostedWindowCommand::Focus(window_id));
@@ -5864,7 +6872,7 @@ impl DesktopProgram {
                 return;
             }
         };
-        let window_id = HostedWindowId(self.next_task_popup_window_id);
+        let window_id = WindowId(self.next_task_popup_window_id);
         self.next_task_popup_window_id = self.next_task_popup_window_id.saturating_add(1);
         self.iab_windows.insert(
             window_id,
@@ -5893,13 +6901,9 @@ impl DesktopProgram {
                     .push(HostedWindowCommand::Focus(window_id));
             }
             IabWindowMessage::Browser(message) => {
-                let commands = self
-                    .iab_windows
-                    .get_mut(&window_id)
-                    .map(|window| window.update_browser(message))
-                    .unwrap_or_default();
-                self.pending_window_commands
-                    .extend(commands.into_iter().map(HostedWindowCommand::Browser));
+                if let Some(window) = self.iab_windows.get_mut(&window_id) {
+                    window.update_browser(message);
+                }
             }
             IabWindowMessage::NoteChanged(note) => {
                 if let Some(window) = self.iab_windows.get_mut(&window_id) {
@@ -5907,17 +6911,8 @@ impl DesktopProgram {
                 }
             }
             IabWindowMessage::Submit => {
-                let capture = self
-                    .iab_windows
-                    .get_mut(&window_id)
-                    .and_then(|window| window.begin_capture(&self.home));
-                if let Some((capture_id, path)) = capture {
-                    self.pending_window_commands
-                        .push(HostedWindowCommand::CapturePng {
-                            id: window_id,
-                            capture_id,
-                            path,
-                        });
+                if let Some(window) = self.iab_windows.get_mut(&window_id) {
+                    let _ = window.begin_capture(&self.home);
                 }
             }
         }
@@ -5929,7 +6924,6 @@ impl DesktopProgram {
         };
         self.abandon_iab_capture(window_id, &mut window);
         self.pending_window_commands.extend([
-            HostedWindowCommand::Browser(HostedBrowserCommand::Detach(window.browser_id())),
             HostedWindowCommand::Close(window_id),
         ]);
     }
@@ -5987,9 +6981,7 @@ impl DesktopProgram {
     fn sync_iab_browser_visibility(&mut self) {
         let visible =
             self.inspector_surface == InspectorSurface::Iab && self.inspector_region_is_visible();
-        let commands = self.iab.set_panel_visible(visible, HostedWindowId::PRIMARY);
-        self.pending_window_commands
-            .extend(commands.into_iter().map(HostedWindowCommand::Browser));
+        self.iab.set_panel_visible(visible, HostedWindowId::PRIMARY);
     }
 
     fn open_architecture(&mut self) {
@@ -6538,34 +7530,7 @@ impl DesktopProgram {
         }
     }
 
-    fn terminal_pane_content(
-        &self,
-        item: &WorkspaceItem,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let Some(snapshot) = self.terminal_snapshot_for_item(item) else {
-            return container(
-                EmptyState::new("终端会话不可用")
-                    .message("关闭此标签后可从工作区工具新建终端。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        };
-        let input = self
-            .terminal_inputs
-            .get(&snapshot.id)
-            .map(String::as_str)
-            .unwrap_or_default();
-        let notice = self.terminal_notices.get(&snapshot.id).map(String::as_str);
-        terminal_content(&snapshot, input, notice, tokens).map(Message::Terminal)
-    }
-
-    fn save_coding_search_to_memory(&mut self) {
+fn save_coding_search_to_memory(&mut self) {
         if self.coding_search_all_projects {
             self.coding_error = Some("切换到当前项目后再写入项目 Memory。".to_owned());
             self.coding_notice = None;
@@ -7471,8 +8436,8 @@ impl DesktopProgram {
             NativeWindowSnapshot {
                 x,
                 y,
-                width: geometry.physical_size.width,
-                height: geometry.physical_size.height,
+                width: geometry.physical_size.0,
+                height: geometry.physical_size.1,
                 scale_factor: geometry.scale_factor,
                 maximized: geometry.maximized,
             },
@@ -7489,8 +8454,8 @@ impl DesktopProgram {
             NativeWindowSnapshot {
                 x,
                 y,
-                width: geometry.physical_size.width,
-                height: geometry.physical_size.height,
+                width: geometry.physical_size.0,
+                height: geometry.physical_size.1,
                 scale_factor: geometry.scale_factor,
                 maximized: geometry.maximized,
             },
@@ -8115,7 +9080,7 @@ impl DesktopProgram {
     fn handle_document_editor_action(
         &mut self,
         item_id: WorkspaceItemId,
-        action: text_editor::Action,
+        action: String,
     ) {
         let Some(state) = self.document_editors.get(&item_id) else {
             return;
@@ -8123,7 +9088,7 @@ impl DesktopProgram {
         if state.read_only {
             return;
         }
-        let is_edit = action.is_edit();
+        let is_edit = !action.is_empty();
         let document_id = state.document_id;
         let expected = state.revision;
         state.editor.perform(action);
@@ -8229,75 +9194,7 @@ impl DesktopProgram {
         }
     }
 
-    fn document_editor_pane_content(
-        &self,
-        item: &WorkspaceItem,
-        window_id: HostedWindowId,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let Some(state) = self.document_editors.get(&item.id) else {
-            return container(
-                EmptyState::new(item.title.clone())
-                    .message("正在读取文档…")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        };
-        let item_id = item.id.clone();
-        let diagnostic_item_id = item.id.clone();
-        let definition_item_id = item.id.clone();
-        let definition_target_item_id = item.id.clone();
-        let command_item_id = item.id.clone();
-        let save_id = item.id.clone();
-        let discard_id = item.id.clone();
-        let definition_enabled =
-            (state.language_label != "plaintext").then(|| Message::GoToDocumentDefinition {
-                item_id: definition_item_id,
-                window_id,
-            });
-        let syntax_theme = match self.theme {
-            ThemeMode::Dark => iced::highlighter::Theme::Base16Ocean,
-            ThemeMode::Light => iced::highlighter::Theme::InspiredGitHub,
-        };
-        document_editor_content(
-            state,
-            target_ids::document_editor_input(item.id.as_str()),
-            tokens,
-            DocumentEditorActions {
-                on_edit: Box::new(move |action| Message::DocumentEditorEdited {
-                    item_id: item_id.clone(),
-                    action,
-                }),
-                on_diagnostic: Box::new(move |index| Message::SelectDocumentDiagnostic {
-                    item_id: diagnostic_item_id.clone(),
-                    index,
-                }),
-                on_definition: definition_enabled,
-                on_definition_target: Box::new(move |index| {
-                    Message::OpenDocumentDefinitionTarget {
-                        item_id: definition_target_item_id.clone(),
-                        window_id,
-                        index,
-                    }
-                }),
-                on_command_key: Box::new(move |stroke| Message::CommandKeyStroke {
-                    window_id,
-                    item_id: Some(command_item_id.clone()),
-                    stroke,
-                }),
-                on_save: Message::SaveDocumentEditor(save_id),
-                on_discard: Message::DiscardDocumentEditor(discard_id),
-            },
-            syntax_theme,
-        )
-    }
-
-    fn refresh_archived_records(&mut self) {
+fn refresh_archived_records(&mut self) {
         self.archived_projects = self
             .application
             .query_projects(ProjectQuery {
@@ -9620,7 +10517,7 @@ impl DesktopProgram {
                         TimelineTextSelection {
                             event_id,
                             text: selection.text,
-                            bounds: selection.bounds,
+                            bounds: None,
                         },
                     );
                 } else if self
@@ -9702,6 +10599,7 @@ impl DesktopProgram {
                 self.command_source_item = item_id;
                 self.execute_native_action(action);
             }
+            Message::FromShell(intent) => return self.apply_shell_intent(intent),
             Message::OpenSettings => {
                 let was_settings_open = self.settings_open;
                 let return_item_id = (!was_settings_open)
@@ -10481,7 +11379,7 @@ impl DesktopProgram {
             Message::ShellShortcutCaptured(event) => {
                 match event {
                     KeyCaptureEvent::Captured(stroke) => {
-                        self.shell_shortcut_edit = stroke.display();
+                        self.shell_shortcut_edit = format!("{:?}", stroke);
                     }
                     KeyCaptureEvent::Cleared => self.shell_shortcut_edit.clear(),
                     KeyCaptureEvent::Cancelled => {}
@@ -11519,7 +12417,7 @@ impl DesktopProgram {
     fn composer_model_options(
         &self,
         current_model: Option<&str>,
-    ) -> Vec<DropdownOption<'static, String>> {
+    ) -> Vec<DropdownOption> {
         let mut options = vec![DropdownOption::new(String::new(), "自动选择")];
         let mut models = self
             .provider_ai_settings
@@ -11649,7 +12547,7 @@ impl DesktopProgram {
             let available = self
                 .composer_model_options(current_model)
                 .into_iter()
-                .any(|option| option.value == value);
+                .any(|option| option.value.as_ref() == value);
             if !available {
                 return false;
             }
@@ -16994,7 +17892,7 @@ impl DesktopProgram {
             return true;
         }
         if target_id == target_ids::TITLEBAR_TASK_INSPECTOR_TOGGLE {
-            self.update_message(Message::TitlebarMenu(ContextMenuEvent::Select(
+            self.update_message(Message::TitlebarMenu(HostedContextMenuEvent::Select(
                 TitlebarMenuAction::ToggleTaskInspector,
             )));
             return true;
@@ -17007,9 +17905,6 @@ impl DesktopProgram {
             target_ids::TITLEBAR_MORE_BACK_TO_TASKS => Some(TitlebarMenuAction::BackToTaskList),
             target_ids::TITLEBAR_MORE_OPEN_TASK_POPUP => Some(TitlebarMenuAction::OpenTaskPopup),
             target_ids::TITLEBAR_MORE_ASK_TASK_POPUP => Some(TitlebarMenuAction::AskTaskPopup),
-            target_ids::TITLEBAR_MORE_OPEN_TASK_BROWSER => {
-                Some(TitlebarMenuAction::OpenTaskBrowser)
-            }
             target_ids::TITLEBAR_MORE_SPLIT_HORIZONTAL => Some(TitlebarMenuAction::SplitHorizontal),
             target_ids::TITLEBAR_MORE_SPLIT_VERTICAL => Some(TitlebarMenuAction::SplitVertical),
             target_ids::TITLEBAR_MORE_CLOSE_CURRENT => Some(TitlebarMenuAction::CloseCurrentItem),
@@ -17022,7 +17917,7 @@ impl DesktopProgram {
             _ => None,
         };
         if let Some(action) = titlebar_action {
-            self.update_message(Message::TitlebarMenu(ContextMenuEvent::Select(action)));
+            self.update_message(Message::TitlebarMenu(HostedContextMenuEvent::Select(action)));
             return true;
         }
         if target_id == target_ids::COMMAND_PALETTE_OPEN {
@@ -17709,7 +18604,7 @@ impl DesktopProgram {
             .into_iter()
             .find(|(candidate, _)| candidate == target_id)
         {
-            self.update_message(Message::SidebarMenu(ContextMenuEvent::Select(action)));
+            self.update_message(Message::SidebarMenu(HostedContextMenuEvent::Select(action)));
             return true;
         }
         if let Some((_, source, target, position)) = self
@@ -19898,28 +20793,6 @@ impl DesktopProgram {
                     && !self.automations_open
                     && self.project_surface == ProjectSurface::Architecture
                 {
-                    let descriptor = GraphCanvas::owned(
-                        "lilia-architecture",
-                        self.architecture_graph.clone(),
-                        self.architecture_viewport,
-                        self.architecture_selection.clone(),
-                        Message::ArchitectureGraph,
-                        self.theme_tokens(),
-                    )
-                    .target_descriptors(GraphSize::new(900.0, 560.0))
-                    .into_iter()
-                    .find(|descriptor| descriptor.id.as_str() == target_id);
-                    if let Some(descriptor) = descriptor {
-                        self.architecture_selection = match descriptor.target {
-                            GraphTarget::Canvas => None,
-                            GraphTarget::Node(node) => Some(GraphSelection::Node(node)),
-                            GraphTarget::Port { node, port } => {
-                                Some(GraphSelection::Port { node, port })
-                            }
-                            GraphTarget::Edge(edge) => Some(GraphSelection::Edge(edge)),
-                        };
-                        return true;
-                    }
                     return false;
                 }
                 if !self.settings_open
@@ -19996,29 +20869,6 @@ impl DesktopProgram {
                         (target_ids::automation_run(&run.id) == target_id).then(|| run.id.clone())
                     }) {
                         self.select_automation_run(run_id);
-                        return true;
-                    }
-                    let descriptor = GraphCanvas::owned(
-                        "lilia-automation",
-                        self.automation_graph.clone(),
-                        self.automation_viewport,
-                        self.automation_selection.clone(),
-                        Message::AutomationGraph,
-                        self.theme_tokens(),
-                    )
-                    .target_descriptors(GraphSize::new(900.0, 560.0))
-                    .into_iter()
-                    .find(|descriptor| descriptor.id.as_str() == target_id);
-                    if let Some(descriptor) = descriptor {
-                        self.automation_selection = match descriptor.target {
-                            GraphTarget::Canvas => None,
-                            GraphTarget::Node(node) => Some(GraphSelection::Node(node)),
-                            GraphTarget::Port { node, port } => {
-                                Some(GraphSelection::Port { node, port })
-                            }
-                            GraphTarget::Edge(edge) => Some(GraphSelection::Edge(edge)),
-                        };
-                        self.refresh_automation_node_inspector();
                         return true;
                     }
                     return false;
@@ -21795,19 +22645,6 @@ impl DesktopProgram {
                 {
                     targets.push(target_ids::ARCHITECTURE_ROLLBACK.to_owned());
                 }
-                targets.extend(
-                    GraphCanvas::owned(
-                        "lilia-architecture",
-                        editor.architecture_graph.clone(),
-                        editor.architecture_viewport,
-                        editor.architecture_selection.clone(),
-                        Message::ArchitectureGraph,
-                        self.theme_tokens(),
-                    )
-                    .target_descriptors(GraphSize::new(900.0, 560.0))
-                    .into_iter()
-                    .map(|descriptor| descriptor.id.as_str().to_owned()),
-                );
                 targets
             }
             ProjectWorkspaceSurface::Files => self
@@ -21929,7 +22766,6 @@ impl DesktopProgram {
                     target_ids::TITLEBAR_MORE_BACK_TO_TASKS.to_owned(),
                     target_ids::TITLEBAR_MORE_OPEN_TASK_POPUP.to_owned(),
                     target_ids::TITLEBAR_MORE_ASK_TASK_POPUP.to_owned(),
-                    target_ids::TITLEBAR_MORE_OPEN_TASK_BROWSER.to_owned(),
                 ]);
             }
             if let Some((_, active_item)) = self.integrated_product_shell_pane() {
@@ -23022,19 +23858,6 @@ impl DesktopProgram {
                 }) {
                     targets.push(target_ids::AUTOMATIONS_CANCEL.to_owned());
                 }
-                targets.extend(
-                    GraphCanvas::owned(
-                        "lilia-automation",
-                        self.automation_graph.clone(),
-                        self.automation_viewport,
-                        self.automation_selection.clone(),
-                        Message::AutomationGraph,
-                        self.theme_tokens(),
-                    )
-                    .target_descriptors(GraphSize::new(900.0, 560.0))
-                    .into_iter()
-                    .map(|descriptor| descriptor.id.as_str().to_owned()),
-                );
             }
         }
 
@@ -23153,7 +23976,6 @@ impl DesktopProgram {
                 target_ids::TASK_POPUP_OPEN.to_owned(),
                 target_ids::TASK_POPUP_ASK_CHILD.to_owned(),
                 target_ids::TASK_POPUP_MOVE_SELECTED.to_owned(),
-                target_ids::IAB_OPEN.to_owned(),
             ]);
         }
         if self.project_surface == ProjectSurface::Settings
@@ -23350,15 +24172,6 @@ impl DesktopProgram {
                 }
             }
         }
-        if self.inspector_surface == InspectorSurface::Iab && self.inspector_region_is_visible() {
-            targets.extend([
-                target_ids::IAB_PANEL.to_owned(),
-                target_ids::IAB_URL.to_owned(),
-                target_ids::IAB_NAVIGATE.to_owned(),
-                target_ids::IAB_OPEN_WINDOW.to_owned(),
-                target_ids::IAB_CLOSE.to_owned(),
-            ]);
-        }
         for (_, item_id) in self.visible_document_editor_locations() {
             if let Some(state) = self.document_editors.get(&item_id) {
                 if state.language_label != "plaintext" && state.definition_operation.is_none() {
@@ -23397,19 +24210,6 @@ impl DesktopProgram {
             {
                 targets.push(target_ids::ARCHITECTURE_ROLLBACK.to_owned());
             }
-            targets.extend(
-                GraphCanvas::owned(
-                    "lilia-architecture",
-                    self.architecture_graph.clone(),
-                    self.architecture_viewport,
-                    self.architecture_selection.clone(),
-                    Message::ArchitectureGraph,
-                    self.theme_tokens(),
-                )
-                .target_descriptors(GraphSize::new(900.0, 560.0))
-                .into_iter()
-                .map(|descriptor| descriptor.id.as_str().to_owned()),
-            );
             return targets;
         }
         if self.error_message.is_none() && self.selected_task.is_some() {
@@ -24427,193 +25227,6 @@ impl DesktopProgram {
         }
     }
 
-    fn title_bar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let context = if self.settings_open {
-            "设置".to_owned()
-        } else if self.automations_open {
-            "自动化".to_owned()
-        } else {
-            if let Some(task) = self.selected_task.as_ref().and_then(|task_id| {
-                self.task_move_candidates
-                    .iter()
-                    .find(|task| &task.id == task_id)
-            }) {
-                let project_name = task
-                    .project_id
-                    .as_ref()
-                    .and_then(|project_id| {
-                        self.projects
-                            .iter()
-                            .find(|project| &project.id == project_id)
-                    })
-                    .map(|project| project.name.clone())
-                    .unwrap_or_else(|| "收集箱".to_owned());
-                return self.conversation_title_bar_with_parent(
-                    project_name,
-                    task.title.clone(),
-                    tokens,
-                );
-            }
-            let project = self
-                .projects
-                .iter()
-                .find(|project| Some(&project.id) == self.selected_project.as_ref())
-                .map_or_else(|| "项目".to_owned(), |project| project.name.clone());
-            match self.project_surface {
-                ProjectSurface::Tasks => project,
-                ProjectSurface::Settings => format!("{project} · 设置"),
-                ProjectSurface::Clone => "克隆仓库".to_owned(),
-                ProjectSurface::Roadmap => format!("{project} · 路线图"),
-                ProjectSurface::Memory => format!("{project} · Memory"),
-                ProjectSurface::Architecture => format!("{project} · 架构"),
-                ProjectSurface::Files => format!("{project} · 文件"),
-            }
-        };
-        self.conversation_title_bar(context, tokens)
-    }
-
-    fn conversation_title_bar(
-        &self,
-        context: String,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        self.conversation_title_bar_with_parent(PRODUCT_NAME.to_owned(), context, tokens)
-    }
-
-    fn conversation_title_bar_with_parent(
-        &self,
-        parent: String,
-        context: String,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let sidebar_collapsed = self
-            .workspace
-            .layout()
-            .region(&RegionId::Resources)
-            .is_some_and(|sidebar| sidebar.collapsed_value());
-        let sidebar_toggle = IconButton::new(
-            if sidebar_collapsed {
-                "展开左侧栏"
-            } else {
-                "折叠左侧栏"
-            },
-            Icon::Sidebar,
-        )
-        .size(ControlSize::Small)
-        .on_press(Message::Workspace(WorkspaceAction::ToggleRegion(
-            RegionId::Resources,
-        )));
-        let leading = row![sidebar_toggle.view(tokens)]
-            .spacing(6)
-            .align_y(Alignment::Center);
-        let center = row![
-            text(parent)
-                .size(12)
-                .color(colors.muted)
-                .wrapping(iced::widget::text::Wrapping::None)
-                .ellipsis(iced::widget::text::Ellipsis::End),
-            text("›").size(12).color(colors.faint),
-            text(context.clone())
-                .size(13)
-                .font(ui_font(font::Weight::Semibold))
-                .wrapping(iced::widget::text::Wrapping::None)
-                .ellipsis(iced::widget::text::Ellipsis::End),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center);
-        let mut trailing = row![].spacing(2).align_y(Alignment::Center);
-        if self.selected_task.is_some() && !self.settings_open && !self.automations_open {
-            let inspector_open = self.inspector_surface == InspectorSurface::Task
-                && self.inspector_region_is_visible();
-            trailing = trailing.push(
-                IconButton::new(
-                    if inspector_open {
-                        "关闭对话侧栏"
-                    } else {
-                        "打开对话侧栏"
-                    },
-                    Icon::Sidebar,
-                )
-                .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
-                    TitlebarMenuAction::ToggleTaskInspector,
-                )))
-                .selected(inspector_open)
-                .size(ControlSize::Small)
-                .view(tokens),
-            );
-        }
-        trailing = trailing.push(
-            button(text("•••").size(12))
-                .on_press(Message::ToggleTitlebarMenu)
-                .padding([3, 8])
-                .style(button_style(
-                    tokens,
-                    if self.titlebar_menu_open {
-                        ButtonKind::Selected
-                    } else {
-                        ButtonKind::Subtle
-                    },
-                )),
-        );
-        AppTitleBar::new(context, tokens)
-            .leading(leading)
-            .center(center)
-            .trailing(trailing)
-            .window_chrome(&self.window_chrome, Message::WindowChrome)
-            .view()
-    }
-
-    fn command_palette_view(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        CommandPalette::new(
-            "命令",
-            self.command_palette_items(),
-            self.command_picker.query().to_owned(),
-            self.command_picker.selected(),
-            Message::CommandPalette,
-            tokens,
-        )
-        .placeholder("搜索命令")
-        .view()
-    }
-
-    fn with_command_palette(
-        &self,
-        window_id: HostedWindowId,
-        base: Element<'static, Message>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        if self.command_picker.is_open() && self.command_source_window == window_id {
-            stack![base, self.command_palette_view(tokens)].into()
-        } else {
-            base
-        }
-    }
-
-    fn with_command_keymap(
-        &self,
-        window_id: HostedWindowId,
-        base: Element<'static, Message>,
-    ) -> Element<'static, Message> {
-        if self.shell_shortcut_capturing {
-            return KeyCaptureLayer::new(base, Message::ShellShortcutCaptured).view();
-        }
-        let item_id = self.active_item_for_window(window_id);
-        let context = self.command_context(window_id, item_id.as_ref());
-        KeymapLayer::new(
-            base,
-            self.command_keymap.clone(),
-            context,
-            self.action_registry.clone(),
-            move |action| Message::DispatchCommandAction {
-                window_id,
-                item_id: item_id.clone(),
-                action,
-            },
-        )
-        .view()
-    }
-
     fn refresh_conversation_status(&mut self) {
         self.conversation_status_open = true;
         self.refresh_conversation_status_entries();
@@ -24692,7 +25305,7 @@ impl DesktopProgram {
         }
     }
 
-    fn provider_runtime_badge(&self, colors: Colors) -> (String, iced::Color, Icon) {
+    fn provider_runtime_badge(&self, colors: Colors) -> (String, nana_ui::Color, Icon) {
         let selected_credential_usable =
             self.selected_provider.as_deref().is_some_and(|provider| {
                 self.provider
@@ -24726,200 +25339,7 @@ impl DesktopProgram {
         }
     }
 
-    fn conversation_status_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let tokens = theme_tokens_with_opacity(tokens, self.conversation_status_window.opacity);
-        let colors = tokens.colors;
-        let active_count = self
-            .conversation_status_entries
-            .iter()
-            .filter(|entry| entry.runtime_phase != "idle")
-            .count();
-        let (provider_status, provider_color, _) = self.provider_runtime_badge(colors);
-        let mut content = column![
-            row![
-                column![
-                    text("会话状态")
-                        .size(18)
-                        .font(ui_font(font::Weight::Semibold))
-                        .color(colors.text),
-                    row![
-                        text(format!(
-                            "{} 个任务 · {} 个正在处理",
-                            self.conversation_status_entries.len(),
-                            active_count
-                        ))
-                        .size(11)
-                        .color(colors.muted),
-                        text(provider_status).size(10).color(provider_color),
-                    ]
-                    .spacing(8),
-                ]
-                .spacing(2)
-                .width(Length::Fill),
-                button(text("新对话").size(11))
-                    .on_press(Message::OpenConversationStatusNewChat)
-                    .style(button_style(tokens, ButtonKind::Primary)),
-                button(text("关闭").size(11))
-                    .on_press(Message::CloseConversationStatus)
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            ]
-            .align_y(Alignment::Center),
-            row![
-                button(
-                    text(if self.conversation_status_window.always_on_top {
-                        "取消置顶"
-                    } else {
-                        "置顶"
-                    })
-                    .size(10)
-                )
-                .on_press(Message::ToggleConversationStatusAlwaysOnTop)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-                button(
-                    text(format!(
-                        "透明度 {}%",
-                        (self.conversation_status_window.opacity * 100.0).round() as u32
-                    ))
-                    .size(10)
-                )
-                .on_press(Message::ToggleConversationStatusOpacityPanel)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-                button(text("刷新").size(10))
-                    .on_press(Message::OpenConversationStatus)
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(10)
-        .width(Length::Fill);
-        if self.conversation_status_opacity_panel_open {
-            content = content.push(
-                Card::new(
-                    row![
-                        text("40%").size(10).color(colors.muted),
-                        slider(
-                            0.4..=1.0,
-                            self.conversation_status_window.opacity,
-                            Message::ConversationStatusOpacityChanged,
-                        )
-                        .step(0.02)
-                        .width(Length::Fill),
-                        text("100%").size(10).color(colors.muted),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                )
-                .title("窗口透明度")
-                .view(tokens),
-            );
-        }
-        if let Some(error) = &self.conversation_status_error {
-            content = content.push(
-                EmptyState::new("无法读取会话状态")
-                    .message(error.clone())
-                    .icon(Icon::About)
-                    .action(
-                        row![
-                            button(text("重试").size(12))
-                                .on_press(Message::OpenConversationStatus)
-                                .style(button_style(tokens, ButtonKind::Primary)),
-                            button(text("忽略").size(12))
-                                .on_press(Message::DismissConversationStatusError)
-                                .style(button_style(tokens, ButtonKind::Ghost)),
-                        ]
-                        .spacing(6),
-                    )
-                    .view(tokens),
-            );
-        } else if self.conversation_status_entries.is_empty() {
-            content = content.push(
-                EmptyState::new("还没有会话")
-                    .message("开始新对话后，会在这里显示处理状态。")
-                    .icon(Icon::Workspace)
-                    .action(
-                        button(text("新对话").size(12))
-                            .on_press(Message::OpenConversationStatusNewChat)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    )
-                    .view(tokens),
-            );
-        } else {
-            for entry in &self.conversation_status_entries {
-                let phase_color = match entry.runtime_phase.as_str() {
-                    "waiting_approval" | "waiting_interaction" => colors.warning,
-                    phase if runtime_phase_is_processing(phase) => colors.accent,
-                    _ => colors.muted,
-                };
-                let queue = if entry.queued_turns > 0 {
-                    format!(" · 排队 {}", entry.queued_turns)
-                } else {
-                    String::new()
-                };
-                let task_button = button(
-                    column![
-                        text(entry.title.clone())
-                            .size(13)
-                            .font(ui_font(font::Weight::Semibold))
-                            .color(colors.text),
-                        row![
-                            text(entry.project_name.clone())
-                                .size(10)
-                                .color(colors.muted),
-                            text(format!(
-                                "{} · {}{}",
-                                status_label(entry.product_status),
-                                runtime_phase_label(&entry.runtime_phase),
-                                queue
-                            ))
-                            .size(10)
-                            .color(phase_color),
-                        ]
-                        .spacing(8),
-                    ]
-                    .spacing(3)
-                    .width(Length::Fill),
-                )
-                .on_press(Message::OpenConversationStatusTask(entry.task_id.clone()))
-                .width(Length::Fill)
-                .style(button_style(tokens, ButtonKind::Ghost));
-                let mut task_row = row![task_button]
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-                    .width(Length::Fill);
-                if entry.runtime_phase != "idle" {
-                    let stopping = self.sidebar_stopping_tasks.contains(&entry.task_id);
-                    let stop_content: Element<'static, Message> = if stopping {
-                        row![
-                            spinner_icon(self.sidebar_activity_phase, 12.0, colors.danger),
-                            text("正在停止").size(11),
-                        ]
-                        .spacing(5)
-                        .align_y(Alignment::Center)
-                        .into()
-                    } else {
-                        text("停止").size(11).into()
-                    };
-                    let mut stop =
-                        button(stop_content).style(button_style(tokens, ButtonKind::Danger));
-                    if !stopping {
-                        stop = stop
-                            .on_press(Message::StopConversationStatusTask(entry.task_id.clone()));
-                    }
-                    task_row = task_row.push(stop);
-                }
-                content = content.push(task_row);
-            }
-        }
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([16, 14]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn task_popup_identity_from_snapshot(
+fn task_popup_identity_from_snapshot(
         &self,
         snapshot: &DesktopWorkspaceSnapshot,
     ) -> Option<(Option<WorkspaceItemId>, Option<TaskId>, String, String)> {
@@ -25143,7 +25563,7 @@ impl DesktopProgram {
             if persisted.window_id < FIRST_TASK_POPUP_WINDOW_ID
                 || self
                     .task_popups
-                    .contains_key(&HostedWindowId(persisted.window_id))
+                    .contains_key(&WindowId(persisted.window_id))
             {
                 continue;
             }
@@ -25191,7 +25611,7 @@ impl DesktopProgram {
                 continue;
             };
             seen_items.extend(restored_items);
-            let window_id = HostedWindowId(persisted.window_id);
+            let window_id = WindowId(persisted.window_id);
             self.task_popups.insert(
                 window_id,
                 TaskPopupWindow {
@@ -25206,7 +25626,7 @@ impl DesktopProgram {
                     task_sessions: BTreeMap::new(),
                     session: None,
                     composer: None,
-                    composer_editor: HostedTextareaState::new(),
+                    composer_editor: TextEditorState::new(),
                     slash_commands: Vec::new(),
                     conversation_reference_results: Vec::new(),
                     context_attachment_results: Vec::new(),
@@ -25267,7 +25687,7 @@ impl DesktopProgram {
             self.error_message = Some("当前视图尚不支持移至新窗口。".to_owned());
             return;
         }
-        let window_id = HostedWindowId(self.next_task_popup_window_id);
+        let window_id = WindowId(self.next_task_popup_window_id);
         self.next_task_popup_window_id = self.next_task_popup_window_id.saturating_add(1);
         let workspace =
             match DesktopWorkspaceSessionId::new(format!("lilia.workspace-window.{}", window_id.0))
@@ -25308,7 +25728,7 @@ impl DesktopProgram {
                 task_sessions: BTreeMap::new(),
                 session: None,
                 composer: None,
-                composer_editor: HostedTextareaState::new(),
+                composer_editor: TextEditorState::new(),
                 slash_commands: Vec::new(),
                 conversation_reference_results: Vec::new(),
                 context_attachment_results: Vec::new(),
@@ -25442,7 +25862,7 @@ impl DesktopProgram {
         composer
             .apply_transient_command(DesktopComposerCommand::SetContent(initial_content))
             .map_err(|error| error.to_string())?;
-        let window_id = HostedWindowId(self.next_task_popup_window_id);
+        let window_id = WindowId(self.next_task_popup_window_id);
         self.next_task_popup_window_id = self.next_task_popup_window_id.saturating_add(1);
         let workspace_id = DesktopWorkspaceSessionId::new(format!(
             "lilia.popup.draft.{}.{}",
@@ -25464,7 +25884,7 @@ impl DesktopProgram {
             .map(|project| project.name.clone())
             .unwrap_or_else(|| "收集箱".to_owned());
         let draft_worktree = self.initial_draft_worktree(project_id.as_ref());
-        let composer_editor = HostedTextareaState::with_text(&composer.content);
+        let composer_editor = TextEditorState::with_text(&composer.content);
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -25605,7 +26025,7 @@ impl DesktopProgram {
                 eprintln!("failed to remember Native popup project: {error}");
             }
         }
-        let window_id = HostedWindowId(self.next_task_popup_window_id);
+        let window_id = WindowId(self.next_task_popup_window_id);
         self.next_task_popup_window_id = self.next_task_popup_window_id.saturating_add(1);
         let workspace = match DesktopWorkspaceSessionId::new(format!(
             "lilia.popup.task.{}.{}",
@@ -25720,7 +26140,7 @@ impl DesktopProgram {
                 task_sessions: BTreeMap::new(),
                 session: None,
                 composer: None,
-                composer_editor: HostedTextareaState::new(),
+                composer_editor: TextEditorState::new(),
                 slash_commands: Vec::new(),
                 conversation_reference_results: Vec::new(),
                 context_attachment_results: Vec::new(),
@@ -26078,7 +26498,7 @@ impl DesktopProgram {
             .as_deref()
             .and_then(|selected| memories.iter().find(|item| item.id == selected));
         let memory_title = memory.map(|item| item.title.clone()).unwrap_or_default();
-        let memory_body = HostedTextareaState::with_text(
+        let memory_body = TextEditorState::with_text(
             memory.map(|item| item.body.as_str()).unwrap_or_default(),
         );
         let memory_tags = memory.map(|item| item.tags.join(", ")).unwrap_or_default();
@@ -26242,7 +26662,7 @@ impl DesktopProgram {
             memories: self.memories.clone(),
             selected_memory: self.selected_memory.clone(),
             memory_title: self.memory_title.clone(),
-            memory_body: HostedTextareaState::with_text(&self.memory_body.text()),
+            memory_body: TextEditorState::with_text(&self.memory_body.text()),
             memory_tags: self.memory_tags.clone(),
             memory_scope: self.memory_scope,
             memory_updated_at: self.memory_updated_at,
@@ -27929,2617 +28349,6 @@ impl DesktopProgram {
         self.sync_markdown_images();
     }
 
-    fn markdown_document_view(
-        &self,
-        document: &NativeMarkdown,
-        window_id: HostedWindowId,
-        event_id: &str,
-        selectable: bool,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let image_states = document
-            .images()
-            .into_iter()
-            .map(|image| {
-                let state = self.markdown_images.get(&image.source).cloned();
-                (image.source, state)
-            })
-            .collect::<BTreeMap<_, _>>();
-        if selectable {
-            let image_states_for_render = image_states.clone();
-            let event_id = event_id.to_owned();
-            document.view_with_media_selection_snapshot(
-                tokens,
-                Message::OpenMarkdownLink,
-                move |image| {
-                    markdown_image_fragment(
-                        image.clone(),
-                        image_states_for_render
-                            .get(&image.source)
-                            .cloned()
-                            .flatten(),
-                        window_id,
-                        tokens,
-                    )
-                },
-                move |selection| Message::TimelineTextSelectionChanged {
-                    window_id,
-                    event_id: event_id.clone(),
-                    selection,
-                },
-            )
-        } else {
-            document.view_with_images(tokens, Message::OpenMarkdownLink, move |image| {
-                markdown_image_fragment(
-                    image.clone(),
-                    image_states.get(&image.source).cloned().flatten(),
-                    window_id,
-                    tokens,
-                )
-            })
-        }
-    }
-
-    fn with_markdown_image_preview(
-        &self,
-        window_id: HostedWindowId,
-        content: Element<'static, Message>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let Some(preview) = self.markdown_image_previews.get(&window_id) else {
-            return content;
-        };
-        let Some(MarkdownImageLoadState::Ready(image)) = self.markdown_images.get(&preview.source)
-        else {
-            return content;
-        };
-        let visual = loaded_markdown_image_visual(image, Length::Fill);
-        let source = ImageViewerSource::new(visual)
-            .name(markdown_image_label(preview))
-            .metadata(markdown_image_format_label(image.media_type()));
-        stack![
-            content,
-            ImageViewer::new(
-                source,
-                Message::CloseMarkdownImage(window_id),
-                Message::CloseMarkdownImage(window_id),
-                Message::MarkdownImageViewerInteraction,
-                tokens,
-            )
-            .view(),
-        ]
-        .into()
-    }
-
-    fn timeline_selection_actions(
-        &self,
-        window_id: HostedWindowId,
-        event_id: &str,
-        tokens: ThemeTokens,
-    ) -> Option<Element<'static, Message>> {
-        let selection = self.timeline_text_selections.get(&window_id)?;
-        if selection.event_id != event_id || selection.text.trim().is_empty() {
-            return None;
-        }
-        Some(
-            row![
-                button(text("复制选中内容").size(10))
-                    .on_press(Message::CopyTimelineSelection { window_id })
-                    .style(button_style(tokens, ButtonKind::Text)),
-                button(text("引用").size(10))
-                    .on_press(Message::QuoteTimelineSelection { window_id })
-                    .style(button_style(tokens, ButtonKind::Text)),
-                button(text("在弹窗提问").size(10))
-                    .on_press(Message::AskTimelineSelectionInPopup { window_id })
-                    .style(button_style(tokens, ButtonKind::Text)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .into(),
-        )
-    }
-
-    fn with_timeline_selection_toolbar(
-        &self,
-        window_id: HostedWindowId,
-        content: Element<'static, Message>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let Some(selection) = self.timeline_text_selections.get(&window_id) else {
-            return content;
-        };
-        let Some(bounds) = selection.bounds else {
-            return content;
-        };
-        let Some(actions) = self.timeline_selection_actions(window_id, &selection.event_id, tokens)
-        else {
-            return content;
-        };
-        let toolbar =
-            container(actions)
-                .padding([4, 6])
-                .style(move |_| iced::widget::container::Style {
-                    background: Some(tokens.colors.surface.into()),
-                    border: iced::Border {
-                        color: tokens.colors.border,
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    shadow: iced::Shadow {
-                        color: iced::Color::from_rgba8(0, 0, 0, 0.18),
-                        offset: iced::Vector::new(0.0, 3.0),
-                        blur_radius: 12.0,
-                    },
-                    ..Default::default()
-                });
-        let position = Point::new(
-            (bounds.x + bounds.width * 0.5 - 96.0).max(8.0),
-            (bounds.y - 36.0).max(8.0),
-        );
-        stack![content, Absolute::new(toolbar, position)].into()
-    }
-
-    fn task_popup_content(
-        &self,
-        popup: &TaskPopupWindow,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        if popup.draft.is_some() {
-            return self.task_popup_draft_content(popup, tokens);
-        }
-        let Ok(snapshot) = popup.workspace.snapshot() else {
-            return container(
-                EmptyState::new("无法读取窗口")
-                    .message("请关闭窗口后重新打开。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        };
-        let focus_main = button(text("回主窗口").size(11))
-            .on_press(Message::FocusTaskPopupMain(popup.id))
-            .style(button_style(tokens, ButtonKind::Ghost));
-        let new_chat = button(text("新对话").size(11))
-            .on_press(Message::OpenTaskPopupNewChat(popup.id))
-            .style(button_style(tokens, ButtonKind::Ghost));
-        let mut ask_child =
-            button(text("询问").size(11)).style(button_style(tokens, ButtonKind::Ghost));
-        if let Some(parent_task_id) = popup.active_task_id.clone() {
-            ask_child = ask_child.on_press(Message::OpenChildQuestionPopup {
-                source_window: popup.id,
-                parent_task_id,
-            });
-        }
-        let window_chrome = row![
-            text(popup.project_name.clone())
-                .size(10)
-                .width(Length::Fill)
-                .color(tokens.colors.muted),
-            focus_main,
-            new_chat,
-            ask_child,
-            button(text("关闭窗口").size(11))
-                .on_press(Message::CloseTaskPopup(popup.id))
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        ]
-        .spacing(6)
-        .padding(Padding::from([4, 8]))
-        .align_y(Alignment::Center);
-        column![
-            window_chrome,
-            self.workspace_window_pane_tree(
-                popup,
-                &snapshot,
-                &snapshot.panel_layout.panes,
-                tokens,
-            ),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
-    }
-
-    fn task_popup_draft_content(
-        &self,
-        popup: &TaskPopupWindow,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let Some(draft) = popup.draft.as_ref() else {
-            return space().into();
-        };
-        self.conversation_draft_content(
-            popup.id,
-            ConversationDraftSurface {
-                task: draft,
-                worktree: &popup.draft_worktree,
-                composer: popup.composer.as_ref(),
-                composer_editor: &popup.composer_editor,
-                suggestions: &popup.conversation_suggestions,
-                error: popup.error.as_deref(),
-            },
-            tokens,
-        )
-    }
-
-    fn main_conversation_draft_content(
-        &self,
-        draft: &MainConversationDraft,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        self.conversation_draft_content(
-            HostedWindowId::PRIMARY,
-            ConversationDraftSurface {
-                task: &draft.task,
-                worktree: &draft.worktree,
-                composer: Some(&draft.composer),
-                composer_editor: &draft.composer_editor,
-                suggestions: &draft.suggestions,
-                error: draft.error.as_deref(),
-            },
-            tokens,
-        )
-    }
-
-    fn conversation_draft_content(
-        &self,
-        window_id: HostedWindowId,
-        surface: ConversationDraftSurface<'_>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let ConversationDraftSurface {
-            task: draft,
-            worktree: draft_worktree,
-            composer,
-            composer_editor,
-            suggestions,
-            error,
-        } = surface;
-        let colors = tokens.colors;
-        let primary = window_id == HostedWindowId::PRIMARY;
-        let project_name = draft
-            .project_id
-            .as_ref()
-            .and_then(|project_id| {
-                self.projects
-                    .iter()
-                    .find(|project| &project.id == project_id)
-            })
-            .map(|project| project.name.as_str())
-            .unwrap_or("收集箱");
-        let content_value = composer
-            .map(|composer| composer.content.clone())
-            .unwrap_or_default();
-        let has_payload = composer.is_some_and(composer_has_turn_payload);
-        let worktree_ready = !matches!(draft_worktree, DraftWorktreeSelection::Existing(None));
-        let mut body = column![].spacing(8).width(Length::Fill);
-        if let Some(error) = error {
-            body = body.push(text(error.to_owned()).size(11).color(colors.danger));
-        }
-        let project_picker: Option<Element<'static, Message>> =
-            if draft.project_id.is_none() && draft.parent_id.is_none() {
-                let mut options = vec![DropdownOption::new(None, "收集箱")];
-                options.extend(self.projects.iter().map(|project| {
-                    DropdownOption::new(Some(project.id.clone()), project.name.clone())
-                }));
-                Some(
-                    row![
-                        text("保存到").size(10).color(colors.muted),
-                        Dropdown::single(Some(None), options, move |event| {
-                            Message::TaskPopupDraftProjectSelection { window_id, event }
-                        })
-                        .display_label("收集箱")
-                        .size(ControlSize::Small)
-                        .view(tokens),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-                    .into(),
-                )
-            } else {
-                None
-            };
-        let worktree_controls: Option<Element<'static, Message>> = if draft.project_id.is_some() {
-            let mut controls = row![button(
-                row![
-                    icon(Icon::Nodes, 13.0, colors.muted),
-                    text(draft_worktree_label(draft_worktree)).size(10),
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            )
-            .on_press(Message::CycleDraftWorktree(window_id))
-            .style(button_style(tokens, ButtonKind::Ghost)),]
-            .spacing(3)
-            .align_y(Alignment::Center);
-            if matches!(draft_worktree, DraftWorktreeSelection::Existing(_)) {
-                controls = controls.push(
-                    button(text("选择").size(10))
-                        .on_press(Message::PickDraftWorktree(window_id))
-                        .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            Some(controls.into())
-        } else {
-            None
-        };
-        if !has_payload {
-            if let Some(suggestions) = conversation_suggestions_view(suggestions, tokens) {
-                body = body.push(suggestions.map(move |message| match message {
-                    ConversationSuggestionViewMessage::Refresh => {
-                        Message::RefreshConversationSuggestions {
-                            window_id,
-                            force: true,
-                        }
-                    }
-                    ConversationSuggestionViewMessage::Apply(prompt) => {
-                        Message::ApplyConversationSuggestion { window_id, prompt }
-                    }
-                }));
-            }
-        }
-        if let Some(composer) = composer {
-            if !composer.attachments.is_empty() {
-                let mut attachments = column![].spacing(4).width(Length::Fill);
-                for attachment in &composer.attachments {
-                    let details: Element<'static, Message> = row![
-                        icon(attachment_icon(attachment), 14.0, colors.muted),
-                        column![
-                            text(attachment.name.clone()).size(11).color(colors.text),
-                            text(attachment_meta_label(attachment))
-                                .size(10)
-                                .color(colors.muted),
-                        ]
-                        .spacing(1)
-                        .width(Length::Fill),
-                        button(icon(Icon::Close, 12.0, colors.muted))
-                            .on_press(if primary {
-                                Message::RemoveAttachment(attachment.id.clone())
-                            } else {
-                                Message::TaskPopupRemoveAttachment {
-                                    window_id,
-                                    attachment_id: attachment.id.clone(),
-                                }
-                            })
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .into();
-                    attachments = attachments.push(ListItem::new(details).view(tokens));
-                }
-                body = body.push(attachments);
-            }
-            if !composer.conversation_references.is_empty() {
-                let mut references = column![].spacing(4).width(Length::Fill);
-                for reference in &composer.conversation_references {
-                    let task_id = reference.task_id.clone();
-                    references = references.push(
-                        ListItem::new(
-                            row![
-                                icon(Icon::Workspace, 14.0, colors.muted),
-                                column![
-                                    text(reference.title.clone()).size(11).color(colors.text),
-                                    text(
-                                        reference
-                                            .project_name
-                                            .clone()
-                                            .unwrap_or_else(|| "收集箱".to_owned())
-                                    )
-                                    .size(10)
-                                    .color(colors.muted),
-                                ]
-                                .spacing(1)
-                                .width(Length::Fill),
-                                button(icon(Icon::Close, 12.0, colors.muted))
-                                    .on_press(if primary {
-                                        Message::RemoveConversationReference(task_id)
-                                    } else {
-                                        Message::TaskPopupRemoveConversationReference {
-                                            window_id,
-                                            task_id,
-                                        }
-                                    })
-                                    .style(button_style(tokens, ButtonKind::Ghost)),
-                            ]
-                            .spacing(8)
-                            .align_y(Alignment::Center),
-                        )
-                        .view(tokens),
-                    );
-                }
-                body = body.push(references);
-            }
-        }
-        if let Some(attachment) = self.attachment_previews.get(&window_id) {
-            body = body.push(attachment_preview_card(attachment, window_id, tokens));
-        }
-        if self.file_drop_hovered_windows.contains(&window_id) {
-            body = body.push(
-                Card::new(text("释放以添加到新对话").size(12).color(colors.accent))
-                    .title("拖放附件")
-                    .view(tokens),
-            );
-        }
-        let (slash_commands, conversation_references, context_attachments) = if primary {
-            (
-                &self.slash_commands,
-                &self.conversation_reference_results,
-                &self.context_attachment_results,
-            )
-        } else if let Some(popup) = self.task_popups.get(&window_id) {
-            (
-                &popup.slash_commands,
-                &popup.conversation_reference_results,
-                &popup.context_attachment_results,
-            )
-        } else {
-            (
-                &self.slash_commands,
-                &self.conversation_reference_results,
-                &self.context_attachment_results,
-            )
-        };
-        if !conversation_references.is_empty() {
-            let mut references = column![].spacing(3).width(Length::Fill);
-            for reference in conversation_references {
-                references = references.push(
-                    button(
-                        row![
-                            text(reference.title.clone()).size(11).color(colors.text),
-                            text(
-                                reference
-                                    .project_name
-                                    .clone()
-                                    .unwrap_or_else(|| "收集箱".to_owned())
-                            )
-                            .size(10)
-                            .color(colors.muted),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(if primary {
-                        Message::SelectConversationReference(reference.task_id.clone())
-                    } else {
-                        Message::TaskPopupSelectConversationReference {
-                            window_id,
-                            task_id: reference.task_id.clone(),
-                        }
-                    })
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            body = body.push(Card::new(references).title("对话引用").view(tokens));
-        }
-        if !context_attachments.is_empty() {
-            let mut context = column![].spacing(3).width(Length::Fill);
-            for result in context_attachments {
-                context = context.push(
-                    button(
-                        row![
-                            icon(attachment_icon(&result.attachment), 13.0, colors.muted),
-                            text(result.relative_path.clone())
-                                .size(11)
-                                .color(colors.text),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(if primary {
-                        Message::SelectContextAttachment(result.relative_path.clone())
-                    } else {
-                        Message::TaskPopupSelectContextAttachment {
-                            window_id,
-                            relative_path: result.relative_path.clone(),
-                        }
-                    })
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            body = body.push(Card::new(context).title("项目上下文").view(tokens));
-        }
-        if !slash_commands.is_empty() {
-            let mut commands = column![].spacing(3).width(Length::Fill);
-            for result in slash_commands {
-                let command = &result.command;
-                commands = commands.push(
-                    button(
-                        row![
-                            text(format!("/{}", command.name))
-                                .size(11)
-                                .color(colors.text),
-                            text(command.title.clone()).size(10).color(colors.muted),
-                            text(slash_command_source_label(command.source))
-                                .size(9)
-                                .color(colors.muted),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(if primary {
-                        Message::SelectSlashCommand(command.clone())
-                    } else {
-                        Message::TaskPopupSelectSlashCommand {
-                            window_id,
-                            command: command.clone(),
-                        }
-                    })
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            body = body.push(Card::new(commands).title("斜杠命令").view(tokens));
-        }
-        let pending_review = if primary {
-            self.pending_review_slash_workflow.as_ref()
-        } else {
-            self.task_popups
-                .get(&window_id)
-                .and_then(|popup| popup.pending_review_slash_workflow.as_ref())
-        };
-        if let Some(pending) = pending_review.filter(|pending| pending.task_id == draft.id) {
-            body = body.push(review_slash_workflow_view(pending, window_id, tokens));
-        }
-        if let Some(route) = self.prompt_route_suggestion(window_id, Some(&draft.id)) {
-            let applied =
-                composer.and_then(|composer| composer.workflow.as_ref()) == route.workflow.as_ref();
-            body = body.push(prompt_route_suggestion_view(
-                route, applied, window_id, tokens,
-            ));
-        } else if let Some(workflow) = composer.and_then(|composer| composer.workflow.as_ref()) {
-            body = body.push(applied_prompt_workflow_view(workflow, window_id, tokens));
-        }
-        let submit = if primary {
-            Message::SubmitTurn
-        } else {
-            Message::TaskPopupSubmitTurn(window_id)
-        };
-        let input = HostedTextarea::new(composer_editor)
-            .id(if primary {
-                target_ids::COMPOSER_INPUT.to_owned()
-            } else {
-                target_ids::task_popup_composer(window_id.0)
-            })
-            .placeholder(COMPOSER_PLACEHOLDER)
-            .height(composer_textarea_height(composer_editor))
-            .on_action(move |action| {
-                if primary {
-                    Message::ComposerEdited(action)
-                } else {
-                    Message::TaskPopupComposerEdited { window_id, action }
-                }
-            });
-        let input = if has_payload && worktree_ready && pending_review.is_none() {
-            input.submit_on_enter(submit)
-        } else {
-            input
-        }
-        .view(tokens);
-        let send = button(text("↑").size(17))
-            .width(Length::Fixed(32.0))
-            .height(Length::Fixed(32.0))
-            .padding(0)
-            .style(composer_round_button_style(tokens, ButtonKind::Primary));
-        let send = if has_payload && worktree_ready && pending_review.is_none() {
-            send.on_press(if primary {
-                Message::SubmitTurn
-            } else {
-                Message::TaskPopupSubmitTurn(window_id)
-            })
-        } else {
-            send
-        };
-        let compact_toolbar = self.compact_composer_toolbar(window_id);
-        let optimizing_prompt = self.prompt_optimization_is_busy(window_id, Some(&draft.id));
-        let optimize_prompt = self.composer_toolbar_action(
-            if optimizing_prompt {
-                "正在优化提示"
-            } else {
-                "优化提示"
-            },
-            Icon::Appearance,
-            compact_toolbar,
-            (!optimizing_prompt && !content_value.trim().is_empty())
-                .then_some(Message::OptimizePrompt(window_id)),
-            optimizing_prompt,
-            tokens,
-        );
-        let permission = composer
-            .map(|composer| composer.permission)
-            .unwrap_or_default();
-        let plan_mode = composer.is_some_and(|composer| composer.plan_mode);
-        let goal_mode = composer.is_some_and(|composer| composer.goal_mode);
-        let actions =
-            self.composer_action_menu(window_id, composer.is_none(), plan_mode, goal_mode, tokens);
-        let permission_button = self.composer_toolbar_action(
-            format!("权限：{}", permission_label(permission)),
-            Icon::About,
-            compact_toolbar,
-            Some(if primary {
-                Message::CyclePermission
-            } else {
-                Message::TaskPopupCyclePermission(window_id)
-            }),
-            false,
-            tokens,
-        );
-        let mut toolbar_left = row![actions, permission_button]
-            .spacing(3)
-            .align_y(Alignment::Center);
-        if let Some(worktree_controls) = worktree_controls {
-            toolbar_left = toolbar_left.push(worktree_controls);
-        }
-        if plan_mode {
-            toolbar_left = toolbar_left.push(self.composer_toolbar_action(
-                "计划 ×",
-                Icon::Nodes,
-                compact_toolbar,
-                Some(if primary {
-                    Message::TogglePlanMode
-                } else {
-                    Message::TaskPopupTogglePlanMode(window_id)
-                }),
-                true,
-                tokens,
-            ));
-        }
-        if goal_mode {
-            toolbar_left = toolbar_left.push(self.composer_toolbar_action(
-                "Goal ×",
-                Icon::Workspace,
-                compact_toolbar,
-                Some(if primary {
-                    Message::ToggleGoalMode
-                } else {
-                    Message::TaskPopupToggleGoalMode(window_id)
-                }),
-                true,
-                tokens,
-            ));
-        }
-        let headline = conversation_empty_headline(
-            draft.project_id.as_ref().map(|_| project_name),
-            draft.parent_id.is_some(),
-        );
-        body = body.push(
-            container(
-                text(headline)
-                    .size(24)
-                    .font(ui_font(font::Weight::Medium))
-                    .color(colors.text),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill),
-        );
-        let model_controls = composer
-            .map(|composer| self.composer_model_controls(window_id, composer, false, tokens))
-            .unwrap_or_else(|| space().into());
-        let composer_toolbar: Element<'static, Message> = if compact_toolbar {
-            column![
-                toolbar_left,
-                row![
-                    space().width(Length::Fill),
-                    model_controls,
-                    optimize_prompt,
-                    send
-                ]
-                .spacing(3)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(4)
-            .into()
-        } else {
-            row![
-                toolbar_left,
-                space().width(Length::Fill),
-                model_controls,
-                optimize_prompt,
-                send,
-            ]
-            .spacing(3)
-            .align_y(Alignment::Center)
-            .into()
-        };
-        body = body.push(
-            container(
-                container(
-                    Card::new(column![input, composer_toolbar].spacing(7))
-                        .padding(Padding::from([10, 12]))
-                        .view(tokens),
-                )
-                .width(if primary {
-                    Length::Fixed(self.primary_chat_content_width(48.0))
-                } else {
-                    Length::Fill
-                }),
-            )
-            .width(Length::Fill)
-            .center_x(Length::Fill)
-            .padding(if primary {
-                Padding {
-                    top: 4.0,
-                    right: 0.0,
-                    bottom: 8.0,
-                    left: 0.0,
-                }
-            } else {
-                Padding::ZERO
-            }),
-        );
-        if let Some(project_picker) = project_picker {
-            body = body.push(
-                container(project_picker)
-                    .width(Length::Fill)
-                    .center_x(Length::Fill)
-                    .padding(Padding::from([0, 4])),
-            );
-        }
-        let focus_main: Element<'static, Message> = if primary {
-            space().into()
-        } else {
-            button(text("回主窗口").size(11))
-                .on_press(Message::FocusTaskPopupMain(window_id))
-                .style(button_style(tokens, ButtonKind::Ghost))
-                .into()
-        };
-        let chrome = row![
-            text(project_name.to_owned())
-                .size(10)
-                .width(Length::Fill)
-                .color(colors.muted),
-            focus_main,
-            button(text(if primary { "返回" } else { "关闭窗口" }).size(11))
-                .on_press(if primary {
-                    Message::CloseMainConversationDraft
-                } else {
-                    Message::CloseTaskPopup(window_id)
-                })
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        ]
-        .spacing(6)
-        .padding(Padding::from([4, 8]))
-        .align_y(Alignment::Center);
-        if primary {
-            container(body)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(Padding::from([20, 24]))
-                .style(canvas_style(tokens))
-                .into()
-        } else {
-            column![
-                chrome,
-                container(body)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .padding(Padding::from([16, 14]))
-                    .style(canvas_style(tokens)),
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        }
-    }
-
-    fn workspace_window_pane_tree(
-        &self,
-        popup: &TaskPopupWindow,
-        snapshot: &DesktopWorkspaceSnapshot,
-        node: &PaneNode,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let root = nana_pane_tree_node(node);
-        let mut leaves = Vec::new();
-        root.visit_leaves(|pane_id| {
-            let items = snapshot
-                .panel_layout
-                .pane_items(pane_id)
-                .unwrap_or_default();
-            let active_item = snapshot.panel_layout.active_item(pane_id).ok().flatten();
-            let content = if snapshot.panel_layout.active_pane() == pane_id {
-                self.workspace_window_active_pane_content(
-                    popup,
-                    snapshot,
-                    pane_id,
-                    items,
-                    active_item,
-                    tokens,
-                )
-            } else {
-                self.workspace_window_inactive_pane_content(
-                    popup,
-                    snapshot,
-                    pane_id,
-                    items,
-                    active_item,
-                    tokens,
-                )
-            };
-            leaves.push((pane_id.clone(), Some(content)));
-        });
-        let leaves = Rc::new(RefCell::new(leaves));
-        let controllers = popup
-            .workspace_splits
-            .iter()
-            .map(|(key, state)| (key.clone(), state.controller.clone()))
-            .collect::<Vec<_>>();
-        let window_id = popup.id;
-        PaneTree::new(
-            root,
-            move |pane_id| {
-                leaves
-                    .borrow_mut()
-                    .iter_mut()
-                    .find(|(id, _)| id == pane_id)
-                    .and_then(|(_, element)| element.take())
-                    .expect("pane tree leaf is rendered once")
-            },
-            move |key, axis, ratio, first, second| {
-                let Some((_, controller)) =
-                    controllers.iter().find(|(candidate, _)| candidate == key)
-                else {
-                    return ratio_pane_split(axis, ratio, first, second, tokens);
-                };
-                let resize_key = key.clone();
-                split_pane(
-                    controller,
-                    first.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
-                    second.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
-                    WorkspaceSplitMessage::Resize,
-                    tokens,
-                )
-                .map(move |message| match message {
-                    WorkspaceSplitMessage::Preview(message) => *message,
-                    WorkspaceSplitMessage::Resize(action) => Message::WorkspaceWindowSplitAction {
-                        window_id,
-                        key: resize_key.clone(),
-                        action,
-                    },
-                })
-            },
-        )
-        .view()
-    }
-
-    fn workspace_window_active_pane_content(
-        &self,
-        popup: &TaskPopupWindow,
-        snapshot: &DesktopWorkspaceSnapshot,
-        pane_id: &PaneId,
-        item_ids: &[WorkspaceItemId],
-        active_item: Option<&WorkspaceItemId>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let body = self.workspace_window_active_pane_body(popup, snapshot, active_item, tokens);
-        self.workspace_window_pane_chrome(
-            popup,
-            snapshot,
-            WorkspaceWindowPaneChrome {
-                pane_id,
-                item_ids,
-                active_item,
-                body,
-                active: true,
-            },
-            tokens,
-        )
-    }
-
-    fn workspace_window_active_pane_body(
-        &self,
-        popup: &TaskPopupWindow,
-        snapshot: &DesktopWorkspaceSnapshot,
-        active_item: Option<&WorkspaceItemId>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let active_workspace_item = active_item.and_then(|item_id| {
-            snapshot
-                .workspace_items
-                .iter()
-                .find(|item| &item.id == item_id)
-        });
-        if let Some(item) = active_workspace_item.filter(|item| is_document_editor_item(item)) {
-            return self.document_editor_pane_content(item, popup.id, tokens);
-        }
-        if let Some(item) = active_workspace_item.filter(|item| {
-            item.terminal_session_id()
-                .is_ok_and(|value| value.is_some())
-        }) {
-            return self.terminal_pane_content(item, tokens);
-        }
-        let application_surface =
-            active_workspace_item.and_then(|item| item.application_surface().ok().flatten());
-        if let Some(surface) = application_surface {
-            let content = match surface {
-                ApplicationWorkspaceSurface::Projects => self.projects_overview_content(tokens),
-                ApplicationWorkspaceSurface::Automations => self.automations_content(tokens),
-                ApplicationWorkspaceSurface::Settings => self.settings_content(tokens),
-            };
-            let window_id = popup.id;
-            return content.map(move |message| Message::WorkspaceWindowSurfaceAction {
-                window_id,
-                message: Box::new(message),
-            });
-        }
-        let project_item = active_item
-            .zip(active_workspace_item)
-            .and_then(|(item_id, item)| {
-                item.project_surface()
-                    .ok()
-                    .flatten()
-                    .map(|(project_id, surface)| (item_id.clone(), project_id, surface))
-            });
-        if let Some((item_id, project_id, surface)) = project_item {
-            if surface == ProjectWorkspaceSurface::Files {
-                let content = self.project_files_content(tokens);
-                let window_id = popup.id;
-                return content.map(move |message| Message::WorkspaceWindowProjectAction {
-                    window_id,
-                    item_id: item_id.clone(),
-                    message: Box::new(message),
-                });
-            }
-            let project = snapshot
-                .projects
-                .iter()
-                .find(|project| project.id == project_id);
-            let editor = popup.project_states.get(&item_id);
-            if let (Some(project), Some(editor)) = (project, editor) {
-                let content = match surface {
-                    ProjectWorkspaceSurface::Roadmap => {
-                        self.roadmap_content_for(project, Some(editor), tokens)
-                    }
-                    ProjectWorkspaceSurface::Memory => {
-                        self.memory_content_for(project, Some(editor), tokens)
-                    }
-                    ProjectWorkspaceSurface::Architecture => {
-                        self.architecture_content_for(project, Some(editor), tokens)
-                    }
-                    ProjectWorkspaceSurface::Files => self.project_files_content(tokens),
-                };
-                let window_id = popup.id;
-                return content.map(move |message| Message::WorkspaceWindowProjectAction {
-                    window_id,
-                    item_id: item_id.clone(),
-                    message: Box::new(message),
-                });
-            }
-        }
-        self.task_popup_active_pane_content(popup, tokens)
-    }
-
-    fn workspace_window_inactive_pane_content(
-        &self,
-        popup: &TaskPopupWindow,
-        snapshot: &DesktopWorkspaceSnapshot,
-        pane_id: &PaneId,
-        item_ids: &[WorkspaceItemId],
-        active_item: Option<&WorkspaceItemId>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let window_id = popup.id;
-        let colors = tokens.colors;
-        let active_workspace_item = active_item.and_then(|item_id| {
-            snapshot
-                .workspace_items
-                .iter()
-                .find(|item| &item.id == item_id)
-        });
-        let title = active_workspace_item
-            .map(|item| item.title.clone())
-            .unwrap_or_else(|| "空窗格".to_owned());
-        let task_session = active_workspace_item
-            .and_then(|item| item.task_id().ok().flatten())
-            .and_then(|task_id| popup.task_sessions.get(&task_id));
-        let pane_body: Element<'static, Message> = if let Some(session) = task_session {
-            let timeline_surface = TimelineSurfaceKey::TaskPopupPane {
-                window_id,
-                pane_id: pane_id.as_str().to_owned(),
-            };
-            let mut timeline = column![].spacing(0).width(Length::Fill);
-            if session.timeline.is_empty() {
-                timeline = timeline.push(
-                    EmptyState::new("暂无时间线")
-                        .message("这个任务还没有会话事件。")
-                        .icon(Icon::Workspace)
-                        .view(tokens),
-                );
-            } else {
-                let window = self.timeline_window(session, &timeline_surface, false);
-                if window.leading_extent > 0.0 {
-                    timeline = timeline.push(space().height(window.leading_extent));
-                }
-                for event in &session.timeline[window.range.clone()] {
-                    let mut event_content = column![].spacing(5).width(Length::Fill);
-                    if let Some(document) = &event.markdown_document {
-                        event_content = event_content.push(self.markdown_document_view(
-                            document,
-                            popup.id,
-                            &event.id,
-                            event.selectable_reply,
-                            tokens,
-                        ));
-                    } else if let Some(summary) = &event.summary {
-                        event_content =
-                            event_content.push(text(summary.clone()).size(11).color(colors.muted));
-                    }
-                    let show_copy = event.message_role.as_deref() != Some("user")
-                        && (event.message_role.as_deref() != Some("assistant")
-                            || self.timeline_hovered_event.as_deref() == Some(event.id.as_str()));
-                    if let Some(value) = event.markdown_plain_text.as_ref().filter(|_| show_copy) {
-                        let copied = self
-                            .last_copied_markdown
-                            .as_ref()
-                            .is_some_and(|(event_id, _)| event_id == &event.id);
-                        event_content = event_content.push(
-                            row![
-                                space().width(Length::Fill),
-                                button(text(if copied { "已复制" } else { "复制" }).size(10))
-                                    .on_press(Message::CopyTimelineMarkdown {
-                                        event_id: event.id.clone(),
-                                        text: value.clone(),
-                                    })
-                                    .style(button_style(tokens, ButtonKind::Text)),
-                            ]
-                            .align_y(Alignment::Center),
-                        );
-                    }
-                    if !event.attachments.is_empty() {
-                        let mut attachments = column![].spacing(3).width(Length::Fill);
-                        for attachment in &event.attachments {
-                            attachments = attachments
-                                .push(timeline_attachment_row(attachment, popup.id, tokens));
-                        }
-                        event_content = event_content.push(attachments);
-                    }
-                    timeline = timeline.push(timeline_event_shell(
-                        event,
-                        event_content.into(),
-                        timeline_event_is_expanded(event, &self.timeline_toggled_events),
-                        tokens,
-                    ));
-                }
-                if window.trailing_extent > 0.0 {
-                    timeline = timeline.push(space().height(window.trailing_extent));
-                }
-            }
-            let scroll_surface = timeline_surface.clone();
-            column![
-                row![
-                    text(title).size(12).color(colors.text),
-                    text(format!("产物 {}", session.artifact_count))
-                        .size(10)
-                        .color(colors.muted),
-                    text(format!("Todo {}", session.todo_count))
-                        .size(10)
-                        .color(colors.muted),
-                    text(format!("待处理 {}", session.open_pending_count))
-                        .size(10)
-                        .color(if session.open_pending_count > 0 {
-                            colors.warning
-                        } else {
-                            colors.muted
-                        }),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                scrollable(timeline)
-                    .id(timeline_surface.scrollable_id())
-                    .on_scroll(move |viewport| Message::TimelineScrolled {
-                        surface: scroll_surface.clone(),
-                        offset: viewport.absolute_offset().y,
-                        viewport_extent: viewport.bounds().height,
-                    })
-                    .direction(vertical_scrollbar())
-                    .height(Length::Fill),
-            ]
-            .spacing(8)
-            .padding(10)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        } else if let Some(item) =
-            active_workspace_item.filter(|item| is_document_editor_item(item))
-        {
-            document_editor_inactive_preview(item, self.document_editors.get(&item.id), tokens)
-        } else if let Some(snapshot) =
-            active_workspace_item.and_then(|item| self.terminal_snapshot_for_item(item))
-        {
-            terminal_inactive_preview(&snapshot, tokens).map(Message::Terminal)
-        } else {
-            container(
-                EmptyState::new(title)
-                    .message("聚焦此窗格以继续。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .into()
-        };
-        self.workspace_window_pane_chrome(
-            popup,
-            snapshot,
-            WorkspaceWindowPaneChrome {
-                pane_id,
-                item_ids,
-                active_item,
-                body: pane_body,
-                active: false,
-            },
-            tokens,
-        )
-    }
-
-    fn workspace_window_pane_chrome(
-        &self,
-        popup: &TaskPopupWindow,
-        snapshot: &DesktopWorkspaceSnapshot,
-        pane: WorkspaceWindowPaneChrome<'_>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let WorkspaceWindowPaneChrome {
-            pane_id,
-            item_ids,
-            active_item,
-            body: pane_body,
-            active,
-        } = pane;
-        let window_id = popup.id;
-        let active_item = active_item.cloned();
-        let mut options = item_ids
-            .iter()
-            .filter_map(|item_id| {
-                snapshot
-                    .workspace_items
-                    .iter()
-                    .find(|item| &item.id == item_id)
-                    .map(|item| {
-                        SelectionOption::new(Some(item.id.clone()), item.title.clone())
-                            .icon(Icon::Workspace)
-                    })
-            })
-            .collect::<Vec<_>>();
-        if options.is_empty() {
-            options.push(
-                SelectionOption::new(None, "空窗格")
-                    .icon(Icon::Workspace)
-                    .draggable(false),
-            );
-        }
-        let select_pane = pane_id.clone();
-        let reorder_pane = pane_id.clone();
-        let fallback_pane = pane_id.clone();
-        let tabs = Tabs::new(active_item.clone(), options, move |item_id| {
-            Message::SelectWorkspaceWindowTab {
-                window_id,
-                pane_id: select_pane.clone(),
-                item_id,
-            }
-        })
-        .on_reorder(move |item_id, before| match item_id {
-            Some(item_id) => Message::ReorderWorkspaceWindowTab {
-                window_id,
-                pane_id: reorder_pane.clone(),
-                item_id,
-                before: before.flatten(),
-            },
-            None => Message::SelectWorkspaceWindowTab {
-                window_id,
-                pane_id: reorder_pane.clone(),
-                item_id: None,
-            },
-        })
-        .drag_group_on_surface(
-            self.workspace_tab_drag_group.clone(),
-            workspace_tab_drag_surface(
-                format!("window:{}", popup.id.0),
-                popup.surface_position,
-                popup.scale_factor,
-            ),
-            task_popup_tab_strip_id(popup.id, pane_id),
-            move |source_strip, item_id, target_strip, before| match item_id {
-                Some(item_id) => Message::TransferWorkspaceTab {
-                    source_strip,
-                    target_strip,
-                    item_id,
-                    before: before.flatten(),
-                },
-                None => Message::SelectWorkspaceWindowTab {
-                    window_id,
-                    pane_id: fallback_pane.clone(),
-                    item_id: None,
-                },
-            },
-        )
-        .accepts_external_drop(true)
-        .size(ControlSize::Small)
-        .view(tokens);
-        let mut pane_actions = Vec::new();
-        if !active {
-            pane_actions.push(PaneChromeAction::new(
-                PaneChromeActionKind::Focus,
-                "聚焦",
-                Message::FocusWorkspaceWindowPane {
-                    window_id,
-                    pane_id: pane_id.clone(),
-                },
-            ));
-        }
-        pane_actions.extend([
-            PaneChromeAction::new(
-                PaneChromeActionKind::SplitHorizontal,
-                "左右分栏",
-                Message::SplitWorkspaceWindowPane {
-                    window_id,
-                    pane_id: pane_id.clone(),
-                    axis: SplitAxis::Horizontal,
-                },
-            ),
-            PaneChromeAction::new(
-                PaneChromeActionKind::SplitVertical,
-                "上下分栏",
-                Message::SplitWorkspaceWindowPane {
-                    window_id,
-                    pane_id: pane_id.clone(),
-                    axis: SplitAxis::Vertical,
-                },
-            ),
-        ]);
-        if snapshot.panel_layout.pane_ids().len() > 1 {
-            if let Some(item_id) = &active_item {
-                pane_actions.push(PaneChromeAction::new(
-                    PaneChromeActionKind::MoveToNextPane,
-                    "移至下一窗格",
-                    Message::MoveWorkspaceWindowItemToNextPane {
-                        window_id,
-                        item_id: item_id.clone(),
-                    },
-                ));
-            } else if item_ids.is_empty() {
-                pane_actions.push(PaneChromeAction::new(
-                    PaneChromeActionKind::ClosePane,
-                    "关闭窗格",
-                    Message::CloseWorkspaceWindowPane {
-                        window_id,
-                        pane_id: pane_id.clone(),
-                    },
-                ));
-            }
-        }
-        if let Some(item) = active_item
-            .as_ref()
-            .and_then(|item_id| {
-                snapshot
-                    .workspace_items
-                    .iter()
-                    .find(|item| &item.id == item_id)
-            })
-            .filter(|item| item.capabilities.closable)
-        {
-            pane_actions.push(
-                PaneChromeAction::new(
-                    PaneChromeActionKind::CloseItem,
-                    "关闭",
-                    Message::CloseWorkspaceWindowItem {
-                        window_id,
-                        item_id: item.id.clone(),
-                    },
-                )
-                .icon(Icon::Close),
-            );
-        }
-        let pane_body = container(pane_body)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(canvas_style(tokens));
-        PaneChrome::new(tabs, pane_body, pane_actions, tokens)
-            .active(active)
-            .view()
-    }
-
-    fn task_popup_active_pane_content(
-        &self,
-        popup: &TaskPopupWindow,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let popup_id = popup.id;
-        let mut content = column![].spacing(10).width(Length::Fill);
-        if let Some(error) = &popup.error {
-            content = content.push(text(error.clone()).size(11).color(colors.danger));
-            if popup
-                .active_task_id
-                .as_ref()
-                .is_some_and(|task_id| self.pending_initial_worktrees.contains_key(task_id))
-            {
-                content = content.push(
-                    button(text("重试准备工作树并发送").size(11))
-                        .on_press(Message::RetryInitialWorktree(popup_id))
-                        .style(button_style(tokens, ButtonKind::Primary)),
-                );
-            }
-        }
-        if popup.active_task_id.is_none() {
-            return column![
-                content,
-                container(
-                    EmptyState::new(popup.title.clone())
-                        .message("此视图当前没有任务会话内容。")
-                        .icon(Icon::Workspace)
-                        .view(tokens),
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center(Length::Fill)
-                .style(canvas_style(tokens)),
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-        }
-        let Some(session) = &popup.session else {
-            return column![
-                content,
-                container(
-                    EmptyState::new("正在读取任务")
-                        .message("任务状态准备好后会显示在这里。")
-                        .icon(Icon::Workspace)
-                        .view(tokens),
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center(Length::Fill)
-                .style(canvas_style(tokens)),
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-        };
-        let session = popup
-            .active_task_id
-            .as_ref()
-            .map(|task_id| {
-                let (events, pending) = self.debug_timeline.overlay(task_id);
-                session.with_ephemeral_debug_overlay(events, pending)
-            })
-            .unwrap_or_else(|| session.clone());
-        let turn_active = popup
-            .turn_state
-            .as_ref()
-            .is_some_and(|(_, state)| turn_state_is_active(state));
-        let pending_blocks_send = session.blocking_pending_count > 0;
-        let can_apply_timeline_suggestion =
-            !turn_active && !pending_blocks_send && session.run_block.is_none();
-        let can_retry_timeline = session.run_block.is_none();
-        content = content.push(
-            row![
-                text(format!("产物 {}", session.artifact_count))
-                    .size(10)
-                    .color(colors.muted),
-                text(format!("Todo {}", session.todo_count))
-                    .size(10)
-                    .color(colors.muted),
-                text(format!("待处理 {}", session.open_pending_count))
-                    .size(10)
-                    .color(if session.open_pending_count > 0 {
-                        colors.warning
-                    } else {
-                        colors.muted
-                    }),
-            ]
-            .spacing(10),
-        );
-        content = content.push(self.debug_timeline_panel(popup_id, true, tokens));
-        let mut timeline = column![].spacing(0).width(Length::Fill);
-        if session.timeline_has_more_before {
-            timeline = timeline.push(
-                button(text("加载更早记录").size(11))
-                    .on_press(Message::TaskPopupLoadEarlierTimeline(popup_id))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            );
-        }
-        if session.timeline.is_empty() {
-            timeline = timeline.push(
-                EmptyState::new("暂无时间线")
-                    .message("发送消息后，会在这里显示任务进展。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            );
-        } else {
-            let surface = TimelineSurfaceKey::TaskPopup(popup_id);
-            let window = self.timeline_window(&session, &surface, true);
-            if window.leading_extent > 0.0 {
-                timeline = timeline.push(space().height(window.leading_extent));
-            }
-            for event in &session.timeline[window.range.clone()] {
-                let hovered = self.timeline_hovered_event.as_deref() == Some(event.id.as_str());
-                let mut event_actions = row![space().width(Length::Fill)]
-                    .spacing(4)
-                    .align_y(Alignment::Center);
-                let show_copy = event.message_role.as_deref() != Some("user")
-                    && (event.message_role.as_deref() != Some("assistant") || hovered);
-                if let Some(value) = event.markdown_plain_text.as_ref().filter(|_| show_copy) {
-                    let copied = self
-                        .last_copied_markdown
-                        .as_ref()
-                        .is_some_and(|(event_id, _)| event_id == &event.id);
-                    event_actions = event_actions.push(
-                        button(text(if copied { "已复制" } else { "复制" }).size(10))
-                            .on_press(Message::CopyTimelineMarkdown {
-                                event_id: event.id.clone(),
-                                text: value.clone(),
-                            })
-                            .style(button_style(tokens, ButtonKind::Text)),
-                    );
-                }
-                if can_retry_timeline && event.can_retry {
-                    event_actions = event_actions.push(
-                        button(text("重试").size(10))
-                            .on_press(Message::RetryTimelineEvent {
-                                window_id: popup_id,
-                                event_id: event.id.clone(),
-                            })
-                            .style(button_style(tokens, ButtonKind::Text)),
-                    );
-                }
-                if hovered
-                    && can_apply_timeline_suggestion
-                    && event.session_branch_turn_id.is_some()
-                {
-                    event_actions = event_actions
-                        .push(
-                            button(text("从这里继续").size(10))
-                                .on_press(Message::SetTimelineSessionBranch {
-                                    window_id: popup_id,
-                                    event_id: event.id.clone(),
-                                    mode: DesktopSessionBranchMode::Continue,
-                                })
-                                .style(button_style(tokens, ButtonKind::Text)),
-                        )
-                        .push(
-                            button(text("从这里分叉").size(10))
-                                .on_press(Message::SetTimelineSessionBranch {
-                                    window_id: popup_id,
-                                    event_id: event.id.clone(),
-                                    mode: DesktopSessionBranchMode::Fork,
-                                })
-                                .style(button_style(tokens, ButtonKind::Text)),
-                        );
-                }
-                if can_apply_timeline_suggestion && event.batch_apply.is_some() {
-                    event_actions = event_actions.push(
-                        button(text("应用建议").size(10))
-                            .on_press(Message::ApplyTimelineSuggestion {
-                                window_id: popup_id,
-                                event_id: event.id.clone(),
-                            })
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    );
-                }
-                let mut event_content = column![].spacing(5).width(Length::Fill);
-                if let Some(document) = &event.markdown_document {
-                    event_content = event_content.push(self.markdown_document_view(
-                        document,
-                        popup_id,
-                        &event.id,
-                        event.selectable_reply,
-                        tokens,
-                    ));
-                } else if let Some(summary) = &event.summary {
-                    event_content =
-                        event_content.push(text(summary.clone()).size(11).color(colors.muted));
-                }
-                if !event.attachments.is_empty() {
-                    let mut attachments = column![].spacing(3).width(Length::Fill);
-                    for attachment in &event.attachments {
-                        attachments =
-                            attachments.push(timeline_attachment_row(attachment, popup_id, tokens));
-                    }
-                    event_content = event_content.push(attachments);
-                }
-                let has_actions = (show_copy && event.markdown_plain_text.is_some())
-                    || (can_retry_timeline && event.can_retry)
-                    || (can_apply_timeline_suggestion
-                        && ((hovered && event.session_branch_turn_id.is_some())
-                            || event.batch_apply.is_some()));
-                if has_actions {
-                    event_content = event_content.push(event_actions);
-                }
-                timeline = timeline.push(timeline_event_shell(
-                    event,
-                    event_content.into(),
-                    timeline_event_is_expanded(event, &self.timeline_toggled_events),
-                    tokens,
-                ));
-            }
-            if window.trailing_extent > 0.0 {
-                timeline = timeline.push(space().height(window.trailing_extent));
-            }
-        }
-        let timeline_surface = TimelineSurfaceKey::TaskPopup(popup_id);
-        let timeline_at_end = self.timeline_is_at_end(Some(&session), &timeline_surface, true);
-        let scroll_surface = timeline_surface.clone();
-        let timeline: Element<'static, Message> = scrollable(timeline)
-            .id(timeline_surface.scrollable_id())
-            .on_scroll(move |viewport| Message::TimelineScrolled {
-                surface: scroll_surface.clone(),
-                offset: viewport.absolute_offset().y,
-                viewport_extent: viewport.bounds().height,
-            })
-            .direction(vertical_scrollbar())
-            .height(Length::Fill)
-            .into();
-        content = content.push(timeline_with_latest_control(
-            timeline,
-            !timeline_at_end && !session.timeline.is_empty(),
-            timeline_surface,
-            tokens,
-        ));
-        let mut pending_actions = column![].spacing(7).width(Length::Fill);
-        for pending in session
-            .pending
-            .iter()
-            .filter(|pending| pending.status == PendingProjectionStatus::Open)
-        {
-            let mut action = column![
-                text(pending.prompt.clone()).size(12).color(colors.text),
-                text(pending_action_label(&pending.kind))
-                    .size(10)
-                    .color(colors.warning),
-            ]
-            .spacing(4);
-            if pending.kind == "permission_approval" {
-                action = action.push(
-                    row![
-                        button(text("允许").size(11))
-                            .on_press(Message::TaskPopupRespondApproval {
-                                window_id: popup_id,
-                                request_id: pending.request_id.clone(),
-                                approved: true,
-                            })
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                        button(text("拒绝").size(11))
-                            .on_press(Message::TaskPopupRespondApproval {
-                                window_id: popup_id,
-                                request_id: pending.request_id.clone(),
-                                approved: false,
-                            })
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(6),
-                );
-            } else if pending.kind == TITLE_UPDATE_ACTION_KIND {
-                action = action.push(
-                    row![
-                        button(text("采用标题").size(11))
-                            .on_press(Message::TaskPopupRespondTitleUpdate {
-                                window_id: popup_id,
-                                request_id: pending.request_id.clone(),
-                                accepted: true,
-                            })
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                        button(text("保留当前").size(11))
-                            .on_press(Message::TaskPopupRespondTitleUpdate {
-                                window_id: popup_id,
-                                request_id: pending.request_id.clone(),
-                                accepted: false,
-                            })
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(6),
-                );
-            } else if pending.kind == "tool_consent" {
-                action = action.push(tool_consent_action_view(
-                    pending,
-                    popup.tool_consent_drafts.get(&pending.request_id),
-                    popup_id,
-                    tokens,
-                ));
-            } else if pending.kind == "mcp_elicitation" {
-                action = action.push(mcp_elicitation_action_view(
-                    pending,
-                    popup.mcp_elicitation_drafts.get(&pending.request_id),
-                    popup_id,
-                    tokens,
-                ));
-            } else if pending.kind == "architecture_change" {
-                action = action.push(architecture_interaction_action_view(
-                    pending, popup_id, tokens,
-                ));
-            } else if pending.kind == "ask_user" {
-                action = action.push(ask_user_action_view(
-                    pending,
-                    popup.ask_user_drafts.get(&pending.request_id),
-                    popup_id,
-                    tokens,
-                ));
-            } else if pending.kind == "plan_approval" {
-                let request_id = pending.request_id.clone();
-                let draft = popup
-                    .interaction_drafts
-                    .get(&request_id)
-                    .cloned()
-                    .unwrap_or_default();
-                let input_request_id = request_id.clone();
-                action = action.push(
-                    Input::new("修改意见（可选）", draft.clone())
-                        .on_input(move |value| Message::TaskPopupInteractionDraftChanged {
-                            window_id: popup_id,
-                            request_id: input_request_id.clone(),
-                            value,
-                        })
-                        .view(tokens),
-                );
-                let mut revise = button(text("要求修改").size(11))
-                    .style(button_style(tokens, ButtonKind::Ghost));
-                if !draft.trim().is_empty() {
-                    revise = revise.on_press(Message::TaskPopupRespondInteraction {
-                        window_id: popup_id,
-                        request_id: request_id.clone(),
-                        accepted: true,
-                        response: json!({ "action": "revise", "feedback": draft }),
-                    });
-                }
-                action = action.push(
-                    row![
-                        button(text("执行计划").size(11))
-                            .on_press(Message::TaskPopupRespondInteraction {
-                                window_id: popup_id,
-                                request_id: request_id.clone(),
-                                accepted: true,
-                                response: json!({ "action": "approve" }),
-                            })
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                        button(text("拒绝").size(11))
-                            .on_press(Message::TaskPopupRespondInteraction {
-                                window_id: popup_id,
-                                request_id: request_id.clone(),
-                                accepted: false,
-                                response: json!({ "action": "decline" }),
-                            })
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                        revise,
-                        button(text("取消任务").size(11))
-                            .on_press(Message::TaskPopupInterruptTurn(popup_id))
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(6),
-                );
-            }
-            pending_actions = pending_actions.push(Card::new(action).view(tokens));
-        }
-        if session.open_pending_count > 0 {
-            content = content.push(pending_actions);
-        }
-        let composer_content = popup
-            .composer
-            .as_ref()
-            .map(|composer| composer.content.clone())
-            .unwrap_or_default();
-        let has_payload = popup
-            .composer
-            .as_ref()
-            .is_some_and(composer_has_turn_payload);
-        let task_run_block = session.run_block.as_ref().map(ToString::to_string);
-        let review_target_pending = popup.pending_review_slash_workflow.is_some();
-        if let Some(composer) = &popup.composer {
-            if !composer.attachments.is_empty() {
-                let mut attachments = column![].spacing(4).width(Length::Fill);
-                for attachment in &composer.attachments {
-                    let attachment_details = row![
-                        icon(attachment_icon(attachment), 14.0, colors.muted),
-                        column![
-                            text(attachment.name.clone()).size(11).color(colors.text),
-                            text(attachment_meta_label(attachment))
-                                .size(10)
-                                .color(colors.muted),
-                        ]
-                        .spacing(1)
-                        .width(Length::Fill),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center);
-                    let attachment_details: Element<'static, Message> =
-                        if attachment_supports_inline_preview(attachment) {
-                            button(attachment_details)
-                                .width(Length::Fill)
-                                .on_press(Message::OpenAttachmentPreview {
-                                    window_id: popup_id,
-                                    attachment: attachment.clone(),
-                                })
-                                .style(button_style(tokens, ButtonKind::Ghost))
-                                .into()
-                        } else {
-                            attachment_details.into()
-                        };
-                    attachments = attachments.push(
-                        ListItem::new(
-                            row![
-                                attachment_details,
-                                button(icon(Icon::Close, 12.0, colors.muted))
-                                    .on_press(Message::TaskPopupRemoveAttachment {
-                                        window_id: popup_id,
-                                        attachment_id: attachment.id.clone(),
-                                    })
-                                    .style(button_style(tokens, ButtonKind::Ghost)),
-                            ]
-                            .spacing(8)
-                            .align_y(Alignment::Center),
-                        )
-                        .view(tokens),
-                    );
-                }
-                content = content.push(attachments);
-            }
-            if !composer.conversation_references.is_empty() {
-                let mut references = column![].spacing(4).width(Length::Fill);
-                for reference in &composer.conversation_references {
-                    references = references.push(
-                        ListItem::new(
-                            row![
-                                icon(Icon::Workspace, 14.0, colors.muted),
-                                column![
-                                    text(reference.title.clone()).size(11).color(colors.text),
-                                    text(
-                                        reference
-                                            .project_name
-                                            .clone()
-                                            .unwrap_or_else(|| "收集箱".to_owned())
-                                    )
-                                    .size(10)
-                                    .color(colors.muted),
-                                ]
-                                .spacing(1)
-                                .width(Length::Fill),
-                                button(icon(Icon::Close, 12.0, colors.muted))
-                                    .on_press(Message::TaskPopupRemoveConversationReference {
-                                        window_id: popup_id,
-                                        task_id: reference.task_id.clone(),
-                                    })
-                                    .style(button_style(tokens, ButtonKind::Ghost)),
-                            ]
-                            .spacing(8)
-                            .align_y(Alignment::Center),
-                        )
-                        .view(tokens),
-                    );
-                }
-                content = content.push(references);
-            }
-        }
-        if let Some(attachment) = self.attachment_previews.get(&popup_id) {
-            content = content.push(attachment_preview_card(attachment, popup_id, tokens));
-        }
-        if self.file_drop_hovered_windows.contains(&popup_id) {
-            content = content.push(
-                Card::new(text("释放以添加到当前任务").size(12).color(colors.accent))
-                    .title("拖放附件")
-                    .view(tokens),
-            );
-        }
-        if !popup.conversation_reference_results.is_empty() {
-            let mut references = column![].spacing(3).width(Length::Fill);
-            for reference in &popup.conversation_reference_results {
-                references = references.push(
-                    button(
-                        row![
-                            text(reference.title.clone()).size(11).color(colors.text),
-                            text(
-                                reference
-                                    .project_name
-                                    .clone()
-                                    .unwrap_or_else(|| "收集箱".to_owned())
-                            )
-                            .size(10)
-                            .color(colors.muted),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(Message::TaskPopupSelectConversationReference {
-                        window_id: popup_id,
-                        task_id: reference.task_id.clone(),
-                    })
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            content = content.push(Card::new(references).title("对话引用").view(tokens));
-        }
-        if !popup.context_attachment_results.is_empty() {
-            let mut context = column![].spacing(3).width(Length::Fill);
-            for result in &popup.context_attachment_results {
-                context = context.push(
-                    button(
-                        row![
-                            icon(attachment_icon(&result.attachment), 13.0, colors.muted),
-                            text(result.relative_path.clone())
-                                .size(11)
-                                .color(colors.text),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(Message::TaskPopupSelectContextAttachment {
-                        window_id: popup_id,
-                        relative_path: result.relative_path.clone(),
-                    })
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            content = content.push(Card::new(context).title("项目上下文").view(tokens));
-        }
-        if !popup.slash_commands.is_empty() {
-            let mut commands = column![].spacing(3).width(Length::Fill);
-            for result in &popup.slash_commands {
-                let command = &result.command;
-                commands = commands.push(
-                    button(
-                        row![
-                            text(format!("/{}", command.name))
-                                .size(11)
-                                .color(colors.text),
-                            text(command.title.clone()).size(10).color(colors.muted),
-                            text(slash_command_source_label(command.source))
-                                .size(9)
-                                .color(colors.muted),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(Message::TaskPopupSelectSlashCommand {
-                        window_id: popup_id,
-                        command: command.clone(),
-                    })
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            content = content.push(Card::new(commands).title("斜杠命令").view(tokens));
-        }
-        if let Some(pending) = popup
-            .pending_review_slash_workflow
-            .as_ref()
-            .filter(|pending| popup.active_task_id.as_ref() == Some(&pending.task_id))
-        {
-            content = content.push(review_slash_workflow_view(pending, popup_id, tokens));
-        }
-        if !turn_active && !has_payload && !pending_blocks_send {
-            if let Some(suggestions) =
-                conversation_suggestions_view(&popup.conversation_suggestions, tokens)
-            {
-                content = content.push(suggestions.map(move |message| match message {
-                    ConversationSuggestionViewMessage::Refresh => {
-                        Message::RefreshConversationSuggestions {
-                            window_id: popup_id,
-                            force: true,
-                        }
-                    }
-                    ConversationSuggestionViewMessage::Apply(prompt) => {
-                        Message::ApplyConversationSuggestion {
-                            window_id: popup_id,
-                            prompt,
-                        }
-                    }
-                }));
-            }
-        }
-        if let Some(pending) = popup
-            .pending_session_branch
-            .as_ref()
-            .filter(|pending| popup.active_task_id.as_ref() == Some(&pending.task_id))
-        {
-            content = content.push(
-                Card::new(
-                    row![
-                        text(format!(
-                            "{} · {}",
-                            session_branch_mode_label(pending.anchor.mode),
-                            pending.anchor.source_turn_id
-                        ))
-                        .size(10)
-                        .width(Length::Fill)
-                        .color(colors.muted),
-                        button(text("清除").size(10))
-                            .on_press(Message::ClearSessionBranch(popup_id))
-                            .style(button_style(tokens, ButtonKind::Text)),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                )
-                .title("会话分支")
-                .view(tokens),
-            );
-        }
-        if let Some(route) = self.prompt_route_suggestion(popup_id, popup.active_task_id.as_ref()) {
-            let applied = popup
-                .composer
-                .as_ref()
-                .and_then(|composer| composer.workflow.as_ref())
-                == route.workflow.as_ref();
-            content = content.push(prompt_route_suggestion_view(
-                route, applied, popup_id, tokens,
-            ));
-        } else if let Some(workflow) = popup
-            .composer
-            .as_ref()
-            .and_then(|composer| composer.workflow.as_ref())
-        {
-            content = content.push(applied_prompt_workflow_view(workflow, popup_id, tokens));
-        }
-        let input = HostedTextarea::new(&popup.composer_editor)
-            .id(target_ids::task_popup_composer(popup_id.0))
-            .placeholder(COMPOSER_PLACEHOLDER)
-            .height(composer_textarea_height(&popup.composer_editor))
-            .on_action(move |action| Message::TaskPopupComposerEdited {
-                window_id: popup_id,
-                action,
-            });
-        let input = if has_payload
-            && (!pending_blocks_send || turn_active)
-            && task_run_block.is_none()
-            && !review_target_pending
-        {
-            input.submit_on_enter(Message::TaskPopupSubmitTurn(popup_id))
-        } else {
-            input
-        }
-        .view(tokens);
-        let action = if review_target_pending {
-            button(text("请选择范围").size(11)).style(button_style(tokens, ButtonKind::Ghost))
-        } else if turn_active && !has_payload {
-            button(text("■").size(13))
-                .width(Length::Fixed(32.0))
-                .height(Length::Fixed(32.0))
-                .padding(0)
-                .on_press(Message::TaskPopupInterruptTurn(popup_id))
-                .style(composer_round_button_style(tokens, ButtonKind::Danger))
-        } else {
-            let send = button(text("↑").size(17))
-                .width(Length::Fixed(32.0))
-                .height(Length::Fixed(32.0))
-                .padding(0)
-                .style(composer_round_button_style(tokens, ButtonKind::Primary));
-            if !has_payload || (pending_blocks_send && !turn_active) || task_run_block.is_some() {
-                send
-            } else {
-                send.on_press(Message::TaskPopupSubmitTurn(popup_id))
-            }
-        };
-        let permission = popup
-            .composer
-            .as_ref()
-            .map(|composer| composer.permission)
-            .unwrap_or_default();
-        let plan_mode = popup
-            .composer
-            .as_ref()
-            .is_some_and(|composer| composer.plan_mode);
-        let goal_mode = popup
-            .composer
-            .as_ref()
-            .is_some_and(|composer| composer.goal_mode);
-        let optimizing_prompt =
-            self.prompt_optimization_is_busy(popup_id, popup.active_task_id.as_ref());
-        let mut optimize_prompt = button(
-            text(if optimizing_prompt {
-                "优化中"
-            } else {
-                "优化提示"
-            })
-            .size(10),
-        )
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let mut permission_button = button(text(permission_label(permission)).size(10))
-            .style(button_style(tokens, ButtonKind::Ghost));
-        if !optimizing_prompt
-            && !turn_active
-            && !pending_blocks_send
-            && !composer_content.trim().is_empty()
-        {
-            optimize_prompt = optimize_prompt.on_press(Message::OptimizePrompt(popup_id));
-        }
-        permission_button = permission_button.on_press(Message::TaskPopupCyclePermission(popup_id));
-        let actions = self.composer_action_menu(
-            popup_id,
-            popup.composer.is_none(),
-            plan_mode,
-            goal_mode,
-            tokens,
-        );
-        let mut toolbar_left = row![actions, permission_button]
-            .spacing(3)
-            .align_y(Alignment::Center);
-        if let Some(worktree) = session.worktree.as_ref() {
-            toolbar_left = toolbar_left.push(
-                container(
-                    text(worktree.branch_name.clone())
-                        .size(10)
-                        .color(colors.muted),
-                )
-                .padding([4, 8]),
-            );
-        }
-        if plan_mode {
-            toolbar_left = toolbar_left.push(
-                button(text("计划 ×").size(10))
-                    .on_press(Message::TaskPopupTogglePlanMode(popup_id))
-                    .style(button_style(tokens, ButtonKind::Subtle)),
-            );
-        }
-        if goal_mode {
-            toolbar_left = toolbar_left.push(
-                button(text("Goal ×").size(10))
-                    .on_press(Message::TaskPopupToggleGoalMode(popup_id))
-                    .style(button_style(tokens, ButtonKind::Subtle)),
-            );
-        }
-        let model_controls = popup
-            .composer
-            .as_ref()
-            .map(|composer| {
-                self.composer_model_controls(
-                    popup_id,
-                    composer,
-                    turn_active || pending_blocks_send,
-                    tokens,
-                )
-            })
-            .unwrap_or_else(|| space().into());
-        let composer_toolbar = row![
-            toolbar_left,
-            space().width(Length::Fill),
-            model_controls,
-            optimize_prompt,
-            action,
-        ]
-        .spacing(3)
-        .align_y(Alignment::Center);
-        let composer_controls = Card::new(column![input, composer_toolbar].spacing(7))
-            .padding(Padding::from([10, 12]))
-            .view(tokens);
-        let mut composer_controls = column![composer_controls].spacing(5);
-        if let Some(reason) = task_run_block {
-            composer_controls = composer_controls.push(text(reason).size(10).color(colors.warning));
-        }
-        if let Some(usage) = session.context_usage.as_ref() {
-            let mut compact =
-                button(text("压缩上下文").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-            if !turn_active && !pending_blocks_send {
-                compact = compact.on_press(Message::TaskPopupCompactContext(popup_id));
-            }
-            composer_controls = composer_controls.push(
-                row![
-                    text(context_usage_label(usage))
-                        .size(10)
-                        .width(Length::Fill)
-                        .color(context_usage_color(usage, colors)),
-                    compact,
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            );
-        }
-        content = content.push(composer_controls);
-        container(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([14, 12]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn projects_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let top = self.projects_sidebar_top(tokens);
-        let mut body = column![].spacing(10).width(Length::Fill);
-        if self.sidebar_folder_drop_hovered {
-            body = body.push(
-                container(text("松开以添加项目").size(11).color(colors.accent))
-                    .width(Length::Fill)
-                    .padding([6, 8])
-                    .style(canvas_style(tokens)),
-            );
-        }
-        if !self.sidebar_search_query.trim().is_empty() {
-            body = body.push(self.sidebar_search_results(tokens));
-        } else {
-            body = body.push(self.sidebar_running_section(tokens));
-            body = body.push(match self.sidebar_display_mode {
-                NativeSidebarDisplayMode::Grouped => self.grouped_projects_sidebar(tokens),
-                NativeSidebarDisplayMode::Unified => self.unified_conversations_sidebar(tokens),
-            });
-        }
-        if let Some(error) = self
-            .conversation_status_error
-            .as_ref()
-            .or(self.task_move_candidates_error.as_ref())
-            .or(self.error_message.as_ref())
-        {
-            let mut error_background = colors.danger;
-            error_background.a = 0.12;
-            body = body.push(
-                container(
-                    row![
-                        text(error.clone())
-                            .size(11)
-                            .color(colors.danger)
-                            .width(Length::Fill),
-                        IconButton::new("关闭提示", Icon::Close)
-                            .on_press(Message::DismissSidebarError)
-                            .size(ControlSize::Small)
-                            .view(tokens),
-                    ]
-                    .spacing(4)
-                    .align_y(Alignment::Center),
-                )
-                .padding([6, 8])
-                .style(move |_| iced::widget::container::Style {
-                    background: Some(error_background.into()),
-                    border: iced::Border {
-                        radius: 6.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }),
-            );
-        }
-        let (provider_status, provider_color, provider_icon) = self.provider_runtime_badge(colors);
-        let mut provider_background = provider_color;
-        provider_background.a = 0.12;
-        let provider = container(
-            button(
-                row![
-                    icon(provider_icon, 12.0, provider_color),
-                    text(provider_status).size(11).color(provider_color),
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            )
-            .on_press(Message::OpenSettings)
-            .height(Length::Fixed(20.0))
-            .padding([0, 7])
-            .style(move |_, status| {
-                let mut background = provider_background;
-                if status == iced::widget::button::Status::Hovered {
-                    background.a = 0.2;
-                }
-                iced::widget::button::Style {
-                    background: Some(background.into()),
-                    text_color: provider_color,
-                    border: iced::Border {
-                        radius: 999.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            }),
-        )
-        .padding(Padding {
-            top: 0.0,
-            right: 0.0,
-            bottom: 0.0,
-            left: 4.0,
-        });
-        let mut footer = SidebarFooter::new();
-        for contribution in self.application.sidebar_navigation_contributions() {
-            footer = footer.push(
-                SidebarFooterButton::new(
-                    contribution.label,
-                    sidebar_navigation_icon(contribution.icon),
-                )
-                .selected(sidebar_navigation_selected(
-                    contribution.target,
-                    self.settings_open,
-                    self.automations_open,
-                ))
-                .on_press(Message::OpenSidebarNavigation(contribution.target))
-                .view(tokens),
-            );
-        }
-        let footer = footer.push(provider).view(colors);
-        SidebarFrame::new(body).top(top).footer(footer).view(colors)
-    }
-
-    fn projects_sidebar_top(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        if self.sidebar_search_open {
-            return row![
-                container(
-                    Input::new("搜索项目和会话", self.sidebar_search_query.clone())
-                        .id(target_ids::SIDEBAR_SEARCH_INPUT)
-                        .on_input(Message::SidebarSearchChanged)
-                        .view(tokens),
-                )
-                .width(Length::Fill),
-                IconButton::new("关闭搜索", Icon::Close)
-                    .on_press(Message::ToggleSidebarSearch)
-                    .size(ControlSize::Small)
-                    .view(tokens),
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center)
-            .into();
-        }
-        row![
-            button(
-                row![
-                    icon(Icon::Add, 15.0, colors.text),
-                    text("新对话").size(13).color(colors.text),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            )
-            .width(Length::Fill)
-            .height(Length::Fixed(30.0))
-            .padding([0, 8])
-            .on_press(Message::OpenSidebarInboxDraft)
-            .style(button_style(tokens, ButtonKind::Text)),
-            IconButton::new("搜索", Icon::Search)
-                .on_press(Message::ToggleSidebarSearch)
-                .size(ControlSize::Small)
-                .view(tokens),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center)
-        .into()
-    }
-
-    fn sidebar_running_section(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let running = self
-            .conversation_status_entries
-            .iter()
-            .filter(|entry| runtime_phase_is_processing(&entry.runtime_phase))
-            .collect::<Vec<_>>();
-        if running.is_empty() {
-            return space().height(Length::Fixed(0.0)).into();
-        }
-        let mut section = SidebarSection::new("进行中");
-        for (index, entry) in running.into_iter().enumerate() {
-            let task_id = entry.task_id.clone();
-            let stop_id = task_id.clone();
-            let stopping = self.sidebar_stopping_tasks.contains(&entry.task_id);
-            let stop_icon: Element<'static, Message> = if stopping {
-                spinner_icon(self.sidebar_activity_phase, 13.0, colors.danger)
-            } else {
-                text("■").size(11).color(colors.danger).into()
-            };
-            let mut stop = button(stop_icon)
-                .width(Length::Fixed(22.0))
-                .height(Length::Fixed(22.0))
-                .padding(0)
-                .style(button_style(tokens, ButtonKind::Text));
-            if !stopping {
-                stop = stop.on_press(Message::SidebarStopTask(stop_id));
-            }
-            let row = SidebarRow::new(entry.title.clone())
-                .leading(icon(Icon::Nodes, 13.0, colors.accent))
-                .trailing(text(entry.project_name.clone()).size(9).color(colors.faint))
-                .tools(
-                    tooltip(
-                        stop,
-                        container(
-                            text(if stopping {
-                                "正在停止进程"
-                            } else {
-                                "强行停止进程"
-                            })
-                            .size(11),
-                        )
-                        .padding([4, 7]),
-                        tooltip::Position::Right,
-                    )
-                    .gap(6),
-                )
-                .on_select(Message::SelectTask(task_id))
-                .view(tokens);
-            section = section.push(container(row).width(Length::Fill));
-            let _ = index;
-        }
-        section.view(tokens)
-    }
-
-    fn grouped_projects_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let all_expanded = !self.projects.is_empty()
-            && self
-                .projects
-                .iter()
-                .all(|project| self.sidebar_project_expanded(&project.id));
-        let header = row![
-            text("项目")
-                .size(11)
-                .font(ui_font(font::Weight::Bold))
-                .color(colors.faint)
-                .width(Length::Fill),
-            IconButton::new("项目总览", Icon::Workspace)
-                .on_press(Message::OpenProjectsOverview)
-                .size(ControlSize::Small)
-                .view(tokens),
-            IconButton::new(
-                if all_expanded {
-                    "全部折叠"
-                } else {
-                    "全部展开"
-                },
-                Icon::Nodes,
-            )
-            .on_press(Message::ToggleAllSidebarProjects)
-            .size(ControlSize::Small)
-            .view(tokens),
-            IconButton::new("添加项目", Icon::Add)
-                .on_press(Message::OpenSidebarMenu {
-                    target: SidebarMenuTarget::AddProject,
-                    anchor_y: 96.0,
-                })
-                .size(ControlSize::Small)
-                .view(tokens),
-        ]
-        .spacing(2)
-        .align_y(Alignment::Center);
-        let mut items = Vec::new();
-        let mut row_index = 0usize;
-        for pinned in [true, false] {
-            for project in self
-                .projects
-                .iter()
-                .filter(|project| project.pinned == pinned)
-            {
-                let expanded = self.sidebar_project_expanded(&project.id);
-                let menu_id = project.id.clone();
-                let popup_id = project.id.clone();
-                let draft_id = project.id.clone();
-                let anchor_y = 126.0 + row_index as f32 * 29.0;
-                row_index += 1;
-                let tools = row![
-                    button(text("•••").size(10))
-                        .on_press(Message::OpenSidebarMenu {
-                            target: SidebarMenuTarget::Project(menu_id),
-                            anchor_y,
-                        })
-                        .width(Length::Fixed(22.0))
-                        .height(Length::Fixed(22.0))
-                        .padding(0)
-                        .style(button_style(tokens, ButtonKind::Text)),
-                    IconButton::new("新对话", Icon::Add)
-                        .on_press(Message::OpenSidebarProjectDraft(draft_id))
-                        .size(ControlSize::Small)
-                        .view(tokens),
-                ]
-                .spacing(1);
-                let right_menu_id = project.id.clone();
-                let project_row = SidebarRow::new(project.name.clone())
-                    .leading(icon(Icon::Folder, 14.0, colors.muted))
-                    .trailing(
-                        project
-                            .pinned
-                            .then(|| text("●").size(8).color(colors.accent))
-                            .map(Element::from)
-                            .unwrap_or_else(|| space().width(Length::Shrink).into()),
-                    )
-                    .tools(tools)
-                    .state(if Some(&project.id) == self.selected_project.as_ref() {
-                        if self.selected_task.is_some() {
-                            SidebarRowState::AncestorActive
-                        } else {
-                            SidebarRowState::Active
-                        }
-                    } else {
-                        SidebarRowState::Idle
-                    })
-                    .on_right_press(move |anchor| Message::OpenSidebarMenuAt {
-                        target: SidebarMenuTarget::Project(right_menu_id.clone()),
-                        anchor,
-                    })
-                    .on_middle_press(move |_| Message::OpenSidebarProjectPopup(popup_id.clone()))
-                    .view(tokens);
-                items.push(ReorderItem::new(
-                    SidebarTreeListItem::Node(SidebarTreeNode::Project(project.id.clone())),
-                    project_row,
-                ));
-                if expanded {
-                    let tasks = self.sidebar_project_tasks(Some(&project.id));
-                    let visible = self.sidebar_visible_project_tasks(&project.id, &tasks);
-                    for (task, depth) in visible {
-                        row_index += 1;
-                        items.push(ReorderItem::new(
-                            SidebarTreeListItem::Node(SidebarTreeNode::Task(task.id.clone())),
-                            self.sidebar_task_row(
-                                task,
-                                depth.saturating_add(1) as u16,
-                                None,
-                                false,
-                                tokens,
-                            ),
-                        ));
-                    }
-                    if tasks.len() > 4 && !self.sidebar_revealed_projects.contains(&project.id) {
-                        row_index += 1;
-                        items.push(
-                            ReorderItem::new(
-                                SidebarTreeListItem::Passive,
-                                SidebarRow::new("…")
-                                    .depth(1)
-                                    .on_select(Message::RevealSidebarProjectTasks(
-                                        project.id.clone(),
-                                    ))
-                                    .view(tokens),
-                            )
-                            .draggable(false),
-                        );
-                    } else if tasks.is_empty() {
-                        row_index += 1;
-                        items.push(
-                            ReorderItem::new(
-                                SidebarTreeListItem::Passive,
-                                container(text("还没有对话").size(10).color(colors.faint))
-                                    .padding([4, 30]),
-                            )
-                            .draggable(false),
-                        );
-                    }
-                }
-            }
-        }
-        if self.projects.is_empty() {
-            items.push(
-                ReorderItem::new(
-                    SidebarTreeListItem::Passive,
-                    container(text("暂无项目").size(12).color(colors.faint)).padding([6, 8]),
-                )
-                .draggable(false),
-            );
-        }
-        let inbox_header = row![
-            text("收集箱")
-                .size(11)
-                .font(ui_font(font::Weight::Bold))
-                .color(colors.faint)
-                .width(Length::Fill),
-            IconButton::new(
-                if self.sidebar_inbox_expanded() {
-                    "折叠收集箱"
-                } else {
-                    "展开收集箱"
-                },
-                Icon::Nodes,
-            )
-            .on_press(Message::ToggleSidebarInbox)
-            .size(ControlSize::Small)
-            .view(tokens),
-            IconButton::new("新对话", Icon::Add)
-                .on_press(Message::OpenSidebarInboxDraft)
-                .size(ControlSize::Small)
-                .view(tokens),
-        ]
-        .spacing(2)
-        .align_y(Alignment::Center);
-        items.push(
-            ReorderItem::new(
-                SidebarTreeListItem::Node(SidebarTreeNode::Inbox),
-                inbox_header,
-            )
-            .draggable(false)
-            .drop_target(true),
-        );
-        if self.sidebar_inbox_expanded() {
-            let tasks = self.sidebar_project_tasks(None);
-            let visible = self.sidebar_visible_tasks(&tasks, self.sidebar_inbox_revealed);
-            for (task, depth) in visible {
-                items.push(ReorderItem::new(
-                    SidebarTreeListItem::Node(SidebarTreeNode::Task(task.id.clone())),
-                    self.sidebar_task_row(task, depth as u16, None, false, tokens),
-                ));
-            }
-            if tasks.len() > 4 && !self.sidebar_inbox_revealed {
-                items.push(
-                    ReorderItem::new(
-                        SidebarTreeListItem::Passive,
-                        SidebarRow::new("…")
-                            .depth(1)
-                            .on_select(Message::RevealSidebarInboxTasks)
-                            .view(tokens),
-                    )
-                    .draggable(false),
-                );
-            } else if tasks.is_empty() {
-                items.push(
-                    ReorderItem::new(
-                        SidebarTreeListItem::Passive,
-                        container(text("没有未绑定的对话").size(10).color(colors.faint))
-                            .padding([4, 30]),
-                    )
-                    .draggable(false),
-                );
-            }
-        }
-        let tree = ReorderList::new(items, |item| match item {
-            SidebarTreeListItem::Node(SidebarTreeNode::Project(project_id)) => {
-                Message::ToggleSidebarProject(project_id)
-            }
-            SidebarTreeListItem::Node(SidebarTreeNode::Task(task_id)) => {
-                Message::SelectTask(task_id)
-            }
-            SidebarTreeListItem::Node(SidebarTreeNode::Inbox) => Message::ToggleSidebarInbox,
-            _ => Message::SidebarTreeInteraction,
-        })
-        .on_tree_drop(|source, intent| match (source, intent.target) {
-            (SidebarTreeListItem::Node(source), SidebarTreeListItem::Node(target)) => {
-                Message::SidebarTreeDrop {
-                    source,
-                    target,
-                    position: intent.position.into(),
-                }
-            }
-            _ => Message::SidebarTreeInteraction,
-        })
-        .spacing(1.0)
-        .indicator(colors.accent)
-        .view();
-        let mut content = column![header, tree].spacing(2).width(Length::Fill);
-        if !self.archived_projects.is_empty() {
-            let mut archived = SidebarSection::new("已归档").count(self.archived_projects.len());
-            for project in &self.archived_projects {
-                archived = archived.push(
-                    SidebarRow::new(format!("恢复 · {}", project.name))
-                        .leading(icon(Icon::Folder, 14.0, colors.faint))
-                        .on_select(Message::RestoreProject(project.id.clone()))
-                        .view(tokens),
-                );
-            }
-            content = content.push(archived.view(tokens));
-        }
-        content.into()
-    }
-
-    fn unified_conversations_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let mut tasks = self
-            .task_move_candidates
-            .iter()
-            .filter(|task| !task.archived)
-            .collect::<Vec<_>>();
-        tasks.sort_by(|left, right| {
-            right
-                .pinned
-                .cmp(&left.pinned)
-                .then_with(|| right.created_at.cmp(&left.created_at))
-                .then_with(|| left.sort_order.cmp(&right.sort_order))
-        });
-        let empty = tasks.is_empty();
-        let mut section = SidebarSection::new("会话");
-        for task in tasks {
-            let project_name = task
-                .project_id
-                .as_ref()
-                .and_then(|project_id| {
-                    self.projects
-                        .iter()
-                        .find(|project| &project.id == project_id)
-                })
-                .map(|project| project.name.as_str())
-                .unwrap_or("收集箱");
-            section =
-                section.push(self.sidebar_task_row(task, 0, Some(project_name), true, tokens));
-        }
-        if empty {
-            section = section.push(text("还没有会话").size(11).color(colors.faint));
-        }
-        section.view(tokens)
-    }
-
     fn sidebar_project_tasks<'a>(
         &'a self,
         project_id: Option<&ProjectId>,
@@ -30575,172 +28384,7 @@ impl DesktopProgram {
             .collect()
     }
 
-    fn sidebar_task_row(
-        &self,
-        task: &ProductTask,
-        depth: u16,
-        project_label: Option<&str>,
-        selects_row: bool,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let task_id = task.id.clone();
-        let popup_id = task.id.clone();
-        let menu_id = task.id.clone();
-        let pin_id = task.id.clone();
-        let archive_id = task.id.clone();
-        let archive_cancel_id = task.id.clone();
-        let merge_id = task.id.clone();
-        let archive_pending = self.sidebar_pending_task_archive.as_ref() == Some(&task.id);
-        let active = Some(&task.id) == self.selected_task.as_ref();
-        let child_count = self
-            .task_move_candidates
-            .iter()
-            .filter(|candidate| {
-                candidate.parent_id.as_ref() == Some(&task.id) && !candidate.archived
-            })
-            .count();
-        let runtime_phase = self
-            .conversation_status_entries
-            .iter()
-            .find(|entry| entry.task_id == task.id)
-            .map(|entry| entry.runtime_phase.as_str())
-            .unwrap_or("idle");
-        let show_activity = runtime_phase != "idle"
-            || matches!(
-                task.status,
-                ProductTaskStatus::Waiting
-                    | ProductTaskStatus::Blocked
-                    | ProductTaskStatus::Done
-                    | ProductTaskStatus::Cancelled
-            );
-        let activity_color = match runtime_phase {
-            "waiting_approval" | "waiting_interaction" => colors.warning,
-            phase if runtime_phase_is_processing(phase) => colors.accent,
-            _ if task.status == ProductTaskStatus::Done => colors.muted,
-            _ if matches!(
-                task.status,
-                ProductTaskStatus::Blocked | ProductTaskStatus::Cancelled
-            ) =>
-            {
-                colors.danger
-            }
-            _ => colors.muted,
-        };
-        let has_worktree = self
-            .application
-            .task_worktree(&task.id)
-            .is_ok_and(|worktree| worktree.is_some());
-        let mut tools = row![].spacing(1);
-        if has_worktree {
-            tools = tools.push(
-                IconButton::new("合并并删除工作树", Icon::Nodes)
-                    .on_press(Message::SidebarRequestTaskWorktreeMerge(merge_id))
-                    .size(ControlSize::Small)
-                    .view(tokens),
-            );
-        }
-        tools = tools.push(
-            IconButton::new(
-                if task.pinned {
-                    "取消置顶"
-                } else {
-                    "置顶"
-                },
-                Icon::Nodes,
-            )
-            .on_press(Message::SidebarToggleTaskPinned(pin_id))
-            .selected(task.pinned)
-            .size(ControlSize::Small)
-            .view(tokens),
-        );
-        if archive_pending {
-            tools = tools.push(
-                button(text("确认").size(10).color(colors.danger))
-                    .on_press(Message::SidebarArchiveTask(archive_id))
-                    .height(22)
-                    .padding([0, 5])
-                    .style(button_style(tokens, ButtonKind::Subtle)),
-            );
-        } else {
-            tools = tools.push(
-                IconButton::new("归档", Icon::Close)
-                    .on_press(Message::SidebarArchiveTask(archive_id))
-                    .size(ControlSize::Small)
-                    .view(tokens),
-            );
-        }
-        let mut row = SidebarRow::new(if task.title.trim().is_empty() {
-            "未命名对话".to_owned()
-        } else {
-            task.title.clone()
-        })
-        .depth(depth)
-        .tools(tools)
-        .state(if active {
-            SidebarRowState::Active
-        } else {
-            SidebarRowState::Idle
-        });
-        if selects_row {
-            row = row.on_select(Message::SelectTask(task_id));
-        }
-        let task_meta = if let Some(project) = project_label {
-            Some(project.to_owned())
-        } else {
-            let mut parts = Vec::new();
-            if task.parent_id.is_some() {
-                parts.push("子任务".to_owned());
-            }
-            if task.status == ProductTaskStatus::Blocked {
-                parts.push("阻塞".to_owned());
-            }
-            if !task.depends_on.is_empty() {
-                parts.push(format!("{} 依赖", task.depends_on.len()));
-            }
-            if child_count > 0 {
-                parts.push(format!("{child_count} 子任务"));
-            }
-            (!parts.is_empty()).then(|| parts.join(" · "))
-        };
-        let metadata: Element<'static, Message> = task_meta
-            .as_ref()
-            .map(|value| text(value.clone()).size(9).color(colors.faint).into())
-            .unwrap_or_else(|| space().width(Length::Shrink).into());
-        if show_activity && !active {
-            let activity: Element<'static, Message> = match runtime_phase {
-                phase if runtime_phase_is_processing(phase) => {
-                    spinner_icon(self.sidebar_activity_phase, 12.0, activity_color)
-                }
-                "waiting_approval" | "waiting_interaction" => {
-                    icon(Icon::About, 12.0, activity_color)
-                }
-                _ if task.status == ProductTaskStatus::Done => {
-                    icon(Icon::Appearance, 12.0, activity_color)
-                }
-                _ => icon(Icon::About, 12.0, activity_color),
-            };
-            row = row.trailing(
-                row![metadata, activity]
-                    .spacing(4)
-                    .align_y(Alignment::Center),
-            );
-        } else if task_meta.is_some() {
-            row = row.trailing(metadata);
-        }
-        let row = row
-            .on_right_press(move |anchor| Message::OpenSidebarMenuAt {
-                target: SidebarMenuTarget::Task(menu_id.clone()),
-                anchor,
-            })
-            .on_middle_press(move |_| Message::OpenSidebarTaskPopup(popup_id.clone()))
-            .view(tokens);
-        mouse_area(row)
-            .on_exit(Message::CancelSidebarTaskArchive(archive_cancel_id))
-            .into()
-    }
-
-    fn sidebar_search_targets(&self) -> Vec<SidebarSearchTarget> {
+fn sidebar_search_targets(&self) -> Vec<SidebarSearchTarget> {
         let query = self.sidebar_search_query.trim().to_ascii_lowercase();
         if query.is_empty() {
             return Vec::new();
@@ -30772,6407 +28416,6 @@ impl DesktopProgram {
         targets
     }
 
-    fn sidebar_search_results(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let mut section = SidebarSection::new("搜索结果");
-        let mut count = 0usize;
-        for (index, target) in self.sidebar_search_targets().into_iter().enumerate() {
-            let active = index == self.sidebar_search_selection;
-            let row = match target {
-                SidebarSearchTarget::Project(project_id) => {
-                    let Some(project) = self
-                        .projects
-                        .iter()
-                        .find(|project| project.id == project_id)
-                    else {
-                        continue;
-                    };
-                    SidebarRow::new(project.name.clone())
-                        .leading(icon(Icon::Folder, 14.0, colors.muted))
-                        .state(if active {
-                            SidebarRowState::Active
-                        } else {
-                            SidebarRowState::Idle
-                        })
-                        .on_select(Message::SelectProject(project.id.clone()))
-                        .view(tokens)
-                }
-                SidebarSearchTarget::Task(task_id) => {
-                    let Some(task) = self
-                        .task_move_candidates
-                        .iter()
-                        .find(|task| task.id == task_id)
-                    else {
-                        continue;
-                    };
-                    let project = task
-                        .project_id
-                        .as_ref()
-                        .and_then(|project_id| {
-                            self.projects
-                                .iter()
-                                .find(|project| &project.id == project_id)
-                        })
-                        .map(|project| project.name.clone())
-                        .unwrap_or_else(|| "收集箱".to_owned());
-                    SidebarRow::new(task.title.clone())
-                        .trailing(text(project).size(9).color(colors.faint))
-                        .state(if active {
-                            SidebarRowState::Active
-                        } else {
-                            SidebarRowState::Idle
-                        })
-                        .on_select(Message::SelectTask(task.id.clone()))
-                        .view(tokens)
-                }
-            };
-            section = section
-                .push(mouse_area(row).on_enter(Message::SidebarSearchSelectionChanged(index)));
-            count += 1;
-        }
-        if count == 0 {
-            section = section.push(text("没有匹配结果").size(11).color(colors.faint));
-        }
-        section.count(count).view(tokens)
-    }
-
-    fn sidebar_context_menu(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let menu = self.sidebar_menu.as_ref().expect("sidebar menu is open");
-        let pending = menu.pending.as_ref();
-        let geometry = self.workspace.viewport_geometry();
-        let action = |label: &'static str, icon: Icon, value: SidebarMenuAction| {
-            ActionMenuItem::new(label)
-                .leading(icon)
-                .on_press(Message::SidebarMenu(ContextMenuEvent::Select(value)))
-                .view(tokens)
-        };
-        let mut content = column![].spacing(1).width(Length::Fill);
-        let item_count = match &menu.target {
-            SidebarMenuTarget::AddProject => {
-                content = content
-                    .push(action(
-                        "使用本地文件夹",
-                        Icon::Folder,
-                        SidebarMenuAction::AddLocalFolder,
-                    ))
-                    .push(action(
-                        "从 GitHub clone",
-                        Icon::Nodes,
-                        SidebarMenuAction::CloneRepository,
-                    ))
-                    .push(action(
-                        "创建空分类",
-                        Icon::Add,
-                        SidebarMenuAction::CreateCategory,
-                    ));
-                3
-            }
-            SidebarMenuTarget::Project(project_id) => {
-                let project = self
-                    .projects
-                    .iter()
-                    .find(|project| &project.id == project_id);
-                let has_workspace = project
-                    .and_then(|project| project.workspace_path.as_ref())
-                    .is_some();
-                content = content
-                    .push(action(
-                        "进入项目",
-                        Icon::Workspace,
-                        SidebarMenuAction::OpenProject,
-                    ))
-                    .push(action(
-                        "在弹出窗口中创建对话",
-                        Icon::Add,
-                        SidebarMenuAction::OpenProjectPopup,
-                    ))
-                    .push(action(
-                        if project.is_some_and(|project| project.pinned) {
-                            "取消置顶"
-                        } else {
-                            "置顶项目"
-                        },
-                        Icon::Nodes,
-                        SidebarMenuAction::ToggleProjectPinned,
-                    ))
-                    .push(
-                        ActionMenuItem::new("在文件管理器中打开")
-                            .leading(Icon::Folder)
-                            .disabled(!has_workspace)
-                            .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
-                                SidebarMenuAction::OpenProjectFileManager,
-                            )))
-                            .view(tokens),
-                    )
-                    .push(
-                        ActionMenuItem::new("在 VS Code 中打开")
-                            .leading(Icon::Workspace)
-                            .disabled(!has_workspace)
-                            .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
-                                SidebarMenuAction::OpenProjectCodeEditor,
-                            )))
-                            .view(tokens),
-                    )
-                    .push(action(
-                        "重命名项目",
-                        Icon::About,
-                        SidebarMenuAction::RenameProject,
-                    ))
-                    .push(
-                        ActionMenuItem::new(
-                            if pending == Some(&SidebarMenuAction::ArchiveProjectConversations) {
-                                "再次点击确认归档"
-                            } else {
-                                "归档所有对话"
-                            },
-                        )
-                        .leading(Icon::Close)
-                        .danger(true)
-                        .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
-                            SidebarMenuAction::ArchiveProjectConversations,
-                        )))
-                        .view(tokens),
-                    )
-                    .push(
-                        ActionMenuItem::new(
-                            if pending == Some(&SidebarMenuAction::RemoveProject) {
-                                "再次点击确认移除"
-                            } else {
-                                "移除项目"
-                            },
-                        )
-                        .leading(Icon::Close)
-                        .danger(true)
-                        .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
-                            SidebarMenuAction::RemoveProject,
-                        )))
-                        .view(tokens),
-                    );
-                8
-            }
-            SidebarMenuTarget::Task(task_id) => {
-                let task = self
-                    .task_move_candidates
-                    .iter()
-                    .find(|task| &task.id == task_id);
-                let has_worktree = self
-                    .application
-                    .task_worktree(task_id)
-                    .is_ok_and(|value| value.is_some());
-                content = content
-                    .push(action(
-                        "在弹出窗口继续",
-                        Icon::Workspace,
-                        SidebarMenuAction::OpenTaskPopup,
-                    ))
-                    .push(action(
-                        "在弹出窗口询问",
-                        Icon::Add,
-                        SidebarMenuAction::AskTaskPopup,
-                    ))
-                    .push(action(
-                        if task.is_some_and(|task| task.pinned) {
-                            "取消置顶"
-                        } else {
-                            "置顶"
-                        },
-                        Icon::Nodes,
-                        SidebarMenuAction::ToggleTaskPinned,
-                    ));
-                if has_worktree {
-                    content = content.push(
-                        ActionMenuItem::new(
-                            if pending == Some(&SidebarMenuAction::MergeTaskWorktree) {
-                                "再次点击确认合并并删除"
-                            } else {
-                                "合并并删除"
-                            },
-                        )
-                        .leading(Icon::Nodes)
-                        .danger(true)
-                        .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
-                            SidebarMenuAction::MergeTaskWorktree,
-                        )))
-                        .view(tokens),
-                    );
-                }
-                content = content.push(
-                    ActionMenuItem::new(if pending == Some(&SidebarMenuAction::ArchiveTask) {
-                        "再次点击确认归档"
-                    } else {
-                        "归档"
-                    })
-                    .leading(Icon::Close)
-                    .danger(true)
-                    .on_press(Message::SidebarMenu(ContextMenuEvent::Select(
-                        SidebarMenuAction::ArchiveTask,
-                    )))
-                    .view(tokens),
-                );
-                if has_worktree {
-                    5
-                } else {
-                    4
-                }
-            }
-        };
-        AnchoredActionMenu::new(
-            content,
-            AnchoredMenuPosition::new(menu.anchor).placement(AnchoredMenuPlacement::BottomStart),
-            Size::new(geometry.logical_size.0, geometry.logical_size.1),
-            Message::SidebarMenu(ContextMenuEvent::Dismiss),
-            Message::SidebarMenu(ContextMenuEvent::Interaction),
-        )
-        .menu_size(220.0, item_count as f32 * 29.0 + 8.0)
-        .view(tokens)
-    }
-
-    fn titlebar_action_menu(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let geometry = self.workspace.viewport_geometry();
-        let mut content = column![].spacing(1).width(Length::Fill);
-        let mut item_count = 0;
-        let item = |label: &'static str, icon: Icon, action: TitlebarMenuAction| {
-            ActionMenuItem::new(label)
-                .leading(icon)
-                .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(action)))
-                .view(tokens)
-        };
-        if self.selected_task.is_some() {
-            content = content
-                .push(item(
-                    "返回任务列表",
-                    Icon::ArrowLeft,
-                    TitlebarMenuAction::BackToTaskList,
-                ))
-                .push(item(
-                    "在弹出窗口继续",
-                    Icon::Workspace,
-                    TitlebarMenuAction::OpenTaskPopup,
-                ))
-                .push(item(
-                    "在弹出窗口询问",
-                    Icon::Add,
-                    TitlebarMenuAction::AskTaskPopup,
-                ))
-                .push(item(
-                    "浏览器",
-                    Icon::Eye,
-                    TitlebarMenuAction::OpenTaskBrowser,
-                ));
-            item_count += 4;
-        }
-        if let Some((_, active_item)) = self.integrated_product_shell_pane() {
-            let closable = active_item.is_some_and(|item_id| {
-                self.workspace_items
-                    .iter()
-                    .any(|item| item.id == item_id && item.capabilities.closable)
-            });
-            content = content
-                .push(item(
-                    "左右分栏",
-                    Icon::Sidebar,
-                    TitlebarMenuAction::SplitHorizontal,
-                ))
-                .push(item(
-                    "上下分栏",
-                    Icon::Nodes,
-                    TitlebarMenuAction::SplitVertical,
-                ))
-                .push(
-                    ActionMenuItem::new("关闭当前页")
-                        .leading(Icon::Close)
-                        .disabled(!closable)
-                        .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
-                            TitlebarMenuAction::CloseCurrentItem,
-                        )))
-                        .view(tokens),
-                );
-            item_count += 3;
-        }
-        content = content
-            .push(
-                ActionMenuItem::new("打开命令面板")
-                    .leading(Icon::Search)
-                    .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
-                        TitlebarMenuAction::OpenCommandPalette,
-                    )))
-                    .view(tokens),
-            )
-            .push(
-                ActionMenuItem::new("打开会话状态")
-                    .leading(Icon::Nodes)
-                    .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
-                        TitlebarMenuAction::OpenConversationStatus,
-                    )))
-                    .view(tokens),
-            );
-        item_count += 2;
-        let trailing_inset = if cfg!(target_os = "macos") {
-            12.0
-        } else {
-            144.0
-        };
-        let anchor = Point::new((geometry.logical_size.0 - trailing_inset).max(0.0), 34.0);
-        AnchoredActionMenu::new(
-            content,
-            AnchoredMenuPosition::new(anchor).placement(AnchoredMenuPlacement::BottomEnd),
-            Size::new(geometry.logical_size.0, geometry.logical_size.1),
-            Message::TitlebarMenu(ContextMenuEvent::Dismiss),
-            Message::TitlebarMenu(ContextMenuEvent::Interaction),
-        )
-        .menu_size(220.0, item_count as f32 * 29.0 + 8.0)
-        .view(tokens)
-    }
-
-    fn automations_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let back = SidebarRow::new("返回项目")
-            .leading(icon(Icon::ArrowLeft, 15.0, colors.text))
-            .on_select(Message::CloseAutomations)
-            .view(tokens);
-        let mut section = SidebarSection::new("自动化").count(self.automations.len());
-        for workflow in &self.automations {
-            let label = if workflow.enabled {
-                format!("{} · 已启用", workflow.name)
-            } else {
-                workflow.name.clone()
-            };
-            section = section.push(
-                SidebarRow::new(label)
-                    .leading(icon(Icon::Nodes, 14.0, colors.muted))
-                    .state(
-                        if self.selected_automation.as_deref() == Some(workflow.id.as_str()) {
-                            SidebarRowState::Active
-                        } else {
-                            SidebarRowState::Idle
-                        },
-                    )
-                    .on_select(Message::SelectAutomation(workflow.id.clone()))
-                    .view(tokens),
-            );
-        }
-        let footer = SidebarFooter::new()
-            .push(
-                SidebarFooterButton::new("刷新", Icon::Workspace)
-                    .on_press(Message::RefreshAutomations)
-                    .view(tokens),
-            )
-            .push(
-                SidebarFooterButton::new("新建", Icon::Add)
-                    .on_press(Message::CreateAutomation)
-                    .view(tokens),
-            )
-            .view(colors);
-        SidebarFrame::new(section.view(tokens))
-            .top(back)
-            .footer(footer)
-            .gap(12.0)
-            .view(colors)
-    }
-
-    fn automations_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        if self.automations.is_empty() {
-            return container(
-                EmptyState::new("还没有自动化")
-                    .message("新建一个工作流后，可在原生节点图中检查并发布。")
-                    .icon(Icon::Nodes)
-                    .action(
-                        button(text("新建自动化").size(13))
-                            .on_press(Message::CreateAutomation)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    )
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        }
-        let Some(workflow) = self.selected_automation_workflow() else {
-            return container(
-                EmptyState::new("选择自动化")
-                    .message("从左侧选择一个工作流查看节点图。")
-                    .icon(Icon::Nodes)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        };
-
-        let version = workflow
-            .published_version_id
-            .as_ref()
-            .map(|_| "已发布")
-            .unwrap_or("草稿");
-        let state = if workflow.enabled {
-            "已启用"
-        } else {
-            "未启用"
-        };
-        let name = Input::new("自动化名称", workflow.name.clone())
-            .on_input(Message::AutomationNameChanged)
-            .view(tokens);
-        let mut save_draft =
-            button(text("保存草稿").size(12)).style(button_style(tokens, ButtonKind::Subtle));
-        if !workflow.name.trim().is_empty() {
-            save_draft = save_draft.on_press(Message::SaveAutomationDraft);
-        }
-        let mut publish =
-            button(text("发布").size(12)).style(button_style(tokens, ButtonKind::Primary));
-        publish = publish.on_press(Message::PublishAutomation);
-        let mut run =
-            button(text("运行").size(12)).style(button_style(tokens, ButtonKind::Primary));
-        if workflow.published_version_id.is_some() {
-            run = run.on_press(Message::RunAutomation);
-        }
-        let mut toggle = button(text(if workflow.enabled { "停用" } else { "启用" }).size(12))
-            .style(button_style(tokens, ButtonKind::Subtle));
-        if workflow.enabled || workflow.published_version_id.is_some() {
-            toggle = toggle.on_press(Message::ToggleAutomation);
-        }
-        let delete = button(text("删除").size(12).color(colors.danger))
-            .on_press(Message::DeleteAutomation)
-            .style(button_style(tokens, ButtonKind::Text));
-        let selection = match self.automation_selection.as_ref() {
-            Some(GraphSelection::Node(node)) => format!("节点 · {node}"),
-            Some(GraphSelection::Port { node, port }) => format!("端口 · {node} / {port}"),
-            Some(GraphSelection::Edge(edge)) => format!("连线 · {edge}"),
-            None => "未选择".to_owned(),
-        };
-        let toolbar = row![
-            column![
-                name,
-                text(format!("{version} · {state} · {selection}"))
-                    .size(11)
-                    .color(colors.muted),
-            ]
-            .spacing(3)
-            .width(Length::Fill),
-            save_draft,
-            publish,
-            run,
-            toggle,
-            delete,
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .padding(Padding::from([10, 14]));
-        let add_node = |label: &'static str, kind: &'static str| {
-            button(text(label).size(11))
-                .on_press(Message::AddAutomationNode(kind.to_owned()))
-                .style(button_style(tokens, ButtonKind::Subtle))
-        };
-        let selection_deletable = match self.automation_selection.as_ref() {
-            Some(GraphSelection::Node(node_id)) => workflow
-                .draft
-                .nodes
-                .iter()
-                .any(|node| node.id == node_id.as_str() && node.kind != "trigger"),
-            Some(GraphSelection::Edge(_)) => true,
-            Some(GraphSelection::Port { .. }) | None => false,
-        };
-        let mut palette = row![
-            text("添加节点").size(11).color(colors.muted),
-            add_node("Agent", "agent"),
-            add_node("工具", "tool"),
-            add_node("逻辑", "logic"),
-            add_node("人工确认", "human"),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .padding(Padding::from([6, 14]));
-        if selection_deletable {
-            palette = palette.push(
-                button(text("删除所选").size(11).color(colors.danger))
-                    .on_press(Message::DeleteAutomationSelection)
-                    .style(button_style(tokens, ButtonKind::Text)),
-            );
-        }
-        let graph = GraphCanvas::owned(
-            "lilia-automation",
-            self.automation_graph.clone(),
-            self.automation_viewport,
-            self.automation_selection.clone(),
-            Message::AutomationGraph,
-            tokens,
-        )
-        .view();
-        let scope_editor = self.automation_scope_editor(workflow, tokens);
-        let selection_details: Element<'static, Message> = match self.automation_selection.as_ref()
-        {
-            Some(GraphSelection::Node(node_id)) => workflow
-                .draft
-                .nodes
-                .iter()
-                .find(|node| node.id == node_id.as_str())
-                .map(|node| {
-                    let title =
-                        Input::new("节点名称", self.automation_node_inspector.title.clone())
-                            .on_input(Message::AutomationNodeTitleChanged)
-                            .view(tokens);
-                    let typed_config = self.automation_node_config_editor(node, tokens);
-                    let config =
-                        Input::new("高级 JSON", self.automation_node_inspector.config.clone())
-                            .on_input(Message::AutomationNodeConfigChanged)
-                            .view(tokens);
-                    let mut save = button(text("保存节点").size(11))
-                        .style(button_style(tokens, ButtonKind::Primary));
-                    if !self.automation_node_inspector.title.trim().is_empty() {
-                        save = save.on_press(Message::SaveAutomationNodeInspector);
-                    }
-                    Card::new(
-                        column![
-                            text(format!(
-                                "{} · {}",
-                                automation_node_kind_label(&node.kind),
-                                node.id
-                            ))
-                            .size(10)
-                            .color(colors.muted),
-                            title,
-                            typed_config,
-                            config,
-                            save,
-                        ]
-                        .spacing(7),
-                    )
-                    .title("所选节点")
-                    .view(tokens)
-                })
-                .unwrap_or_else(|| {
-                    Card::new(text("所选节点已不存在").size(11).color(colors.muted))
-                        .title("所选节点")
-                        .view(tokens)
-                }),
-            Some(GraphSelection::Edge(edge_id)) => {
-                Card::new(text(format!("连线 {edge_id}")).size(11).color(colors.text))
-                    .title("所选连线")
-                    .view(tokens)
-            }
-            Some(GraphSelection::Port { node, port }) => {
-                Card::new(text(format!("{node} · {port}")).size(11).color(colors.text))
-                    .title("所选端口")
-                    .view(tokens)
-            }
-            None => Card::new(
-                text("选择节点或连线以查看详情")
-                    .size(11)
-                    .color(colors.muted),
-            )
-            .title("检查器")
-            .view(tokens),
-        };
-        let mut run_items = column![].spacing(7).width(Length::Fill);
-        if self.automation_runs.is_empty() {
-            run_items = run_items.push(text("暂无运行记录").size(11).color(colors.muted));
-        } else {
-            for run in self.automation_runs.iter().take(12) {
-                let status_color = match run.status {
-                    AutomationRunStatus::Failed => colors.danger,
-                    AutomationRunStatus::WaitingUser => colors.warning,
-                    AutomationRunStatus::Succeeded => colors.success,
-                    _ => colors.muted,
-                };
-                let mut item = column![
-                    row![
-                        text(automation_run_status_label(run.status))
-                            .size(11)
-                            .color(status_color),
-                        text(run.trigger_kind.clone()).size(10).color(colors.muted),
-                    ]
-                    .spacing(6),
-                    text(run.id.clone()).size(9).color(colors.faint),
-                ]
-                .spacing(3);
-                if let Some(error) = &run.error {
-                    item = item.push(text(error.clone()).size(10).color(colors.danger));
-                }
-                let kind = if self.selected_automation_run.as_deref() == Some(run.id.as_str()) {
-                    ButtonKind::Subtle
-                } else {
-                    ButtonKind::Text
-                };
-                run_items = run_items.push(
-                    button(item)
-                        .on_press(Message::SelectAutomationRun(run.id.clone()))
-                        .width(Length::Fill)
-                        .style(button_style(tokens, kind)),
-                );
-            }
-        }
-        let run_detail: Element<'static, Message> = if let Some(detail) =
-            &self.automation_run_detail
-        {
-            let mut nodes = column![text(format!(
-                "{} · {}",
-                automation_run_status_label(detail.run.status),
-                detail.run.id
-            ))
-            .size(10)
-            .color(colors.muted)]
-            .spacing(5);
-            for node in &detail.nodes {
-                let color = match node.status {
-                    AutomationRunStatus::Failed => colors.danger,
-                    AutomationRunStatus::WaitingUser => colors.warning,
-                    AutomationRunStatus::Succeeded => colors.success,
-                    _ => colors.muted,
-                };
-                nodes = nodes.push(
-                    row![
-                        text(node.node_id.clone()).size(10).color(colors.text),
-                        text(automation_run_status_label(node.status))
-                            .size(10)
-                            .color(color),
-                    ]
-                    .spacing(6),
-                );
-            }
-            if matches!(
-                detail.run.status,
-                AutomationRunStatus::Running | AutomationRunStatus::WaitingUser
-            ) {
-                nodes = nodes.push(
-                    button(text("取消运行").size(11))
-                        .on_press(Message::CancelAutomation)
-                        .style(button_style(tokens, ButtonKind::Danger)),
-                );
-            }
-            if let Some(waiting) = waiting_human_node(detail) {
-                let response = Input::new("回复（可选）", self.automation_human_response.clone())
-                    .on_input(Message::AutomationHumanResponseChanged)
-                    .view(tokens);
-                nodes = nodes
-                    .push(text(format!("{} 正在等待确认", waiting.node_id)).size(10))
-                    .push(response)
-                    .push(
-                        button(text("确认并继续").size(11))
-                            .on_press(Message::ResumeAutomation)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    );
-            } else if waiting_agent_node(detail).is_some() {
-                nodes = nodes.push(
-                    text("Agent 正在任务时间线中执行；完成后会自动继续。")
-                        .size(10)
-                        .color(colors.muted),
-                );
-            }
-            Card::new(nodes).title("运行详情").view(tokens)
-        } else {
-            Card::new(
-                text("选择一条运行记录查看节点状态")
-                    .size(11)
-                    .color(colors.muted),
-            )
-            .title("运行详情")
-            .view(tokens)
-        };
-        let inspector = container(
-            scrollable(
-                column![
-                    scope_editor,
-                    selection_details,
-                    run_detail,
-                    Card::new(run_items).title("运行历史").view(tokens),
-                ]
-                .spacing(10),
-            )
-            .direction(vertical_scrollbar())
-            .height(Length::Fill),
-        )
-        .width(Length::Fixed(280.0))
-        .height(Length::Fill)
-        .padding(Padding::from([8, 10]));
-        let workspace = row![graph, inspector]
-            .width(Length::Fill)
-            .height(Length::Fill);
-        let mut body = column![toolbar, palette, workspace]
-            .width(Length::Fill)
-            .height(Length::Fill);
-        if let Some(error) = &self.automation_error {
-            body = body.push(
-                container(text(error.clone()).size(11).color(colors.danger))
-                    .padding(Padding::from([8, 14]))
-                    .width(Length::Fill),
-            );
-        }
-        container(body)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn automation_scope_editor(
-        &self,
-        workflow: &AutomationWorkflow,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let scope = &workflow.scope;
-        let inbox = button(
-            text(if scope.include_inbox {
-                "收集箱 · 已包含"
-            } else {
-                "收集箱 · 未包含"
-            })
-            .size(10),
-        )
-        .on_press(Message::ToggleAutomationScopeInbox)
-        .style(button_style(
-            tokens,
-            if scope.include_inbox {
-                ButtonKind::Subtle
-            } else {
-                ButtonKind::Text
-            },
-        ));
-        let mut projects = column![text("项目").size(10).color(colors.muted)].spacing(4);
-        for project in &self.projects {
-            let active = scope
-                .project_ids
-                .iter()
-                .any(|project_id| project_id == project.id.as_str());
-            projects = projects.push(
-                button(text(project.name.clone()).size(10))
-                    .on_press(Message::ToggleAutomationScopeValue {
-                        field: "project".to_owned(),
-                        value: project.id.as_str().to_owned(),
-                    })
-                    .style(button_style(
-                        tokens,
-                        if active {
-                            ButtonKind::Subtle
-                        } else {
-                            ButtonKind::Text
-                        },
-                    )),
-            );
-        }
-        let mut statuses = row![].spacing(4);
-        for status in ["waiting", "running", "blocked", "done"] {
-            let active = scope.task_statuses.iter().any(|item| item == status);
-            statuses = statuses.push(
-                button(text(automation_scope_task_status_label(status)).size(9))
-                    .on_press(Message::ToggleAutomationScopeValue {
-                        field: "task-status".to_owned(),
-                        value: status.to_owned(),
-                    })
-                    .style(button_style(
-                        tokens,
-                        if active {
-                            ButtonKind::Subtle
-                        } else {
-                            ButtonKind::Text
-                        },
-                    )),
-            );
-        }
-        let backend_active = scope
-            .backends
-            .iter()
-            .any(|backend| backend == "native-agentkit");
-        let backend = button(text("Native AgentKit").size(9))
-            .on_press(Message::ToggleAutomationScopeValue {
-                field: "backend".to_owned(),
-                value: "native-agentkit".to_owned(),
-            })
-            .style(button_style(
-                tokens,
-                if backend_active {
-                    ButtonKind::Subtle
-                } else {
-                    ButtonKind::Text
-                },
-            ));
-        let mut events = column![text("事件 kind").size(10).color(colors.muted)].spacing(4);
-        for event_kind in [
-            "task_created",
-            "task_status_changed",
-            "task_updated",
-            "timeline_event",
-            "todo_changed",
-            "interaction_request",
-        ] {
-            let active = scope.event_kinds.iter().any(|item| item == event_kind);
-            events = events.push(
-                button(text(event_kind).size(9))
-                    .on_press(Message::ToggleAutomationScopeValue {
-                        field: "event-kind".to_owned(),
-                        value: event_kind.to_owned(),
-                    })
-                    .style(button_style(
-                        tokens,
-                        if active {
-                            ButtonKind::Subtle
-                        } else {
-                            ButtonKind::Text
-                        },
-                    )),
-            );
-        }
-        Card::new(
-            column![
-                inbox,
-                projects,
-                text("任务状态").size(10).color(colors.muted),
-                statuses,
-                text("Agent 后端").size(10).color(colors.muted),
-                backend,
-                events,
-            ]
-            .spacing(6),
-        )
-        .title("作用域")
-        .view(tokens)
-    }
-
-    fn automation_node_config_editor(
-        &self,
-        node: &AutomationNode,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let config = &self.automation_node_inspector.config;
-        let input = |label: &'static str, field: &'static str| {
-            Input::new(label, automation_config_string(config, field))
-                .on_input(move |value| Message::AutomationNodeConfigFieldChanged {
-                    field: field.to_owned(),
-                    value,
-                })
-                .view(tokens)
-        };
-        let cycle = |label: &str, field: &'static str| {
-            button(
-                text(format!(
-                    "{label} · {}",
-                    automation_config_string(config, field)
-                ))
-                .size(10),
-            )
-            .on_press(Message::CycleAutomationNodeConfig(field.to_owned()))
-            .style(button_style(tokens, ButtonKind::Subtle))
-        };
-        let mut fields = column![].spacing(6);
-        match node.kind.as_str() {
-            "trigger" => fields = fields.push(cycle("触发类型", "triggerKind")),
-            "agent" => {
-                fields = fields
-                    .push(
-                        button(
-                            text(if automation_config_boolean(config, "createTask") {
-                                "新建任务 · 是"
-                            } else {
-                                "新建任务 · 否"
-                            })
-                            .size(10),
-                        )
-                        .on_press(Message::ToggleAutomationNodeConfigBoolean(
-                            "createTask".to_owned(),
-                        ))
-                        .style(button_style(tokens, ButtonKind::Subtle)),
-                    )
-                    .push(input("Task ID", "taskId"))
-                    .push(input("项目 ID", "projectId"))
-                    .push(input("任务标题", "title"))
-                    .push(
-                        text(format!(
-                            "后端 · {}",
-                            automation_config_string(config, "backend")
-                        ))
-                        .size(10)
-                        .color(tokens.colors.muted),
-                    )
-                    .push(input("模型", "model"))
-                    .push(input("工作目录", "projectCwd"))
-                    .push(input("Prompt", "prompt"))
-                    .push(cycle("权限", "permission"));
-            }
-            "logic" => {
-                let logic = automation_config_string(config, "logic");
-                fields = fields
-                    .push(cycle("逻辑", "logic"))
-                    .push(input("路径", "path"))
-                    .push(input("等于", "equals"));
-                if logic == "switch" {
-                    fields = fields.push(input("分支值（逗号分隔）", "cases"));
-                }
-            }
-            "tool" => {
-                let action = automation_config_string(config, "action");
-                fields = fields.push(cycle("动作", "action"));
-                for field in automation_tool_action_fields(&action) {
-                    fields = if *field == "priority" {
-                        fields.push(cycle("优先级", "priority"))
-                    } else {
-                        fields.push(input(automation_tool_field_label(field), field))
-                    };
-                }
-            }
-            "human" => fields = fields.push(input("提示", "prompt")),
-            _ => {}
-        }
-        fields.into()
-    }
-
-    fn settings_sidebar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let active = self.settings_state.active_tab().as_str();
-        let back = SidebarRow::new("返回")
-            .leading(icon(Icon::ArrowLeft, 15.0, colors.text))
-            .on_select(Message::CloseSettings)
-            .view(tokens);
-        let appearance = SidebarRow::new("外观")
-            .leading(icon(Icon::Appearance, 15.0, colors.text))
-            .state(if active == "appearance" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("appearance")))
-            .view(tokens);
-        let project = SidebarRow::new("项目")
-            .leading(icon(Icon::Folder, 15.0, colors.text))
-            .state(if active == "project" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("project")))
-            .view(tokens);
-        let provider = SidebarRow::new("模型服务")
-            .leading(icon(Icon::Nodes, 15.0, colors.text))
-            .state(if active == "provider" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("provider")))
-            .view(tokens);
-        let agent = SidebarRow::new("Agent")
-            .leading(icon(Icon::Nodes, 15.0, colors.text))
-            .state(if active == "agent" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("agent")))
-            .view(tokens);
-        let quota = SidebarRow::new("用量与额度")
-            .leading(icon(Icon::Chart, 15.0, colors.text))
-            .state(if active == "quota" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("quota")))
-            .view(tokens);
-        let extensions = SidebarRow::new("扩展")
-            .leading(icon(Icon::Nodes, 15.0, colors.text))
-            .state(if active == "extensions" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("extensions")))
-            .view(tokens);
-        let remote = SidebarRow::new("远程控制")
-            .leading(icon(Icon::Nodes, 15.0, colors.text))
-            .state(if active == "remote" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("remote")))
-            .view(tokens);
-        let desktop = SidebarRow::new("桌面")
-            .leading(icon(Icon::Appearance, 15.0, colors.text))
-            .state(if active == "desktop" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("desktop")))
-            .view(tokens);
-        let data = SidebarRow::new("数据迁移")
-            .leading(icon(Icon::Folder, 15.0, colors.text))
-            .state(if active == "data" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("data")))
-            .view(tokens);
-        let about = SidebarRow::new("关于")
-            .leading(icon(Icon::About, 15.0, colors.text))
-            .state(if active == "about" {
-                SidebarRowState::Active
-            } else {
-                SidebarRowState::Idle
-            })
-            .on_select(Message::SelectSettingsTab(SettingsTabId::new("about")))
-            .view(tokens);
-        SidebarFrame::new(
-            column![
-                appearance, project, provider, agent, quota, extensions, remote, desktop, data,
-                about
-            ]
-            .spacing(4),
-        )
-        .top(back)
-        .gap(12.0)
-        .view(colors)
-    }
-
-    fn settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        match self.settings_state.active_tab().as_str() {
-            "project" => self.project_settings_content(tokens),
-            "provider" => self.provider_settings_content(tokens),
-            "agent" => self.agent_settings_content(tokens),
-            "quota" => self.quota_settings_content(tokens),
-            "extensions" => self.extensions_settings_content(tokens),
-            "remote" => self.remote_settings_content(tokens),
-            "desktop" => self.desktop_settings_content(tokens),
-            "data" => self.data_import_settings_content(tokens),
-            "about" => self.about_settings_content(tokens),
-            _ => self.appearance_settings_content(tokens),
-        }
-    }
-
-    fn appearance_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let card =
-            AppearanceSection::new(self.theme, &self.appearance, Message::Appearance).view(tokens);
-        let sidebar_mode = SettingsCard::new(
-            "侧边栏样式",
-            row![
-                button(text("按项目分组").size(11))
-                    .padding([7.0, 12.0])
-                    .on_press(Message::SetSidebarDisplayMode(
-                        NativeSidebarDisplayMode::Grouped,
-                    ))
-                    .style(button_style(
-                        tokens,
-                        if self.sidebar_display_mode == NativeSidebarDisplayMode::Grouped {
-                            ButtonKind::Selected
-                        } else {
-                            ButtonKind::Ghost
-                        },
-                    )),
-                button(text("统一列表").size(11))
-                    .padding([7.0, 12.0])
-                    .on_press(Message::SetSidebarDisplayMode(
-                        NativeSidebarDisplayMode::Unified,
-                    ))
-                    .style(button_style(
-                        tokens,
-                        if self.sidebar_display_mode == NativeSidebarDisplayMode::Unified {
-                            ButtonKind::Selected
-                        } else {
-                            ButtonKind::Ghost
-                        },
-                    )),
-            ]
-            .spacing(8),
-        )
-        .view(tokens);
-        container(
-            column![
-                text("外观")
-                    .size(18)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                card,
-                sidebar_mode,
-            ]
-            .spacing(16),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding::from([20, 24]))
-        .style(canvas_style(tokens))
-        .into()
-    }
-
-    fn project_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let control_height = ControlSize::Medium.height_in(tokens.metrics);
-        let clone_parent = Input::new("默认克隆位置", self.project_clone_parent.clone())
-            .on_input(Message::ProjectCloneParentChanged)
-            .view(tokens);
-        let clone_parent = row![
-            container(clone_parent).width(Length::Fill),
-            button(text("选择目录").size(11))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 12.0])
-                .on_press(Message::PickProjectCloneParent)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-        let repository = SettingsCard::new(
-            "仓库",
-            column![
-                text("新克隆的仓库默认保存到此目录。")
-                    .size(11)
-                    .color(colors.muted),
-                clone_parent,
-            ]
-            .spacing(8),
-        )
-        .view(tokens);
-
-        let worktree_parent = Input::new(
-            "工作树存放位置",
-            self.project_settings
-                .worktree
-                .parent_dir
-                .clone()
-                .unwrap_or_default(),
-        )
-        .on_input(Message::ProjectWorktreeParentChanged)
-        .view(tokens);
-        let worktree_parent = row![
-            container(worktree_parent).width(Length::Fill),
-            button(text("选择目录").size(11))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 12.0])
-                .on_press(Message::PickProjectWorktreeParent)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-        let instructions = HostedTextarea::new(&self.project_worktree_instructions)
-            .id(target_ids::PROJECT_WORKTREE_INSTRUCTIONS)
-            .placeholder("创建工作树后附加到任务上下文的说明")
-            .height(120.0)
-            .on_action(Message::ProjectWorktreeInstructionsEdited)
-            .view(tokens);
-        let worktree = SettingsCard::new(
-            "任务工作树",
-            column![
-                row![
-                    column![
-                        text("新任务默认位置").size(12).color(colors.text),
-                        text("发送首条消息前仍可为当前任务单独选择。")
-                            .size(11)
-                            .color(colors.muted),
-                    ]
-                    .spacing(3)
-                    .width(Length::Fill),
-                    button(
-                        text(worktree_selection_mode_label(
-                            self.project_settings.worktree.default_mode,
-                        ))
-                        .size(11),
-                    )
-                    .height(Length::Fixed(control_height))
-                    .padding([0.0, 12.0])
-                    .on_press(Message::CycleProjectWorktreeMode)
-                    .style(button_style(tokens, ButtonKind::Selected)),
-                ]
-                .align_y(Alignment::Center),
-                worktree_parent,
-                column![
-                    text("工作树说明").size(11).color(colors.muted),
-                    instructions,
-                ]
-                .spacing(5),
-                settings_toggle_row(
-                    "归档时清理工作树",
-                    "没有未合并提交时，普通归档会移除工作树和分支。",
-                    self.project_settings.worktree.cleanup_on_archive,
-                    Message::ToggleProjectWorktreeCleanup,
-                    tokens,
-                ),
-                button(text("保存项目设置").size(12))
-                    .height(Length::Fixed(control_height))
-                    .padding([0.0, 14.0])
-                    .on_press(Message::SaveProjectSettings)
-                    .style(button_style(tokens, ButtonKind::Primary)),
-            ]
-            .spacing(10),
-        )
-        .view(tokens);
-        let mut content = column![
-            text("项目")
-                .size(18)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            repository,
-            worktree,
-        ]
-        .spacing(16);
-        if let Some(error) = &self.project_settings_error {
-            content = content.push(
-                SettingsCard::new(
-                    "需要处理",
-                    text(error.clone()).size(11).color(colors.danger),
-                )
-                .view(tokens),
-            );
-        }
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn desktop_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let control_height = ControlSize::Medium.height_in(tokens.metrics);
-        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-        let status = SettingsCard::new(
-            "桌面集成",
-            column![
-                row![
-                    text("系统托盘").size(12).color(colors.text),
-                    text(if self.shell.tray_active() {
-                        "已启用"
-                    } else {
-                        "不可用"
-                    })
-                    .size(11)
-                    .color(if self.shell.tray_active() {
-                        colors.success
-                    } else {
-                        colors.danger
-                    }),
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center),
-                text("托盘菜单可打开主窗口、跳转最近任务或退出应用。")
-                    .size(11)
-                    .color(colors.muted),
-            ]
-            .spacing(8),
-        )
-        .view(tokens);
-        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-        let shortcut = SettingsCard::new(
-            "全局唤起快捷键",
-            column![
-                text("点击快捷键区域后直接按下组合键；Escape 取消，Delete 或 Backspace 清空。")
-                    .size(11)
-                    .color(colors.muted),
-                row![
-                    container(
-                        button(
-                            container(
-                                text(if self.shell_shortcut_capturing {
-                                    "请按组合键…".to_owned()
-                                } else if self.shell_shortcut_edit.is_empty() {
-                                    "未设置".to_owned()
-                                } else {
-                                    self.shell_shortcut_edit.clone()
-                                })
-                                .size(12),
-                            )
-                            .width(Length::Fill),
-                        )
-                        .height(Length::Fixed(control_height))
-                        .padding([0.0, 10.0])
-                        .on_press(Message::BeginShellShortcutCapture)
-                        .style(button_style(
-                            tokens,
-                            if self.shell_shortcut_capturing {
-                                ButtonKind::Selected
-                            } else {
-                                ButtonKind::Ghost
-                            },
-                        )),
-                    )
-                    .width(Length::Fill),
-                    button(text("保存").size(11))
-                        .height(Length::Fixed(control_height))
-                        .padding([0.0, 14.0])
-                        .on_press(Message::SaveShellShortcut)
-                        .style(button_style(tokens, ButtonKind::Primary)),
-                    button(text("清除").size(11))
-                        .height(Length::Fixed(control_height))
-                        .padding([0.0, 14.0])
-                        .on_press(Message::ClearShellShortcut)
-                        .style(button_style(tokens, ButtonKind::Ghost)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                text(if self.shell.shortcut_active() {
-                    "快捷键已注册"
-                } else {
-                    "当前未注册快捷键"
-                })
-                .size(11)
-                .color(if self.shell.shortcut_active() {
-                    colors.success
-                } else {
-                    colors.muted
-                }),
-            ]
-            .spacing(10),
-        )
-        .view(tokens);
-        let (update_label, update_detail, update_color) = match &self.update_state {
-            DesktopUpdateState::Idle => (
-                "尚未检查".to_owned(),
-                format!("当前版本 {}", env!("CARGO_PKG_VERSION")),
-                colors.muted,
-            ),
-            DesktopUpdateState::Checking => (
-                "正在检查".to_owned(),
-                "正在查询 Preview 更新通道。".to_owned(),
-                colors.warning,
-            ),
-            DesktopUpdateState::UpToDate => (
-                "已是最新版本".to_owned(),
-                format!("当前版本 {}", env!("CARGO_PKG_VERSION")),
-                colors.success,
-            ),
-            DesktopUpdateState::Available { version, .. } => (
-                format!("可更新至 {version}"),
-                "更新包将在安装前完成签名验证。".to_owned(),
-                colors.success,
-            ),
-            DesktopUpdateState::Downloading { version, progress } => {
-                let detail = update_download_percent(*progress)
-                    .map(|percent| format!("已下载 {percent}%，完成后将自动启动安装。"))
-                    .unwrap_or_else(|| "正在下载更新包，完成后将自动启动安装。".to_owned());
-                (format!("正在下载 {version}"), detail, colors.warning)
-            }
-            DesktopUpdateState::Installing { version } => (
-                format!("正在安装 {version}"),
-                "安装器已准备完成。".to_owned(),
-                colors.warning,
-            ),
-            DesktopUpdateState::Restarting { version } => (
-                format!("正在重启至 {version}"),
-                "安装器已启动，应用即将退出。".to_owned(),
-                colors.warning,
-            ),
-            DesktopUpdateState::Failed { message } => {
-                ("更新未完成".to_owned(), message.clone(), colors.danger)
-            }
-        };
-        let mut update_actions = row![].spacing(8).align_y(Alignment::Center);
-        if self.update_configured {
-            let check = button(
-                text(if self.update_busy {
-                    "处理中"
-                } else {
-                    "检查更新"
-                })
-                .size(11),
-            )
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 14.0])
-            .style(button_style(tokens, ButtonKind::Ghost));
-            update_actions = update_actions.push(if self.update_busy {
-                check
-            } else {
-                check.on_press(Message::CheckForUpdate)
-            });
-            if matches!(&self.update_state, DesktopUpdateState::Available { .. }) {
-                let install = button(text("更新并重启").size(11))
-                    .height(Length::Fixed(control_height))
-                    .padding([0.0, 14.0])
-                    .style(button_style(tokens, ButtonKind::Primary));
-                update_actions = update_actions.push(if self.update_busy {
-                    install
-                } else {
-                    install.on_press(Message::InstallUpdate)
-                });
-            }
-        }
-        update_actions = update_actions.push(
-            button(text("查看发布记录").size(11))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 14.0])
-                .on_press(Message::OpenReleases)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        );
-        let mut update_body = column![
-            row![text(update_label)
-                .size(12)
-                .font(ui_font(font::Weight::Semibold))
-                .color(update_color),],
-            text(update_detail).size(11).color(colors.muted),
-        ]
-        .spacing(8);
-        if !self.update_configured {
-            update_body = update_body.push(
-                text("当前版本仅支持从 发布页手动更新。")
-                    .size(11)
-                    .color(colors.muted),
-            );
-        }
-        if let DesktopUpdateState::Available {
-            notes: Some(notes), ..
-        } = &self.update_state
-        {
-            if !notes.trim().is_empty() {
-                update_body = update_body.push(text(notes.clone()).size(11).color(colors.text));
-            }
-        }
-        if let Some(error) = &self.update_error {
-            update_body = update_body.push(text(error.clone()).size(11).color(colors.danger));
-        }
-        update_body = update_body.push(update_actions);
-        let update = SettingsCard::new("应用更新", update_body).view(tokens);
-        let mut content = column![text("桌面")
-            .size(18)
-            .font(ui_font(font::Weight::Semibold))
-            .color(colors.text),]
-        .spacing(16);
-        #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-        {
-            content = content.push(status).push(shortcut);
-        }
-        content = content.push(update);
-        if let Some(error) = &self.shell_error {
-            content = content.push(
-                SettingsCard::new(
-                    "桌面集成未完成",
-                    text(error.clone()).size(11).color(colors.danger),
-                )
-                .view(tokens),
-            );
-        }
-        container(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn about_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let row = |label: String, value: String| -> Element<'static, Message> {
-            row![
-                container(text(label).size(12).color(colors.text)).width(Length::Fill),
-                text(value).size(11).color(colors.muted),
-            ]
-            .spacing(16)
-            .align_y(Alignment::Center)
-            .into()
-        };
-        let application = SettingsCard::new(
-            "应用",
-            column![
-                row("名称".to_owned(), PRODUCT_NAME.to_owned()),
-                row("版本".to_owned(), env!("CARGO_PKG_VERSION").to_owned()),
-                row("许可证".to_owned(), env!("CARGO_PKG_LICENSE").to_owned()),
-            ]
-            .spacing(10),
-        )
-        .view(tokens);
-
-        let content = column![
-            text("关于")
-                .size(18)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            application,
-        ]
-        .spacing(16);
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn data_import_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let control_height = ControlSize::Medium.height_in(tokens.metrics);
-        let source_label = self
-            .data_import
-            .source_home
-            .as_ref()
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "尚未选择".to_owned());
-        let choose_button = button(
-            text(if self.data_import.busy {
-                "正在检查"
-            } else if self.data_import.source_home.is_some() {
-                "重新选择"
-            } else {
-                "选择目录"
-            })
-            .size(11),
-        )
-        .height(Length::Fixed(control_height))
-        .padding([0.0, 14.0])
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let choose_button = if self.data_import.busy || self.data_import.restart_required {
-            choose_button
-        } else {
-            choose_button.on_press(Message::PickDataImportSource)
-        };
-        let source = SettingsCard::new(
-            "旧版数据目录",
-            column![
-                text("选择旧版 LiliaCode 使用的数据目录。旧数据不会被移动或删除。")
-                    .size(11)
-                    .color(colors.muted),
-                text(source_label).size(11).color(colors.text),
-                choose_button,
-            ]
-            .spacing(9),
-        )
-        .view(tokens);
-
-        let mut content = column![
-            text("数据迁移")
-                .size(18)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            source,
-        ]
-        .spacing(16);
-
-        if let Some(plan) = &self.data_import.plan {
-            let plan_color = match plan.status {
-                DesktopImportPlanStatus::Ready => colors.success,
-                DesktopImportPlanStatus::Empty => colors.muted,
-                DesktopImportPlanStatus::Partial => colors.warning,
-                DesktopImportPlanStatus::Blocked => colors.danger,
-            };
-            let mut items = column![text(plan_status_label(plan.status))
-                .size(13)
-                .font(ui_font(font::Weight::Semibold))
-                .color(plan_color),]
-            .spacing(8);
-            for item in &plan.items {
-                let status_color = match item.status {
-                    DesktopImportPlanItemStatus::Ready => colors.success,
-                    DesktopImportPlanItemStatus::MissingSource => colors.muted,
-                    DesktopImportPlanItemStatus::RequiresCredentialConfirmation => colors.warning,
-                    DesktopImportPlanItemStatus::Conflict
-                    | DesktopImportPlanItemStatus::Incompatible
-                    | DesktopImportPlanItemStatus::SourceBusy
-                    | DesktopImportPlanItemStatus::InspectionFailed => colors.danger,
-                };
-                let detail = match item.status {
-                    DesktopImportPlanItemStatus::Ready => {
-                        format!("{} 个文件", item.files.len())
-                    }
-                    DesktopImportPlanItemStatus::MissingSource => "旧版未使用此项".to_owned(),
-                    DesktopImportPlanItemStatus::Conflict => {
-                        "为保护现有数据，此项不会被覆盖".to_owned()
-                    }
-                    DesktopImportPlanItemStatus::Incompatible => {
-                        "无法安全读取此版本的数据".to_owned()
-                    }
-                    DesktopImportPlanItemStatus::SourceBusy => {
-                        "请退出旧版 LiliaCode 后重试".to_owned()
-                    }
-                    DesktopImportPlanItemStatus::InspectionFailed => {
-                        "请确认目录完整且可以读取".to_owned()
-                    }
-                    DesktopImportPlanItemStatus::RequiresCredentialConfirmation => {
-                        if plan.credential_entries.is_empty() {
-                            "没有已保存的凭据".to_owned()
-                        } else {
-                            format!("发现 {} 项，需要单独确认", plan.credential_entries.len())
-                        }
-                    }
-                };
-                items = items.push(
-                    column![
-                        row![
-                            text(import_item_label(&item.kind))
-                                .size(12)
-                                .color(colors.text),
-                            text(plan_item_status_label(item.status))
-                                .size(11)
-                                .color(status_color),
-                        ]
-                        .spacing(12)
-                        .align_y(Alignment::Center),
-                        text(detail).size(10).color(colors.muted),
-                    ]
-                    .spacing(3),
-                );
-            }
-            content = content.push(SettingsCard::new("导入计划", items).view(tokens));
-
-            if self.data_import.has_credentials() && self.data_import.report.is_none() {
-                let credential_kind = if self.data_import.credentials_confirmed {
-                    ButtonKind::Selected
-                } else {
-                    ButtonKind::Ghost
-                };
-                let credential_button = button(
-                    text(if self.data_import.credentials_confirmed {
-                        "已选择复制凭据"
-                    } else {
-                        "复制登录凭据"
-                    })
-                    .size(11),
-                )
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 14.0])
-                .style(button_style(tokens, credential_kind));
-                let credential_button = if self.data_import.busy {
-                    credential_button
-                } else {
-                    credential_button.on_press(Message::ToggleDataImportCredentials)
-                };
-                content = content.push(
-                    SettingsCard::new(
-                        "登录凭据",
-                        column![
-                            text("凭据始终保存在系统凭据库中，现有凭据不会被覆盖。")
-                                .size(11)
-                                .color(colors.muted),
-                            credential_button,
-                        ]
-                        .spacing(9),
-                    )
-                    .view(tokens),
-                );
-            }
-        }
-
-        if let Some(report) = &self.data_import.report {
-            let report_color = match report.status {
-                DesktopImportReportStatus::Completed => colors.success,
-                DesktopImportReportStatus::NothingToImport => colors.muted,
-                DesktopImportReportStatus::AwaitingCredentialConfirmation
-                | DesktopImportReportStatus::PartialFailure => colors.warning,
-                DesktopImportReportStatus::Failed => colors.danger,
-            };
-            let mut rows = column![text(report_status_label(report.status))
-                .size(13)
-                .font(ui_font(font::Weight::Semibold))
-                .color(report_color),]
-            .spacing(8);
-            for item in &report.items {
-                let item_color = match &item.status {
-                    DesktopImportReportItemStatus::Copied
-                    | DesktopImportReportItemStatus::CredentialsImported { failed: 0, .. } => {
-                        colors.success
-                    }
-                    DesktopImportReportItemStatus::Failed
-                    | DesktopImportReportItemStatus::Conflict
-                    | DesktopImportReportItemStatus::CredentialsImported { failed: 1.., .. } => {
-                        colors.danger
-                    }
-                    DesktopImportReportItemStatus::MissingSource
-                    | DesktopImportReportItemStatus::AwaitingCredentialConfirmation
-                    | DesktopImportReportItemStatus::SkippedCredentialDenied => colors.muted,
-                };
-                let mut row_content = column![row![
-                    text(import_item_label(&item.kind))
-                        .size(12)
-                        .color(colors.text),
-                    text(report_item_status_label(&item.status))
-                        .size(11)
-                        .color(item_color),
-                ]
-                .spacing(12)
-                .align_y(Alignment::Center),]
-                .spacing(3);
-                if item.error.as_ref().is_some_and(|error| error.retryable) {
-                    row_content =
-                        row_content.push(text("可以重新检查后再试").size(10).color(colors.muted));
-                }
-                rows = rows.push(row_content);
-            }
-            content = content.push(SettingsCard::new("导入结果", rows).view(tokens));
-        }
-
-        if self.data_import.restart_required {
-            content = content.push(
-                SettingsCard::new(
-                    "完成迁移",
-                    column![
-                        text("重启后将启用已导入的数据；当前空库会保留为可恢复备份。")
-                            .size(11)
-                            .color(colors.muted),
-                        button(text("重启并完成导入").size(11))
-                            .height(Length::Fixed(control_height))
-                            .padding([0.0, 14.0])
-                            .on_press(Message::RestartAfterDataImport)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    ]
-                    .spacing(9),
-                )
-                .view(tokens),
-            );
-        } else if self.data_import.plan.is_some() {
-            let mut actions = row![].spacing(8).align_y(Alignment::Center);
-            if self.data_import.can_execute() {
-                actions = actions.push(
-                    button(
-                        text(if self.data_import.busy {
-                            "正在导入"
-                        } else {
-                            "开始导入"
-                        })
-                        .size(11),
-                    )
-                    .height(Length::Fixed(control_height))
-                    .padding([0.0, 14.0])
-                    .on_press(Message::ExecuteDataImport)
-                    .style(button_style(tokens, ButtonKind::Primary)),
-                );
-            }
-            if !self.data_import.busy {
-                actions = actions.push(
-                    button(text("重新检查").size(11))
-                        .height(Length::Fixed(control_height))
-                        .padding([0.0, 14.0])
-                        .on_press(Message::ResetDataImport)
-                        .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            content = content.push(actions);
-        }
-        if let Some(error) = &self.data_import.error {
-            content = content.push(
-                SettingsCard::new(
-                    "迁移未完成",
-                    text(error.clone()).size(11).color(colors.danger),
-                )
-                .view(tokens),
-            );
-        }
-
-        container(
-            scrollable(content)
-                .direction(vertical_scrollbar())
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding::from([20, 24]))
-        .style(canvas_style(tokens))
-        .into()
-    }
-
-    fn provider_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let control_height = ControlSize::Medium.height_in(tokens.metrics);
-        let selected_provider = self.selected_provider.as_deref();
-        let supports_api_key = self.selected_provider_supports_api_key();
-        let selected_capability = self
-            .provider
-            .capability_limits
-            .iter()
-            .find(|provider| Some(provider.provider_id.as_str()) == selected_provider);
-        let selected_credential_usable =
-            selected_capability.is_some_and(|provider| provider.has_usable_credential);
-        let (runtime_status, runtime_detail) =
-            if !self.provider.broker_ready || !self.provider.runtime.runtime_ready {
-                (("服务不可用", colors.danger), "模型服务尚未准备完成")
-            } else if selected_credential_usable
-                && self.provider.runtime.profile_has_credential_refs
-                && self.provider.runtime.live_model_adapter_drives_turn
-            {
-                (
-                    ("已连接", colors.success),
-                    if self.provider.broker_degraded {
-                        "当前模型凭据已生效；另有凭据需要重新配置"
-                    } else {
-                        "当前模型凭据已生效"
-                    },
-                )
-            } else if selected_credential_usable {
-                (("正在准备", colors.warning), "凭据可用，模型服务仍在初始化")
-            } else if self.provider.broker_degraded {
-                (("需要处理", colors.warning), "部分凭据无法恢复，请重新添加")
-            } else {
-                (
-                    ("等待凭据", colors.warning),
-                    "添加当前模型服务的凭据后即可使用",
-                )
-            };
-        let runtime = SettingsCard::new(
-            "运行状态",
-            column![
-                row![text(runtime_status.0)
-                    .size(13)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(runtime_status.1),]
-                .spacing(10)
-                .align_y(Alignment::Center),
-                text(runtime_detail).size(11).color(colors.muted),
-            ]
-            .spacing(6),
-        )
-        .view(tokens);
-
-        let model = Input::new("例如 gpt-4.1-mini", self.provider_model.clone())
-            .disabled(self.provider_busy)
-            .on_input(Message::ProviderModelChanged)
-            .view(tokens);
-        let openai_endpoint = Input::new(
-            "OpenAI 兼容端点（可选）",
-            self.provider_openai_endpoint.clone(),
-        )
-        .disabled(self.provider_busy)
-        .on_input(Message::ProviderOpenAiEndpointChanged)
-        .view(tokens);
-        let anthropic_endpoint = Input::new(
-            "Anthropic Messages 端点（可选）",
-            self.provider_anthropic_endpoint.clone(),
-        )
-        .disabled(self.provider_busy)
-        .on_input(Message::ProviderAnthropicEndpointChanged)
-        .view(tokens);
-        let save_runtime = button(text("应用配置").size(12))
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 14.0])
-            .style(button_style(tokens, ButtonKind::Primary));
-        let save_runtime = if self.provider_busy || !self.provider_runtime_settings_dirty() {
-            save_runtime
-        } else {
-            save_runtime.on_press(Message::SaveProviderRuntimeSettings)
-        };
-        let reset_runtime = button(text("恢复默认").size(12))
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 14.0])
-            .style(button_style(tokens, ButtonKind::Ghost));
-        let has_runtime_override = self.provider_runtime_settings.model.is_some()
-            || self.provider_runtime_settings.openai_endpoint.is_some()
-            || self.provider_runtime_settings.anthropic_endpoint.is_some();
-        let reset_runtime = if self.provider_busy || !has_runtime_override {
-            reset_runtime
-        } else {
-            reset_runtime.on_press(Message::ResetProviderRuntimeSettings)
-        };
-        let runtime_configuration = SettingsCard::new(
-            "默认运行配置",
-            column![
-                column![text("默认模型").size(11).color(colors.muted), model,].spacing(5),
-                column![
-                    text("OpenAI 兼容端点").size(11).color(colors.muted),
-                    openai_endpoint,
-                ]
-                .spacing(5),
-                column![
-                    text("Anthropic Messages 端点").size(11).color(colors.muted),
-                    anthropic_endpoint,
-                ]
-                .spacing(5),
-                text("留空时使用内置默认值；新的配置从下一次任务调用开始生效。")
-                    .size(11)
-                    .color(colors.muted),
-                row![save_runtime, reset_runtime]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-            ]
-            .spacing(10),
-        )
-        .view(tokens);
-
-        let assistant_controls_busy = self.provider_busy || self.assistant_ai_probe_busy;
-        let assistant_base_url = Input::new(
-            "例如 https://api.example.com/v1",
-            self.provider_ai_settings.assistant_base_url.clone(),
-        )
-        .disabled(assistant_controls_busy)
-        .on_input(Message::AssistantAiBaseUrlChanged)
-        .view(tokens);
-        let assistant_model = Input::new(
-            "辅助模型名称",
-            self.provider_ai_settings.assistant_model.clone(),
-        )
-        .disabled(assistant_controls_busy)
-        .on_input(Message::AssistantAiModelChanged)
-        .view(tokens);
-        let assistant_secret = Input::new(
-            if self.provider_ai_settings.assistant_secret_configured {
-                "输入新密钥以替换"
-            } else {
-                "输入 API Key"
-            },
-            self.provider_ai_settings.assistant_secret.clone(),
-        )
-        .secure(true)
-        .disabled(assistant_controls_busy)
-        .on_input(Message::AssistantAiSecretChanged)
-        .view(tokens);
-        let assistant_new_model_id = Input::new("模型 ID", self.assistant_ai_new_model_id.clone())
-            .disabled(assistant_controls_busy)
-            .on_input(Message::AssistantAiNewModelIdChanged)
-            .view(tokens);
-        let assistant_new_model_label =
-            Input::new("显示名（可选）", self.assistant_ai_new_model_label.clone())
-                .disabled(assistant_controls_busy)
-                .on_input(Message::AssistantAiNewModelLabelChanged)
-                .view(tokens);
-        let add_assistant_model = button(text("添加模型").size(12))
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 14.0])
-            .style(button_style(tokens, ButtonKind::Ghost));
-        let add_assistant_model =
-            if assistant_controls_busy || self.assistant_ai_new_model_id.trim().is_empty() {
-                add_assistant_model
-            } else {
-                add_assistant_model.on_press(Message::AddAssistantAiModel)
-            };
-        let mut assistant_model_pool = column![].spacing(7);
-        for item in self.provider_ai_settings.assistant_model_pool() {
-            let model_id = item.id.clone();
-            let label = Input::new("显示名", item.label.clone())
-                .disabled(assistant_controls_busy)
-                .on_input(move |value| Message::RenameAssistantAiModel {
-                    model_id: model_id.clone(),
-                    value,
-                })
-                .view(tokens);
-            assistant_model_pool = assistant_model_pool.push(
-                row![
-                    text(item.id.clone())
-                        .size(11)
-                        .color(colors.muted)
-                        .width(Length::FillPortion(2)),
-                    container(label).width(Length::FillPortion(3)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            );
-        }
-        if self
-            .provider_ai_settings
-            .assistant_model_pool()
-            .next()
-            .is_none()
-        {
-            assistant_model_pool = assistant_model_pool.push(
-                text("暂无模型，可手动添加或从服务获取。")
-                    .size(11)
-                    .color(colors.muted),
-            );
-        }
-        let fetch_assistant_models = button(
-            text(if self.assistant_ai_probe_busy {
-                "处理中"
-            } else {
-                "获取模型"
-            })
-            .size(12),
-        )
-        .height(Length::Fixed(control_height))
-        .padding([0.0, 14.0])
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let fetch_assistant_models = if assistant_controls_busy {
-            fetch_assistant_models
-        } else {
-            fetch_assistant_models.on_press(Message::FetchAssistantAiModels)
-        };
-        let test_assistant = button(
-            text(if self.assistant_ai_probe_busy {
-                "处理中"
-            } else {
-                "测试连接"
-            })
-            .size(12),
-        )
-        .height(Length::Fixed(control_height))
-        .padding([0.0, 14.0])
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let test_assistant = if assistant_controls_busy {
-            test_assistant
-        } else {
-            test_assistant.on_press(Message::TestAssistantAiConnection)
-        };
-        let save_assistant = button(text("保存辅助模型").size(12))
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 14.0])
-            .style(button_style(tokens, ButtonKind::Primary));
-        let save_assistant =
-            if assistant_controls_busy || !self.provider_ai_settings.assistant_dirty() {
-                save_assistant
-            } else {
-                save_assistant.on_press(Message::SaveAssistantAiConfiguration)
-            };
-        let clear_assistant_secret = button(text("移除密钥").size(12))
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 14.0])
-            .style(button_style(tokens, ButtonKind::Ghost));
-        let clear_assistant_secret =
-            if assistant_controls_busy || !self.provider_ai_settings.assistant_secret_configured {
-                clear_assistant_secret
-            } else {
-                clear_assistant_secret.on_press(Message::ClearAssistantAiSecret)
-            };
-        let mut assistant_configuration_content = column![
-            text("用于自动标题、对话建议与提示优化。")
-                .size(11)
-                .color(colors.muted),
-            column![
-                text("服务地址").size(11).color(colors.muted),
-                assistant_base_url
-            ]
-            .spacing(5),
-            column![
-                text("默认模型").size(11).color(colors.muted),
-                assistant_model
-            ]
-            .spacing(5),
-            column![
-                text(if self.provider_ai_settings.assistant_secret_configured {
-                    "密钥已保存"
-                } else {
-                    "尚未保存密钥"
-                })
-                .size(11)
-                .color(if self.provider_ai_settings.assistant_secret_configured {
-                    colors.success
-                } else {
-                    colors.muted
-                }),
-                assistant_secret,
-            ]
-            .spacing(5),
-            column![
-                text("模型池").size(11).color(colors.muted),
-                row![
-                    assistant_new_model_id,
-                    assistant_new_model_label,
-                    add_assistant_model
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                assistant_model_pool,
-            ]
-            .spacing(7),
-            row![
-                save_assistant,
-                clear_assistant_secret,
-                fetch_assistant_models,
-                test_assistant,
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(10);
-        if let Some((ok, notice)) = &self.assistant_ai_probe_notice {
-            assistant_configuration_content =
-                assistant_configuration_content.push(text(notice.clone()).size(11).color(if *ok {
-                    colors.success
-                } else {
-                    colors.danger
-                }));
-        }
-        let assistant_configuration =
-            SettingsCard::new("辅助模型", assistant_configuration_content).view(tokens);
-
-        let title_model = Input::new(
-            "留空时使用辅助模型默认值",
-            self.provider_ai_settings.title_model.clone(),
-        )
-        .disabled(self.provider_busy)
-        .on_input(Message::TitleModelChanged)
-        .view(tokens);
-        let suggestion_model = Input::new(
-            "留空时使用辅助模型默认值",
-            self.provider_ai_settings.suggestion_model.clone(),
-        )
-        .disabled(self.provider_busy)
-        .on_input(Message::SuggestionModelChanged)
-        .view(tokens);
-        let prompt_router_model = Input::new(
-            "留空时使用辅助模型默认值",
-            self.provider_ai_settings.prompt_router_model.clone(),
-        )
-        .disabled(self.provider_busy)
-        .on_input(Message::PromptRouterModelChanged)
-        .view(tokens);
-        let prompt_optimize_model = Input::new(
-            "留空时使用辅助模型默认值",
-            self.provider_ai_settings.prompt_optimize_model.clone(),
-        )
-        .disabled(self.provider_busy)
-        .on_input(Message::PromptOptimizeModelChanged)
-        .view(tokens);
-        let auto_turn_decision_model = Input::new(
-            "留空时使用当前 Provider 默认模型",
-            self.provider_ai_settings.auto_turn_decision_model.clone(),
-        )
-        .disabled(self.provider_busy)
-        .on_input(Message::AutoTurnDecisionModelChanged)
-        .view(tokens);
-        let save_features = button(text("保存功能模型").size(12))
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 14.0])
-            .style(button_style(tokens, ButtonKind::Primary));
-        let save_features =
-            if self.provider_busy || !self.provider_ai_settings.model_features_dirty() {
-                save_features
-            } else {
-                save_features.on_press(Message::SaveModelFeatureSettings)
-            };
-        let suggestions_enabled = self.provider_ai_settings.conversation_suggestions_enabled();
-        let suggestions_on =
-            button(text("开启").size(11))
-                .padding([5.0, 12.0])
-                .style(button_style(
-                    tokens,
-                    if suggestions_enabled {
-                        ButtonKind::Selected
-                    } else {
-                        ButtonKind::Ghost
-                    },
-                ));
-        let suggestions_on = if self.provider_busy || suggestions_enabled {
-            suggestions_on
-        } else {
-            suggestions_on.on_press(Message::SetConversationSuggestionsEnabled(true))
-        };
-        let suggestions_off =
-            button(text("关闭").size(11))
-                .padding([5.0, 12.0])
-                .style(button_style(
-                    tokens,
-                    if suggestions_enabled {
-                        ButtonKind::Ghost
-                    } else {
-                        ButtonKind::Selected
-                    },
-                ));
-        let suggestions_off = if self.provider_busy || !suggestions_enabled {
-            suggestions_off
-        } else {
-            suggestions_off.on_press(Message::SetConversationSuggestionsEnabled(false))
-        };
-        let feature_models = SettingsCard::new(
-            "功能模型",
-            column![
-                column![text("自动标题").size(11).color(colors.muted), title_model].spacing(5),
-                column![
-                    text("新对话建议").size(11).color(colors.muted),
-                    row![suggestions_on, suggestions_off].spacing(6),
-                ]
-                .spacing(5),
-                column![
-                    text("建议模型").size(11).color(colors.muted),
-                    suggestion_model,
-                ]
-                .spacing(5),
-                column![
-                    text("提示分类模型").size(11).color(colors.muted),
-                    prompt_router_model,
-                ]
-                .spacing(5),
-                column![
-                    text("提示优化模型").size(11).color(colors.muted),
-                    prompt_optimize_model,
-                ]
-                .spacing(5),
-                column![
-                    text("自动回合决策").size(11).color(colors.muted),
-                    auto_turn_decision_model,
-                ]
-                .spacing(5),
-                save_features,
-            ]
-            .spacing(10),
-        )
-        .view(tokens);
-
-        let mut preset_rows =
-            column![
-                text("按回合意图选择模型与思考强度；留空时使用 Provider 的内置默认值。")
-                    .size(11)
-                    .color(colors.muted)
-            ]
-            .spacing(9);
-        for preset in self.provider_ai_settings.builtin_presets() {
-            let preset_id = preset.id.clone();
-            let model_value = preset.model.clone().unwrap_or_default();
-            let model_input = Input::new("Provider 默认", model_value)
-                .disabled(self.provider_busy)
-                .on_input({
-                    let preset_id = preset_id.clone();
-                    move |value| Message::FeaturePresetModelChanged {
-                        preset_id: preset_id.clone(),
-                        value,
-                    }
-                })
-                .view(tokens);
-            let effort = preset.reasoning_effort.as_deref().unwrap_or("默认强度");
-            let effort_button = button(text(effort.to_owned()).size(11))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 12.0])
-                .style(button_style(tokens, ButtonKind::Ghost));
-            let effort_button = if self.provider_busy {
-                effort_button
-            } else {
-                effort_button.on_press(Message::CycleFeaturePresetEffort(preset_id))
-            };
-            preset_rows = preset_rows.push(
-                column![
-                    text(preset.label.clone())
-                        .size(11)
-                        .font(ui_font(font::Weight::Semibold))
-                        .color(colors.text),
-                    row![model_input, effort_button]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                ]
-                .spacing(5),
-            );
-        }
-        let custom_preset_name = Input::new("名称", self.custom_preset_draft.clone())
-            .disabled(self.provider_busy)
-            .on_input(Message::CustomPresetDraftChanged)
-            .view(tokens);
-        let add_custom_preset = button(text("添加").size(11))
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 12.0])
-            .style(button_style(tokens, ButtonKind::Ghost));
-        let add_custom_preset = if self.provider_busy {
-            add_custom_preset
-        } else {
-            add_custom_preset.on_press(Message::AddCustomPreset)
-        };
-        preset_rows = preset_rows.push(
-            column![
-                text("自定义预设")
-                    .size(11)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                row![custom_preset_name, add_custom_preset]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-            ]
-            .spacing(5),
-        );
-        let custom_presets = self
-            .provider_ai_settings
-            .custom_presets()
-            .cloned()
-            .collect::<Vec<_>>();
-        if custom_presets.is_empty() {
-            preset_rows = preset_rows.push(text("暂无自定义预设。").size(10).color(colors.muted));
-        }
-        for preset in custom_presets {
-            let preset_id = preset.id.clone();
-            let label_input = Input::new("预设名称", preset.label)
-                .disabled(self.provider_busy)
-                .on_input({
-                    let preset_id = preset_id.clone();
-                    move |value| Message::RenameCustomPreset {
-                        preset_id: preset_id.clone(),
-                        value,
-                    }
-                })
-                .view(tokens);
-            let model_input = Input::new("未绑定", preset.model.unwrap_or_default())
-                .disabled(self.provider_busy)
-                .on_input({
-                    let preset_id = preset_id.clone();
-                    move |value| Message::FeaturePresetModelChanged {
-                        preset_id: preset_id.clone(),
-                        value,
-                    }
-                })
-                .view(tokens);
-            let effort = preset.reasoning_effort.as_deref().unwrap_or("默认强度");
-            let effort_button = button(text(effort.to_owned()).size(11))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 12.0])
-                .style(button_style(tokens, ButtonKind::Ghost));
-            let remove_button = button(text("删除").size(11))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 12.0])
-                .style(button_style(tokens, ButtonKind::Danger));
-            let (effort_button, remove_button) = if self.provider_busy {
-                (effort_button, remove_button)
-            } else {
-                (
-                    effort_button.on_press(Message::CycleFeaturePresetEffort(preset_id.clone())),
-                    remove_button.on_press(Message::RemoveCustomPreset(preset_id)),
-                )
-            };
-            preset_rows = preset_rows.push(
-                column![
-                    label_input,
-                    row![model_input, effort_button, remove_button]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                ]
-                .spacing(5),
-            );
-        }
-        let model_presets = SettingsCard::new("回合模型预设", preset_rows).view(tokens);
-
-        let mut provider_choices = row![].spacing(6);
-        for provider in &self.provider.providers {
-            let provider_id = provider.provider_id.clone();
-            let kind = if selected_provider == Some(provider.provider_id.as_str()) {
-                ButtonKind::Selected
-            } else {
-                ButtonKind::Ghost
-            };
-            let choice = button(text(provider.display_name.clone()).size(12))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 12.0])
-                .style(button_style(tokens, kind));
-            provider_choices = provider_choices.push(if self.provider_busy {
-                choice
-            } else {
-                choice.on_press(Message::SelectProvider(provider_id))
-            });
-        }
-        let secret = Input::new("粘贴 API Key", self.provider_secret.clone())
-            .secure(true)
-            .disabled(self.provider_busy || !supports_api_key)
-            .on_input(Message::ProviderSecretChanged)
-            .view(tokens);
-        let save = button(
-            text(if self.provider_busy {
-                "保存中"
-            } else {
-                "保存"
-            })
-            .size(12),
-        )
-        .height(Length::Fixed(control_height))
-        .padding([0.0, 16.0])
-        .style(button_style(tokens, ButtonKind::Primary));
-        let save =
-            if self.provider_busy || !supports_api_key || self.provider_secret.trim().is_empty() {
-                save
-            } else {
-                save.on_press(Message::SaveProviderCredential)
-            };
-        let credential_setup = column![
-            provider_choices,
-            row![secret, save].spacing(8).align_y(Alignment::Center),
-            text(if supports_api_key {
-                "凭据会写入当前 Preview 的独立安全存储。"
-            } else {
-                "当前服务需要其他凭据类型，尚无可用的配置入口。"
-            })
-            .size(11)
-            .color(colors.muted),
-        ]
-        .spacing(10);
-        let setup = SettingsCard::new("API 凭据", credential_setup).view(tokens);
-
-        let matching_credentials = self
-            .provider
-            .credentials
-            .iter()
-            .filter(|credential| Some(credential.provider_id.as_str()) == selected_provider)
-            .collect::<Vec<_>>();
-        let mut credentials = column![].spacing(8);
-        if matching_credentials.is_empty() {
-            credentials = credentials.push(text("尚未保存凭据").size(12).color(colors.muted));
-        } else {
-            for credential in matching_credentials {
-                let credential_id = credential.credential_id.clone();
-                let revision = credential.revision;
-                let status = credential_status_label(credential.status);
-                let revoke =
-                    button(text("撤销").size(11)).style(button_style(tokens, ButtonKind::Danger));
-                let revoke = if self.provider_busy
-                    || credential.status == DesktopCredentialStatus::Revoked
-                {
-                    revoke
-                } else {
-                    revoke.on_press(Message::RevokeProviderCredential {
-                        credential_id,
-                        revision,
-                    })
-                };
-                credentials = credentials.push(
-                    row![
-                        column![
-                            text(
-                                credential
-                                    .account_label
-                                    .clone()
-                                    .unwrap_or_else(|| credential_display_name(credential)),
-                            )
-                            .size(12)
-                            .color(colors.text),
-                            text(status).size(11).color(colors.muted),
-                        ]
-                        .spacing(3)
-                        .width(Length::Fill),
-                        revoke,
-                    ]
-                    .spacing(10)
-                    .align_y(Alignment::Center),
-                );
-            }
-        }
-        let credentials = SettingsCard::new("已保存凭据", credentials).view(tokens);
-
-        let quota_note = match &self.provider.remote_quota {
-            DesktopRemoteQuotaState::Unavailable { .. } => {
-                "远程剩余额度不可用；下方信息仅表示已知能力，不代表剩余额度。"
-            }
-        };
-        let mut limits = column![text(quota_note).size(11).color(colors.muted)].spacing(7);
-        for provider in self
-            .provider
-            .capability_limits
-            .iter()
-            .filter(|provider| Some(provider.provider_id.as_str()) == selected_provider)
-        {
-            for limit in &provider.known_limits {
-                let value = capability_limit_value(&limit.kind, limit.value);
-                limits = limits.push(
-                    row![
-                        text(capability_limit_label(&limit.kind))
-                            .size(12)
-                            .color(colors.text)
-                            .width(Length::Fill),
-                        text(value).size(12).color(colors.muted),
-                    ]
-                    .spacing(10),
-                );
-            }
-        }
-        let limits = SettingsCard::new("能力与额度", limits).view(tokens);
-
-        let refresh =
-            button(text("刷新状态").size(12)).style(button_style(tokens, ButtonKind::Ghost));
-        let refresh = if self.provider_busy {
-            refresh
-        } else {
-            refresh.on_press(Message::RefreshProvider)
-        };
-        let mut content = column![
-            row![
-                text("模型服务")
-                    .size(18)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text)
-                    .width(Length::Fill),
-                refresh,
-            ]
-            .align_y(Alignment::Center),
-            runtime,
-            runtime_configuration,
-            assistant_configuration,
-            feature_models,
-            model_presets,
-            setup,
-            credentials,
-            limits,
-        ]
-        .spacing(16);
-        if let Some(error) = &self.provider_error {
-            content = content.push(
-                SettingsCard::new(
-                    "需要处理",
-                    text(error.clone()).size(11).color(colors.danger),
-                )
-                .view(tokens),
-            );
-        }
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn agent_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let control_height = ControlSize::Medium.height_in(tokens.metrics);
-        let settings = &self.agent_interaction_settings;
-        let interaction_mode = SettingsCard::new(
-            "待处理交互",
-            column![
-                settings_toggle_row(
-                    "非打断模式",
-                    "等待回答或工具确认时，仍可拖入文件和目录补充上下文。",
-                    settings.non_interrupt_mode,
-                    Message::ToggleAgentInteraction(AgentInteractionToggle::NonInterrupt),
-                    tokens,
-                ),
-                settings_toggle_row(
-                    "Debug 面板",
-                    "在任务时间线中显示交互与卡片预览入口。",
-                    settings.debug,
-                    Message::ToggleAgentInteraction(AgentInteractionToggle::Debug),
-                    tokens,
-                ),
-            ]
-            .spacing(10),
-        )
-        .view(tokens);
-        let subagent_mode = SettingsCard::new(
-            "协作 Agent",
-            column![
-                settings_toggle_row(
-                    "允许委派任务",
-                    "主 Agent 可以把独立的只读调查交给已启用的自定义 Agent。",
-                    settings.subagent_mode.enabled,
-                    Message::ToggleAgentInteraction(AgentInteractionToggle::Subagents),
-                    tokens,
-                ),
-                text(if settings.subagent_mode.enabled {
-                    format!(
-                        "当前有 {} 个 Agent 可参与任务",
-                        self.custom_agents
-                            .agents
-                            .iter()
-                            .filter(|agent| agent.enabled)
-                            .count()
-                    )
-                } else {
-                    "自定义 Agent 保持保存，但不会参与任务".to_owned()
-                })
-                .size(11)
-                .color(colors.muted),
-            ]
-            .spacing(10),
-        )
-        .view(tokens);
-
-        let auto_turn = SettingsCard::new(
-            "自动选择运行方式",
-            column![
-                settings_toggle_row(
-                    "启用自动选择",
-                    "发送任务时，根据内容选择合适的运行方式。",
-                    settings.auto_turn_decision.enabled,
-                    Message::ToggleAgentInteraction(AgentInteractionToggle::AutoTurn),
-                    tokens,
-                ),
-                settings_toggle_row(
-                    "模型层级",
-                    "允许为任务选择更合适的模型层级。",
-                    settings.auto_turn_decision.allow_model_tier,
-                    Message::ToggleAgentInteraction(AgentInteractionToggle::AutoModelTier),
-                    tokens,
-                ),
-                settings_toggle_row(
-                    "思考强度",
-                    "允许根据任务复杂度调整思考强度。",
-                    settings.auto_turn_decision.allow_reasoning_effort,
-                    Message::ToggleAgentInteraction(AgentInteractionToggle::AutoReasoningEffort),
-                    tokens,
-                ),
-                settings_toggle_row(
-                    "计划模式",
-                    "允许复杂任务先形成计划。",
-                    settings.auto_turn_decision.allow_plan_mode,
-                    Message::ToggleAgentInteraction(AgentInteractionToggle::AutoPlanMode),
-                    tokens,
-                ),
-                settings_toggle_row(
-                    "目标模式",
-                    "允许长任务进入持续目标模式。",
-                    settings.auto_turn_decision.allow_goal_mode,
-                    Message::ToggleAgentInteraction(AgentInteractionToggle::AutoGoalMode),
-                    tokens,
-                ),
-                settings_toggle_row(
-                    "新会话",
-                    "允许在上下文不匹配时创建独立会话。",
-                    settings.auto_turn_decision.allow_session_fork,
-                    Message::ToggleAgentInteraction(AgentInteractionToggle::AutoSessionFork),
-                    tokens,
-                ),
-            ]
-            .spacing(10),
-        )
-        .view(tokens);
-
-        let mut agent_rows = column![].spacing(10);
-        if self.custom_agents.agents.is_empty() {
-            agent_rows = agent_rows.push(text("还没有自定义 Agent。").size(12).color(colors.muted));
-        } else {
-            for agent in &self.custom_agents.agents {
-                let agent_id = agent.id.clone();
-                let toggle_id = agent.id.clone();
-                let delete_id = agent.id.clone();
-                let description = if agent.description.trim().is_empty() {
-                    "未填写简介".to_owned()
-                } else {
-                    agent.description.clone()
-                };
-                agent_rows = agent_rows.push(
-                    row![
-                        column![
-                            text(agent.name.clone())
-                                .size(13)
-                                .font(ui_font(font::Weight::Semibold))
-                                .color(colors.text),
-                            text(description).size(11).color(colors.muted),
-                        ]
-                        .spacing(3)
-                        .width(Length::Fill),
-                        button(
-                            text(if agent.enabled {
-                                "已启用"
-                            } else {
-                                "已停用"
-                            })
-                            .size(11)
-                        )
-                        .height(Length::Fixed(control_height))
-                        .padding([0.0, 12.0])
-                        .on_press(Message::ToggleCustomAgent(toggle_id))
-                        .style(button_style(
-                            tokens,
-                            if agent.enabled {
-                                ButtonKind::Selected
-                            } else {
-                                ButtonKind::Ghost
-                            },
-                        )),
-                        button(text("编辑").size(11))
-                            .height(Length::Fixed(control_height))
-                            .padding([0.0, 12.0])
-                            .on_press(Message::EditCustomAgent(agent_id))
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                        button(text("删除").size(11))
-                            .height(Length::Fixed(control_height))
-                            .padding([0.0, 12.0])
-                            .on_press(Message::DeleteCustomAgent(delete_id))
-                            .style(button_style(tokens, ButtonKind::Danger)),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                );
-            }
-        }
-        let agents = SettingsCard::new("自定义 Agent", agent_rows).view(tokens);
-
-        let mut content = column![
-            row![
-                column![
-                    text("Agent")
-                        .size(18)
-                        .font(ui_font(font::Weight::Semibold))
-                        .color(colors.text),
-                    text("配置任务分工与自动运行方式")
-                        .size(11)
-                        .color(colors.muted),
-                ]
-                .spacing(3)
-                .width(Length::Fill),
-                button(text("新建 Agent").size(12))
-                    .height(Length::Fixed(control_height))
-                    .padding([0.0, 14.0])
-                    .on_press(Message::NewCustomAgent)
-                    .style(button_style(tokens, ButtonKind::Primary)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-            interaction_mode,
-            subagent_mode,
-            auto_turn,
-            agents,
-        ]
-        .spacing(16);
-
-        if self.custom_agent_editor_open {
-            let name = Input::new("Agent 名称", self.custom_agent_name.clone())
-                .on_input(Message::AgentNameChanged)
-                .view(tokens);
-            let description = Input::new(
-                "一句话说明适合委派的任务",
-                self.custom_agent_description.clone(),
-            )
-            .on_input(Message::AgentDescriptionChanged)
-            .view(tokens);
-            let instruction = HostedTextarea::new(&self.custom_agent_instruction)
-                .id(target_ids::AGENT_INSTRUCTION_INPUT)
-                .placeholder("说明职责、关注点和输出要求")
-                .height(150.0)
-                .on_action(Message::AgentInstructionEdited)
-                .view(tokens);
-            let save = button(text("保存").size(12))
-                .height(Length::Fixed(control_height))
-                .padding([0.0, 14.0])
-                .style(button_style(tokens, ButtonKind::Primary));
-            let save = if self.custom_agent_name.trim().is_empty()
-                || self.custom_agent_instruction.text().trim().is_empty()
-            {
-                save
-            } else {
-                save.on_press(Message::SaveCustomAgent)
-            };
-            let editor = SettingsCard::new(
-                if self.editing_custom_agent.is_some() {
-                    "编辑 Agent"
-                } else {
-                    "新建 Agent"
-                },
-                column![
-                    column![text("名称").size(11).color(colors.muted), name].spacing(5),
-                    column![text("简介").size(11).color(colors.muted), description].spacing(5),
-                    column![text("指令").size(11).color(colors.muted), instruction].spacing(5),
-                    row![
-                        save,
-                        button(text("取消").size(12))
-                            .height(Length::Fixed(control_height))
-                            .padding([0.0, 14.0])
-                            .on_press(Message::CancelCustomAgentEdit)
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(8),
-                ]
-                .spacing(10),
-            )
-            .view(tokens);
-            content = content.push(editor);
-        }
-        if let Some(error) = &self.agent_interaction_error {
-            content = content.push(
-                SettingsCard::new(
-                    "需要处理",
-                    text(error.clone()).size(11).color(colors.danger),
-                )
-                .view(tokens),
-            );
-        }
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn quota_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let control_height = ControlSize::Medium.height_in(tokens.metrics);
-        let days = button(text(format!("{} 天", self.quota_days)).size(12))
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 12.0])
-            .style(button_style(tokens, ButtonKind::Ghost));
-        let backend = button(text(quota_backend_label(&self.quota_backend)).size(12))
-            .height(Length::Fixed(control_height))
-            .padding([0.0, 12.0])
-            .style(button_style(tokens, ButtonKind::Ghost));
-        let refresh = button(
-            text(if self.quota_busy {
-                "刷新中"
-            } else {
-                "刷新"
-            })
-            .size(12),
-        )
-        .height(Length::Fixed(control_height))
-        .padding([0.0, 14.0])
-        .style(button_style(tokens, ButtonKind::Primary));
-        let (days, backend, refresh) = if self.quota_busy {
-            (days, backend, refresh)
-        } else {
-            (
-                days.on_press(Message::CycleQuotaDays),
-                backend.on_press(Message::CycleQuotaBackend),
-                refresh.on_press(Message::RefreshQuota),
-            )
-        };
-
-        let mut content = column![row![
-            column![
-                text("用量与额度")
-                    .size(18)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                text("统计 Native AgentKit 写入 Product Core 的真实用量事件")
-                    .size(11)
-                    .color(colors.muted),
-            ]
-            .spacing(3)
-            .width(Length::Fill),
-            days,
-            backend,
-            refresh,
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),]
-        .spacing(16);
-
-        if let Some(error) = &self.quota_error {
-            content = content.push(
-                SettingsCard::new(
-                    "读取失败",
-                    text(error.clone()).size(11).color(colors.danger),
-                )
-                .view(tokens),
-            );
-        }
-
-        if let Some(stats) = &self.quota_usage {
-            let totals = row![
-                SettingsCard::new(
-                    "总 Token",
-                    text(format_token_count(stats.totals.total_tokens))
-                        .size(20)
-                        .font(ui_font(font::Weight::Semibold))
-                        .color(colors.text),
-                )
-                .view(tokens),
-                SettingsCard::new(
-                    "输入 / 输出",
-                    text(format!(
-                        "{} / {}",
-                        format_token_count(stats.totals.input_tokens),
-                        format_token_count(stats.totals.output_tokens)
-                    ))
-                    .size(16)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                )
-                .view(tokens),
-                SettingsCard::new(
-                    "成本",
-                    text(
-                        stats
-                            .cost
-                            .known_cost_usd
-                            .map(|cost| format!("${cost:.4}"))
-                            .unwrap_or_else(|| "Provider 未提供".to_owned()),
-                    )
-                    .size(14)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(if stats.cost.known_cost_usd.is_some() {
-                        colors.text
-                    } else {
-                        colors.muted
-                    }),
-                )
-                .view(tokens),
-            ]
-            .spacing(10);
-            content = content.push(totals);
-
-            let chart_values = stats
-                .daily
-                .iter()
-                .map(|bucket| bucket.total_tokens as f64)
-                .collect::<Vec<_>>();
-            let chart = SettingsCard::new(
-                "每日 Token",
-                column![
-                    TimeSeriesChart::new(chart_values, tokens).view(),
-                    row![
-                        text("较早").size(10).color(colors.faint),
-                        text(format!("{} 条用量记录", stats.cost.total_record_count))
-                            .size(10)
-                            .color(colors.muted)
-                            .width(Length::Fill),
-                        text("今天").size(10).color(colors.faint),
-                    ]
-                    .align_y(Alignment::Center),
-                ]
-                .spacing(4),
-            )
-            .view(tokens);
-            content = content.push(chart);
-
-            let mut projects = column![].spacing(7);
-            if stats.projects.is_empty() {
-                projects = projects.push(text("当前范围暂无项目用量").size(11).color(colors.muted));
-            } else {
-                for project in stats.projects.iter().take(6) {
-                    projects = projects.push(
-                        row![
-                            text(project.project_name.clone())
-                                .size(12)
-                                .color(colors.text)
-                                .width(Length::Fill),
-                            text(format_token_count(project.total_tokens))
-                                .size(12)
-                                .color(colors.muted),
-                        ]
-                        .spacing(10),
-                    );
-                }
-            }
-
-            let mut conversations = column![].spacing(7);
-            if stats.conversations.is_empty() {
-                conversations =
-                    conversations.push(text("当前范围暂无会话用量").size(11).color(colors.muted));
-            } else {
-                for task in stats.conversations.iter().take(6) {
-                    conversations = conversations.push(
-                        row![
-                            text(task.task_title.clone())
-                                .size(12)
-                                .color(colors.text)
-                                .width(Length::Fill),
-                            text(format_token_count(task.total_tokens))
-                                .size(12)
-                                .color(colors.muted),
-                        ]
-                        .spacing(10),
-                    );
-                }
-            }
-            content = content.push(
-                row![
-                    SettingsCard::new("项目", projects).view(tokens),
-                    SettingsCard::new("会话", conversations).view(tokens),
-                ]
-                .spacing(10),
-            );
-
-            let mut tools = column![].spacing(7);
-            if stats.tools.is_empty() {
-                tools = tools.push(text("当前范围暂无工具调用").size(11).color(colors.muted));
-            } else {
-                for tool in stats.tools.iter().take(8) {
-                    tools = tools.push(
-                        row![
-                            text(tool.label.clone())
-                                .size(12)
-                                .color(colors.text)
-                                .width(Length::Fill),
-                            text(format!(
-                                "{} 次 · {:.1}%",
-                                tool.call_count, tool.share_percent
-                            ))
-                            .size(12)
-                            .color(colors.muted),
-                        ]
-                        .spacing(10),
-                    );
-                }
-            }
-            content = content.push(SettingsCard::new("工具活动", tools).view(tokens));
-        } else if !self.quota_busy && self.quota_error.is_none() {
-            content = content.push(
-                EmptyState::new("尚未读取用量")
-                    .message("刷新后显示当前 Preview 在 Product Core 中记录的用量。")
-                    .icon(Icon::Chart)
-                    .action(
-                        button(text("读取用量").size(12))
-                            .on_press(Message::RefreshQuota)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    )
-                    .view(tokens),
-            );
-        }
-
-        let remote_note = match &self.provider.remote_quota {
-            DesktopRemoteQuotaState::Unavailable { note } => note.clone(),
-        };
-        content = content.push(
-            SettingsCard::new(
-                "远程额度",
-                column![
-                    text("不可用").size(12).color(colors.warning),
-                    text(remote_note).size(11).color(colors.muted),
-                    text("订阅权益不会被推断为 API 剩余额度。")
-                        .size(11)
-                        .color(colors.faint),
-                ]
-                .spacing(5),
-            )
-            .view(tokens),
-        );
-
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn project_clone_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let github = if let Some(binding) = self.github_binding.binding.as_ref() {
-            let mut repositories = column![].spacing(6).width(Length::Fill);
-            let query = self.project_clone_repository.trim().to_ascii_lowercase();
-            let filtered = self
-                .github_repositories
-                .iter()
-                .filter(|repository| {
-                    query.is_empty()
-                        || repository.full_name.to_ascii_lowercase().contains(&query)
-                        || repository
-                            .description
-                            .as_deref()
-                            .is_some_and(|description| {
-                                description.to_ascii_lowercase().contains(&query)
-                            })
-                })
-                .take(8)
-                .collect::<Vec<_>>();
-            for repository in filtered {
-                let selected = self.selected_github_repository.as_deref()
-                    == Some(repository.full_name.as_str());
-                let visibility = if repository.private {
-                    "私有"
-                } else {
-                    "公开"
-                };
-                let label = if selected {
-                    format!("{} · {} · 已选择", repository.full_name, visibility)
-                } else {
-                    format!("{} · {}", repository.full_name, visibility)
-                };
-                let kind = if selected {
-                    ButtonKind::Primary
-                } else {
-                    ButtonKind::Subtle
-                };
-                repositories = repositories.push(
-                    button(text(label).size(11))
-                        .on_press(Message::SelectGitHubRepository {
-                            full_name: repository.full_name.clone(),
-                        })
-                        .style(button_style(tokens, kind))
-                        .width(Length::Fill),
-                );
-                if let Some(description) = repository.description.as_deref() {
-                    repositories = repositories
-                        .push(text(description.to_owned()).size(10).color(colors.muted));
-                }
-            }
-            if self.github_repositories_busy {
-                repositories =
-                    repositories.push(text("正在读取仓库…").size(11).color(colors.muted));
-            } else if self.github_repositories.is_empty() {
-                repositories =
-                    repositories.push(text("账号中暂无可选仓库。").size(11).color(colors.muted));
-            }
-            let mut refresh =
-                button(text("刷新仓库").size(11)).style(button_style(tokens, ButtonKind::Subtle));
-            let mut unbind =
-                button(text("解除绑定").size(11)).style(button_style(tokens, ButtonKind::Text));
-            if !self.github_repositories_busy && !self.github_binding_busy {
-                refresh = refresh.on_press(Message::RefreshGitHubRepositories);
-                unbind = unbind.on_press(Message::UnbindGitHub);
-            }
-            let mut actions = row![refresh, unbind].spacing(6);
-            if self.github_repositories_next_page.is_some() && !self.github_repositories_busy {
-                actions = actions.push(
-                    button(text("加载更多").size(11))
-                        .on_press(Message::LoadMoreGitHubRepositories)
-                        .style(button_style(tokens, ButtonKind::Subtle)),
-                );
-            }
-            SettingsCard::new(
-                "GitHub",
-                column![
-                    text(format!("已绑定 @{}", binding.login))
-                        .size(12)
-                        .color(colors.text),
-                    text("可直接选择账号仓库，也可继续输入其他 Git 地址。")
-                        .size(11)
-                        .color(colors.muted),
-                    actions,
-                    repositories,
-                ]
-                .spacing(8),
-            )
-            .view(tokens)
-        } else {
-            let mut binding = column![text("绑定后可直接选择账号中的公开或私有仓库。")
-                .size(11)
-                .color(colors.muted),]
-            .spacing(8)
-            .width(Length::Fill);
-            if let Some(flow) = self.github_device_flow.as_ref() {
-                binding = binding
-                    .push(
-                        text(format!("授权码 {}", flow.user_code))
-                            .size(15)
-                            .font(ui_font(font::Weight::Semibold))
-                            .color(colors.text),
-                    )
-                    .push(
-                        text("在 GitHub 授权页确认后，这里会自动完成绑定。")
-                            .size(11)
-                            .color(colors.muted),
-                    )
-                    .push(
-                        row![
-                            button(text("打开授权页").size(11))
-                                .on_press(Message::OpenGitHubVerification)
-                                .style(button_style(tokens, ButtonKind::Primary)),
-                            button(text("复制授权码").size(11))
-                                .on_press(Message::CopyGitHubUserCode)
-                                .style(button_style(tokens, ButtonKind::Subtle)),
-                            button(text("取消").size(11))
-                                .on_press(Message::CancelGitHubBinding)
-                                .style(button_style(tokens, ButtonKind::Text)),
-                        ]
-                        .spacing(6),
-                    );
-            } else {
-                let mut start = button(text("绑定 GitHub").size(11))
-                    .style(button_style(tokens, ButtonKind::Primary));
-                if !self.github_binding_busy && self.github_binding.client_id_configured {
-                    start = start.on_press(Message::StartGitHubBinding);
-                }
-                binding = binding.push(start);
-            }
-            SettingsCard::new("GitHub", binding).view(tokens)
-        };
-        let repository = if self.project_clone_busy {
-            Input::new("仓库 URL 或本地路径", self.project_clone_repository.clone()).view(tokens)
-        } else {
-            Input::new("仓库 URL 或本地路径", self.project_clone_repository.clone())
-                .on_input(Message::ProjectCloneRepositoryChanged)
-                .view(tokens)
-        };
-        let parent = if self.project_clone_busy {
-            Input::new("克隆位置", self.project_clone_parent.clone()).view(tokens)
-        } else {
-            Input::new("克隆位置", self.project_clone_parent.clone())
-                .on_input(Message::ProjectCloneParentChanged)
-                .view(tokens)
-        };
-        let mut pick_parent =
-            button(text("选择目录").size(11)).style(button_style(tokens, ButtonKind::Subtle));
-        if !self.project_clone_busy {
-            pick_parent = pick_parent.on_press(Message::PickProjectCloneParent);
-        }
-        let parent = row![container(parent).width(Length::Fill), pick_parent]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .width(Length::Fill);
-        let clone = if self.project_clone_busy {
-            button(text("取消克隆").size(11))
-                .on_press(Message::CancelProjectClone)
-                .style(button_style(tokens, ButtonKind::Danger))
-        } else {
-            let mut clone =
-                button(text("开始克隆").size(11)).style(button_style(tokens, ButtonKind::Primary));
-            if !self.project_clone_repository.trim().is_empty()
-                && !self.project_clone_parent.trim().is_empty()
-            {
-                clone = clone.on_press(Message::StartProjectClone);
-            }
-            clone
-        };
-        let mut back =
-            button(text("返回项目").size(11)).style(button_style(tokens, ButtonKind::Text));
-        if !self.project_clone_busy {
-            back = back.on_press(Message::CloseProjectClone);
-        }
-        let mut content = column![
-            text("克隆 Git 仓库")
-                .size(20)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            text("克隆成功后会创建项目，并把新目录设为工作区。")
-                .size(11)
-                .color(colors.muted),
-            github,
-            Card::new(
-                column![repository, parent, row![clone, back].spacing(6)]
-                    .spacing(8)
-                    .width(Length::Fill),
-            )
-            .title("仓库")
-            .view(tokens),
-        ]
-        .spacing(12)
-        .width(Length::Fill);
-        if let Some(detail) = &self.project_clone_detail {
-            let progress = self
-                .project_clone_percent
-                .map(|percent| format!("{detail} {percent}%"))
-                .unwrap_or_else(|| detail.clone());
-            content = content.push(text(progress).size(11).color(colors.muted));
-        }
-        if let Some(error) = &self.project_action_error {
-            content = content.push(text(error.clone()).size(11).color(colors.danger));
-        }
-        if let Some(error) = &self.github_error {
-            content = content.push(text(error.clone()).size(11).color(colors.danger));
-        }
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([18, 20]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn project_content_toolbar(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let Some(project) = self.selected_project.as_ref().and_then(|project_id| {
-            self.projects
-                .iter()
-                .find(|project| &project.id == project_id)
-        }) else {
-            return space().height(Length::Fixed(0.0)).into();
-        };
-        let colors = tokens.colors;
-        let compact = project_toolbar_is_compact(self.primary_chat_region_width());
-        let tab = |label: &'static str,
-                   icon_kind: Icon,
-                   active: bool,
-                   message: Message|
-         -> Element<'static, Message> {
-            if compact {
-                return IconButton::new(label, icon_kind)
-                    .on_press(message)
-                    .selected(active)
-                    .size(ControlSize::Small)
-                    .view(tokens);
-            }
-            button(
-                row![
-                    icon(
-                        icon_kind,
-                        13.0,
-                        if active { colors.accent } else { colors.muted }
-                    ),
-                    text(label).size(12),
-                ]
-                .spacing(5)
-                .align_y(Alignment::Center),
-            )
-            .on_press(message)
-            .style(button_style(
-                tokens,
-                if active {
-                    ButtonKind::Subtle
-                } else {
-                    ButtonKind::Text
-                },
-            ))
-            .into()
-        };
-        let project_title = container(
-            text(project.name.clone())
-                .size(14)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text)
-                .wrapping(iced::widget::text::Wrapping::None)
-                .ellipsis(iced::widget::text::Ellipsis::End)
-                .width(Length::Fixed(if compact { 120.0 } else { 200.0 })),
-        )
-        .width(Length::Shrink);
-        let navigation = row![
-            project_title,
-            tab(
-                "任务",
-                Icon::Workspace,
-                self.project_surface == ProjectSurface::Tasks,
-                Message::OpenProjectTasks,
-            ),
-            tab(
-                "文件",
-                Icon::File,
-                self.project_surface == ProjectSurface::Files,
-                Message::OpenProjectFiles,
-            ),
-            tab(
-                "路线图",
-                Icon::Nodes,
-                self.project_surface == ProjectSurface::Roadmap,
-                Message::OpenRoadmap,
-            ),
-            tab(
-                "Memory",
-                Icon::Appearance,
-                self.project_surface == ProjectSurface::Memory,
-                Message::OpenMemory,
-            ),
-            tab(
-                "架构",
-                Icon::Nodes,
-                self.project_surface == ProjectSurface::Architecture,
-                Message::OpenArchitecture,
-            ),
-            tab(
-                "设置",
-                Icon::Settings,
-                self.project_surface == ProjectSurface::Settings,
-                Message::OpenProjectSettings,
-            ),
-            space().width(Length::Fill),
-            IconButton::new("打开工具", Icon::Nodes)
-                .on_press(Message::OpenCodingTools)
-                .size(ControlSize::Small)
-                .view(tokens),
-        ]
-        .spacing(if compact { 4 } else { 8 })
-        .align_y(Alignment::Center);
-        column![
-            container(navigation)
-                .width(Length::Fill)
-                .padding(Padding {
-                    top: 14.0,
-                    right: 20.0,
-                    bottom: 0.0,
-                    left: 20.0,
-                })
-                .style(canvas_style(tokens)),
-            container(space())
-                .width(Length::Fill)
-                .height(Length::Fixed(1.0))
-                .style(move |_| {
-                    iced::widget::container::Style::default().background(colors.border_soft)
-                }),
-        ]
-        .spacing(0)
-        .into()
-    }
-
-    fn with_project_content_toolbar(
-        &self,
-        content: Element<'static, Message>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        if self.selected_task.is_some() && self.project_surface == ProjectSurface::Tasks {
-            return content;
-        }
-        column![self.project_content_toolbar(tokens), content]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    }
-
-    fn project_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        if let Some(message) = &self.error_message {
-            return container(
-                EmptyState::new("暂时无法显示内容")
-                    .message(message.clone())
-                    .icon(Icon::About)
-                    .action(
-                        button(text("重试").size(13))
-                            .on_press(Message::RefreshProjects)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    )
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        }
-
-        if self.project_surface == ProjectSurface::Clone {
-            return self.project_clone_content(tokens);
-        }
-
-        if let Some(draft) = &self.main_conversation_draft {
-            return self.main_conversation_draft_content(draft, tokens);
-        }
-
-        if self.inbox_selected {
-            if let Some(session) = &self.task_session {
-                let session = self.task_session_with_debug_overlay(session);
-                let content = self.task_session_content("收集箱".to_owned(), &session, tokens);
-                return self.with_project_content_toolbar(content, tokens);
-            }
-            return self.inbox_content(tokens);
-        }
-
-        let Some(project) = self
-            .projects
-            .iter()
-            .find(|project| Some(&project.id) == self.selected_project.as_ref())
-        else {
-            return container(
-                EmptyState::new("还没有项目")
-                    .message("创建第一个项目，之后可设置工作区并添加任务。")
-                    .icon(Icon::Folder)
-                    .action(
-                        button(text("新建项目").size(13))
-                            .on_press(Message::CreateProject)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    )
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        };
-
-        match self.project_surface {
-            ProjectSurface::Clone => return self.project_clone_content(tokens),
-            ProjectSurface::Roadmap => {
-                let content = self.roadmap_content(project, tokens);
-                return self.with_project_content_toolbar(content, tokens);
-            }
-            ProjectSurface::Memory => {
-                let content = self.memory_content(project, tokens);
-                return self.with_project_content_toolbar(content, tokens);
-            }
-            ProjectSurface::Architecture => {
-                let content = self.architecture_content(project, tokens);
-                return self.with_project_content_toolbar(content, tokens);
-            }
-            ProjectSurface::Files => {
-                let content = self.project_files_content(tokens);
-                return self.with_project_content_toolbar(content, tokens);
-            }
-            ProjectSurface::Tasks => {
-                let task_list = self.task_list_content(
-                    tokens,
-                    "暂无任务",
-                    "点左侧项目行的 + 开一段新对话，或在这里创建任务。",
-                );
-                let content = container(task_list)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .padding(Padding::from([16, 20]))
-                    .style(canvas_style(tokens))
-                    .into();
-                return self.with_project_content_toolbar(content, tokens);
-            }
-            ProjectSurface::Settings => {}
-        }
-
-        if let Some(session) = &self.task_session {
-            let session = self.task_session_with_debug_overlay(session);
-            let content = self.task_session_content(project.name.clone(), &session, tokens);
-            return self.with_project_content_toolbar(content, tokens);
-        }
-
-        let project_name = Input::new("项目名称", self.project_name_edit.clone())
-            .id(target_ids::PROJECT_NAME)
-            .on_input(Message::ProjectNameChanged)
-            .view(tokens);
-        let project_workspace =
-            Input::new("工作区路径（可选）", self.project_workspace_edit.clone())
-                .on_input(Message::ProjectWorkspaceChanged)
-                .view(tokens);
-        let mut clear_workspace =
-            button(text("清除").size(11)).style(button_style(tokens, ButtonKind::Text));
-        if !self.project_workspace_edit.is_empty() {
-            clear_workspace = clear_workspace.on_press(Message::ClearProjectWorkspace);
-        }
-        let workspace_editor = row![
-            container(project_workspace).width(Length::Fill),
-            button(text("选择目录").size(11))
-                .on_press(Message::PickProjectWorkspace)
-                .style(button_style(tokens, ButtonKind::Subtle)),
-            clear_workspace,
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .width(Length::Fill);
-        let mut save_project =
-            button(text("保存项目").size(11)).style(button_style(tokens, ButtonKind::Primary));
-        if !self.project_name_edit.trim().is_empty() {
-            save_project = save_project.on_press(Message::SaveProject);
-        }
-        let mut move_up =
-            button(text("上移").size(11)).style(button_style(tokens, ButtonKind::Text));
-        if self.reordered_selected_project_ids(-1).is_some() {
-            move_up = move_up.on_press(Message::MoveProjectUp);
-        }
-        let mut move_down =
-            button(text("下移").size(11)).style(button_style(tokens, ButtonKind::Text));
-        if self.reordered_selected_project_ids(1).is_some() {
-            move_down = move_down.on_press(Message::MoveProjectDown);
-        }
-        let mut project_editor_content = column![project_name, workspace_editor].spacing(8);
-        if let Some(error) = &self.project_action_error {
-            project_editor_content =
-                project_editor_content.push(text(error.clone()).size(11).color(colors.danger));
-        }
-        let project_editor = Card::new(
-            project_editor_content
-                .push(
-                    row![
-                        save_project,
-                        button(
-                            text(if project.pinned {
-                                "取消固定"
-                            } else {
-                                "固定"
-                            })
-                            .size(11)
-                        )
-                        .on_press(Message::ToggleProjectPinned)
-                        .style(button_style(tokens, ButtonKind::Ghost)),
-                        move_up,
-                        move_down,
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                )
-                .push(
-                    row![
-                        button(text("归档全部对话").size(11))
-                            .on_press(Message::RequestProjectConversationArchive)
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                        button(text("移除项目").size(11))
-                            .on_press(Message::RequestProjectRemoval)
-                            .style(button_style(tokens, ButtonKind::Danger)),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                ),
-        )
-        .title("项目")
-        .view(tokens);
-
-        let content = container(project_editor)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into();
-        self.with_project_content_toolbar(content, tokens)
-    }
-
-    fn projects_overview_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let mut refresh = button(text("刷新").size(12))
-            .style(button_style(tokens, ButtonKind::Ghost))
-            .on_press(Message::RefreshProjectsOverview);
-        if self.project_dashboard.is_empty() && self.project_dashboard_error.is_some() {
-            refresh = refresh.style(button_style(tokens, ButtonKind::Primary));
-        }
-        let mut dashboard = column![row![
-            column![
-                text("项目")
-                    .size(20)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                text(format!(
-                    "{} 个项目 · 任务、状态和用量总览",
-                    self.project_dashboard.len()
-                ))
-                .size(11)
-                .color(colors.muted),
-            ]
-            .spacing(3)
-            .width(Length::Fill),
-            refresh,
-        ]
-        .align_y(Alignment::Center)]
-        .spacing(12)
-        .width(Length::Fill);
-        if let Some(error) = &self.project_dashboard_error {
-            dashboard = dashboard.push(text(error.clone()).size(11).color(colors.danger));
-        }
-        if self.project_dashboard.is_empty() {
-            dashboard = dashboard.push(
-                EmptyState::new("暂无项目")
-                    .message("创建项目后，这里会汇总任务状态与用量。")
-                    .icon(Icon::Folder)
-                    .action(
-                        button(text("新建项目").size(12))
-                            .on_press(Message::CreateProject)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    )
-                    .view(tokens),
-            );
-        } else {
-            for project in &self.project_dashboard {
-                let activity = project
-                    .recent_activity_at
-                    .map(format_civil_date)
-                    .unwrap_or_else(|| "暂无活跃".to_owned());
-                let cost = project
-                    .known_cost_usd
-                    .map(|value| format!("${value:.2}"))
-                    .unwrap_or_else(|| "暂无成本".to_owned());
-                let coverage = if project.usage_record_count == 0 {
-                    "无用量记录".to_owned()
-                } else if project.cost_record_count == 0 {
-                    format!("{} 条用量", project.usage_record_count)
-                } else {
-                    format!(
-                        "{}/{} 条成本",
-                        project.cost_record_count, project.usage_record_count
-                    )
-                };
-                let status = &project.status_counts;
-                let path = project
-                    .workspace_path
-                    .clone()
-                    .unwrap_or_else(|| "分类项目".to_owned());
-                let project_id = ProjectId::new(project.project_id.clone())
-                    .expect("dashboard project ids come from Product Core");
-                let card = column![
-                    row![
-                        column![
-                            text(project.name.clone())
-                                .size(14)
-                                .font(ui_font(font::Weight::Semibold))
-                                .color(colors.text),
-                            text(path).size(10).color(colors.muted),
-                        ]
-                        .spacing(2)
-                        .width(Length::Fill),
-                        text(format!("最近活跃 {activity}"))
-                            .size(10)
-                            .color(colors.muted),
-                    ]
-                    .align_y(Alignment::Center),
-                    row![
-                        dashboard_metric("进行中", project.active_count, colors),
-                        dashboard_metric("阻塞", project.blocked_count, colors),
-                        dashboard_metric("完成", status.done, colors),
-                        dashboard_metric("会话", project.session_count, colors),
-                        dashboard_metric("任务", project.task_count, colors),
-                    ]
-                    .spacing(16),
-                    row![
-                        text(format!(
-                            "{} tokens",
-                            format_token_count(project.total_tokens)
-                        ))
-                        .size(10)
-                        .color(colors.muted),
-                        text(cost).size(10).color(colors.muted),
-                        text(coverage).size(10).color(colors.muted),
-                        text(format!(
-                            "草稿 {} · 等待 {} · 运行 {} · 阻塞 {} · 完成 {} · 取消 {}",
-                            status.draft,
-                            status.waiting,
-                            status.running,
-                            status.blocked,
-                            status.done,
-                            status.cancelled
-                        ))
-                        .size(10)
-                        .color(colors.faint),
-                    ]
-                    .spacing(12),
-                ]
-                .spacing(8)
-                .width(Length::Fill);
-                dashboard = dashboard.push(
-                    button(Card::new(card).view(tokens))
-                        .width(Length::Fill)
-                        .on_press(Message::SelectProject(project_id))
-                        .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-        }
-        container(scrollable(dashboard).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn inbox_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let task_list = self.task_list_content(
-            tokens,
-            "收集箱为空",
-            "先记录任务，准备好后再移动到具体项目。",
-        );
-        let page = column![
-            row![
-                column![
-                    text("收集箱")
-                        .size(18)
-                        .font(ui_font(font::Weight::Semibold))
-                        .color(colors.text),
-                    text("暂未归属项目的任务").size(12).color(colors.muted),
-                ]
-                .spacing(3)
-                .width(Length::Fill),
-                text(format!("任务 {}", self.tasks.len()))
-                    .size(12)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.muted),
-            ]
-            .align_y(Alignment::Center),
-            task_list,
-        ]
-        .spacing(14);
-        container(page)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn task_list_content(
-        &self,
-        tokens: ThemeTokens,
-        empty_title: &'static str,
-        empty_message: &'static str,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let new_task = Input::new("新任务标题", self.new_task_title.clone())
-            .on_input(Message::NewTaskTitleChanged)
-            .view(tokens);
-        let mut create_task =
-            button(text("创建任务").size(11)).style(button_style(tokens, ButtonKind::Primary));
-        if !self.new_task_title.trim().is_empty() {
-            create_task = create_task.on_press(Message::CreateTask);
-        }
-        let search = Input::new("搜索任务", self.task_search.clone())
-            .on_input(Message::TaskSearchChanged)
-            .view(tokens);
-        let session_hits = session_search_hit_ids(&self.application, &self.task_search);
-        let filtered_tasks = ordered_task_tree_indices(&self.tasks)
-            .into_iter()
-            .filter_map(|(index, depth)| {
-                let task = &self.tasks[index];
-                task_matches_search(task, &self.task_search, &session_hits).then_some((task, depth))
-            })
-            .collect::<Vec<_>>();
-        let mut items = column![].spacing(6).width(Length::Fill);
-        if filtered_tasks.is_empty() {
-            items = items.push(
-                EmptyState::new(if self.tasks.is_empty() {
-                    empty_title
-                } else {
-                    "没有匹配任务"
-                })
-                .message(if self.tasks.is_empty() {
-                    empty_message
-                } else {
-                    "尝试其他标题或任务 ID。"
-                })
-                .icon(Icon::Workspace)
-                .view(tokens),
-            );
-        } else if self.task_search.trim().is_empty() {
-            for pinned in [true, false] {
-                let reorder_items = filtered_tasks
-                    .iter()
-                    .filter(|(task, _)| task.pinned == pinned)
-                    .map(|(task, depth)| {
-                        let metadata = format!(
-                            "{} · {}",
-                            status_label(task.status),
-                            priority_label(task.priority)
-                        );
-                        ReorderItem::new(
-                            task.id.clone(),
-                            ListItem::new(
-                                row![
-                                    text(if *depth == 0 {
-                                        task.title.clone()
-                                    } else {
-                                        format!("{}↳ {}", "  ".repeat((*depth).min(6)), task.title)
-                                    })
-                                    .size(13)
-                                    .width(Length::Fill)
-                                    .color(colors.text),
-                                    text(metadata).size(11).color(colors.muted),
-                                ]
-                                .spacing(12)
-                                .align_y(Alignment::Center),
-                            )
-                            .selected(Some(&task.id) == self.selected_task.as_ref())
-                            .view(tokens),
-                        )
-                    })
-                    .collect::<Vec<_>>();
-                if reorder_items.is_empty() {
-                    continue;
-                }
-                items = items.push(
-                    ReorderList::new(reorder_items, Message::SelectTask)
-                        .on_reorder(|task_id, before_task_id| Message::ReorderTask {
-                            task_id,
-                            before_task_id,
-                        })
-                        .spacing(6.0)
-                        .indicator(colors.accent)
-                        .view(),
-                );
-            }
-        } else {
-            for (task, depth) in filtered_tasks {
-                let metadata = format!(
-                    "{} · {}",
-                    status_label(task.status),
-                    priority_label(task.priority)
-                );
-                items = items.push(
-                    ListItem::new(
-                        row![
-                            text(if depth == 0 {
-                                task.title.clone()
-                            } else {
-                                format!("{}↳ {}", "  ".repeat(depth.min(6)), task.title)
-                            })
-                            .size(13)
-                            .width(Length::Fill)
-                            .color(colors.text),
-                            text(metadata).size(11).color(colors.muted),
-                        ]
-                        .spacing(12)
-                        .align_y(Alignment::Center),
-                    )
-                    .selected(Some(&task.id) == self.selected_task.as_ref())
-                    .on_select(Message::SelectTask(task.id.clone()))
-                    .view(tokens),
-                );
-            }
-        }
-        if !self.archived_tasks.is_empty() {
-            items = items.push(
-                text(format!("已归档 {}", self.archived_tasks.len()))
-                    .size(11)
-                    .color(colors.faint),
-            );
-            for task in &self.archived_tasks {
-                items = items.push(
-                    ListItem::new(
-                        row![
-                            text(task.title.clone())
-                                .size(12)
-                                .width(Length::Fill)
-                                .color(colors.muted),
-                            button(text("恢复").size(10))
-                                .on_press(Message::RestoreTask(task.id.clone()))
-                                .style(button_style(tokens, ButtonKind::Ghost)),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .view(tokens),
-                );
-            }
-        }
-        column![
-            row![new_task, create_task]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            search,
-            scrollable(items)
-                .direction(vertical_scrollbar())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        ]
-        .spacing(14)
-        .into()
-    }
-
-    fn roadmap_content(
-        &self,
-        project: &DesktopWorkspaceProject,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        self.roadmap_content_for(project, None, tokens)
-    }
-
-    fn roadmap_content_for(
-        &self,
-        project: &DesktopWorkspaceProject,
-        editor: Option<&ProjectWorkspaceEditorState>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let roadmap = editor.map_or(&self.roadmap, |state| &state.roadmap);
-        let selected_milestone =
-            editor.map_or(&self.selected_milestone, |state| &state.selected_milestone);
-        let milestone_title = editor.map_or(&self.milestone_title, |state| &state.milestone_title);
-        let milestone_description = editor.map_or(&self.milestone_description, |state| {
-            &state.milestone_description
-        });
-        let milestone_due_date =
-            editor.map_or(&self.milestone_due_date, |state| &state.milestone_due_date);
-        let tasks = editor.map_or(self.tasks.as_slice(), |state| state.tasks.as_slice());
-        let roadmap_error = editor.map_or(&self.roadmap_error, |state| &state.roadmap_error);
-        let colors = tokens.colors;
-        let mut milestone_items = column![].spacing(6).width(Length::Fill);
-        if roadmap.milestones.is_empty() {
-            milestone_items = milestone_items.push(
-                EmptyState::new("暂无里程碑")
-                    .message("创建里程碑来组织项目阶段和关联任务。")
-                    .icon(Icon::Nodes)
-                    .view(tokens),
-            );
-        } else {
-            for milestone in &roadmap.milestones {
-                milestone_items = milestone_items.push(
-                    ListItem::new(
-                        column![
-                            text(milestone.title.clone()).size(12).color(colors.text),
-                            text(milestone_status_label(milestone.status))
-                                .size(10)
-                                .color(colors.muted),
-                        ]
-                        .spacing(3),
-                    )
-                    .selected(selected_milestone.as_deref() == Some(milestone.id.as_str()))
-                    .on_select(Message::SelectMilestone(milestone.id.clone()))
-                    .view(tokens),
-                );
-            }
-        }
-        let sidebar = container(
-            column![
-                row![
-                    text("里程碑")
-                        .size(14)
-                        .font(ui_font(font::Weight::Semibold))
-                        .width(Length::Fill)
-                        .color(colors.text),
-                    button(text("新建").size(11))
-                        .on_press(Message::CreateMilestone)
-                        .style(button_style(tokens, ButtonKind::Primary)),
-                    button(text("刷新").size(11))
-                        .on_press(Message::RefreshRoadmap)
-                        .style(button_style(tokens, ButtonKind::Subtle)),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-                scrollable(milestone_items)
-                    .direction(vertical_scrollbar())
-                    .height(Length::Fill),
-            ]
-            .spacing(10),
-        )
-        .width(Length::Fixed(300.0))
-        .height(Length::Fill)
-        .padding(Padding::from([16, 14]));
-
-        let inspector: Element<'static, Message> = if let Some(milestone) =
-            selected_milestone.as_deref().and_then(|selected| {
-                roadmap
-                    .milestones
-                    .iter()
-                    .find(|milestone| milestone.id == selected)
-            }) {
-            let title = Input::new("里程碑名称", milestone_title.clone())
-                .on_input(Message::MilestoneTitleChanged)
-                .view(tokens);
-            let description = Input::new("描述", milestone_description.clone())
-                .on_input(Message::MilestoneDescriptionChanged)
-                .view(tokens);
-            let due_date = Input::new("截止日期 YYYY-MM-DD", milestone_due_date.clone())
-                .on_input(Message::MilestoneDueDateChanged)
-                .view(tokens);
-            let mut save =
-                button(text("保存").size(11)).style(button_style(tokens, ButtonKind::Primary));
-            if !milestone_title.trim().is_empty() {
-                save = save.on_press(Message::SaveMilestone);
-            }
-            let status = button(text(milestone_status_label(milestone.status)).size(11))
-                .on_press(Message::CycleMilestoneStatus)
-                .style(button_style(tokens, ButtonKind::Subtle));
-            let actions = row![
-                save,
-                status,
-                button(text("上移").size(11))
-                    .on_press(Message::MoveMilestoneUp)
-                    .style(button_style(tokens, ButtonKind::Text)),
-                button(text("下移").size(11))
-                    .on_press(Message::MoveMilestoneDown)
-                    .style(button_style(tokens, ButtonKind::Text)),
-                button(text("删除").size(11).color(colors.danger))
-                    .on_press(Message::DeleteMilestone)
-                    .style(button_style(tokens, ButtonKind::Text)),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center);
-            let linked = roadmap
-                .links
-                .iter()
-                .filter(|link| link.milestone_id == milestone.id)
-                .map(|link| link.task_id.as_str())
-                .collect::<BTreeSet<_>>();
-            let mut task_items = column![].spacing(5).width(Length::Fill);
-            if tasks.is_empty() {
-                task_items = task_items.push(text("当前项目暂无任务").size(11).color(colors.muted));
-            } else {
-                for task in tasks {
-                    let is_linked = linked.contains(task.id.as_str());
-                    task_items = task_items.push(
-                        button(
-                            row![
-                                text(if is_linked { "已关联" } else { "关联" })
-                                    .size(10)
-                                    .color(if is_linked {
-                                        colors.accent
-                                    } else {
-                                        colors.muted
-                                    }),
-                                text(task.title.clone())
-                                    .size(11)
-                                    .width(Length::Fill)
-                                    .color(colors.text),
-                            ]
-                            .spacing(8),
-                        )
-                        .on_press(Message::ToggleMilestoneTask(task.id.as_str().to_owned()))
-                        .style(button_style(tokens, ButtonKind::Text)),
-                    );
-                }
-            }
-            container(
-                scrollable(
-                    column![
-                        text(project.name.clone()).size(11).color(colors.muted),
-                        title,
-                        description,
-                        due_date,
-                        actions,
-                        Card::new(task_items).title("关联任务").view(tokens),
-                    ]
-                    .spacing(10),
-                )
-                .direction(vertical_scrollbar())
-                .height(Length::Fill),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([16, 18]))
-            .into()
-        } else {
-            container(
-                EmptyState::new("选择里程碑")
-                    .message("从左侧选择里程碑后可编辑状态、截止日期和关联任务。")
-                    .icon(Icon::Nodes)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .into()
-        };
-        let mut page = column![
-            text("路线图")
-                .size(18)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            row![sidebar, inspector]
-                .width(Length::Fill)
-                .height(Length::Fill),
-        ]
-        .spacing(10)
-        .width(Length::Fill)
-        .height(Length::Fill);
-        if let Some(error) = roadmap_error {
-            page = page.push(text(error.clone()).size(11).color(colors.danger));
-        }
-        container(page)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([18, 20]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn memory_content(
-        &self,
-        project: &DesktopWorkspaceProject,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        self.memory_content_for(project, None, tokens)
-    }
-
-    fn memory_content_for(
-        &self,
-        project: &DesktopWorkspaceProject,
-        editor: Option<&ProjectWorkspaceEditorState>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let memories = editor.map_or(self.memories.as_slice(), |state| state.memories.as_slice());
-        let selected_memory = editor.map_or(&self.selected_memory, |state| &state.selected_memory);
-        let memory_title = editor.map_or(&self.memory_title, |state| &state.memory_title);
-        let memory_body = editor.map_or(&self.memory_body, |state| &state.memory_body);
-        let memory_body_text = memory_body.text();
-        let memory_tags = editor.map_or(&self.memory_tags, |state| &state.memory_tags);
-        let memory_scope = editor.map_or(self.memory_scope, |state| state.memory_scope);
-        let memory_error = editor.map_or(&self.memory_error, |state| &state.memory_error);
-        let colors = tokens.colors;
-        let mut memory_items = column![].spacing(6).width(Length::Fill);
-        if memories.is_empty() {
-            memory_items = memory_items.push(text("暂无 Memory").size(11).color(colors.muted));
-        } else {
-            for memory in memories {
-                let scope = match memory.scope {
-                    MemoryScope::User => "用户",
-                    MemoryScope::Project => "项目",
-                };
-                let state = if memory.enabled { "启用" } else { "停用" };
-                memory_items = memory_items.push(
-                    ListItem::new(
-                        column![
-                            text(memory.title.clone()).size(12).color(colors.text),
-                            text(format!("{scope} · {state}"))
-                                .size(10)
-                                .color(colors.muted),
-                        ]
-                        .spacing(3),
-                    )
-                    .selected(selected_memory.as_deref() == Some(memory.id.as_str()))
-                    .on_select(Message::SelectMemory(memory.id.clone()))
-                    .view(tokens),
-                );
-            }
-        }
-        let sidebar = container(
-            column![
-                row![
-                    text("Memory")
-                        .size(14)
-                        .font(ui_font(font::Weight::Semibold))
-                        .width(Length::Fill)
-                        .color(colors.text),
-                    button(text("新建").size(11))
-                        .on_press(Message::NewMemory)
-                        .style(button_style(tokens, ButtonKind::Primary)),
-                    button(text("刷新").size(11))
-                        .on_press(Message::RefreshMemory)
-                        .style(button_style(tokens, ButtonKind::Subtle)),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-                scrollable(memory_items)
-                    .direction(vertical_scrollbar())
-                    .height(Length::Fill),
-            ]
-            .spacing(10),
-        )
-        .width(Length::Fixed(300.0))
-        .height(Length::Fill)
-        .padding(Padding::from([16, 14]));
-
-        let title = Input::new("标题", memory_title.clone())
-            .on_input(Message::MemoryTitleChanged)
-            .view(tokens);
-        let body = HostedTextarea::new(memory_body)
-            .id(target_ids::MEMORY_BODY)
-            .placeholder("正文")
-            .height(220.0)
-            .on_action(Message::MemoryBodyEdited)
-            .view(tokens);
-        let tags = Input::new("标签，以逗号分隔", memory_tags.clone())
-            .on_input(Message::MemoryTagsChanged)
-            .view(tokens);
-        let cooldown_valid = parse_memory_cooldown(&self.memory_cooldown_input).is_ok();
-        let cooldown_input = Input::new("冷却 turn（1–100）", self.memory_cooldown_input.clone())
-            .on_input(Message::MemoryCooldownChanged)
-            .view(tokens);
-        let mut save_cooldown =
-            button(text("保存冷却").size(11)).style(button_style(tokens, ButtonKind::Primary));
-        if cooldown_valid {
-            save_cooldown = save_cooldown.on_press(Message::SaveMemoryCooldown);
-        }
-        let mut memory_settings_content = column![
-            row![
-                button(
-                    text(if self.memory_settings.enabled {
-                        "Memory 已启用"
-                    } else {
-                        "Memory 已停用"
-                    })
-                    .size(11),
-                )
-                .on_press(Message::ToggleMemoryGlobal)
-                .style(button_style(tokens, ButtonKind::Subtle)),
-                button(
-                    text(if self.memory_settings.baseline_injection_enabled {
-                        "基线注入开启"
-                    } else {
-                        "基线注入关闭"
-                    })
-                    .size(11),
-                )
-                .on_press(Message::ToggleMemoryBaseline)
-                .style(button_style(tokens, ButtonKind::Subtle)),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-            row![
-                container(cooldown_input).width(Length::Fixed(180.0)),
-                save_cooldown,
-                button(text("常用值").size(11))
-                    .on_press(Message::CycleMemoryCooldown)
-                    .style(button_style(tokens, ButtonKind::Text)),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(8);
-        if !cooldown_valid {
-            memory_settings_content = memory_settings_content.push(
-                text("冷却 turn 必须是 1–100 的整数。")
-                    .size(10)
-                    .color(colors.danger),
-            );
-        }
-        let memory_settings = Card::new(memory_settings_content)
-            .title("注入设置")
-            .view(tokens);
-        let scope_label = match memory_scope {
-            MemoryScope::User => "用户 Memory",
-            MemoryScope::Project => "项目 Memory",
-        };
-        let scope = button(text(scope_label).size(11))
-            .on_press(Message::ToggleMemoryScope)
-            .style(button_style(tokens, ButtonKind::Subtle));
-        let mut save =
-            button(text("保存").size(11)).style(button_style(tokens, ButtonKind::Primary));
-        if !memory_title.trim().is_empty() && !memory_body_text.trim().is_empty() {
-            save = save.on_press(Message::SaveMemory);
-        }
-        let mut actions = row![save, scope].spacing(6).align_y(Alignment::Center);
-        if let Some(memory) = selected_memory
-            .as_deref()
-            .and_then(|selected| memories.iter().find(|memory| memory.id == selected))
-        {
-            actions = actions
-                .push(
-                    button(text(if memory.enabled { "停用" } else { "启用" }).size(11))
-                        .on_press(Message::ToggleMemoryEnabled)
-                        .style(button_style(tokens, ButtonKind::Text)),
-                )
-                .push(
-                    button(text("删除").size(11).color(colors.danger))
-                        .on_press(Message::DeleteMemory)
-                        .style(button_style(tokens, ButtonKind::Text)),
-                );
-        }
-        let editor = container(
-            column![
-                text(project.name.clone()).size(11).color(colors.muted),
-                memory_settings,
-                title,
-                body,
-                tags,
-                actions,
-            ]
-            .spacing(10),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding::from([16, 18]));
-        let mut page = column![
-            text("Memory")
-                .size(18)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            row![sidebar, editor]
-                .width(Length::Fill)
-                .height(Length::Fill),
-        ]
-        .spacing(10)
-        .width(Length::Fill)
-        .height(Length::Fill);
-        if let Some(error) = memory_error {
-            page = page.push(text(error.clone()).size(11).color(colors.danger));
-        }
-        container(page)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([18, 20]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn architecture_content(
-        &self,
-        project: &DesktopWorkspaceProject,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        self.architecture_content_for(project, None, tokens)
-    }
-
-    fn architecture_content_for(
-        &self,
-        project: &DesktopWorkspaceProject,
-        editor: Option<&ProjectWorkspaceEditorState>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let tasks = editor.map_or(self.tasks.as_slice(), |state| state.tasks.as_slice());
-        let architecture = editor.map_or(&self.architecture, |state| &state.architecture);
-        let architecture_history = editor.map_or(self.architecture_history.as_slice(), |state| {
-            state.architecture_history.as_slice()
-        });
-        let architecture_quarantine_count = editor
-            .map_or(self.architecture_quarantine_count, |state| {
-                state.architecture_quarantine_count
-            });
-        let architecture_graph =
-            editor.map_or(&self.architecture_graph, |state| &state.architecture_graph);
-        let architecture_viewport = editor.map_or(self.architecture_viewport, |state| {
-            state.architecture_viewport
-        });
-        let architecture_selection = editor.map_or(&self.architecture_selection, |state| {
-            &state.architecture_selection
-        });
-        let architecture_error =
-            editor.map_or(&self.architecture_error, |state| &state.architecture_error);
-        let colors = tokens.colors;
-        let mut refresh = button(text("刷新").size(11))
-            .style(button_style(tokens, ButtonKind::Subtle))
-            .on_press(Message::RefreshArchitecture);
-        let can_rollback = !tasks.is_empty()
-            && architecture_history.iter().any(|record| {
-                record.event.status == ArchitectureChangeStatus::Applied
-                    && record.after_graph.as_ref() == Some(architecture)
-            });
-        let mut rollback =
-            button(text("回滚上一版本").size(11)).style(button_style(tokens, ButtonKind::Subtle));
-        if can_rollback {
-            rollback = rollback.on_press(Message::RollbackArchitecture);
-        }
-        if self.selected_project.is_none() {
-            refresh = button(text("刷新").size(11)).style(button_style(tokens, ButtonKind::Subtle));
-        }
-        let header = row![
-            column![
-                text("项目架构")
-                    .size(20)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                text(format!(
-                    "{} · v{} · {} 节点 · {} 关系",
-                    project.name,
-                    architecture.version,
-                    architecture.nodes.len(),
-                    architecture.edges.len()
-                ))
-                .size(11)
-                .color(colors.muted),
-            ]
-            .spacing(4)
-            .width(Length::Fill),
-            refresh,
-            rollback,
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-
-        let graph: Element<'static, Message> = if architecture.nodes.is_empty() {
-            EmptyState::new("暂无架构快照")
-                .message("架构变更由 Agent 审批流写入；此处只展示真实历史，不生成占位图。")
-                .icon(Icon::Nodes)
-                .view(tokens)
-        } else {
-            GraphCanvas::owned(
-                "lilia-architecture",
-                architecture_graph.clone(),
-                architecture_viewport,
-                architecture_selection.clone(),
-                Message::ArchitectureGraph,
-                tokens,
-            )
-            .view()
-        };
-        let selection_text = match architecture_selection.as_ref() {
-            Some(GraphSelection::Node(node_id)) => architecture
-                .nodes
-                .iter()
-                .find(|node| node.id == node_id.as_str())
-                .map(|node| {
-                    let paths = if node.paths.is_empty() {
-                        "无绑定路径".to_owned()
-                    } else {
-                        node.paths.join(" · ")
-                    };
-                    format!(
-                        "{} · {}\n{}\n{}",
-                        node.label, node.node_type, node.summary, paths
-                    )
-                })
-                .unwrap_or_else(|| format!("节点 {node_id}")),
-            Some(GraphSelection::Edge(edge_id)) => architecture
-                .edges
-                .iter()
-                .find(|edge| edge.id == edge_id.as_str())
-                .map(|edge| {
-                    format!(
-                        "{} → {} · {}\n{}",
-                        edge.from, edge.to, edge.edge_type, edge.summary
-                    )
-                })
-                .unwrap_or_else(|| format!("关系 {edge_id}")),
-            Some(GraphSelection::Port { node, port }) => format!("{node} · {port}"),
-            None => architecture.summary.clone(),
-        };
-        let graph_panel = column![
-            container(graph)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .style(canvas_style(tokens)),
-            Card::new(
-                text(if selection_text.trim().is_empty() {
-                    "选择节点或关系查看详情。".to_owned()
-                } else {
-                    selection_text
-                })
-                .size(11)
-                .color(colors.muted)
-            )
-            .title("选择详情")
-            .view(tokens),
-        ]
-        .spacing(8)
-        .width(Length::FillPortion(3))
-        .height(Length::Fill);
-
-        let mut history = column![].spacing(6).width(Length::Fill);
-        if architecture_history.is_empty() {
-            history = history.push(text("暂无变更记录").size(11).color(colors.muted));
-        } else {
-            for record in architecture_history.iter().take(20) {
-                let version = record
-                    .event
-                    .after_version
-                    .map(|version| format!("v{version}"))
-                    .unwrap_or_else(|| format!("v{}", record.event.before_version));
-                history = history.push(
-                    ListItem::new(
-                        column![
-                            text(if record.event.reason.is_empty() {
-                                architecture_status_label(record.event.status).to_owned()
-                            } else {
-                                record.event.reason.clone()
-                            })
-                            .size(11)
-                            .color(colors.text),
-                            text(format!(
-                                "{} · {} · {}",
-                                version,
-                                architecture_status_label(record.event.status),
-                                record.event.backend.as_str()
-                            ))
-                            .size(10)
-                            .color(colors.muted),
-                        ]
-                        .spacing(2),
-                    )
-                    .view(tokens),
-                );
-            }
-        }
-        let history_panel = Card::new(
-            scrollable(history)
-                .direction(vertical_scrollbar())
-                .height(Length::Fill),
-        )
-        .title("版本历史")
-        .view(tokens);
-        let mut page = column![header].spacing(12).height(Length::Fill);
-        if let Some(error) = architecture_error {
-            page = page.push(text(error.clone()).size(11).color(colors.danger));
-        }
-        if architecture_quarantine_count > 0 {
-            page = page.push(
-                text(format!(
-                    "已隔离 {architecture_quarantine_count} 条无法读取的架构数据；当前图与有效历史可继续使用。"
-                ))
-                .size(11)
-                .color(colors.warning),
-            );
-        }
-        page = page.push(
-            row![
-                graph_panel,
-                container(history_panel)
-                    .width(Length::FillPortion(1))
-                    .height(Length::Fill),
-            ]
-            .spacing(10)
-            .height(Length::Fill),
-        );
-        container(page)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([18, 20]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn coding_tools_content(
-        &self,
-        project: &DesktopWorkspaceProject,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let mut refresh = button(
-            text(if self.coding_busy {
-                "处理中"
-            } else {
-                "刷新"
-            })
-            .size(11),
-        )
-        .style(button_style(tokens, ButtonKind::Subtle));
-        if !self.coding_busy {
-            refresh = refresh.on_press(Message::RefreshCodingTools);
-        }
-        let close = button(icon(Icon::Close, 13.0, colors.muted))
-            .on_press(Message::CloseInspectorDock)
-            .style(button_style(tokens, ButtonKind::Text));
-        let heading = row![
-            column![
-                text("工作区工具")
-                    .size(15)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                text(
-                    project
-                        .workspace_path
-                        .clone()
-                        .unwrap_or_else(|| "未设置工作区路径".to_owned())
-                )
-                .size(11)
-                .color(colors.muted),
-            ]
-            .spacing(3)
-            .width(Length::Fill),
-            refresh,
-            close,
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-
-        let mut open_workspace =
-            button(text("文件管理器").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-        let mut open_editor =
-            button(text("VS Code").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-        let mut open_terminal =
-            button(text("外部终端").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-        let mut new_terminal =
-            button(text("工作区终端").size(10)).style(button_style(tokens, ButtonKind::Primary));
-        if project.workspace_path.is_some() {
-            open_workspace = open_workspace.on_press(Message::OpenProjectWorkspace);
-            open_editor = open_editor.on_press(Message::OpenProjectCodeEditor);
-            open_terminal = open_terminal.on_press(Message::OpenProjectTerminal);
-            new_terminal = new_terminal.on_press(Message::OpenNativeProjectTerminal);
-        }
-        let host_actions = row![open_workspace, open_editor, open_terminal, new_terminal]
-            .spacing(5)
-            .align_y(Alignment::Center);
-
-        let services = if let Some(snapshot) = &self.coding_tools {
-            Card::new(
-                column![
-                    text(if snapshot.status.shared_identity_ok {
-                        "工作区与 Agent 使用同一服务实例"
-                    } else {
-                        "工作区服务实例不一致"
-                    })
-                    .size(11)
-                    .color(if snapshot.status.shared_identity_ok {
-                        colors.success
-                    } else {
-                        colors.danger
-                    }),
-                    text(format!(
-                        "MCP 已连接 {} · LSP 工作区 {}",
-                        snapshot.status.mcp_active_servers, snapshot.status.lsp_active_workspaces
-                    ))
-                    .size(10)
-                    .color(colors.muted),
-                ]
-                .spacing(6),
-            )
-            .title("Agent 服务")
-            .view(tokens)
-        } else {
-            Card::new(text("正在读取共享服务状态").size(11).color(colors.muted))
-                .title("Agent 服务")
-                .view(tokens)
-        };
-
-        let project_terminals = self
-            .terminal_snapshots
-            .values()
-            .filter(|snapshot| {
-                matches!(
-                    &snapshot.scope,
-                    DesktopTerminalScope::Project(project_id) if project_id == &project.id
-                )
-            })
-            .collect::<Vec<_>>();
-        let mut terminal_sessions = column![].spacing(5).width(Length::Fill);
-        if project_terminals.is_empty() {
-            terminal_sessions =
-                terminal_sessions.push(text("尚未创建工作区终端").size(10).color(colors.muted));
-        } else {
-            for snapshot in project_terminals {
-                let status = if snapshot.process.is_running() {
-                    "运行中"
-                } else {
-                    "已结束"
-                };
-                terminal_sessions = terminal_sessions.push(
-                    ListItem::new(
-                        row![
-                            column![
-                                text(snapshot.command_label.clone())
-                                    .size(10)
-                                    .color(colors.text),
-                                text(format!(
-                                    "{} · {}×{}",
-                                    status, snapshot.columns, snapshot.rows
-                                ))
-                                .size(9)
-                                .color(colors.muted),
-                            ]
-                            .spacing(2)
-                            .width(Length::Fill),
-                            text("打开").size(9).color(colors.accent),
-                        ]
-                        .align_y(Alignment::Center),
-                    )
-                    .auto_height()
-                    .on_select(Message::Terminal(TerminalViewMessage::Reveal(
-                        snapshot.id.clone(),
-                    )))
-                    .view(tokens),
-                );
-            }
-        }
-        let terminal_sessions = Card::new(terminal_sessions).title("终端会话").view(tokens);
-
-        let mut task_content = column![].spacing(5).width(Length::Fill);
-        match &self.coding_project_tasks {
-            Some(catalog) if catalog.tasks.is_empty() => {
-                task_content =
-                    task_content.push(text("项目中尚未配置任务").size(10).color(colors.muted));
-            }
-            Some(catalog) => {
-                for task in &catalog.tasks {
-                    let action = if let Some(session_id) = &task.running_session_id {
-                        Message::Terminal(TerminalViewMessage::Reveal(session_id.clone()))
-                    } else {
-                        Message::RunProjectTask(task.id.clone())
-                    };
-                    let action_label = if task.running_session_id.is_some() {
-                        "打开"
-                    } else {
-                        "运行"
-                    };
-                    task_content = task_content.push(
-                        ListItem::new(
-                            row![
-                                column![
-                                    text(task.label.clone()).size(10).color(colors.text),
-                                    text(if task.allow_concurrent_runs {
-                                        "允许并行运行"
-                                    } else {
-                                        "单实例"
-                                    })
-                                    .size(9)
-                                    .color(colors.muted),
-                                ]
-                                .spacing(2)
-                                .width(Length::Fill),
-                                text(action_label).size(9).color(colors.accent),
-                            ]
-                            .align_y(Alignment::Center),
-                        )
-                        .auto_height()
-                        .on_select(action)
-                        .view(tokens),
-                    );
-                }
-            }
-            None => {
-                task_content =
-                    task_content.push(text("正在读取项目任务").size(10).color(colors.muted));
-            }
-        }
-        let project_tasks = Card::new(task_content).title("项目任务").view(tokens);
-
-        let mut git_content = column![].spacing(4).width(Length::Fill);
-        if let Some(status) = &self.coding_git {
-            let branch = status
-                .branch
-                .clone()
-                .unwrap_or_else(|| "detached HEAD".to_owned());
-            let commit = status.commit.chars().take(10).collect::<String>();
-            git_content = git_content.push(
-                row![
-                    text(branch).size(11).width(Length::Fill).color(colors.text),
-                    text(if status.clean {
-                        "工作区干净".to_owned()
-                    } else {
-                        format!("{} 项更改", status.changes.len())
-                    })
-                    .size(10)
-                    .color(if status.clean {
-                        colors.success
-                    } else {
-                        colors.warning
-                    }),
-                ]
-                .spacing(6),
-            );
-            git_content = git_content.push(text(commit).size(10).color(colors.faint));
-            for change in status.changes.iter().take(8) {
-                git_content = git_content.push(
-                    ListItem::new(
-                        row![
-                            text(change.path.clone())
-                                .size(10)
-                                .width(Length::Fill)
-                                .color(colors.text),
-                            text(format!(
-                                "{}  +{} -{}",
-                                git_file_status_label(change.status),
-                                change.additions,
-                                change.deletions
-                            ))
-                            .size(9)
-                            .color(colors.muted),
-                        ]
-                        .spacing(5),
-                    )
-                    .auto_height()
-                    .view(tokens),
-                );
-            }
-            if status.changes.len() > 8 {
-                git_content = git_content.push(
-                    text(format!("另有 {} 项更改", status.changes.len() - 8))
-                        .size(9)
-                        .color(colors.faint),
-                );
-            }
-        } else {
-            git_content = git_content.push(text("暂无 Git 状态").size(10).color(colors.muted));
-        }
-        let git = Card::new(git_content).title("Git").view(tokens);
-
-        let mut diff_content = column![].spacing(4).width(Length::Fill);
-        if let Some(diff) = &self.coding_git_diff {
-            let additions = diff.files.iter().map(|file| file.additions).sum::<u64>();
-            let deletions = diff.files.iter().map(|file| file.deletions).sum::<u64>();
-            diff_content = diff_content.push(
-                row![
-                    text(format!(
-                        "{} 个文件  +{} -{}",
-                        diff.files.len(),
-                        additions,
-                        deletions
-                    ))
-                    .size(10)
-                    .width(Length::Fill)
-                    .color(colors.text),
-                    button(
-                        text(match diff.scope {
-                            DesktopGitDiffScope::WorkingTree => "工作区",
-                            DesktopGitDiffScope::Staged => "已暂存",
-                        })
-                        .size(9)
-                    )
-                    .on_press_maybe((!self.coding_busy).then_some(Message::CycleCodingGitDiffScope))
-                    .style(button_style(tokens, ButtonKind::Subtle)),
-                ]
-                .spacing(6),
-            );
-            if let Some(patch) = &diff.patch {
-                let mut lines = patch.lines();
-                let preview = lines.by_ref().take(24).collect::<Vec<_>>().join("\n");
-                if !preview.is_empty() {
-                    diff_content = diff_content.push(
-                        container(text(preview).size(9).color(colors.muted))
-                            .width(Length::Fill)
-                            .padding(8)
-                            .style(canvas_style(tokens)),
-                    );
-                }
-                if lines.next().is_some() {
-                    diff_content =
-                        diff_content.push(text("仅显示前 24 行").size(9).color(colors.faint));
-                }
-            }
-        } else {
-            diff_content = diff_content.push(text("暂无工作区 Diff").size(10).color(colors.muted));
-        }
-        let git_diff = Card::new(diff_content).title("Diff").view(tokens);
-
-        let mut workspace_content = column![].spacing(3).width(Length::Fill);
-        if let Some(listing) = &self.coding_workspace {
-            if listing.entries.is_empty() {
-                workspace_content =
-                    workspace_content.push(text("工作区根目录为空").size(10).color(colors.muted));
-            } else {
-                for entry in listing.entries.iter().take(12) {
-                    let size = entry
-                        .size_bytes
-                        .map(format_byte_size)
-                        .unwrap_or_else(|| entry.kind.clone());
-                    workspace_content = workspace_content.push(
-                        ListItem::new(
-                            row![
-                                icon(
-                                    if entry.kind == "directory" {
-                                        Icon::Folder
-                                    } else {
-                                        Icon::File
-                                    },
-                                    12.0,
-                                    colors.muted,
-                                ),
-                                text(entry.path.clone())
-                                    .size(10)
-                                    .width(Length::Fill)
-                                    .color(colors.text),
-                                text(size).size(9).color(colors.faint),
-                            ]
-                            .spacing(5)
-                            .align_y(Alignment::Center),
-                        )
-                        .auto_height()
-                        .view(tokens),
-                    );
-                }
-            }
-        } else {
-            workspace_content =
-                workspace_content.push(text("暂无目录数据").size(10).color(colors.muted));
-        }
-        let workspace = Card::new(workspace_content).title("工作区").view(tokens);
-        let search_placeholder = match self.coding_search_mode {
-            DesktopCodeSearchMode::Symbol => "搜索工作区符号",
-            _ => "搜索工作区文本",
-        };
-        let query = Input::new(search_placeholder, self.coding_query.clone())
-            .on_input(Message::CodingQueryChanged)
-            .view(tokens);
-        let mode_label = match self.coding_search_mode {
-            DesktopCodeSearchMode::Symbol => "符号",
-            _ => "文本",
-        };
-        let mut search_mode =
-            button(text(mode_label).size(10)).style(button_style(tokens, ButtonKind::Subtle));
-        let scope_label = if self.coding_search_all_projects {
-            "全部项目"
-        } else {
-            "当前项目"
-        };
-        let mut search_scope =
-            button(text(scope_label).size(10)).style(button_style(tokens, ButtonKind::Subtle));
-        if !self.coding_busy {
-            search_mode = search_mode.on_press(Message::CycleCodingSearchMode);
-            search_scope = search_scope.on_press(Message::ToggleCodingSearchScope);
-        }
-        let has_searchable_workspace = if self.coding_search_all_projects {
-            self.projects.iter().any(|project| {
-                project
-                    .workspace_path
-                    .as_deref()
-                    .is_some_and(|root| !root.trim().is_empty())
-            })
-        } else {
-            project
-                .workspace_path
-                .as_deref()
-                .is_some_and(|root| !root.trim().is_empty())
-        };
-        let mut search =
-            button(text("搜索").size(11)).style(button_style(tokens, ButtonKind::Primary));
-        if !self.coding_busy && !self.coding_query.trim().is_empty() && has_searchable_workspace {
-            search = search.on_press(Message::SearchCodingTools);
-        }
-        let mut search_content = column![row![query, search_scope, search_mode, search]
-            .spacing(7)
-            .align_y(Alignment::Center)]
-        .spacing(5)
-        .width(Length::Fill);
-        if let Some(result) = &self.coding_search {
-            if result.hits.is_empty() {
-                search_content =
-                    search_content.push(text("没有匹配结果").size(10).color(colors.muted));
-            } else {
-                for hit in &result.hits {
-                    let location = hit.hit.start_line.map_or_else(
-                        || format!("{} · {}", hit.project_name, hit.hit.path),
-                        |line| {
-                            format!(
-                                "{} · {}:{}",
-                                hit.project_name,
-                                hit.hit.path,
-                                line.saturating_add(1)
-                            )
-                        },
-                    );
-                    search_content = search_content.push(
-                        ListItem::new(
-                            column![
-                                text(location).size(10).color(colors.text),
-                                text(hit.hit.summary.clone()).size(9).color(colors.muted),
-                            ]
-                            .spacing(2),
-                        )
-                        .auto_height()
-                        .on_select(Message::OpenCodingSearchHit(hit.clone()))
-                        .view(tokens),
-                    );
-                }
-                let mut save_memory = button(text("写入项目 Memory").size(10))
-                    .style(button_style(tokens, ButtonKind::Subtle));
-                if !self.coding_busy && !self.coding_search_all_projects {
-                    save_memory = save_memory.on_press(Message::SaveCodingSearchToMemory);
-                }
-                search_content = search_content.push(save_memory);
-            }
-        } else {
-            search_content = search_content.push(
-                text(if self.coding_search_all_projects {
-                    "输入关键词后搜索全部活动项目工作区。"
-                } else {
-                    "输入关键词后搜索当前工作区。"
-                })
-                .size(10)
-                .color(colors.muted),
-            );
-        }
-        let code_search = Card::new(search_content).title("代码搜索").view(tokens);
-        let mut content = column![
-            heading,
-            host_actions,
-            services,
-            project_tasks,
-            terminal_sessions,
-            git,
-            git_diff,
-            workspace,
-            code_search
-        ]
-        .spacing(10)
-        .width(Length::Fill);
-        if let Some(error) = &self.coding_error {
-            content = content.push(text(error.clone()).size(11).color(colors.danger));
-        }
-        if let Some(notice) = &self.coding_notice {
-            content = content.push(text(notice.clone()).size(10).color(colors.success));
-        }
-        container(
-            scrollable(content)
-                .direction(vertical_scrollbar())
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding::from([14, 12]))
-        .into()
-    }
-
-    fn extensions_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let control_height = ControlSize::Medium.height_in(tokens.metrics);
-        let refresh = button(
-            text(if self.extensions_busy {
-                "读取中"
-            } else {
-                "刷新"
-            })
-            .size(12),
-        )
-        .height(Length::Fixed(control_height))
-        .padding([0.0, 14.0])
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let refresh = if self.extensions_busy {
-            refresh
-        } else {
-            refresh.on_press(Message::RefreshExtensions)
-        };
-        let mut content = column![row![
-            column![
-                text("扩展")
-                    .size(18)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                text("Native AgentKit 的 Skill、MCP 与共享运行时服务")
-                    .size(11)
-                    .color(colors.muted),
-            ]
-            .spacing(3)
-            .width(Length::Fill),
-            refresh,
-        ]
-        .align_y(Alignment::Center),]
-        .spacing(16);
-
-        if let Some(error) = &self.extensions_error {
-            content = content.push(
-                SettingsCard::new(
-                    "读取失败",
-                    text(error.clone()).size(11).color(colors.danger),
-                )
-                .view(tokens),
-            );
-        }
-
-        if let Some(snapshot) = &self.extensions {
-            let mut services = column![].spacing(7);
-            for service in &snapshot.runtime_services {
-                services = services.push(
-                    row![
-                        column![
-                            text(service.label.clone()).size(12).color(colors.text),
-                            text(service.service_id.clone())
-                                .size(10)
-                                .color(colors.faint),
-                        ]
-                        .spacing(2)
-                        .width(Length::Fill),
-                        text(if service.shared_with_agent {
-                            "同一实例"
-                        } else {
-                            "不可用"
-                        })
-                        .size(11)
-                        .color(if service.shared_with_agent {
-                            colors.success
-                        } else {
-                            colors.danger
-                        }),
-                    ]
-                    .spacing(10)
-                    .align_y(Alignment::Center),
-                );
-            }
-            content = content.push(SettingsCard::new("运行时服务", services).view(tokens));
-
-            let skill_id = Input::new("例如 code-review", self.skill_id_input.clone())
-                .on_input(Message::SkillIdChanged)
-                .disabled(self.extensions_busy)
-                .view(tokens);
-            let skill_description =
-                Input::new("用途与执行说明", self.skill_description_input.clone())
-                    .on_input(Message::SkillDescriptionChanged)
-                    .disabled(self.extensions_busy)
-                    .view(tokens);
-            let mut create_skill = button(
-                text(if self.extensions_busy {
-                    "保存中"
-                } else {
-                    "新建 Skill"
-                })
-                .size(11),
-            )
-            .style(button_style(tokens, ButtonKind::Primary));
-            if !self.extensions_busy && !self.skill_id_input.trim().is_empty() {
-                create_skill = create_skill.on_press(Message::CreateSkill);
-            }
-            let mut skills = column![
-                row![
-                    column![
-                        text("注册表管理").size(12).color(colors.text),
-                        text(format!("修订 {}", snapshot.skills_registry_revision))
-                            .size(10)
-                            .color(colors.faint),
-                    ]
-                    .spacing(2)
-                    .width(Length::Fill),
-                    create_skill,
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                text("Skill ID").size(10).color(colors.muted),
-                skill_id,
-                text("说明").size(10).color(colors.muted),
-                skill_description,
-            ]
-            .spacing(7);
-            if snapshot.skills.is_empty() {
-                skills = skills.push(text("尚未注册 Skill 包").size(11).color(colors.muted));
-            } else {
-                for skill in &snapshot.skills {
-                    let state = if !skill.enabled {
-                        "已停用"
-                    } else if skill.runtime_available {
-                        "运行时可用"
-                    } else {
-                        "未载入"
-                    };
-                    let mut skill_row = column![
-                        row![
-                            column![
-                                text(skill.skill_id.clone()).size(12).color(colors.text),
-                                text(if skill.description.is_empty() {
-                                    skill.path.clone()
-                                } else {
-                                    skill.description.clone()
-                                })
-                                .size(10)
-                                .color(colors.faint),
-                            ]
-                            .spacing(2)
-                            .width(Length::Fill),
-                            text(state).size(10).color(
-                                if skill.enabled && skill.runtime_available {
-                                    colors.success
-                                } else {
-                                    colors.muted
-                                }
-                            ),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                        text(skill.path.clone()).size(9).color(colors.faint),
-                    ]
-                    .spacing(3);
-                    if skill.editable {
-                        let mut toggle =
-                            button(text(if skill.enabled { "停用" } else { "启用" }).size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                        let mut delete = button(text("删除").size(10))
-                            .style(button_style(tokens, ButtonKind::Danger));
-                        if !self.extensions_busy {
-                            toggle = toggle.on_press(Message::ToggleSkill(skill.skill_id.clone()));
-                            delete = delete
-                                .on_press(Message::RequestDeleteSkill(skill.skill_id.clone()));
-                        }
-                        skill_row = skill_row.push(row![toggle, delete].spacing(5));
-                        if self.skill_delete_confirmation.as_deref()
-                            == Some(skill.skill_id.as_str())
-                        {
-                            let mut confirm = button(text("确认删除").size(10))
-                                .style(button_style(tokens, ButtonKind::Danger));
-                            let mut cancel = button(text("取消").size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                            if !self.extensions_busy {
-                                confirm = confirm.on_press(Message::ConfirmDeleteSkill);
-                                cancel = cancel.on_press(Message::CancelDeleteSkill);
-                            }
-                            skill_row = skill_row.push(
-                                row![
-                                    text("将删除整个 Skill 目录。")
-                                        .size(10)
-                                        .color(colors.warning),
-                                    confirm,
-                                    cancel,
-                                ]
-                                .spacing(5)
-                                .align_y(Alignment::Center),
-                            );
-                        }
-                    }
-                    skills = skills.push(skill_row);
-                }
-            }
-            skills = skills.push(
-                text(snapshot.skills_registry_path.clone())
-                    .size(10)
-                    .color(colors.faint),
-            );
-            content = content.push(SettingsCard::new("Skills", skills).view(tokens));
-
-            let plugin_source = Input::new("Plugin 目录", self.plugin_source_input.clone())
-                .on_input(Message::PluginSourceChanged)
-                .disabled(self.extensions_busy)
-                .view(tokens);
-            let mut browse_plugin =
-                button(text("选择目录").size(11)).style(button_style(tokens, ButtonKind::Ghost));
-            let mut install_plugin =
-                button(text("安装").size(11)).style(button_style(tokens, ButtonKind::Primary));
-            if !self.extensions_busy {
-                browse_plugin = browse_plugin.on_press(Message::PickPluginDirectory);
-                if !self.plugin_source_input.trim().is_empty() {
-                    install_plugin = install_plugin.on_press(Message::InstallPlugin);
-                }
-            }
-            let mut plugins = column![
-                row![
-                    column![
-                        text("托管扩展包").size(12).color(colors.text),
-                        text(format!("修订 {}", snapshot.plugins_registry_revision))
-                            .size(10)
-                            .color(colors.faint),
-                    ]
-                    .spacing(2)
-                    .width(Length::Fill),
-                    browse_plugin,
-                    install_plugin,
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-                plugin_source,
-            ]
-            .spacing(7);
-            if snapshot.plugins.is_empty() {
-                plugins = plugins.push(text("尚未安装 Plugin").size(11).color(colors.muted));
-            } else {
-                for plugin in &snapshot.plugins {
-                    let state = if !plugin.enabled {
-                        "已停用"
-                    } else if plugin.runtime_available {
-                        "运行时可用"
-                    } else {
-                        "不可用"
-                    };
-                    let mut plugin_row = column![
-                        row![
-                            column![
-                                text(plugin.name.clone()).size(12).color(colors.text),
-                                text(format!(
-                                    "{} · {} Skill · {} Hook · {} MCP",
-                                    plugin.version,
-                                    plugin.skill_count,
-                                    plugin.hook_count,
-                                    plugin.mcp_server_count
-                                ))
-                                .size(10)
-                                .color(colors.faint),
-                            ]
-                            .spacing(2)
-                            .width(Length::Fill),
-                            text(state).size(10).color(if plugin.runtime_available {
-                                colors.success
-                            } else if plugin.enabled {
-                                colors.danger
-                            } else {
-                                colors.muted
-                            }),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                        text(plugin.description.clone())
-                            .size(10)
-                            .color(colors.muted),
-                    ]
-                    .spacing(3);
-                    for warning in &plugin.warnings {
-                        plugin_row =
-                            plugin_row.push(text(warning.clone()).size(10).color(colors.danger));
-                    }
-                    if plugin.editable {
-                        let mut toggle =
-                            button(text(if plugin.enabled { "停用" } else { "启用" }).size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                        let mut delete = button(text("删除").size(10))
-                            .style(button_style(tokens, ButtonKind::Danger));
-                        if !self.extensions_busy {
-                            toggle =
-                                toggle.on_press(Message::TogglePlugin(plugin.plugin_id.clone()));
-                            delete = delete
-                                .on_press(Message::RequestDeletePlugin(plugin.plugin_id.clone()));
-                        }
-                        plugin_row = plugin_row.push(row![toggle, delete].spacing(5));
-                        if self.plugin_delete_confirmation.as_deref()
-                            == Some(plugin.plugin_id.as_str())
-                        {
-                            let mut confirm = button(text("确认删除").size(10))
-                                .style(button_style(tokens, ButtonKind::Danger));
-                            let mut cancel = button(text("取消").size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                            if !self.extensions_busy {
-                                confirm = confirm.on_press(Message::ConfirmDeletePlugin);
-                                cancel = cancel.on_press(Message::CancelDeletePlugin);
-                            }
-                            plugin_row = plugin_row.push(
-                                row![
-                                    text("仅删除托管副本。").size(10).color(colors.warning),
-                                    confirm,
-                                    cancel,
-                                ]
-                                .spacing(5)
-                                .align_y(Alignment::Center),
-                            );
-                        }
-                    }
-                    plugins =
-                        plugins.push(container(plugin_row).padding(8).style(canvas_style(tokens)));
-                }
-            }
-            content = content.push(SettingsCard::new("Plugins", plugins).view(tokens));
-
-            let mut hooks = column![].spacing(8);
-            if let Some(overview) = &self.hooks {
-                for source in &overview.sources {
-                    let scope_label = match source.scope {
-                        DesktopHookScope::User => "全局",
-                        DesktopHookScope::Project => "当前项目",
-                    };
-                    let mut source_content = column![
-                        row![
-                            column![
-                                text(scope_label).size(12).color(colors.text),
-                                text(format!(
-                                    "修订 {} · {} 个 Handler",
-                                    source.revision, source.handler_count
-                                ))
-                                .size(10)
-                                .color(colors.faint),
-                            ]
-                            .spacing(2)
-                            .width(Length::Fill),
-                            text(if !source.exists {
-                                "未创建"
-                            } else if source.enabled {
-                                "已启用"
-                            } else {
-                                "已停用"
-                            })
-                            .size(10)
-                            .color(if source.enabled {
-                                colors.success
-                            } else {
-                                colors.muted
-                            }),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                        text(source.path.clone()).size(9).color(colors.faint),
-                    ]
-                    .spacing(4);
-                    if !source.exists {
-                        let mut create = button(text("创建来源").size(10))
-                            .style(button_style(tokens, ButtonKind::Primary));
-                        if !self.extensions_busy {
-                            create = create.on_press(Message::CreateHookSource(source.id.clone()));
-                        }
-                        source_content = source_content.push(create);
-                    } else {
-                        let source_id = source.id.clone();
-                        let draft = self
-                            .hook_drafts
-                            .get(&source.id)
-                            .cloned()
-                            .unwrap_or_else(|| hook_handlers_draft(&[]));
-                        let mut handlers = column![row![
-                            text("Handlers")
-                                .size(10)
-                                .width(Length::Fill)
-                                .color(colors.muted),
-                            button(text("新增 Handler").size(10))
-                                .on_press_maybe(
-                                    (!self.extensions_busy)
-                                        .then(|| { Message::AddHookHandler(source.id.clone()) })
-                                )
-                                .style(button_style(tokens, ButtonKind::Ghost)),
-                        ]
-                        .spacing(6)
-                        .align_y(Alignment::Center),]
-                        .spacing(6);
-                        match parse_hook_handlers_draft(&draft) {
-                            Ok(draft_handlers) => {
-                                for (index, handler) in draft_handlers.iter().enumerate() {
-                                    handlers = handlers.push(hook_handler_editor(
-                                        source.id.clone(),
-                                        index,
-                                        handler,
-                                        self.extensions_busy,
-                                        tokens,
-                                    ));
-                                }
-                            }
-                            Err(error) => {
-                                handlers = handlers.push(text(error).size(10).color(colors.danger));
-                            }
-                        }
-                        let raw_source_id = source_id.clone();
-                        source_content = source_content
-                            .push(handlers)
-                            .push(text("高级 JSON").size(10).color(colors.muted))
-                            .push(
-                                Input::new("Handler 数组", draft)
-                                    .on_input(move |value| Message::HookDraftChanged {
-                                        source_id: raw_source_id.clone(),
-                                        value,
-                                    })
-                                    .disabled(self.extensions_busy)
-                                    .view(tokens),
-                            );
-                        let mut save = button(text("保存").size(10))
-                            .style(button_style(tokens, ButtonKind::Primary));
-                        let mut toggle =
-                            button(text(if source.enabled { "停用" } else { "启用" }).size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                        let mut delete = button(text("删除").size(10))
-                            .style(button_style(tokens, ButtonKind::Danger));
-                        if !self.extensions_busy {
-                            save = save.on_press(Message::SaveHookSource(source.id.clone()));
-                            toggle = toggle.on_press(Message::ToggleHookSource(source.id.clone()));
-                            delete = delete
-                                .on_press(Message::RequestDeleteHookSource(source.id.clone()));
-                        }
-                        source_content = source_content.push(row![save, toggle, delete].spacing(5));
-                        if self.hook_delete_confirmation.as_deref() == Some(source.id.as_str()) {
-                            let mut confirm = button(text("确认删除").size(10))
-                                .style(button_style(tokens, ButtonKind::Danger));
-                            let mut cancel = button(text("取消").size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                            if !self.extensions_busy {
-                                confirm = confirm.on_press(Message::ConfirmDeleteHookSource);
-                                cancel = cancel.on_press(Message::CancelDeleteHookSource);
-                            }
-                            source_content = source_content.push(row![confirm, cancel].spacing(5));
-                        }
-                    }
-                    hooks = hooks.push(
-                        container(source_content)
-                            .padding(8)
-                            .style(canvas_style(tokens)),
-                    );
-                }
-            } else {
-                hooks = hooks.push(text("尚未读取 Hooks").size(11).color(colors.muted));
-            }
-            content = content.push(SettingsCard::new("Hooks", hooks).view(tokens));
-
-            let mut add =
-                button(text("新增 MCP").size(11)).style(button_style(tokens, ButtonKind::Primary));
-            if !self.extensions_busy && self.mcp_editor.is_none() {
-                add = add.on_press(Message::NewMcpServer);
-            }
-            let mut mcp = column![row![
-                column![
-                    text("注册表管理").size(12).color(colors.text),
-                    text(format!("修订 {}", snapshot.mcp_registry_revision))
-                        .size(10)
-                        .color(colors.faint),
-                ]
-                .spacing(2)
-                .width(Length::Fill),
-                add,
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),]
-            .spacing(8);
-            if let Some(editor) = &self.mcp_editor {
-                let editing = editor.editing_server_id.is_some();
-                let id_input = Input::new("例如 filesystem", editor.server_id.clone())
-                    .on_input(Message::McpServerIdChanged)
-                    .disabled(editing || self.extensions_busy)
-                    .view(tokens);
-                let mut transport = button(text(mcp_transport_label(editor.transport)).size(11))
-                    .style(button_style(tokens, ButtonKind::Ghost));
-                if !self.extensions_busy {
-                    transport = transport.on_press(Message::CycleMcpTransport);
-                }
-                let location_placeholder = match editor.transport {
-                    DesktopMcpTransport::Stdio => "可执行文件或命令",
-                    DesktopMcpTransport::StreamableHttp | DesktopMcpTransport::Sse => {
-                        "https://example.com/mcp"
-                    }
-                };
-                let location = Input::new(location_placeholder, editor.location.clone())
-                    .on_input(Message::McpLocationChanged)
-                    .disabled(self.extensions_busy)
-                    .view(tokens);
-                let mut enabled = button(
-                    text(if editor.enabled {
-                        "保存后启用"
-                    } else {
-                        "保存但停用"
-                    })
-                    .size(11),
-                )
-                .style(button_style(tokens, ButtonKind::Ghost));
-                if !self.extensions_busy {
-                    enabled = enabled.on_press(Message::ToggleMcpEditorEnabled);
-                }
-                let mut editor_content = column![
-                    text(if editing { "编辑 MCP" } else { "新增 MCP" })
-                        .size(12)
-                        .font(ui_font(font::Weight::Semibold))
-                        .color(colors.text),
-                    text("标识").size(10).color(colors.muted),
-                    id_input,
-                    row![transport, enabled].spacing(6),
-                    text(if editor.transport == DesktopMcpTransport::Stdio {
-                        "命令"
-                    } else {
-                        "服务地址"
-                    })
-                    .size(10)
-                    .color(colors.muted),
-                    location,
-                ]
-                .spacing(6);
-                if editor.transport == DesktopMcpTransport::Stdio {
-                    editor_content = editor_content
-                        .push(text("参数 JSON 数组").size(10).color(colors.muted))
-                        .push(
-                            Input::new("例如 [\"--stdio\"]", editor.args_json.clone())
-                                .on_input(Message::McpArgsChanged)
-                                .disabled(self.extensions_busy)
-                                .view(tokens),
-                        );
-                }
-                editor_content = editor_content
-                    .push(
-                        text(if editor.transport == DesktopMcpTransport::Stdio {
-                            "Keyring 环境变量名称 JSON 数组"
-                        } else {
-                            "Keyring 请求头名称 JSON 数组"
-                        })
-                        .size(10)
-                        .color(colors.muted),
-                    )
-                    .push(
-                        Input::new(
-                            if editor.transport == DesktopMcpTransport::Stdio {
-                                "例如 [\"API_TOKEN\"]"
-                            } else {
-                                "例如 [\"Authorization\"]"
-                            },
-                            editor.credential_names_json.clone(),
-                        )
-                        .on_input(Message::McpCredentialNamesChanged)
-                        .disabled(self.extensions_busy)
-                        .view(tokens),
-                    );
-                let can_save = !self.extensions_busy
-                    && !editor.server_id.trim().is_empty()
-                    && !editor.location.trim().is_empty();
-                let mut save = button(
-                    text(if self.extensions_busy {
-                        "保存中"
-                    } else {
-                        "保存"
-                    })
-                    .size(11),
-                )
-                .style(button_style(tokens, ButtonKind::Primary));
-                let mut cancel =
-                    button(text("取消").size(11)).style(button_style(tokens, ButtonKind::Ghost));
-                if can_save {
-                    save = save.on_press(Message::SaveMcpServer);
-                }
-                if !self.extensions_busy {
-                    cancel = cancel.on_press(Message::CancelMcpEditor);
-                }
-                editor_content = editor_content.push(row![save, cancel].spacing(6));
-                mcp = mcp.push(
-                    container(editor_content)
-                        .padding(10)
-                        .style(canvas_style(tokens)),
-                );
-            }
-            if snapshot.mcp_servers.is_empty() {
-                mcp = mcp.push(text("尚未注册 MCP Server").size(11).color(colors.muted));
-            } else {
-                for server in &snapshot.mcp_servers {
-                    let state = server
-                        .runtime_state
-                        .as_deref()
-                        .map(mcp_state_label)
-                        .unwrap_or("未连接");
-                    let availability = if !server.editable {
-                        "运行时"
-                    } else if server.enabled {
-                        "已启用"
-                    } else {
-                        "已停用"
-                    };
-                    let mut server_row = column![
-                        row![
-                            text(server.server_id.clone())
-                                .size(12)
-                                .color(colors.text)
-                                .width(Length::Fill),
-                            text(state).size(11).color(if state == "就绪" {
-                                colors.success
-                            } else {
-                                colors.muted
-                            }),
-                        ]
-                        .spacing(10),
-                        text(format!(
-                            "{} · {} · {} 个工具 · {} 个资源 · {} 个提示词",
-                            server.transport,
-                            availability,
-                            server.tool_count,
-                            server.resource_count,
-                            server.prompt_count
-                        ))
-                        .size(10)
-                        .color(colors.faint),
-                    ]
-                    .spacing(3);
-                    if let Some(error) = &server.last_error {
-                        server_row =
-                            server_row.push(text(error.clone()).size(10).color(colors.danger));
-                    }
-                    if !server.tools.is_empty() {
-                        let mut tools = column![text("工具")
-                            .size(10)
-                            .font(ui_font(font::Weight::Semibold))
-                            .color(colors.muted),]
-                        .spacing(3);
-                        for tool in &server.tools {
-                            let safety = if tool.destructive == Some(true) {
-                                "破坏性"
-                            } else if tool.read_only == Some(true) {
-                                "只读"
-                            } else {
-                                "需审批"
-                            };
-                            tools = tools.push(
-                                column![
-                                    row![
-                                        text(tool.namespaced_name.clone())
-                                            .size(10)
-                                            .color(colors.text)
-                                            .width(Length::Fill),
-                                        text(safety).size(10).color(if safety == "只读" {
-                                            colors.success
-                                        } else if safety == "破坏性" {
-                                            colors.danger
-                                        } else {
-                                            colors.warning
-                                        }),
-                                    ]
-                                    .spacing(6),
-                                    text(if tool.description.is_empty() {
-                                        "无描述".to_owned()
-                                    } else {
-                                        tool.description.clone()
-                                    })
-                                    .size(10)
-                                    .color(colors.faint),
-                                ]
-                                .spacing(1),
-                            );
-                        }
-                        server_row = server_row.push(tools);
-                    }
-                    if !server.resources.is_empty() {
-                        let mut resources = column![text("资源")
-                            .size(10)
-                            .font(ui_font(font::Weight::Semibold))
-                            .color(colors.muted),]
-                        .spacing(3);
-                        for resource in &server.resources {
-                            let server_id = server.server_id.clone();
-                            let uri = resource.uri.clone();
-                            let mut read = button(text("读取").size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                            if !self.extensions_busy {
-                                read = read.on_press(Message::ReadMcpResource { server_id, uri });
-                            }
-                            resources = resources.push(
-                                column![
-                                    row![
-                                        text(resource.name.clone())
-                                            .size(10)
-                                            .color(colors.text)
-                                            .width(Length::Fill),
-                                        read,
-                                    ]
-                                    .spacing(6)
-                                    .align_y(Alignment::Center),
-                                    text(resource.uri.clone()).size(10).color(colors.faint),
-                                ]
-                                .spacing(1),
-                            );
-                        }
-                        server_row = server_row.push(resources);
-                    }
-                    if !server.prompts.is_empty() {
-                        let mut prompts = column![text("提示词")
-                            .size(10)
-                            .font(ui_font(font::Weight::Semibold))
-                            .color(colors.muted),]
-                        .spacing(3);
-                        for prompt in &server.prompts {
-                            let required = prompt
-                                .arguments
-                                .iter()
-                                .filter(|argument| argument.required)
-                                .map(|argument| argument.name.as_str())
-                                .collect::<Vec<_>>()
-                                .join("、");
-                            let namespaced_name = prompt.namespaced_name.clone();
-                            let draft = self
-                                .mcp_prompt_argument_drafts
-                                .get(&namespaced_name)
-                                .cloned()
-                                .unwrap_or_else(|| "{}".to_owned());
-                            let input_name = namespaced_name.clone();
-                            let arguments = Input::new("参数 JSON 对象", draft)
-                                .on_input(move |value| Message::McpPromptArgumentsChanged {
-                                    namespaced_name: input_name.clone(),
-                                    value,
-                                })
-                                .disabled(self.extensions_busy)
-                                .view(tokens);
-                            let mut get = button(text("生成").size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                            if !self.extensions_busy {
-                                get = get.on_press(Message::GetMcpPrompt(namespaced_name));
-                            }
-                            prompts = prompts.push(
-                                column![
-                                    row![
-                                        text(prompt.namespaced_name.clone())
-                                            .size(10)
-                                            .color(colors.text)
-                                            .width(Length::Fill),
-                                        get,
-                                    ]
-                                    .spacing(6)
-                                    .align_y(Alignment::Center),
-                                    text(if required.is_empty() {
-                                        "无必填参数".to_owned()
-                                    } else {
-                                        format!("必填：{required}")
-                                    })
-                                    .size(10)
-                                    .color(colors.faint),
-                                    arguments,
-                                ]
-                                .spacing(1),
-                            );
-                        }
-                        server_row = server_row.push(prompts);
-                    }
-                    if !server.credentials.is_empty() {
-                        let mut credentials = column![text("凭据（OS Keyring）")
-                            .size(10)
-                            .font(ui_font(font::Weight::Semibold))
-                            .color(colors.muted),]
-                        .spacing(5);
-                        for credential in &server.credentials {
-                            let server_id = server.server_id.clone();
-                            let kind = credential.kind;
-                            let name = credential.name.clone();
-                            let draft_key = mcp_credential_draft_key(&server_id, kind, &name);
-                            let draft = self
-                                .mcp_credential_drafts
-                                .get(&draft_key)
-                                .cloned()
-                                .unwrap_or_default();
-                            let input_server_id = server_id.clone();
-                            let input_name = name.clone();
-                            let secret = Input::new("输入新值", draft.clone())
-                                .on_input(move |value| Message::McpCredentialChanged {
-                                    server_id: input_server_id.clone(),
-                                    kind,
-                                    name: input_name.clone(),
-                                    value,
-                                })
-                                .secure(true)
-                                .disabled(self.extensions_busy)
-                                .view(tokens);
-                            let mut save = button(text("保存凭据").size(10))
-                                .style(button_style(tokens, ButtonKind::Primary));
-                            let mut remove = button(text("清除凭据").size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                            if !self.extensions_busy && !draft.is_empty() {
-                                save = save.on_press(Message::SaveMcpCredential {
-                                    server_id: server_id.clone(),
-                                    kind,
-                                    name: name.clone(),
-                                });
-                            }
-                            if !self.extensions_busy && credential.present {
-                                remove = remove.on_press(Message::DeleteMcpCredential {
-                                    server_id: server_id.clone(),
-                                    kind,
-                                    name: name.clone(),
-                                });
-                            }
-                            credentials = credentials.push(
-                                column![
-                                    row![
-                                        text(format!(
-                                            "{} · {}",
-                                            mcp_credential_kind_label(kind),
-                                            name
-                                        ))
-                                        .size(10)
-                                        .color(colors.text)
-                                        .width(Length::Fill),
-                                        text(if credential.present {
-                                            "已配置"
-                                        } else {
-                                            "未配置"
-                                        })
-                                        .size(10)
-                                        .color(
-                                            if credential.present {
-                                                colors.success
-                                            } else {
-                                                colors.warning
-                                            }
-                                        ),
-                                    ]
-                                    .spacing(6),
-                                    secret,
-                                    row![save, remove].spacing(5),
-                                ]
-                                .spacing(3),
-                            );
-                        }
-                        server_row = server_row.push(credentials);
-                    }
-                    if server.editable {
-                        let mut toggle =
-                            button(text(if server.enabled { "停用" } else { "启用" }).size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                        let mut edit = button(text("编辑").size(10))
-                            .style(button_style(tokens, ButtonKind::Ghost));
-                        let mut delete = button(text("删除").size(10))
-                            .style(button_style(tokens, ButtonKind::Danger));
-                        if !self.extensions_busy {
-                            toggle =
-                                toggle.on_press(Message::ToggleMcpServer(server.server_id.clone()));
-                            edit = edit.on_press(Message::EditMcpServer(server.server_id.clone()));
-                            delete = delete.on_press(Message::RequestDeleteMcpServer(
-                                server.server_id.clone(),
-                            ));
-                        }
-                        server_row = server_row.push(row![toggle, edit, delete].spacing(5));
-                        if self.mcp_delete_confirmation.as_deref() == Some(&server.server_id) {
-                            let mut confirm = button(text("确认删除").size(10))
-                                .style(button_style(tokens, ButtonKind::Danger));
-                            let mut cancel = button(text("取消").size(10))
-                                .style(button_style(tokens, ButtonKind::Ghost));
-                            if !self.extensions_busy {
-                                confirm = confirm.on_press(Message::ConfirmDeleteMcpServer);
-                                cancel = cancel.on_press(Message::CancelDeleteMcpServer);
-                            }
-                            server_row = server_row.push(
-                                row![
-                                    text("删除后会断开运行时连接。")
-                                        .size(10)
-                                        .color(colors.warning),
-                                    confirm,
-                                    cancel,
-                                ]
-                                .spacing(5)
-                                .align_y(Alignment::Center),
-                            );
-                        }
-                    }
-                    mcp = mcp.push(server_row);
-                }
-            }
-            if let Some(preview) = &self.mcp_content_preview {
-                mcp = mcp.push(
-                    container(
-                        column![
-                            text(match preview.kind {
-                                McpContentKind::Resource => "资源内容",
-                                McpContentKind::Prompt => "提示词内容",
-                            })
-                            .size(10)
-                            .font(ui_font(font::Weight::Semibold))
-                            .color(colors.muted),
-                            text(preview.title.clone()).size(10).color(colors.faint),
-                            text(preview.text.clone()).size(11).color(colors.text),
-                        ]
-                        .spacing(3),
-                    )
-                    .padding(8)
-                    .style(canvas_style(tokens)),
-                );
-            }
-            mcp = mcp.push(
-                text(snapshot.mcp_registry_path.clone())
-                    .size(10)
-                    .color(colors.faint),
-            );
-            if snapshot.mcp_servers.iter().any(|server| server.enabled) {
-                let activate = button(
-                    text(if self.extensions_busy {
-                        "连接中"
-                    } else {
-                        "连接已注册 MCP"
-                    })
-                    .size(11),
-                )
-                .style(button_style(tokens, ButtonKind::Primary));
-                mcp = mcp.push(if self.extensions_busy {
-                    activate
-                } else {
-                    activate.on_press(Message::ActivateRegisteredMcp)
-                });
-            }
-            if let Some(report) = &self.extensions_activation {
-                let failed = report
-                    .results
-                    .iter()
-                    .filter(|result| result.error.is_some())
-                    .count();
-                mcp = mcp.push(
-                    text(format!(
-                        "连接完成：{} 个就绪，{} 个失败",
-                        report.results.len().saturating_sub(failed),
-                        failed
-                    ))
-                    .size(11)
-                    .color(if failed == 0 {
-                        colors.success
-                    } else {
-                        colors.warning
-                    }),
-                );
-                for result in report
-                    .results
-                    .iter()
-                    .filter(|result| result.error.is_some())
-                {
-                    mcp = mcp.push(
-                        text(format!(
-                            "{}：{}",
-                            result.server_id,
-                            result.error.as_deref().unwrap_or_default()
-                        ))
-                        .size(10)
-                        .color(colors.danger),
-                    );
-                }
-            }
-            content = content.push(SettingsCard::new("MCP", mcp).view(tokens));
-        } else if !self.extensions_busy && self.extensions_error.is_none() {
-            content = content.push(
-                EmptyState::new("尚未读取扩展")
-                    .message("刷新后显示 Native AgentKit 的真实注册表和运行时状态。")
-                    .icon(Icon::Nodes)
-                    .action(
-                        button(text("读取扩展").size(12))
-                            .on_press(Message::RefreshExtensions)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    )
-                    .view(tokens),
-            );
-        }
-
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn remote_settings_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let control_height = ControlSize::Medium.height_in(tokens.metrics);
-        let refresh = button(
-            text(if self.remote_busy {
-                "处理中"
-            } else {
-                "刷新"
-            })
-            .size(12),
-        )
-        .height(Length::Fixed(control_height))
-        .padding([0.0, 14.0])
-        .style(button_style(tokens, ButtonKind::Ghost));
-        let refresh = if self.remote_busy {
-            refresh
-        } else {
-            refresh.on_press(Message::RefreshRemote)
-        };
-        let mut content = column![row![
-            column![
-                text("远程控制")
-                    .size(18)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                text("从 Android 设备查看任务、继续对话并处理审批")
-                    .size(11)
-                    .color(colors.muted),
-            ]
-            .spacing(3)
-            .width(Length::Fill),
-            refresh,
-        ]
-        .align_y(Alignment::Center),]
-        .spacing(16);
-
-        if let Some(error) = &self.remote_error {
-            content = content.push(
-                SettingsCard::new(
-                    "操作失败",
-                    text(error.clone()).size(11).color(colors.danger),
-                )
-                .view(tokens),
-            );
-        }
-
-        if let Some(status) = &self.remote {
-            let host_state = remote_state_label(&status.state);
-            let host_color = if status.host_enabled {
-                colors.success
-            } else {
-                colors.muted
-            };
-            let host_toggle = button(
-                text(if status.host_enabled {
-                    "关闭远控"
-                } else {
-                    "启用远控"
-                })
-                .size(11),
-            )
-            .style(button_style(
-                tokens,
-                if status.host_enabled {
-                    ButtonKind::Subtle
-                } else {
-                    ButtonKind::Primary
-                },
-            ));
-            let host_toggle = if self.remote_busy {
-                host_toggle
-            } else {
-                host_toggle.on_press(Message::ToggleRemoteHost)
-            };
-            let awake = button(
-                text(if status.keep_awake_enabled {
-                    "连接时保持唤醒"
-                } else {
-                    "允许系统休眠"
-                })
-                .size(11),
-            )
-            .style(button_style(tokens, ButtonKind::Subtle));
-            let awake = if self.remote_busy {
-                awake
-            } else {
-                awake.on_press(Message::ToggleRemoteKeepAwake)
-            };
-            let endpoint = status
-                .endpoint
-                .as_ref()
-                .map(|endpoint| endpoint.endpoint_id.clone())
-                .unwrap_or_else(|| "启用后生成".to_owned());
-            content = content.push(
-                SettingsCard::new(
-                    "本机主机",
-                    column![
-                        row![
-                            column![
-                                text(host_state).size(12).color(host_color),
-                                text(endpoint).size(10).color(colors.faint),
-                            ]
-                            .spacing(2)
-                            .width(Length::Fill),
-                            host_toggle,
-                            awake,
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                        row![
-                            Input::new("电脑名称", self.remote_pc_name.clone())
-                                .on_input(Message::RemotePcNameChanged)
-                                .view(tokens),
-                            if self.remote_busy || self.remote_pc_name.trim().is_empty() {
-                                button(text("保存名称").size(11))
-                                    .style(button_style(tokens, ButtonKind::Primary))
-                            } else {
-                                button(text("保存名称").size(11))
-                                    .on_press(Message::SaveRemotePcName)
-                                    .style(button_style(tokens, ButtonKind::Primary))
-                            },
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    ]
-                    .spacing(10),
-                )
-                .view(tokens),
-            );
-
-            if status.host_enabled {
-                let pairing: Element<'static, Message> = if let Some(ticket) = &status.active_ticket
-                {
-                    let seconds = ticket
-                        .expires_at
-                        .saturating_sub(current_timestamp_millis())
-                        .saturating_div(1000)
-                        .max(0);
-                    let qr: Element<'static, Message> =
-                        match QrCodeCanvas::encode(ticket.pairing_uri.as_bytes()) {
-                            Ok(code) => code.size(228.0).view(),
-                            Err(error) => text(format!("无法生成二维码：{error}"))
-                                .size(11)
-                                .color(colors.danger)
-                                .into(),
-                        };
-                    let cancel = button(text("取消配对").size(11))
-                        .style(button_style(tokens, ButtonKind::Subtle));
-                    let cancel = if self.remote_busy {
-                        cancel
-                    } else {
-                        cancel.on_press(Message::CancelRemotePairing)
-                    };
-                    row![
-                        qr,
-                        column![
-                            text("使用 Lilia Remote 扫描二维码")
-                                .size(13)
-                                .font(ui_font(font::Weight::Semibold))
-                                .color(colors.text),
-                            text(format!("配对码将在 {seconds} 秒后失效"))
-                                .size(11)
-                                .color(colors.muted),
-                            text(ticket.bridge_url.clone().unwrap_or_default())
-                                .size(10)
-                                .color(colors.faint),
-                            row![
-                                button(text("复制配对信息").size(11))
-                                    .on_press(Message::CopyRemotePairingUri)
-                                    .style(button_style(tokens, ButtonKind::Primary)),
-                                cancel,
-                            ]
-                            .spacing(8),
-                        ]
-                        .spacing(8)
-                        .width(Length::Fill),
-                    ]
-                    .spacing(18)
-                    .align_y(Alignment::Center)
-                    .into()
-                } else {
-                    let start = button(text("生成配对二维码").size(11))
-                        .style(button_style(tokens, ButtonKind::Primary));
-                    let start = if self.remote_busy {
-                        start
-                    } else {
-                        start.on_press(Message::StartRemotePairing)
-                    };
-                    column![
-                        text("二维码是一次性的，有效期为 10 分钟。")
-                            .size(11)
-                            .color(colors.muted),
-                        start,
-                    ]
-                    .spacing(8)
-                    .into()
-                };
-                content = content.push(SettingsCard::new("配对新设备", pairing).view(tokens));
-            }
-
-            let mut devices = column![].spacing(9);
-            if status.trusted_devices.is_empty() {
-                devices = devices.push(text("尚未配对设备").size(11).color(colors.muted));
-            } else {
-                for device in &status.trusted_devices {
-                    let active = device.trusted && device.revoked_at.is_none();
-                    let state = if active { "已信任" } else { "已撤销" };
-                    let mut row = row![column![
-                        text(device.display_name.clone())
-                            .size(12)
-                            .color(colors.text),
-                        text(format!("{} · {}", device.endpoint_id, state))
-                            .size(10)
-                            .color(if active { colors.muted } else { colors.faint }),
-                    ]
-                    .spacing(2)
-                    .width(Length::Fill),]
-                    .align_y(Alignment::Center);
-                    if active {
-                        let revoke = button(text("撤销").size(11).color(colors.danger))
-                            .style(button_style(tokens, ButtonKind::Text));
-                        row = row.push(if self.remote_busy {
-                            revoke
-                        } else {
-                            revoke.on_press(Message::RevokeRemoteDevice(device.id.clone()))
-                        });
-                    }
-                    devices = devices.push(row);
-                }
-            }
-            content = content.push(SettingsCard::new("已配对设备", devices).view(tokens));
-        } else if !self.remote_busy && self.remote_error.is_none() {
-            content = content.push(
-                EmptyState::new("尚未读取远控状态")
-                    .message("刷新后显示本机连接、配对二维码和已信任设备。")
-                    .icon(Icon::Nodes)
-                    .action(
-                        button(text("读取远控状态").size(12))
-                            .on_press(Message::RefreshRemote)
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    )
-                    .view(tokens),
-            );
-        }
-
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn composer_model_controls(
-        &self,
-        window_id: HostedWindowId,
-        composer: &DesktopComposerState,
-        disabled: bool,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let automatic = self.composer_automatic_selection(window_id);
-        let manual = composer.model.is_some() || composer.reasoning_effort.is_some();
-        let selected_model = composer.model.clone().unwrap_or_default();
-        let effective_model = composer.model.clone().or_else(|| {
-            automatic
-                .as_ref()
-                .and_then(|selection| selection.model.clone())
-        });
-        let effective_effort = composer.reasoning_effort.clone().or_else(|| {
-            automatic
-                .as_ref()
-                .and_then(|selection| selection.reasoning_effort.clone())
-        });
-        let model_label = match effective_model.as_deref() {
-            Some(model) if manual => format!("手动 · {model}"),
-            Some(model) => format!("自动 · {model}"),
-            None => "自动选择".to_owned(),
-        };
-        let model = Dropdown::single(
-            Some(selected_model),
-            self.composer_model_options(composer.model.as_deref()),
-            move |event| Message::ComposerModelSelection { window_id, event },
-        )
-        .display_label(model_label)
-        .size(ControlSize::Small)
-        .disabled(disabled)
-        .view(tokens);
-        let effort_options = ["low", "medium", "high", "xhigh", "max"]
-            .into_iter()
-            .map(|effort| DropdownOption::new(effort.to_owned(), effort))
-            .collect::<Vec<_>>();
-        let effort_label = effective_effort.as_deref().map_or_else(
-            || "thinking auto".to_owned(),
-            |effort| format!("thinking {effort}"),
-        );
-        let effort = Dropdown::single(effective_effort, effort_options, move |event| {
-            Message::ComposerReasoningSelection { window_id, event }
-        })
-        .display_label(effort_label)
-        .size(ControlSize::Small)
-        .disabled(disabled)
-        .view(tokens);
-        row![model, effort]
-            .spacing(4)
-            .align_y(Alignment::Center)
-            .into()
-    }
-
-    fn compact_composer_toolbar(&self, window_id: HostedWindowId) -> bool {
-        composer_toolbar_is_compact(window_id, self.primary_chat_region_width())
-    }
-
-    fn primary_chat_region_width(&self) -> f32 {
-        self.workspace
-            .viewport_geometry()
-            .region(&RegionId::Primary)
-            .map(|region| region.logical.width)
-            .unwrap_or_else(|| self.workspace.viewport_geometry().logical_size.0)
-    }
-
-    fn primary_chat_content_width(&self, horizontal_inset: f32) -> f32 {
-        (self.primary_chat_region_width() - horizontal_inset).clamp(1.0, CHAT_CONTENT_MAX_WIDTH)
-    }
-
-    fn primary_chat_timeline_width(&self, horizontal_inset: f32) -> f32 {
-        (self.primary_chat_region_width() - horizontal_inset).clamp(1.0, CHAT_TIMELINE_MAX_WIDTH)
-    }
-
-    fn composer_action_menu(
-        &self,
-        window_id: HostedWindowId,
-        disabled: bool,
-        plan_mode: bool,
-        goal_mode: bool,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let item = |label: &'static str, icon_kind: Icon, action: ComposerAction| {
-            ActionMenuItem::new(label)
-                .leading(icon_kind)
-                .disabled(disabled)
-                .on_press(Message::ComposerAction { window_id, action })
-                .view(tokens)
-        };
-        let content = column![
-            item("添加文件", Icon::File, ComposerAction::AddFile),
-            item("添加目录", Icon::Folder, ComposerAction::AddDirectory),
-            item(
-                "引用其他对话",
-                Icon::Workspace,
-                ComposerAction::ReferenceConversation,
-            ),
-            item("粘贴文字", Icon::File, ComposerAction::PasteText),
-            item("粘贴图片", Icon::Eye, ComposerAction::PasteImage),
-            item("粘贴文件", Icon::Nodes, ComposerAction::PasteFiles),
-            item(
-                if plan_mode {
-                    "关闭计划模式"
-                } else {
-                    "开启计划模式"
-                },
-                Icon::Nodes,
-                ComposerAction::TogglePlanMode,
-            ),
-            item(
-                if goal_mode {
-                    "关闭目标模式"
-                } else {
-                    "开启目标模式"
-                },
-                Icon::Workspace,
-                ComposerAction::ToggleGoalMode,
-            ),
-        ]
-        .spacing(1)
-        .width(Length::Fill);
-        let trigger = container(icon(Icon::Add, 16.0, tokens.colors.muted))
-            .width(Length::Fixed(28.0))
-            .height(Length::Fixed(28.0))
-            .center_x(Length::Fill)
-            .center_y(Length::Fill);
-        Popover::new(
-            trigger,
-            content,
-            self.composer_action_menu_window == Some(window_id),
-            Message::ToggleComposerActionMenu(window_id),
-            Message::CloseComposerActionMenu,
-            tokens,
-        )
-        .placement(PopoverPlacement::Top)
-        .gap(4.0)
-        .width(220.0)
-        .view()
-    }
-
-    fn composer_toolbar_action(
-        &self,
-        label: impl Into<String>,
-        icon_kind: Icon,
-        compact: bool,
-        message: Option<Message>,
-        selected: bool,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let label = label.into();
-        if compact {
-            let mut action = IconButton::new(label, icon_kind)
-                .size(ControlSize::Small)
-                .selected(selected)
-                .disabled(message.is_none());
-            if let Some(message) = message {
-                action = action.on_press(message);
-            }
-            return action.view(tokens);
-        }
-        button(
-            row![
-                icon(icon_kind, 13.0, tokens.colors.muted),
-                text(label).size(10),
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center),
-        )
-        .on_press_maybe(message)
-        .style(button_style(
-            tokens,
-            if selected {
-                ButtonKind::Primary
-            } else {
-                ButtonKind::Ghost
-            },
-        ))
-        .into()
-    }
-
     fn task_session_with_debug_overlay(&self, session: &TaskSessionView) -> TaskSessionView {
         let Some(task_id) = self.selected_task.as_ref() else {
             return session.clone();
@@ -37181,1868 +28424,7 @@ impl DesktopProgram {
         session.with_ephemeral_debug_overlay(events, pending)
     }
 
-    fn debug_timeline_panel(
-        &self,
-        window_id: HostedWindowId,
-        has_task: bool,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        if !self.agent_interaction_settings.debug || !has_task {
-            return space().height(0).into();
-        }
-        let action = |action: DebugTimelineAction| {
-            button(text(action.label()).size(10))
-                .padding([6.0, 9.0])
-                .on_press(Message::InjectDebugTimeline { window_id, action })
-                .style(button_style(tokens, ButtonKind::Ghost))
-        };
-        Card::new(
-            column![
-                row![
-                    action(DebugTimelineAction::Plan),
-                    action(DebugTimelineAction::AskUser),
-                    action(DebugTimelineAction::AskUserMulti),
-                    action(DebugTimelineAction::AskUserPreview),
-                    action(DebugTimelineAction::AskUserFlow),
-                    action(DebugTimelineAction::Permission),
-                ]
-                .spacing(5),
-                row![
-                    action(DebugTimelineAction::TodoTool),
-                    action(DebugTimelineAction::Todo),
-                    action(DebugTimelineAction::Command),
-                    action(DebugTimelineAction::FileRead),
-                    action(DebugTimelineAction::FileChange),
-                ]
-                .spacing(5),
-            ]
-            .spacing(7),
-        )
-        .title("Debug")
-        .view(tokens)
-    }
-
-    fn task_session_content(
-        &self,
-        location_name: String,
-        session: &TaskSessionView,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let composer_content = self
-            .composer
-            .as_ref()
-            .map(|composer| composer.content.clone())
-            .unwrap_or_default();
-        let composer_attachments = self
-            .composer
-            .as_ref()
-            .map(|composer| composer.attachments.clone())
-            .unwrap_or_default();
-        let composer_conversation_references = self
-            .composer
-            .as_ref()
-            .map(|composer| composer.conversation_references.clone())
-            .unwrap_or_default();
-        let composer_permission = self
-            .composer
-            .as_ref()
-            .map(|composer| composer.permission)
-            .unwrap_or_default();
-        let composer_plan_mode = self
-            .composer
-            .as_ref()
-            .is_some_and(|composer| composer.plan_mode);
-        let composer_goal_mode = self
-            .composer
-            .as_ref()
-            .is_some_and(|composer| composer.goal_mode);
-        let can_apply_timeline_suggestion =
-            !self.composer_is_locked() && session.run_block.is_none();
-        let can_retry_timeline = session.run_block.is_none();
-
-        let timeline_empty = session.timeline.is_empty() && !session.timeline_has_more_before;
-        let mut timeline = column![].spacing(0).width(Length::Fill);
-        if session.timeline_has_more_before {
-            timeline = timeline.push(
-                button(text("加载更早记录").size(12))
-                    .on_press(Message::LoadEarlierTimeline)
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            );
-        }
-        if !session.timeline.is_empty() {
-            let window = self.timeline_window(session, &TimelineSurfaceKey::Main, true);
-            if window.leading_extent > 0.0 {
-                timeline = timeline.push(space().height(window.leading_extent));
-            }
-            for event in &session.timeline[window.range.clone()] {
-                let hovered = self.timeline_hovered_event.as_deref() == Some(event.id.as_str());
-                let mut event_actions = row![space().width(Length::Fill)]
-                    .spacing(4)
-                    .align_y(Alignment::Center);
-                let show_copy = event.message_role.as_deref() != Some("user")
-                    && (event.message_role.as_deref() != Some("assistant") || hovered);
-                if let Some(value) = event.markdown_plain_text.as_ref().filter(|_| show_copy) {
-                    let copied = self
-                        .last_copied_markdown
-                        .as_ref()
-                        .is_some_and(|(event_id, _)| event_id == &event.id);
-                    event_actions = event_actions.push(
-                        button(text(if copied { "已复制" } else { "复制" }).size(11))
-                            .on_press(Message::CopyTimelineMarkdown {
-                                event_id: event.id.clone(),
-                                text: value.clone(),
-                            })
-                            .style(button_style(tokens, ButtonKind::Text)),
-                    );
-                }
-                if can_retry_timeline && event.can_retry {
-                    event_actions = event_actions.push(
-                        button(text("重试").size(11))
-                            .on_press(Message::RetryTimelineEvent {
-                                window_id: HostedWindowId::PRIMARY,
-                                event_id: event.id.clone(),
-                            })
-                            .style(button_style(tokens, ButtonKind::Text)),
-                    );
-                }
-                if hovered
-                    && can_apply_timeline_suggestion
-                    && event.session_branch_turn_id.is_some()
-                {
-                    event_actions = event_actions
-                        .push(
-                            button(text("从这里继续").size(11))
-                                .on_press(Message::SetTimelineSessionBranch {
-                                    window_id: HostedWindowId::PRIMARY,
-                                    event_id: event.id.clone(),
-                                    mode: DesktopSessionBranchMode::Continue,
-                                })
-                                .style(button_style(tokens, ButtonKind::Text)),
-                        )
-                        .push(
-                            button(text("从这里分叉").size(11))
-                                .on_press(Message::SetTimelineSessionBranch {
-                                    window_id: HostedWindowId::PRIMARY,
-                                    event_id: event.id.clone(),
-                                    mode: DesktopSessionBranchMode::Fork,
-                                })
-                                .style(button_style(tokens, ButtonKind::Text)),
-                        );
-                }
-                if can_apply_timeline_suggestion && event.batch_apply.is_some() {
-                    event_actions = event_actions.push(
-                        button(text("应用建议").size(11))
-                            .on_press(Message::ApplyTimelineSuggestion {
-                                window_id: HostedWindowId::PRIMARY,
-                                event_id: event.id.clone(),
-                            })
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                    );
-                }
-                let mut body = column![].spacing(5).width(Length::Fill);
-                if let Some(document) = &event.markdown_document {
-                    body = body.push(self.markdown_document_view(
-                        document,
-                        HostedWindowId::PRIMARY,
-                        &event.id,
-                        event.selectable_reply,
-                        tokens,
-                    ));
-                } else if let Some(summary) = &event.summary {
-                    body = body.push(text(summary.clone()).size(12).color(colors.muted));
-                }
-                if !event.attachments.is_empty() {
-                    let mut attachments = column![].spacing(3).width(Length::Fill);
-                    for attachment in &event.attachments {
-                        attachments = attachments.push(timeline_attachment_row(
-                            attachment,
-                            HostedWindowId::PRIMARY,
-                            tokens,
-                        ));
-                    }
-                    body = body.push(attachments);
-                }
-                let has_actions = (show_copy && event.markdown_plain_text.is_some())
-                    || (can_retry_timeline && event.can_retry)
-                    || (can_apply_timeline_suggestion
-                        && ((hovered && event.session_branch_turn_id.is_some())
-                            || event.batch_apply.is_some()));
-                if has_actions {
-                    body = body.push(event_actions);
-                }
-
-                timeline = timeline.push(timeline_event_shell(
-                    event,
-                    body.into(),
-                    timeline_event_is_expanded(event, &self.timeline_toggled_events),
-                    tokens,
-                ));
-            }
-            if window.trailing_extent > 0.0 {
-                timeline = timeline.push(space().height(window.trailing_extent));
-            }
-        }
-
-        let mut pending_actions = column![].spacing(8).width(Length::Fill);
-        for pending in session
-            .pending
-            .iter()
-            .filter(|pending| pending.status == PendingProjectionStatus::Open)
-        {
-            let mut action = column![
-                text(pending.prompt.clone()).size(13).color(colors.text),
-                text(pending_action_label(&pending.kind))
-                    .size(11)
-                    .color(colors.warning),
-            ]
-            .spacing(4);
-            if pending.kind == "permission_approval" {
-                action = action.push(
-                    row![
-                        button(text("允许").size(12))
-                            .on_press(Message::RespondApproval {
-                                request_id: pending.request_id.clone(),
-                                approved: true,
-                            })
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                        button(text("拒绝").size(12))
-                            .on_press(Message::RespondApproval {
-                                request_id: pending.request_id.clone(),
-                                approved: false,
-                            })
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(8),
-                );
-            } else if pending.kind == TITLE_UPDATE_ACTION_KIND {
-                action = action.push(
-                    row![
-                        button(text("采用标题").size(12))
-                            .on_press(Message::RespondTitleUpdate {
-                                request_id: pending.request_id.clone(),
-                                accepted: true,
-                            })
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                        button(text("保留当前").size(12))
-                            .on_press(Message::RespondTitleUpdate {
-                                request_id: pending.request_id.clone(),
-                                accepted: false,
-                            })
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(8),
-                );
-            } else if pending.kind == "tool_consent" {
-                action = action.push(tool_consent_action_view(
-                    pending,
-                    self.tool_consent_drafts.get(&pending.request_id),
-                    HostedWindowId::PRIMARY,
-                    tokens,
-                ));
-            } else if pending.kind == "mcp_elicitation" {
-                action = action.push(mcp_elicitation_action_view(
-                    pending,
-                    self.mcp_elicitation_drafts.get(&pending.request_id),
-                    HostedWindowId::PRIMARY,
-                    tokens,
-                ));
-            } else if pending.kind == "architecture_change" {
-                action = action.push(architecture_interaction_action_view(
-                    pending,
-                    HostedWindowId::PRIMARY,
-                    tokens,
-                ));
-            } else if pending.kind == "ask_user" {
-                action = action.push(ask_user_action_view(
-                    pending,
-                    self.ask_user_drafts.get(&pending.request_id),
-                    HostedWindowId::PRIMARY,
-                    tokens,
-                ));
-            } else if pending.kind == "plan_approval" {
-                let request_id = pending.request_id.clone();
-                let draft = self
-                    .interaction_drafts
-                    .get(&request_id)
-                    .cloned()
-                    .unwrap_or_default();
-                let input_request_id = request_id.clone();
-                action = action.push(
-                    Input::new("修改意见（可选）", draft.clone())
-                        .on_input(move |value| Message::InteractionDraftChanged {
-                            request_id: input_request_id.clone(),
-                            value,
-                        })
-                        .view(tokens),
-                );
-                let mut revise = button(text("要求修改").size(12))
-                    .style(button_style(tokens, ButtonKind::Ghost));
-                if !draft.trim().is_empty() {
-                    revise = revise.on_press(Message::RespondInteraction {
-                        request_id: request_id.clone(),
-                        accepted: true,
-                        response: json!({ "action": "revise", "feedback": draft }),
-                    });
-                }
-                action = action.push(
-                    row![
-                        button(text("执行计划").size(12))
-                            .on_press(Message::RespondInteraction {
-                                request_id: request_id.clone(),
-                                accepted: true,
-                                response: json!({ "action": "approve" }),
-                            })
-                            .style(button_style(tokens, ButtonKind::Primary)),
-                        revise,
-                        button(text("拒绝").size(12))
-                            .on_press(Message::RespondInteraction {
-                                request_id: request_id.clone(),
-                                accepted: false,
-                                response: json!({ "action": "decline" }),
-                            })
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                        button(text("取消任务").size(12))
-                            .on_press(Message::InterruptTurn)
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(8),
-                );
-            }
-            pending_actions =
-                pending_actions.push(Card::new(action).title("需要处理").view(tokens));
-        }
-
-        let turn_active = self
-            .turn_state
-            .as_ref()
-            .is_some_and(|(_, state)| turn_state_is_active(state));
-        let pending_blocks_send = session.blocking_pending_count > 0;
-        let task_run_block = session.run_block.as_ref().map(ToString::to_string);
-        let review_target_pending = self.pending_review_slash_workflow.is_some();
-        let has_payload = self
-            .composer
-            .as_ref()
-            .is_some_and(composer_has_turn_payload);
-        let input = HostedTextarea::new(&self.composer_editor)
-            .id(target_ids::COMPOSER_INPUT)
-            .placeholder(COMPOSER_PLACEHOLDER)
-            .height(composer_textarea_height(&self.composer_editor))
-            .on_action(Message::ComposerEdited)
-            .disabled(self.composer_input_is_locked());
-        let input = if has_payload
-            && (!pending_blocks_send || turn_active)
-            && task_run_block.is_none()
-            && !review_target_pending
-        {
-            input.submit_on_enter(Message::SubmitTurn)
-        } else {
-            input
-        }
-        .view(tokens);
-        let action_button = if review_target_pending {
-            button(text("请选择范围").size(12)).style(button_style(tokens, ButtonKind::Ghost))
-        } else if turn_active && !has_payload {
-            button(text("■").size(13))
-                .width(Length::Fixed(32.0))
-                .height(Length::Fixed(32.0))
-                .padding(0)
-                .on_press(Message::InterruptTurn)
-                .style(composer_round_button_style(tokens, ButtonKind::Danger))
-        } else {
-            let send = button(text("↑").size(17))
-                .width(Length::Fixed(32.0))
-                .height(Length::Fixed(32.0))
-                .padding(0)
-                .style(composer_round_button_style(tokens, ButtonKind::Primary));
-            if !has_payload || (pending_blocks_send && !turn_active) || task_run_block.is_some() {
-                send
-            } else {
-                send.on_press(Message::SubmitTurn)
-            }
-        };
-        let mut composer_surface = column![].spacing(6).width(Length::Fill);
-        if let Some(pending) = self
-            .pending_session_branch
-            .as_ref()
-            .filter(|pending| self.selected_task.as_ref() == Some(&pending.task_id))
-        {
-            composer_surface = composer_surface.push(
-                Card::new(
-                    row![
-                        text(format!(
-                            "{} · {}",
-                            session_branch_mode_label(pending.anchor.mode),
-                            pending.anchor.source_turn_id
-                        ))
-                        .size(11)
-                        .width(Length::Fill)
-                        .color(colors.muted),
-                        button(text("清除").size(11))
-                            .on_press(Message::ClearSessionBranch(HostedWindowId::PRIMARY))
-                            .style(button_style(tokens, ButtonKind::Text)),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                )
-                .title("会话分支")
-                .view(tokens),
-            );
-        }
-        if !turn_active && !has_payload && !pending_blocks_send {
-            if let Some(suggestions) =
-                conversation_suggestions_view(&self.conversation_suggestions, tokens)
-            {
-                composer_surface =
-                    composer_surface.push(suggestions.map(|message| match message {
-                        ConversationSuggestionViewMessage::Refresh => {
-                            Message::RefreshConversationSuggestions {
-                                window_id: HostedWindowId::PRIMARY,
-                                force: true,
-                            }
-                        }
-                        ConversationSuggestionViewMessage::Apply(prompt) => {
-                            Message::ApplyConversationSuggestion {
-                                window_id: HostedWindowId::PRIMARY,
-                                prompt,
-                            }
-                        }
-                    }));
-            }
-        }
-        if let Some(route) =
-            self.prompt_route_suggestion(HostedWindowId::PRIMARY, self.selected_task.as_ref())
-        {
-            let applied = self
-                .composer
-                .as_ref()
-                .and_then(|composer| composer.workflow.as_ref())
-                == route.workflow.as_ref();
-            composer_surface = composer_surface.push(prompt_route_suggestion_view(
-                route,
-                applied,
-                HostedWindowId::PRIMARY,
-                tokens,
-            ));
-        } else if let Some(workflow) = self
-            .composer
-            .as_ref()
-            .and_then(|composer| composer.workflow.as_ref())
-        {
-            composer_surface = composer_surface.push(applied_prompt_workflow_view(
-                workflow,
-                HostedWindowId::PRIMARY,
-                tokens,
-            ));
-        }
-        if let Some((_, state)) = &self.turn_state {
-            composer_surface = composer_surface.push(
-                text(turn_state_label(state))
-                    .size(11)
-                    .color(turn_state_color(state, colors)),
-            );
-        }
-        if let Some(reason) = task_run_block {
-            composer_surface = composer_surface.push(text(reason).size(11).color(colors.warning));
-        }
-        if let Some(error) = &self.task_action_error {
-            composer_surface =
-                composer_surface.push(text(error.clone()).size(11).color(colors.danger));
-            if self
-                .selected_task
-                .as_ref()
-                .is_some_and(|task_id| self.pending_initial_worktrees.contains_key(task_id))
-            {
-                composer_surface = composer_surface.push(
-                    button(text("重试准备工作树并发送").size(11))
-                        .on_press(Message::RetryInitialWorktree(HostedWindowId::PRIMARY))
-                        .style(button_style(tokens, ButtonKind::Primary)),
-                );
-            }
-        }
-        if let Some(attachment) = self.attachment_previews.get(&HostedWindowId::PRIMARY) {
-            composer_surface = composer_surface.push(attachment_preview_card(
-                attachment,
-                HostedWindowId::PRIMARY,
-                tokens,
-            ));
-        }
-        if self
-            .file_drop_hovered_windows
-            .contains(&HostedWindowId::PRIMARY)
-        {
-            composer_surface = composer_surface.push(
-                Card::new(text("释放以添加到当前任务").size(12).color(colors.accent))
-                    .title("拖放附件")
-                    .view(tokens),
-            );
-        }
-        if !self.conversation_reference_results.is_empty() {
-            let mut references = column![].spacing(3).width(Length::Fill);
-            for reference in &self.conversation_reference_results {
-                references = references.push(
-                    button(
-                        row![
-                            text(reference.title.clone()).size(11).color(colors.text),
-                            text(
-                                reference
-                                    .project_name
-                                    .clone()
-                                    .unwrap_or_else(|| "收集箱".to_owned())
-                            )
-                            .size(10)
-                            .color(colors.muted),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(Message::SelectConversationReference(
-                        reference.task_id.clone(),
-                    ))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            composer_surface =
-                composer_surface.push(Card::new(references).title("对话引用").view(tokens));
-        }
-        if !self.context_attachment_results.is_empty() {
-            let mut context = column![].spacing(3).width(Length::Fill);
-            for result in &self.context_attachment_results {
-                context = context.push(
-                    button(
-                        row![
-                            icon(attachment_icon(&result.attachment), 13.0, colors.muted),
-                            text(result.relative_path.clone())
-                                .size(11)
-                                .color(colors.text),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(Message::SelectContextAttachment(
-                        result.relative_path.clone(),
-                    ))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            composer_surface =
-                composer_surface.push(Card::new(context).title("项目上下文").view(tokens));
-        }
-        if !self.slash_commands.is_empty() {
-            let mut commands = column![].spacing(3).width(Length::Fill);
-            for result in &self.slash_commands {
-                let command = &result.command;
-                commands = commands.push(
-                    button(
-                        row![
-                            text(format!("/{}", command.name))
-                                .size(11)
-                                .color(colors.text),
-                            text(command.title.clone()).size(10).color(colors.muted),
-                            text(slash_command_source_label(command.source))
-                                .size(9)
-                                .color(colors.muted),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .width(Length::Fill)
-                    .on_press(Message::SelectSlashCommand(command.clone()))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                );
-            }
-            composer_surface =
-                composer_surface.push(Card::new(commands).title("斜杠命令").view(tokens));
-        }
-        if let Some(pending) = self
-            .pending_review_slash_workflow
-            .as_ref()
-            .filter(|pending| self.selected_task.as_ref() == Some(&pending.task_id))
-        {
-            composer_surface = composer_surface.push(review_slash_workflow_view(
-                pending,
-                HostedWindowId::PRIMARY,
-                tokens,
-            ));
-        }
-        if !composer_attachments.is_empty() {
-            let mut attachments = column![].spacing(4).width(Length::Fill);
-            for attachment in &composer_attachments {
-                let attachment_id = attachment.id.clone();
-                let attachment_details = row![
-                    icon(attachment_icon(attachment), 14.0, colors.muted),
-                    column![
-                        text(attachment.name.clone()).size(11).color(colors.text),
-                        text(attachment_meta_label(attachment))
-                            .size(10)
-                            .color(colors.muted),
-                    ]
-                    .spacing(1)
-                    .width(Length::Fill),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center);
-                let attachment_details: Element<'static, Message> =
-                    if attachment_supports_inline_preview(attachment) {
-                        button(attachment_details)
-                            .width(Length::Fill)
-                            .on_press(Message::OpenAttachmentPreview {
-                                window_id: HostedWindowId::PRIMARY,
-                                attachment: attachment.clone(),
-                            })
-                            .style(button_style(tokens, ButtonKind::Ghost))
-                            .into()
-                    } else {
-                        attachment_details.into()
-                    };
-                attachments = attachments.push(
-                    ListItem::new(
-                        row![
-                            attachment_details,
-                            button(icon(Icon::Close, 12.0, colors.muted))
-                                .on_press(Message::RemoveAttachment(attachment_id))
-                                .style(button_style(tokens, ButtonKind::Ghost)),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .view(tokens),
-                );
-            }
-            composer_surface = composer_surface.push(attachments);
-        }
-        if !composer_conversation_references.is_empty() {
-            let mut references = column![].spacing(4).width(Length::Fill);
-            for reference in &composer_conversation_references {
-                let task_id = reference.task_id.clone();
-                references = references.push(
-                    ListItem::new(
-                        row![
-                            icon(Icon::Workspace, 14.0, colors.muted),
-                            column![
-                                text(reference.title.clone()).size(11).color(colors.text),
-                                text(
-                                    reference
-                                        .project_name
-                                        .clone()
-                                        .unwrap_or_else(|| "收集箱".to_owned())
-                                )
-                                .size(10)
-                                .color(colors.muted),
-                            ]
-                            .spacing(1)
-                            .width(Length::Fill),
-                            button(icon(Icon::Close, 12.0, colors.muted))
-                                .on_press(Message::RemoveConversationReference(task_id))
-                                .style(button_style(tokens, ButtonKind::Ghost)),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    )
-                    .view(tokens),
-                );
-            }
-            composer_surface = composer_surface.push(references);
-        }
-        let compact_toolbar = self.compact_composer_toolbar(HostedWindowId::PRIMARY);
-        let composer_locked = self.composer_input_is_locked();
-        let optimizing_prompt =
-            self.prompt_optimization_is_busy(HostedWindowId::PRIMARY, self.selected_task.as_ref());
-        let available = !composer_locked;
-        let optimize_prompt = self.composer_toolbar_action(
-            if optimizing_prompt {
-                "正在优化提示"
-            } else {
-                "优化提示"
-            },
-            Icon::Appearance,
-            compact_toolbar,
-            (!optimizing_prompt
-                && !self.composer_is_locked()
-                && !composer_content.trim().is_empty())
-            .then_some(Message::OptimizePrompt(HostedWindowId::PRIMARY)),
-            optimizing_prompt,
-            tokens,
-        );
-        let actions = self.composer_action_menu(
-            HostedWindowId::PRIMARY,
-            !available,
-            composer_plan_mode,
-            composer_goal_mode,
-            tokens,
-        );
-        let permission = self.composer_toolbar_action(
-            format!("权限：{}", permission_label(composer_permission)),
-            Icon::About,
-            compact_toolbar,
-            available.then_some(Message::CyclePermission),
-            false,
-            tokens,
-        );
-        let mut toolbar_left = row![actions, permission]
-            .spacing(3)
-            .align_y(Alignment::Center);
-        if let Some(worktree) = session.worktree.as_ref() {
-            toolbar_left = toolbar_left.push(
-                button(
-                    row![
-                        icon(Icon::Nodes, 13.0, colors.muted),
-                        text(worktree.branch_name.clone()).size(10),
-                    ]
-                    .spacing(4)
-                    .align_y(Alignment::Center),
-                )
-                .on_press(Message::OpenWorktree)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-            );
-        }
-        if composer_plan_mode {
-            toolbar_left = toolbar_left.push(self.composer_toolbar_action(
-                "计划 ×",
-                Icon::Nodes,
-                compact_toolbar,
-                available.then_some(Message::TogglePlanMode),
-                true,
-                tokens,
-            ));
-        }
-        if composer_goal_mode {
-            toolbar_left = toolbar_left.push(self.composer_toolbar_action(
-                "Goal ×",
-                Icon::Workspace,
-                compact_toolbar,
-                available.then_some(Message::ToggleGoalMode),
-                true,
-                tokens,
-            ));
-        }
-        if let Some(usage) = session.context_usage.as_ref() {
-            let mut compact =
-                button(text("压缩上下文").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-            if !turn_active && !pending_blocks_send {
-                compact = compact.on_press(Message::CompactContext);
-            }
-            composer_surface = composer_surface.push(
-                row![
-                    text(context_usage_label(usage))
-                        .size(10)
-                        .width(Length::Fill)
-                        .color(context_usage_color(usage, colors)),
-                    compact,
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            );
-        }
-        let model_controls = self
-            .composer
-            .as_ref()
-            .map(|composer| {
-                self.composer_model_controls(
-                    HostedWindowId::PRIMARY,
-                    composer,
-                    composer_locked,
-                    tokens,
-                )
-            })
-            .unwrap_or_else(|| space().into());
-        let toolbar: Element<'static, Message> = if compact_toolbar {
-            column![
-                toolbar_left,
-                row![
-                    space().width(Length::Fill),
-                    model_controls,
-                    optimize_prompt,
-                    action_button,
-                ]
-                .spacing(3)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(4)
-            .into()
-        } else {
-            row![
-                toolbar_left,
-                space().width(Length::Fill),
-                model_controls,
-                optimize_prompt,
-                action_button,
-            ]
-            .spacing(3)
-            .align_y(Alignment::Center)
-            .into()
-        };
-        let composer_card = Card::new(column![input, toolbar].spacing(7))
-            .padding(Padding::from([10, 12]))
-            .view(tokens);
-        let composer_controls: Element<'static, Message> =
-            if let Some(todo_float) = self.task_todo_float(session, tokens) {
-                column![todo_float, composer_card].spacing(0).into()
-            } else {
-                composer_card
-            };
-        composer_surface = composer_surface.push(composer_controls);
-        let composer_surface = container(
-            container(composer_surface).width(Length::Fixed(self.primary_chat_content_width(48.0))),
-        )
-        .width(Length::Fill)
-        .center_x(Length::Fill)
-        .padding(Padding {
-            top: 4.0,
-            right: 0.0,
-            bottom: 8.0,
-            left: 0.0,
-        });
-
-        let debug_panel = self.debug_timeline_panel(
-            HostedWindowId::PRIMARY,
-            self.selected_task.is_some(),
-            tokens,
-        );
-        let timeline_at_end =
-            self.timeline_is_at_end(Some(session), &TimelineSurfaceKey::Main, true);
-        let timeline_surface: Element<'static, Message> = if timeline_empty {
-            let headline = conversation_empty_headline(
-                (location_name != "收集箱").then_some(location_name.as_str()),
-                false,
-            );
-            container(
-                column![
-                    space().height(Length::FillPortion(3)),
-                    text(headline)
-                        .size(24)
-                        .font(ui_font(font::Weight::Medium))
-                        .color(colors.text),
-                    space().height(Length::FillPortion(4)),
-                ]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_x(Alignment::Center),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        } else {
-            let timeline = container(
-                container(timeline).width(Length::Fixed(self.primary_chat_timeline_width(48.0))),
-            )
-            .width(Length::Fill)
-            .center_x(Length::Fill);
-            let timeline: Element<'static, Message> = scrollable(timeline)
-                .id(TimelineSurfaceKey::Main.scrollable_id())
-                .on_scroll(|viewport| Message::TimelineScrolled {
-                    surface: TimelineSurfaceKey::Main,
-                    offset: viewport.absolute_offset().y,
-                    viewport_extent: viewport.bounds().height,
-                })
-                .direction(vertical_scrollbar())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into();
-            timeline_with_latest_control(
-                timeline,
-                !timeline_at_end,
-                TimelineSurfaceKey::Main,
-                tokens,
-            )
-        };
-        let pending_actions = container(
-            container(pending_actions).width(Length::Fixed(self.primary_chat_content_width(48.0))),
-        )
-        .width(Length::Fill)
-        .center_x(Length::Fill);
-        let mut page = column![]
-            .spacing(8)
-            .width(Length::Fill)
-            .height(Length::Fill);
-        if self.agent_interaction_settings.debug && self.selected_task.is_some() {
-            page = page.push(debug_panel);
-        }
-        page = page.push(timeline_surface);
-        if session.open_pending_count > 0 {
-            page = page.push(pending_actions);
-        }
-        page = page.push(composer_surface);
-        container(page)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([20, 24]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn task_todo_float(
-        &self,
-        session: &TaskSessionView,
-        tokens: ThemeTokens,
-    ) -> Option<Element<'static, Message>> {
-        let visible_todos = session
-            .todos
-            .iter()
-            .filter(|todo| todo_float_item_is_visible(todo))
-            .collect::<Vec<_>>();
-        let total_count = visible_todos.len() + usize::from(session.goal.is_some());
-        if total_count == 0 {
-            return None;
-        }
-
-        const MAX_VISIBLE_ROWS: usize = 6;
-        let colors = tokens.colors;
-        let locked = self.composer_is_locked();
-        let inspector_open =
-            self.inspector_surface == InspectorSurface::Task && self.inspector_region_is_visible();
-        let mut rows = column![].spacing(2).width(Length::Fill);
-        let mut shown = 0usize;
-
-        if let Some(goal) = &session.goal {
-            let inspector: Element<'static, Message> = if inspector_open {
-                text("检查器").size(10).color(colors.faint).into()
-            } else {
-                button(text("编辑").size(10))
-                    .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
-                        TitlebarMenuAction::ToggleTaskInspector,
-                    )))
-                    .style(button_style(tokens, ButtonKind::Text))
-                    .into()
-            };
-            let mut refresh = IconButton::new("刷新 Goal", Icon::Restore).size(ControlSize::Small);
-            let mut clear = IconButton::new("清除 Goal", Icon::Close).size(ControlSize::Small);
-            if !locked {
-                refresh = refresh.on_press(Message::RefreshGoal);
-                clear = clear.on_press(Message::ClearGoal);
-            }
-            rows = rows.push(
-                container(
-                    row![
-                        icon(Icon::Nodes, 13.0, colors.accent),
-                        text(goal.objective.clone())
-                            .size(12)
-                            .width(Length::Fill)
-                            .color(colors.text),
-                        text(format!(
-                            "{} · {} tokens",
-                            goal_status_label(goal.status),
-                            goal.tokens_used
-                        ))
-                        .size(10)
-                        .color(colors.muted),
-                        inspector,
-                        refresh.view(tokens),
-                        clear.view(tokens),
-                    ]
-                    .spacing(5)
-                    .align_y(Alignment::Center),
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(28.0))
-                .padding([0, 4])
-                .style(move |_| {
-                    iced::widget::container::Style::default().background(colors.subtle)
-                }),
-            );
-            shown += 1;
-        }
-
-        for todo in visible_todos
-            .into_iter()
-            .take(MAX_VISIBLE_ROWS.saturating_sub(shown))
-        {
-            let is_guide = todo.source == DesktopTodoSource::Lilia;
-            let source_icon = if is_guide {
-                Icon::Appearance
-            } else {
-                Icon::About
-            };
-            let status = if is_guide {
-                match todo.guide_status {
-                    Some(DesktopTodoGuideStatus::Queued) => "排队中".to_owned(),
-                    _ => todo_priority_label(todo.priority).to_owned(),
-                }
-            } else {
-                format!("Agent · {}", todo_priority_label(todo.priority))
-            };
-            let mut actions = row![].spacing(1).align_y(Alignment::Center);
-            if is_guide && todo.guide_status == Some(DesktopTodoGuideStatus::Pending) {
-                let mut send =
-                    button(text("发送").size(10)).style(button_style(tokens, ButtonKind::Text));
-                let mut delete = IconButton::new("删除引导", Icon::Close).size(ControlSize::Small);
-                if !locked {
-                    send = send.on_press(Message::DispatchTodoGuide(todo.id.clone()));
-                    delete = delete.on_press(Message::DeleteTodo(todo.id.clone()));
-                }
-                actions = actions.push(send).push(delete.view(tokens));
-            }
-            rows = rows.push(
-                container(
-                    row![
-                        icon(source_icon, 13.0, colors.faint),
-                        text(todo.text.clone())
-                            .size(12)
-                            .width(Length::Fill)
-                            .color(colors.text),
-                        text(status).size(10).color(colors.muted),
-                        actions,
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center),
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(28.0))
-                .padding([0, 4]),
-            );
-            shown += 1;
-        }
-
-        if total_count > shown {
-            let label = format!("还有 {} 项 · 在检查器查看", total_count - shown);
-            rows = if inspector_open {
-                rows.push(container(text(label).size(10).color(colors.faint)).padding([4, 8]))
-            } else {
-                rows.push(
-                    button(text(label).size(10))
-                        .width(Length::Fill)
-                        .on_press(Message::TitlebarMenu(ContextMenuEvent::Select(
-                            TitlebarMenuAction::ToggleTaskInspector,
-                        )))
-                        .style(button_style(tokens, ButtonKind::Text)),
-                )
-            };
-        }
-
-        Some(
-            container(rows)
-                .width(Length::Fill)
-                .padding([6, 8])
-                .style(move |_| iced::widget::container::Style {
-                    background: Some(colors.surface.into()),
-                    border: iced::Border {
-                        color: colors.border,
-                        width: 1.0,
-                        radius: iced::border::Radius {
-                            top_left: 10.0,
-                            top_right: 10.0,
-                            bottom_right: 0.0,
-                            bottom_left: 0.0,
-                        },
-                    },
-                    shadow: iced::Shadow {
-                        color: iced::Color::from_rgba8(0, 0, 0, 0.16),
-                        offset: iced::Vector::new(0.0, 2.0),
-                        blur_radius: 10.0,
-                    },
-                    ..iced::widget::container::Style::default()
-                })
-                .into(),
-        )
-    }
-
-    fn inspector_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        if self.inspector_surface == InspectorSurface::Iab {
-            return self.iab.view(tokens, true).map(Message::Iab);
-        }
-        if self.inspector_surface == InspectorSurface::CodingTools {
-            if let Some(project) = self
-                .projects
-                .iter()
-                .find(|project| Some(&project.id) == self.selected_project.as_ref())
-            {
-                return self.coding_tools_content(project, tokens);
-            }
-        }
-        self.task_inspector(tokens)
-    }
-
-    fn task_inspector(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let Some(session) = &self.task_session else {
-            return container(
-                EmptyState::new("选择任务查看会话")
-                    .message("Todo、产物和运行状态会显示在这里。")
-                    .icon(Icon::About)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .into();
-        };
-
-        let goal_locked = self.composer_is_locked();
-        let task_card = if let Some(task) = self
-            .tasks
-            .iter()
-            .find(|task| Some(&task.id) == self.selected_task.as_ref())
-        {
-            let task_title = Input::new("任务标题", self.task_title_edit.clone())
-                .on_input(Message::TaskTitleChanged)
-                .disabled(goal_locked)
-                .view(tokens);
-            let mut save =
-                button(text("保存标题").size(10)).style(button_style(tokens, ButtonKind::Primary));
-            let mut status = button(text(status_label(task.status)).size(10))
-                .style(button_style(tokens, ButtonKind::Ghost));
-            let mut priority = button(text(priority_label(task.priority)).size(10))
-                .style(button_style(tokens, ButtonKind::Ghost));
-            let mut pinned = button(
-                text(if task.pinned {
-                    "取消固定"
-                } else {
-                    "固定"
-                })
-                .size(10),
-            )
-            .style(button_style(tokens, ButtonKind::Ghost));
-            let mut archive =
-                button(text("归档").size(10)).style(button_style(tokens, ButtonKind::Danger));
-            let mut move_up =
-                button(text("上移").size(10)).style(button_style(tokens, ButtonKind::Text));
-            let mut move_down =
-                button(text("下移").size(10)).style(button_style(tokens, ButtonKind::Text));
-            let task_move_target = self.effective_task_move_target();
-            let move_target_label = task_move_target
-                .as_ref()
-                .map(|(_, name)| format!("目标：{name}"))
-                .unwrap_or_else(|| "无其他项目".to_owned());
-            let mut move_project_target = button(text(move_target_label).size(10))
-                .style(button_style(tokens, ButtonKind::Ghost));
-            let mut move_project =
-                button(text("移动任务").size(10)).style(button_style(tokens, ButtonKind::Primary));
-            let task_parent_target = self.effective_task_parent_target();
-            let parent_target_label = task_parent_target
-                .as_ref()
-                .map(|(_, name)| format!("父级：{name}"))
-                .unwrap_or_else(|| "父级不可用".to_owned());
-            let parent_target_count = self.task_parent_targets().len();
-            let parent_changed = self.task_parent_target_changed();
-            let mut parent_target = button(text(parent_target_label).size(10))
-                .style(button_style(tokens, ButtonKind::Ghost));
-            let mut reparent =
-                button(text("调整层级").size(10)).style(button_style(tokens, ButtonKind::Primary));
-            let mut clear_parent =
-                button(text("移至根级").size(10)).style(button_style(tokens, ButtonKind::Text));
-            let dependency_target = self.effective_task_dependency_target();
-            let dependency_target_label = dependency_target
-                .as_ref()
-                .map(|target| format!("依赖：{}", target.title))
-                .unwrap_or_else(|| "无可选依赖".to_owned());
-            let selected_dependencies = self
-                .application
-                .get_task(&task.id)
-                .map(|task| task.depends_on)
-                .unwrap_or_default();
-            let dependency_is_selected = dependency_target
-                .as_ref()
-                .is_some_and(|target| selected_dependencies.contains(&target.id));
-            let mut dependency_target_button = button(text(dependency_target_label).size(10))
-                .style(button_style(tokens, ButtonKind::Ghost));
-            let mut dependency_toggle = button(
-                text(if dependency_is_selected {
-                    "移除依赖"
-                } else {
-                    "添加依赖"
-                })
-                .size(10),
-            )
-            .style(button_style(tokens, ButtonKind::Primary));
-            if !goal_locked {
-                if !self.task_title_edit.trim().is_empty() {
-                    save = save.on_press(Message::SaveTask);
-                }
-                status = status.on_press(Message::CycleTaskStatus);
-                priority = priority.on_press(Message::CycleTaskPriority);
-                pinned = pinned.on_press(Message::ToggleTaskPinned);
-                if self.reordered_selected_task_ids(-1).is_some() {
-                    move_up = move_up.on_press(Message::MoveTaskUp);
-                }
-                if self.reordered_selected_task_ids(1).is_some() {
-                    move_down = move_down.on_press(Message::MoveTaskDown);
-                }
-                if task_move_target.is_some() {
-                    move_project_target =
-                        move_project_target.on_press(Message::CycleTaskMoveTarget);
-                    move_project = move_project.on_press(Message::MoveTaskToProject);
-                }
-                if parent_target_count > 1 {
-                    parent_target = parent_target.on_press(Message::CycleTaskParentTarget);
-                }
-                if parent_changed {
-                    reparent = reparent.on_press(Message::ReparentTask);
-                }
-                if task.parent_id.is_some() {
-                    clear_parent = clear_parent.on_press(Message::ClearTaskParent);
-                }
-                if dependency_target.is_some() {
-                    dependency_target_button =
-                        dependency_target_button.on_press(Message::CycleTaskDependency);
-                    dependency_toggle = dependency_toggle.on_press(Message::ToggleTaskDependency);
-                }
-                archive = archive.on_press(Message::ArchiveTask);
-            }
-            Card::new(
-                column![
-                    row![task_title, save].spacing(6).align_y(Alignment::Center),
-                    row![status, priority, pinned, move_up, move_down, archive]
-                        .spacing(4)
-                        .align_y(Alignment::Center),
-                    row![move_project_target, move_project]
-                        .spacing(4)
-                        .align_y(Alignment::Center),
-                    row![parent_target, reparent, clear_parent]
-                        .spacing(4)
-                        .align_y(Alignment::Center),
-                    row![dependency_target_button, dependency_toggle]
-                        .spacing(4)
-                        .align_y(Alignment::Center),
-                ]
-                .spacing(7),
-            )
-            .title("任务")
-            .view(tokens)
-        } else {
-            Card::new(text("任务状态不可用").size(11).color(colors.muted))
-                .title("任务")
-                .view(tokens)
-        };
-        let task_drop_card = if let Some(error) = &self.task_move_candidates_error {
-            Card::new(text(error.clone()).size(11).color(colors.danger))
-                .title("拖放移动")
-                .view(tokens)
-        } else if let Some(task_id) = self.selected_task.as_ref() {
-            let title = self
-                .task_move_candidates
-                .iter()
-                .find(|task| &task.id == task_id)
-                .map(|task| task.title.clone())
-                .unwrap_or_else(|| task_id.as_str().to_owned());
-            let destinations = self.task_drop_destinations();
-            let mut drop_items = vec![ReorderItem::new(
-                TaskDropItem::Source(task_id.clone()),
-                ListItem::new(
-                    column![
-                        text(format!("拖动：{title}")).size(12).color(colors.text),
-                        text("拖到下方目标行即可原子移动整棵任务子树")
-                            .size(10)
-                            .color(colors.muted),
-                    ]
-                    .spacing(2),
-                )
-                .selected(true)
-                .view(tokens),
-            )
-            .draggable(!goal_locked)
-            .drop_target(false)];
-            drop_items.extend(destinations.iter().map(|(destination, label)| {
-                ReorderItem::new(
-                    destination.clone(),
-                    ListItem::new(
-                        row![
-                            icon(Icon::Folder, 13.0, colors.muted),
-                            text(label.clone()).size(11).color(colors.text),
-                        ]
-                        .spacing(6)
-                        .align_y(Alignment::Center),
-                    )
-                    .view(tokens),
-                )
-                .draggable(false)
-                .drop_target(!goal_locked)
-            }));
-            let search = Input::new("搜索父任务；留空只显示根级", self.task_drop_search.clone())
-                .on_input(Message::TaskDropSearchChanged)
-                .disabled(goal_locked)
-                .view(tokens);
-            let mut content = column![
-                search,
-                ReorderList::new(drop_items, |item| match item {
-                    TaskDropItem::Source(task_id) => Message::SelectTask(task_id),
-                    TaskDropItem::Destination { .. } => Message::TaskDropInteraction,
-                })
-                .on_reorder(|source, before| Message::DropTask { source, before })
-                .spacing(5.0)
-                .indicator(colors.accent)
-                .view(),
-            ]
-            .spacing(7);
-            if destinations.is_empty() {
-                content = content.push(
-                    text("没有匹配且有效的目标；后代任务不会作为父级落点。")
-                        .size(10)
-                        .color(colors.muted),
-                );
-            }
-            Card::new(content).title("拖放移动").view(tokens)
-        } else {
-            Card::new(text("选择任务后可拖放移动").size(11).color(colors.muted))
-                .title("拖放移动")
-                .view(tokens)
-        };
-        let goal_input = Input::new(
-            if session.goal.is_some() {
-                "更新 Goal"
-            } else {
-                "设置 Goal"
-            },
-            self.goal_draft.clone(),
-        )
-        .on_input(Message::GoalDraftChanged)
-        .disabled(goal_locked)
-        .view(tokens);
-        let mut set_goal = button(
-            text(if session.goal.is_some() {
-                "更新"
-            } else {
-                "设置"
-            })
-            .size(11),
-        )
-        .style(button_style(tokens, ButtonKind::Primary));
-        if !goal_locked && !self.goal_draft.trim().is_empty() {
-            set_goal = set_goal.on_press(Message::SetGoal);
-        }
-        let mut goal_content = column![row![goal_input, set_goal]
-            .spacing(6)
-            .align_y(Alignment::Center)]
-        .spacing(7)
-        .width(Length::Fill);
-        if let Some(goal) = &session.goal {
-            let mut refresh =
-                button(text("刷新").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-            let mut clear =
-                button(text("清除").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-            if !goal_locked {
-                refresh = refresh.on_press(Message::RefreshGoal);
-                clear = clear.on_press(Message::ClearGoal);
-            }
-            goal_content = goal_content.push(
-                column![
-                    text(goal.objective.clone()).size(12).color(colors.text),
-                    row![
-                        text(format!(
-                            "{} · {} tokens · {}s",
-                            goal_status_label(goal.status),
-                            goal.tokens_used,
-                            goal.time_used_seconds,
-                        ))
-                        .size(10)
-                        .width(Length::Fill)
-                        .color(colors.faint),
-                        refresh,
-                        clear,
-                    ]
-                    .spacing(4)
-                    .align_y(Alignment::Center),
-                ]
-                .spacing(3),
-            );
-        }
-        let goal_card = Card::new(goal_content).title("Goal").view(tokens);
-
-        let worktree_locked = self.composer_is_locked() || self.worktree_busy;
-        let mut worktree_content = column![].spacing(6).width(Length::Fill);
-        if let Some(worktree) = &session.worktree {
-            worktree_content = worktree_content.push(
-                column![
-                    text(worktree.branch_name.clone())
-                        .size(12)
-                        .color(colors.text),
-                    text(format!("基于 {}", worktree.base_branch))
-                        .size(10)
-                        .color(colors.faint),
-                    text(worktree.worktree_path.clone())
-                        .size(10)
-                        .width(Length::Fill)
-                        .color(colors.muted),
-                ]
-                .spacing(2),
-            );
-            let open = button(text("打开").size(10))
-                .on_press(Message::OpenWorktree)
-                .style(button_style(tokens, ButtonKind::Ghost));
-            let mut clear =
-                button(text("解除绑定").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-            let mut cleanup =
-                button(text("清理并归档").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-            let mut merge =
-                button(text("合并并归档").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-            if !worktree_locked {
-                clear = clear.on_press(Message::ClearWorktree);
-                cleanup = cleanup.on_press(Message::RequestWorktreeCleanup);
-                merge = merge.on_press(Message::RequestWorktreeMerge);
-            }
-            worktree_content = worktree_content.push(
-                row![open, clear, cleanup, merge]
-                    .spacing(4)
-                    .align_y(Alignment::Center),
-            );
-            if let Some(action) = self.worktree_confirmation {
-                let label = match action {
-                    WorktreeDangerAction::CleanupAndArchive => "确认清理并归档",
-                    WorktreeDangerAction::MergeAndArchive => "确认合并并归档",
-                };
-                let mut confirm =
-                    button(text(label).size(10)).style(button_style(tokens, ButtonKind::Danger));
-                let mut cancel =
-                    button(text("取消").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-                if !worktree_locked {
-                    confirm = confirm.on_press(Message::ConfirmWorktreeAction);
-                    cancel = cancel.on_press(Message::CancelWorktreeAction);
-                }
-                worktree_content = worktree_content
-                    .push(row![confirm, cancel].spacing(4).align_y(Alignment::Center));
-            }
-        } else {
-            worktree_content = worktree_content.push(
-                text("当前任务直接使用项目工作区。")
-                    .size(11)
-                    .color(colors.muted),
-            );
-            let mut create = button(text("创建工作树").size(10))
-                .style(button_style(tokens, ButtonKind::Primary));
-            let mut attach =
-                button(text("绑定已有").size(10)).style(button_style(tokens, ButtonKind::Ghost));
-            if !worktree_locked {
-                create = create.on_press(Message::CreateWorktree);
-                attach = attach.on_press(Message::PickWorktree);
-            }
-            worktree_content =
-                worktree_content.push(row![create, attach].spacing(4).align_y(Alignment::Center));
-        }
-        if self.worktree_busy {
-            worktree_content =
-                worktree_content.push(text("正在更新工作树…").size(10).color(colors.muted));
-        }
-        let worktree_card = Card::new(worktree_content).title("工作树").view(tokens);
-
-        let todo_input = Input::new(
-            if self.editing_todo.is_some() {
-                "修改 Todo"
-            } else {
-                "新增 Todo"
-            },
-            self.todo_draft.clone(),
-        )
-        .on_input(Message::TodoDraftChanged)
-        .view(tokens);
-        let mut save_todo = button(
-            text(if self.editing_todo.is_some() {
-                "保存"
-            } else {
-                "添加"
-            })
-            .size(11),
-        )
-        .style(button_style(tokens, ButtonKind::Primary));
-        if !self.todo_draft.trim().is_empty() {
-            save_todo = save_todo.on_press(Message::SaveTodo);
-        }
-        let mut todo_editor = row![todo_input, save_todo]
-            .spacing(6)
-            .align_y(Alignment::Center);
-        if self.editing_todo.is_some() {
-            todo_editor = todo_editor.push(
-                button(text("取消").size(11))
-                    .on_press(Message::CancelTodoEdit)
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            );
-        }
-
-        let mut todo_items = column![todo_editor].spacing(6).width(Length::Fill);
-        if session.todos.is_empty() {
-            todo_items = todo_items.push(text("暂无 Todo").size(12).color(colors.muted));
-        } else {
-            for todo in &session.todos {
-                let mark = if todo.done { "✓" } else { "○" };
-                let tone = if todo.done {
-                    colors.success
-                } else {
-                    colors.text
-                };
-                let todo_id = todo.id.clone();
-                let content = if todo.source == DesktopTodoSource::Lilia {
-                    row![
-                        button(text(mark).size(13).color(tone))
-                            .on_press(Message::ToggleTodo(todo_id.clone(), !todo.done))
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                        text(todo.text.clone())
-                            .size(12)
-                            .width(Length::Fill)
-                            .color(tone),
-                        button(text(todo_priority_label(todo.priority)).size(10))
-                            .on_press(Message::CycleTodoPriority(todo_id.clone(), todo.priority,))
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                        button(text("编辑").size(10))
-                            .on_press(Message::EditTodo(todo_id.clone()))
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                        button(text("删除").size(10))
-                            .on_press(Message::DeleteTodo(todo_id))
-                            .style(button_style(tokens, ButtonKind::Ghost)),
-                    ]
-                    .spacing(4)
-                    .align_y(Alignment::Center)
-                } else {
-                    row![
-                        text(mark).size(13).color(tone),
-                        text(todo.text.clone())
-                            .size(12)
-                            .width(Length::Fill)
-                            .color(tone),
-                        text(format!("Agent · {}", todo_priority_label(todo.priority)))
-                            .size(10)
-                            .color(colors.faint),
-                    ]
-                    .spacing(7)
-                    .align_y(Alignment::Center)
-                };
-                todo_items = todo_items.push(ListItem::new(content).auto_height().view(tokens));
-            }
-        }
-
-        let mut artifacts = column![].spacing(6).width(Length::Fill);
-        if session.artifacts.is_empty() {
-            artifacts = artifacts.push(text("暂无产物").size(12).color(colors.muted));
-        } else {
-            for artifact in &session.artifacts {
-                let size = artifact
-                    .size_bytes
-                    .map(format_byte_size)
-                    .unwrap_or_else(|| "大小未知".to_owned());
-                artifacts = artifacts.push(
-                    ListItem::new(
-                        column![
-                            row![
-                                text(artifact.summary.clone())
-                                    .size(12)
-                                    .width(Length::Fill)
-                                    .color(colors.text),
-                                text(artifact.status.clone()).size(10).color(colors.muted),
-                            ]
-                            .spacing(8),
-                            text(format!(
-                                "{} · {} · {}",
-                                artifact.media_type, size, artifact.id
-                            ))
-                            .size(10)
-                            .color(colors.faint),
-                        ]
-                        .spacing(3),
-                    )
-                    .view(tokens),
-                );
-            }
-        }
-
-        let memory_injection = if let Some(state) = &self.memory_injection {
-            let last_injected = state
-                .last_injected_turn_seq
-                .map(|sequence| format!("最近注入轮次 {sequence}"))
-                .unwrap_or_else(|| "尚未注入".to_owned());
-            Card::new(
-                column![
-                    text(last_injected).size(10).color(colors.muted),
-                    row![
-                        button(
-                            text(if state.enabled {
-                                "停止注入"
-                            } else {
-                                "启用注入"
-                            })
-                            .size(11)
-                        )
-                        .on_press(Message::ToggleTaskMemory)
-                        .style(button_style(tokens, ButtonKind::Subtle)),
-                        button(text("重置冷却").size(11))
-                            .on_press(Message::ResetTaskMemoryCooldown)
-                            .style(button_style(tokens, ButtonKind::Text)),
-                    ]
-                    .spacing(6),
-                ]
-                .spacing(6),
-            )
-            .title("Memory 注入")
-            .view(tokens)
-        } else {
-            Card::new(text("暂时无法读取注入状态").size(11).color(colors.muted))
-                .title("Memory 注入")
-                .view(tokens)
-        };
-
-        let content = column![
-            text("会话检查器")
-                .size(15)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            task_card,
-            task_drop_card,
-            goal_card,
-            worktree_card,
-            memory_injection,
-            Card::new(todo_items).title("Todo").view(tokens),
-            Card::new(artifacts).title("产物").view(tokens),
-        ]
-        .spacing(12);
-        container(
-            scrollable(content)
-                .direction(vertical_scrollbar())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding::from([16, 14]))
-        .into()
-    }
-
-    fn workspace_primary_content(&self, tokens: ThemeTokens) -> Element<'static, Message> {
-        if self.project_surface == ProjectSurface::Clone {
-            return self.project_content(tokens);
-        }
-        self.workspace_pane_tree(&self.panel_layout.panes, tokens)
-    }
-
-    fn workspace_pane_tree(
-        &self,
-        node: &PaneNode,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let root = nana_pane_tree_node(node);
-        let mut leaves = Vec::new();
-        root.visit_leaves(|pane_id| {
-            let items = self.panel_layout.pane_items(pane_id).unwrap_or_default();
-            let active_item = self.panel_layout.active_item(pane_id).ok().flatten();
-            leaves.push((
-                pane_id.clone(),
-                Some(self.workspace_pane_content(pane_id, items, active_item, tokens)),
-            ));
-        });
-        let leaves = Rc::new(RefCell::new(leaves));
-        let controllers = self
-            .workspace_splits
-            .iter()
-            .map(|(key, state)| (key.clone(), state.controller.clone()))
-            .collect::<Vec<_>>();
-        PaneTree::new(
-            root,
-            move |pane_id| {
-                leaves
-                    .borrow_mut()
-                    .iter_mut()
-                    .find(|(id, _)| id == pane_id)
-                    .and_then(|(_, element)| element.take())
-                    .expect("pane tree leaf is rendered once")
-            },
-            move |key, axis, ratio, first, second| {
-                let Some((_, controller)) =
-                    controllers.iter().find(|(candidate, _)| candidate == key)
-                else {
-                    return ratio_pane_split(axis, ratio, first, second, tokens);
-                };
-                let resize_key = key.clone();
-                split_pane(
-                    controller,
-                    first.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
-                    second.map(|message| WorkspaceSplitMessage::Preview(Box::new(message))),
-                    WorkspaceSplitMessage::Resize,
-                    tokens,
-                )
-                .map(move |message| match message {
-                    WorkspaceSplitMessage::Preview(message) => *message,
-                    WorkspaceSplitMessage::Resize(action) => Message::WorkspaceSplitAction {
-                        key: resize_key.clone(),
-                        action,
-                    },
-                })
-            },
-        )
-        .view()
-    }
-
-    fn workspace_pane_content(
-        &self,
-        pane_id: &PaneId,
-        item_ids: &[WorkspaceItemId],
-        active_item: Option<&WorkspaceItemId>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let pane_is_active = self.panel_layout.active_pane() == pane_id;
-        let active_item = active_item.cloned();
-        let compact_product_tabs = self.uses_compact_product_shell_tabs(item_ids);
-        let mut options = Vec::new();
-        if !compact_product_tabs || active_item.is_none() {
-            options.push(
-                SelectionOption::new(None, "项目概览")
-                    .icon(Icon::Workspace)
-                    .draggable(false),
-            );
-        }
-        for item_id in self.visible_main_workspace_tab_item_ids(item_ids, active_item.as_ref()) {
-            if let Some(item) = self.workspace_items.iter().find(|item| item.id == item_id) {
-                options.push(
-                    SelectionOption::new(Some(item.id.clone()), item.title.clone())
-                        .icon(Icon::Workspace)
-                        .draggable(!compact_product_tabs),
-                );
-            }
-        }
-        let target_pane_id = pane_id.clone();
-        let reorder_pane_id = pane_id.clone();
-        let transfer_fallback_pane_id = pane_id.clone();
-        let drag_surface = workspace_tab_drag_surface(
-            "main",
-            self.main_window_geometry
-                .map(|geometry| (geometry.x, geometry.y)),
-            self.main_window_scale_factor,
-        );
-        let drag_strip_id = main_workspace_tab_strip_id(pane_id);
-        let tabs = Tabs::new(active_item.clone(), options, move |item_id| {
-            Message::SelectWorkspacePaneTab {
-                pane_id: target_pane_id.clone(),
-                item_id,
-            }
-        })
-        .on_reorder(move |item_id, before| match item_id {
-            Some(item_id) => Message::ReorderWorkspacePaneTab {
-                pane_id: reorder_pane_id.clone(),
-                item_id,
-                before: before.flatten(),
-            },
-            None => Message::SelectWorkspacePaneTab {
-                pane_id: reorder_pane_id.clone(),
-                item_id: None,
-            },
-        })
-        .drag_group_on_surface(
-            self.workspace_tab_drag_group.clone(),
-            drag_surface,
-            drag_strip_id,
-            move |source_strip, item_id, target_strip, before| match item_id {
-                Some(item_id) => Message::TransferWorkspaceTab {
-                    source_strip,
-                    target_strip,
-                    item_id,
-                    before: before.flatten(),
-                },
-                None => Message::SelectWorkspacePaneTab {
-                    pane_id: transfer_fallback_pane_id.clone(),
-                    item_id: None,
-                },
-            },
-        )
-        .size(ControlSize::Small)
-        .view(tokens);
-        let mut pane_actions = Vec::new();
-        if !pane_is_active {
-            pane_actions.push(PaneChromeAction::new(
-                PaneChromeActionKind::Focus,
-                "聚焦",
-                Message::FocusWorkspacePane(pane_id.clone()),
-            ));
-        }
-        pane_actions.extend([
-            PaneChromeAction::new(
-                PaneChromeActionKind::SplitHorizontal,
-                "左右分栏",
-                Message::SplitWorkspacePane {
-                    pane_id: pane_id.clone(),
-                    axis: SplitAxis::Horizontal,
-                },
-            ),
-            PaneChromeAction::new(
-                PaneChromeActionKind::SplitVertical,
-                "上下分栏",
-                Message::SplitWorkspacePane {
-                    pane_id: pane_id.clone(),
-                    axis: SplitAxis::Vertical,
-                },
-            ),
-        ]);
-        if let Some(item) = active_item
-            .as_ref()
-            .and_then(|item_id| self.workspace_items.iter().find(|item| &item.id == item_id))
-            .filter(|item| {
-                item.capabilities.movable_across_windows
-                    && (item.application_surface().ok().flatten().is_some()
-                        || item.project_surface().ok().flatten().is_some()
-                        || is_document_editor_item(item)
-                        || item
-                            .terminal_session_id()
-                            .is_ok_and(|value| value.is_some()))
-            })
-        {
-            pane_actions.push(PaneChromeAction::new(
-                PaneChromeActionKind::MoveToWindow,
-                "移至新窗口",
-                Message::MoveWorkspaceItemToNewWindow(item.id.clone()),
-            ));
-        }
-        if self.panel_layout.pane_ids().len() > 1 {
-            if let Some(item_id) = &active_item {
-                pane_actions.push(PaneChromeAction::new(
-                    PaneChromeActionKind::MoveToNextPane,
-                    "移至下一窗格",
-                    Message::MoveWorkspaceItemToNextPane(item_id.clone()),
-                ));
-            } else if item_ids.is_empty() {
-                pane_actions.push(PaneChromeAction::new(
-                    PaneChromeActionKind::ClosePane,
-                    "关闭窗格",
-                    Message::CloseWorkspacePane(pane_id.clone()),
-                ));
-            }
-        }
-        if let Some(item) = active_item
-            .as_ref()
-            .and_then(|item_id| self.workspace_items.iter().find(|item| &item.id == item_id))
-            .filter(|item| item.capabilities.closable)
-        {
-            pane_actions.push(
-                PaneChromeAction::new(
-                    PaneChromeActionKind::CloseItem,
-                    "关闭",
-                    Message::CloseWorkspaceItem(item.id.clone()),
-                )
-                .icon(Icon::Close),
-            );
-        }
-        let body = if pane_is_active {
-            let active_document = active_item.as_ref().and_then(|item_id| {
-                self.workspace_items
-                    .iter()
-                    .find(|item| &item.id == item_id && is_document_editor_item(item))
-            });
-            if let Some(item) = active_document {
-                self.document_editor_pane_content(item, HostedWindowId::PRIMARY, tokens)
-            } else if let Some(item) = active_item
-                .as_ref()
-                .and_then(|item_id| self.workspace_items.iter().find(|item| &item.id == item_id))
-                .filter(|item| {
-                    item.terminal_session_id()
-                        .is_ok_and(|value| value.is_some())
-                })
-            {
-                self.terminal_pane_content(item, tokens)
-            } else if self.settings_open {
-                self.settings_content(tokens)
-            } else if self.automations_open {
-                self.automations_content(tokens)
-            } else if self.projects_overview_open {
-                self.projects_overview_content(tokens)
-            } else {
-                self.project_content(tokens)
-            }
-        } else {
-            self.workspace_inactive_pane_content(active_item.as_ref(), tokens)
-        };
-        if self.integrated_product_shell_pane().is_some() {
-            return body;
-        }
-        PaneChrome::new(tabs, body, pane_actions, tokens)
-            .active(pane_is_active)
-            .view()
-    }
-
-    fn uses_compact_product_shell_tabs(&self, item_ids: &[WorkspaceItemId]) -> bool {
+fn uses_compact_product_shell_tabs(&self, item_ids: &[WorkspaceItemId]) -> bool {
         self.panel_layout.pane_ids().len() == 1
             && item_ids.iter().all(|item_id| {
                 self.workspace_items
@@ -39085,642 +28467,15 @@ impl DesktopProgram {
         })
     }
 
-    fn workspace_inactive_pane_content(
-        &self,
-        active_item: Option<&WorkspaceItemId>,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let Some(item) = active_item
-            .and_then(|item_id| self.workspace_items.iter().find(|item| &item.id == item_id))
-        else {
-            return container(
-                EmptyState::new("空窗格")
-                    .message("打开任务或将标签移入此窗格。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        };
-        if let Ok(Some(surface)) = item.application_surface() {
-            return match surface {
-                ApplicationWorkspaceSurface::Projects => container(
-                    EmptyState::new("项目总览")
-                        .message(format!("{} 个项目", self.project_dashboard.len()))
-                        .icon(Icon::Workspace)
-                        .view(tokens),
-                )
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .center(Length::Fill)
-                .style(canvas_style(tokens))
-                .into(),
-                ApplicationWorkspaceSurface::Automations => {
-                    self.workspace_automation_preview_content(item, tokens)
-                }
-                ApplicationWorkspaceSurface::Settings => {
-                    self.workspace_settings_preview_content(item, tokens)
-                }
-            };
-        }
-        if item
-            .project_surface()
-            .is_ok_and(|surface| surface.is_some())
-        {
-            return self.workspace_project_preview_content(item, tokens);
-        }
-        if is_document_editor_item(item) {
-            return document_editor_inactive_preview(
-                item,
-                self.document_editors.get(&item.id),
-                tokens,
-            );
-        }
-        if let Some(snapshot) = self.terminal_snapshot_for_item(item) {
-            return terminal_inactive_preview(&snapshot, tokens).map(Message::Terminal);
-        }
-        let Some(task_id) = item.task_id().ok().flatten() else {
-            return container(
-                EmptyState::new(item.title.clone())
-                    .message("聚焦此窗格以继续。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        };
-        let Some(session) = self.pane_task_sessions.get(&task_id) else {
-            return container(
-                EmptyState::new("正在读取任务")
-                    .message("任务状态准备好后会显示在这里。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center(Length::Fill)
-            .style(canvas_style(tokens))
-            .into();
-        };
-        let colors = tokens.colors;
-        let mut timeline = column![].spacing(6).width(Length::Fill);
-        for event in session.timeline.iter().rev().take(8).rev() {
-            let mut event_content =
-                column![text(event.title.clone()).size(12).color(colors.text)].spacing(3);
-            if let Some(summary) = &event.summary {
-                event_content =
-                    event_content.push(text(summary.clone()).size(10).color(colors.muted));
-            }
-            timeline = timeline.push(ListItem::new(event_content).auto_height().view(tokens));
-        }
-        if session.timeline.is_empty() {
-            timeline = timeline.push(
-                EmptyState::new("暂无时间线")
-                    .message("聚焦窗格后可继续任务。")
-                    .icon(Icon::Workspace)
-                    .view(tokens),
-            );
-        }
-        let content = column![
-            text(session.task_title.clone())
-                .size(15)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            row![
-                text(format!("产物 {}", session.artifact_count))
-                    .size(10)
-                    .color(colors.muted),
-                text(format!("Todo {}", session.todo_count))
-                    .size(10)
-                    .color(colors.muted),
-                text(format!("待处理 {}", session.open_pending_count))
-                    .size(10)
-                    .color(if session.open_pending_count > 0 {
-                        colors.warning
-                    } else {
-                        colors.muted
-                    }),
-            ]
-            .spacing(10),
-            timeline,
-        ]
-        .spacing(10)
-        .width(Length::Fill);
-        container(
-            scrollable(content)
-                .direction(vertical_scrollbar())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding::from([16, 14]))
-        .style(canvas_style(tokens))
-        .into()
-    }
-
-    fn workspace_project_preview_content(
-        &self,
-        item: &WorkspaceItem,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let mut content = column![
-            text(item.title.clone())
-                .size(15)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            text("只读预览 · 聚焦窗格后可编辑")
-                .size(10)
-                .color(colors.muted),
-        ]
-        .spacing(8)
-        .width(Length::Fill);
-        match self.project_workspace_previews.get(&item.id) {
-            Some(ProjectWorkspacePreview::Roadmap(roadmap)) => {
-                content = content.push(
-                    text(format!(
-                        "{} 个里程碑 · {} 个任务关联",
-                        roadmap.milestones.len(),
-                        roadmap.links.len()
-                    ))
-                    .size(10)
-                    .color(colors.muted),
-                );
-                if roadmap.milestones.is_empty() {
-                    content = content.push(
-                        EmptyState::new("暂无里程碑")
-                            .message("聚焦窗格后可创建路线图里程碑。")
-                            .icon(Icon::Workspace)
-                            .view(tokens),
-                    );
-                } else {
-                    for milestone in roadmap.milestones.iter().take(8) {
-                        content = content.push(
-                            ListItem::new(
-                                column![
-                                    text(milestone.title.clone()).size(12).color(colors.text),
-                                    text(milestone_status_label(milestone.status))
-                                        .size(10)
-                                        .color(colors.muted),
-                                ]
-                                .spacing(2),
-                            )
-                            .auto_height()
-                            .view(tokens),
-                        );
-                    }
-                }
-            }
-            Some(ProjectWorkspacePreview::Memory(memories)) => {
-                let enabled = memories.iter().filter(|memory| memory.enabled).count();
-                content = content.push(
-                    text(format!("{} 条记忆 · {} 条启用", memories.len(), enabled))
-                        .size(10)
-                        .color(colors.muted),
-                );
-                if memories.is_empty() {
-                    content = content.push(
-                        EmptyState::new("暂无记忆")
-                            .message("聚焦窗格后可创建项目记忆。")
-                            .icon(Icon::Workspace)
-                            .view(tokens),
-                    );
-                } else {
-                    for memory in memories.iter().take(8) {
-                        content = content.push(
-                            ListItem::new(
-                                column![
-                                    text(memory.title.clone()).size(12).color(colors.text),
-                                    text(if memory.enabled {
-                                        "已启用"
-                                    } else {
-                                        "已停用"
-                                    })
-                                    .size(10)
-                                    .color(
-                                        if memory.enabled {
-                                            colors.success
-                                        } else {
-                                            colors.muted
-                                        },
-                                    ),
-                                ]
-                                .spacing(2),
-                            )
-                            .auto_height()
-                            .view(tokens),
-                        );
-                    }
-                }
-            }
-            Some(ProjectWorkspacePreview::Architecture(graph)) => {
-                content = content.push(
-                    text(format!(
-                        "版本 {} · {} 个节点 · {} 条关系",
-                        graph.version,
-                        graph.nodes.len(),
-                        graph.edges.len()
-                    ))
-                    .size(10)
-                    .color(colors.muted),
-                );
-                if !graph.summary.trim().is_empty() {
-                    content = content.push(text(graph.summary.clone()).size(11).color(colors.text));
-                }
-                if graph.nodes.is_empty() {
-                    content = content.push(
-                        EmptyState::new("暂无架构节点")
-                            .message("聚焦窗格后可查看架构历史与变更。")
-                            .icon(Icon::Workspace)
-                            .view(tokens),
-                    );
-                } else {
-                    for node in graph.nodes.iter().take(8) {
-                        content = content.push(
-                            ListItem::new(
-                                column![
-                                    text(node.label.clone()).size(12).color(colors.text),
-                                    text(node.node_type.clone()).size(10).color(colors.muted),
-                                ]
-                                .spacing(2),
-                            )
-                            .auto_height()
-                            .view(tokens),
-                        );
-                    }
-                }
-            }
-            Some(ProjectWorkspacePreview::Files {
-                entry_count,
-                revision,
-            }) => {
-                content = content.push(
-                    text(format!("根目录 {entry_count} 项 · 修订 {revision}"))
-                        .size(10)
-                        .color(colors.muted),
-                );
-                content = content.push(
-                    text("聚焦窗格后可展开目录并打开文件。")
-                        .size(11)
-                        .color(colors.text),
-                );
-            }
-            Some(ProjectWorkspacePreview::Error(message)) => {
-                content = content.push(
-                    EmptyState::new("无法读取项目视图")
-                        .message(message.clone())
-                        .icon(Icon::About)
-                        .view(tokens),
-                );
-            }
-            None => {
-                content = content.push(
-                    EmptyState::new("正在读取项目视图")
-                        .message("数据准备好后会显示在这里。")
-                        .icon(Icon::Workspace)
-                        .view(tokens),
-                );
-            }
-        }
-        container(scrollable(content).direction(vertical_scrollbar()))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([14, 16]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn workspace_automation_preview_content(
-        &self,
-        item: &WorkspaceItem,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let enabled = self
-            .automations
-            .iter()
-            .filter(|workflow| workflow.enabled)
-            .count();
-        let mut workflows = column![].spacing(6).width(Length::Fill);
-        if self.automations.is_empty() {
-            workflows = workflows.push(
-                EmptyState::new("暂无自动化")
-                    .message("聚焦窗格后可创建工作流。")
-                    .icon(Icon::Nodes)
-                    .view(tokens),
-            );
-        } else {
-            for workflow in self.automations.iter().take(8) {
-                workflows = workflows.push(
-                    ListItem::new(
-                        column![
-                            text(workflow.name.clone()).size(12).color(colors.text),
-                            text(if workflow.enabled {
-                                "已启用"
-                            } else {
-                                "未启用"
-                            })
-                            .size(10)
-                            .color(if workflow.enabled {
-                                colors.success
-                            } else {
-                                colors.muted
-                            }),
-                        ]
-                        .spacing(2),
-                    )
-                    .auto_height()
-                    .view(tokens),
-                );
-            }
-        }
-        let content = column![
-            text(item.title.clone())
-                .size(15)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            text("只读预览 · 聚焦窗格后可编辑")
-                .size(10)
-                .color(colors.muted),
-            text(format!(
-                "{} 个工作流 · {} 个已启用",
-                self.automations.len(),
-                enabled
-            ))
-            .size(10)
-            .color(colors.muted),
-            workflows,
-        ]
-        .spacing(8)
-        .width(Length::Fill);
-        container(
-            scrollable(content)
-                .direction(vertical_scrollbar())
-                .width(Length::Fill)
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding::from([14, 16]))
-        .style(canvas_style(tokens))
-        .into()
-    }
-
-    fn workspace_settings_preview_content(
-        &self,
-        item: &WorkspaceItem,
-        tokens: ThemeTokens,
-    ) -> Element<'static, Message> {
-        let colors = tokens.colors;
-        let active_tab = item
-            .serialized_state
-            .as_ref()
-            .and_then(|state| state.get("activeTab"))
-            .and_then(Value::as_str)
-            .unwrap_or("appearance");
-        let connected_credentials = self
-            .provider
-            .credentials
-            .iter()
-            .filter(|credential| credential.status == DesktopCredentialStatus::Active)
-            .count();
-        let remote_state = self
-            .remote
-            .as_ref()
-            .map(|status| status.state.as_str())
-            .unwrap_or("未启动");
-        let content = column![
-            text(item.title.clone())
-                .size(15)
-                .font(ui_font(font::Weight::Semibold))
-                .color(colors.text),
-            text("只读预览 · 聚焦窗格后可编辑")
-                .size(10)
-                .color(colors.muted),
-            Card::new(
-                column![
-                    text(format!("上次页面 · {active_tab}"))
-                        .size(11)
-                        .color(colors.text),
-                    text(format!(
-                        "主题 · {}",
-                        match self.theme {
-                            ThemeMode::Dark => "dark",
-                            ThemeMode::Light => "light",
-                        }
-                    ))
-                    .size(10)
-                    .color(colors.muted),
-                    text(format!("有效凭据 · {connected_credentials}"))
-                        .size(10)
-                        .color(colors.muted),
-                    text(format!("远控 · {remote_state}"))
-                        .size(10)
-                        .color(colors.muted),
-                ]
-                .spacing(4),
-            )
-            .title("应用状态")
-            .view(tokens),
-        ]
-        .spacing(8)
-        .width(Length::Fill);
-        container(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([14, 16]))
-            .style(canvas_style(tokens))
-            .into()
-    }
-
-    fn view_shell(&self) -> Element<'static, Message> {
-        let tokens = self.theme_tokens();
-        let sidebar = if self.settings_open {
-            self.settings_sidebar(tokens)
-        } else if self.automations_open {
-            self.automations_sidebar(tokens)
-        } else {
-            self.projects_sidebar(tokens)
-        };
-        let primary = self.workspace_primary_content(tokens);
-        let regions = WorkspaceRegions::new()
-            .with_region(RegionId::Primary, primary)
-            .with_region(RegionId::Resources, sidebar)
-            .with_region(RegionId::Inspector, self.inspector_content(tokens));
-        let workspace = workspace_view(&self.workspace, regions, tokens, Message::Workspace);
-        let shell = app_shell(self.title_bar(tokens), workspace, tokens.colors);
-        let update_prompt = match &self.update_state {
-            DesktopUpdateState::Available { version, notes, .. }
-                if !self.dismissed_update_versions.contains(version) =>
-            {
-                Some((
-                    format!("发现 LiliaCode {version}"),
-                    format!(
-                        "当前版本 {}，可以更新到 {version}。安装完成后应用会重启。",
-                        env!("CARGO_PKG_VERSION")
-                    ),
-                    notes
-                        .as_deref()
-                        .filter(|notes| !notes.trim().is_empty())
-                        .map(str::to_owned)
-                        .unwrap_or_else(|| "安装前会验证更新包签名。".to_owned()),
-                    Message::InstallUpdate,
-                    "更新并重启".to_owned(),
-                    "暂不更新".to_owned(),
-                    self.update_busy,
-                    "准备中".to_owned(),
-                ))
-            }
-            DesktopUpdateState::Downloading { progress, .. } => {
-                let percent = update_download_percent(*progress);
-                Some((
-                    "正在下载更新".to_owned(),
-                    percent
-                        .map(|percent| format!("正在下载新版安装包（{percent}%）。"))
-                        .unwrap_or_else(|| "正在下载新版安装包。".to_owned()),
-                    "下载完成后会验证签名并自动启动安装。".to_owned(),
-                    Message::InstallUpdate,
-                    "更新并重启".to_owned(),
-                    "暂不更新".to_owned(),
-                    true,
-                    percent
-                        .map(|percent| format!("下载中 {percent}%"))
-                        .unwrap_or_else(|| "下载中".to_owned()),
-                ))
-            }
-            DesktopUpdateState::Installing { .. } => Some((
-                "正在安装更新".to_owned(),
-                "正在安装新版，完成后将重启应用。".to_owned(),
-                "安装期间请保持应用运行。".to_owned(),
-                Message::InstallUpdate,
-                "更新并重启".to_owned(),
-                "暂不更新".to_owned(),
-                true,
-                "安装中".to_owned(),
-            )),
-            DesktopUpdateState::Restarting { .. } => Some((
-                "正在重启 LiliaCode".to_owned(),
-                "更新已安装，正在重启应用。".to_owned(),
-                "应用会在新版本中重新打开。".to_owned(),
-                Message::InstallUpdate,
-                "更新并重启".to_owned(),
-                "暂不更新".to_owned(),
-                true,
-                "重启中".to_owned(),
-            )),
-            DesktopUpdateState::Failed { .. } if !self.update_failure_dismissed => Some((
-                "更新未完成".to_owned(),
-                "检查或安装更新时没有完成。可以现在重试，也可以稍后在桌面设置中继续。".to_owned(),
-                "现有版本不会被覆盖。".to_owned(),
-                Message::CheckForUpdate,
-                "重试".to_owned(),
-                "稍后".to_owned(),
-                false,
-                "处理中".to_owned(),
-            )),
-            _ => None,
-        };
-        let base = if let Some(archive) = &self.project_archive_confirmation {
-            stack![
-                shell,
-                ConfirmDialog::new(
-                    "归档全部对话",
-                    format!("确认归档“{}”中的全部对话？", archive.project_name),
-                    Message::ConfirmProjectConversationArchive,
-                    Message::CancelProjectConversationArchive,
-                    Message::ProjectConversationArchiveDialogInteraction,
-                )
-                .description("项目和磁盘工作区会保留；对话可从已归档列表恢复。")
-                .danger(true)
-                .on_outside(Message::CancelProjectConversationArchive)
-                .view(tokens),
-            ]
-            .into()
-        } else if let Some(removal) = &self.project_removal {
-            let summary = format!(
-                "{} 个任务和 {} 个会话将移入收集箱。",
-                removal.active_task_count, removal.active_conversation_count
-            );
-            let description = removal
-                .workspace_path
-                .as_deref()
-                .map(|path| format!("不会删除磁盘工作区：{path}"))
-                .unwrap_or_else(|| "项目记录会保留为已归档状态，可稍后恢复。".to_owned());
-            stack![
-                shell,
-                ConfirmDialog::new(
-                    "移除项目",
-                    format!("确认移除“{}”？{summary}", removal.project_name),
-                    Message::ConfirmProjectRemoval,
-                    Message::CancelProjectRemoval,
-                    Message::ProjectRemovalDialogInteraction,
-                )
-                .description(description)
-                .danger(true)
-                .on_outside(Message::CancelProjectRemoval)
-                .view(tokens),
-            ]
-            .into()
-        } else if let Some((
-            title,
-            message,
-            description,
-            confirm,
-            confirm_label,
-            cancel_label,
-            busy,
-            busy_label,
-        )) = update_prompt
-        {
-            stack![
-                shell,
-                ConfirmDialog::new(
-                    title,
-                    message,
-                    confirm,
-                    Message::DismissUpdatePrompt,
-                    Message::UpdatePromptDialogInteraction,
-                )
-                .description(description)
-                .confirm_label(confirm_label)
-                .cancel_label(cancel_label)
-                .busy(busy, busy_label, 0)
-                .on_outside(Message::DismissUpdatePrompt)
-                .view(tokens),
-            ]
-            .into()
-        } else {
-            shell
-        };
-        let base = if self.sidebar_menu.is_some() {
-            stack![base, self.sidebar_context_menu(tokens)].into()
-        } else {
-            base
-        };
-        let base = if self.titlebar_menu_open {
-            stack![base, self.titlebar_action_menu(tokens)].into()
-        } else {
-            base
-        };
-        let base = self.with_command_palette(HostedWindowId::PRIMARY, base, tokens);
-        self.with_command_keymap(HostedWindowId::PRIMARY, base)
-    }
 }
 
-fn sync_hosted_textarea(state: &HostedTextareaState, value: &str) {
+fn sync_hosted_textarea(state: &TextEditorState, value: &str) {
     if state.text() != value {
         state.set_text(value);
     }
 }
 
-fn composer_textarea_height(state: &HostedTextareaState) -> f32 {
+fn composer_textarea_height(state: &TextEditorState) -> f32 {
     let additional_lines = state.line_count().saturating_sub(1) as f32;
     (COMPOSER_TEXTAREA_MIN_HEIGHT + additional_lines * COMPOSER_TEXTAREA_LINE_HEIGHT)
         .min(COMPOSER_TEXTAREA_MAX_HEIGHT)
@@ -39737,33 +28492,10 @@ pub struct LiliaDesktopProgram {
     theme: ThemeMode,
     pending_messages: Vec<Message>,
     pending_window_events: Vec<HostedWindowEvent>,
+    documents: HashMap<WindowId, RuntimeDocument>,
 }
 
 impl LiliaDesktopProgram {
-    fn startup_view(&self) -> Element<'static, Message> {
-        let colors = self.theme.colors();
-        let status = match self.state {
-            LiliaDesktopState::Failed => "无法打开工作区，请重新启动应用。",
-            LiliaDesktopState::Loading | LiliaDesktopState::Ready(_) => "正在打开工作区…",
-        };
-        container(
-            column![
-                text(PRODUCT_NAME)
-                    .size(20)
-                    .font(ui_font(font::Weight::Semibold))
-                    .color(colors.text),
-                text(status).size(13).color(colors.muted),
-            ]
-            .spacing(8)
-            .align_x(Alignment::Center),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .style(move |_| iced::widget::container::Style::default().background(colors.background))
-        .into()
-    }
 }
 
 fn initial_messages(update_configured: bool) -> Vec<Message> {
@@ -39777,9 +28509,38 @@ fn initial_messages(update_configured: bool) -> Vec<Message> {
     messages
 }
 
-impl HostedProgram for LiliaDesktopProgram {
+impl RuntimeProgram for LiliaDesktopProgram {
     type Message = Message;
     type Error = String;
+
+    fn document(&self, id: WindowId) -> Option<&RuntimeDocument> {
+        match &self.state {
+            LiliaDesktopState::Ready(program) => program.document(id),
+            LiliaDesktopState::Loading | LiliaDesktopState::Failed => self.documents.get(&id),
+        }
+    }
+
+    fn document_mut(&mut self, id: WindowId) -> Option<&mut RuntimeDocument> {
+        match &mut self.state {
+            LiliaDesktopState::Ready(program) => program.document_mut(id),
+            LiliaDesktopState::Loading | LiliaDesktopState::Failed => self.documents.get_mut(&id),
+        }
+    }
+
+    fn input_event(
+        &mut self,
+        id: WindowId,
+        event: &nana_ui_platform::InputEvent,
+        context: &HostedProgramContext<Self::Message>,
+    ) -> Result<HostedProgramUpdate, nana_ui::runtime::FrameworkError> {
+        match &mut self.state {
+            LiliaDesktopState::Ready(program) => program.input_event(id, event, context),
+            LiliaDesktopState::Loading | LiliaDesktopState::Failed => {
+                Ok(HostedProgramUpdate::default())
+            }
+        }
+    }
+
 
     fn initialize(
         _context: &HostedProgramContext<Self::Message>,
@@ -39787,12 +28548,17 @@ impl HostedProgram for LiliaDesktopProgram {
         let theme = lilia_home()
             .map(|home| load_theme(&home))
             .unwrap_or_default();
+        let mut documents = HashMap::new();
+        if let Ok(document) = crate::runtime_compat::startup_document("正在打开工作区…") {
+            documents.insert(WindowId::PRIMARY, document);
+        }
         Ok((
             Self {
                 state: LiliaDesktopState::Loading,
                 theme,
                 pending_messages: Vec::new(),
                 pending_window_events: Vec::new(),
+                documents,
             },
             Vec::new(),
         ))
@@ -39813,24 +28579,6 @@ impl HostedProgram for LiliaDesktopProgram {
         }
     }
 
-    fn view(&self, native_material: bool) -> Element<'static, Self::Message> {
-        match &self.state {
-            LiliaDesktopState::Ready(program) => program.view(native_material),
-            LiliaDesktopState::Loading | LiliaDesktopState::Failed => self.startup_view(),
-        }
-    }
-
-    fn view_window(
-        &self,
-        id: HostedWindowId,
-        native_material: bool,
-    ) -> Element<'static, Self::Message> {
-        match &self.state {
-            LiliaDesktopState::Ready(program) => program.view_window(id, native_material),
-            LiliaDesktopState::Loading | LiliaDesktopState::Failed => self.startup_view(),
-        }
-    }
-
     fn theme_mode(&self) -> ThemeMode {
         match &self.state {
             LiliaDesktopState::Ready(program) => program.theme_mode(),
@@ -39838,33 +28586,10 @@ impl HostedProgram for LiliaDesktopProgram {
         }
     }
 
-    fn window_material_mode(&self) -> WindowMaterialMode {
+    fn window_material_mode(&self) -> nana_ui::MaterialEffect {
         match &self.state {
             LiliaDesktopState::Ready(program) => program.window_material_mode(),
-            LiliaDesktopState::Loading | LiliaDesktopState::Failed => WindowMaterialMode::Solid,
-        }
-    }
-
-    fn backdrop_opacity(&self) -> f32 {
-        match &self.state {
-            LiliaDesktopState::Ready(program) => program.backdrop_opacity(),
-            LiliaDesktopState::Loading | LiliaDesktopState::Failed => {
-                AppearanceSettings::DEFAULT_BACKDROP_OPACITY
-            }
-        }
-    }
-
-    fn backdrop_target(&self) -> BackdropTarget {
-        match &self.state {
-            LiliaDesktopState::Ready(program) => program.backdrop_target(),
-            LiliaDesktopState::Loading | LiliaDesktopState::Failed => BackdropTarget::Sidebar,
-        }
-    }
-
-    fn titlebar_follows_sidebar(&self) -> bool {
-        match &self.state {
-            LiliaDesktopState::Ready(program) => program.titlebar_follows_sidebar(),
-            LiliaDesktopState::Loading | LiliaDesktopState::Failed => true,
+            LiliaDesktopState::Loading | LiliaDesktopState::Failed => nana_ui::MaterialEffect::Solid,
         }
     }
 
@@ -39880,7 +28605,7 @@ impl HostedProgram for LiliaDesktopProgram {
                     HostedProgramUpdate::exit()
                 } else {
                     self.pending_window_events.push(event);
-                    HostedProgramUpdate::redraw()
+                    HostedProgramUpdate::redraw_primary()
                 }
             }
             LiliaDesktopState::Failed => {
@@ -39889,19 +28614,6 @@ impl HostedProgram for LiliaDesktopProgram {
                 } else {
                     HostedProgramUpdate::default()
                 }
-            }
-        }
-    }
-
-    fn runtime_event(
-        &mut self,
-        event: HostedRuntimeEvent,
-        context: &HostedProgramContext<Self::Message>,
-    ) -> HostedProgramUpdate {
-        match &mut self.state {
-            LiliaDesktopState::Ready(program) => program.runtime_event(event, context),
-            LiliaDesktopState::Loading | LiliaDesktopState::Failed => {
-                HostedProgramUpdate::default()
             }
         }
     }
@@ -39926,14 +28638,14 @@ impl HostedProgram for LiliaDesktopProgram {
         }
     }
 
-    fn frame_presented(
+    fn window_frame_presented(
         &mut self,
-        material: nana_ui::MaterialOutcome,
+        id: WindowId,
         context: &HostedProgramContext<Self::Message>,
     ) -> HostedProgramUpdate {
         crate::startup_window::close();
         if let LiliaDesktopState::Ready(program) = &mut self.state {
-            return program.frame_presented(material, context);
+            return program.window_frame_presented(id, context);
         }
         if matches!(self.state, LiliaDesktopState::Failed) {
             return HostedProgramUpdate::default();
@@ -39950,22 +28662,69 @@ impl HostedProgram for LiliaDesktopProgram {
                     .into_iter()
                     .chain(initial_messages)
                 {
-                    let _ = context.proxy().send_event(message);
+                    context.dispatch(message);
                 }
                 HostedProgramUpdate::redraw_all()
             }
             Err(error) => {
                 eprintln!("{PRODUCT_NAME} initialization failed: {error}");
                 self.state = LiliaDesktopState::Failed;
-                HostedProgramUpdate::redraw()
+                if let Ok(document) =
+                    crate::runtime_compat::startup_document("无法打开工作区，请重新启动应用。")
+                {
+                    self.documents.insert(WindowId::PRIMARY, document);
+                }
+                HostedProgramUpdate::redraw_primary()
             }
         }
     }
 }
 
-impl HostedProgram for DesktopProgram {
+impl RuntimeProgram for DesktopProgram {
     type Message = Message;
     type Error = String;
+
+    fn document(&self, id: WindowId) -> Option<&RuntimeDocument> {
+        self.documents.get(&id)
+    }
+
+    fn document_mut(&mut self, id: WindowId) -> Option<&mut RuntimeDocument> {
+        self.documents.get_mut(&id)
+    }
+
+    fn input_event(
+        &mut self,
+        id: WindowId,
+        event: &nana_ui_platform::InputEvent,
+        _context: &HostedProgramContext<Self::Message>,
+    ) -> Result<HostedProgramUpdate, nana_ui::runtime::FrameworkError> {
+        if let nana_ui_platform::InputEvent::Keyboard {
+            pressed: true,
+            key,
+            modifiers,
+            repeat: false,
+            ..
+        } = event
+        {
+            if modifiers.meta || modifiers.control {
+                self.update_message(Message::CommandKeyStroke {
+                    window_id: id,
+                    item_id: self.active_item_for_window(id),
+                    stroke: KeyStroke::new(
+                        key,
+                        KeyModifiers {
+                            control: modifiers.control,
+                            alt: modifiers.alt,
+                            shift: modifiers.shift,
+                            logo: modifiers.meta,
+                        },
+                    ),
+                });
+            }
+        }
+        Ok(HostedProgramUpdate::redraw(id))
+    }
+
 
     fn initialize(
         context: &HostedProgramContext<Self::Message>,
@@ -40020,21 +28779,18 @@ impl HostedProgram for DesktopProgram {
         }
         let subscription = application.subscribe_events();
         let message_sender: MessageSender = {
-            let proxy = context.proxy().clone();
+            let dispatcher = context.clone();
             Arc::new(move |message| {
-                proxy
-                    .send_event(message)
-                    .map_err(|_| "LiliaCode event loop is unavailable".to_owned())
+                dispatcher.dispatch(message);
+                Ok(())
             })
         };
-        let proxy = context.proxy().clone();
+        let dispatcher = context.clone();
         std::thread::Builder::new()
             .name("lilia-desktop-events".to_owned())
             .spawn(move || {
                 while let Ok(event) = subscription.recv() {
-                    if proxy.send_event(Message::DesktopEvent(event)).is_err() {
-                        break;
-                    }
+                    dispatcher.dispatch(Message::DesktopEvent(event));
                 }
             })
             .map_err(|error| format!("failed to start desktop event bridge: {error}"))?;
@@ -40079,11 +28835,10 @@ impl HostedProgram for DesktopProgram {
         }
         #[cfg(debug_assertions)]
         {
-            let proxy = context.proxy().clone();
+            let dispatcher = context.clone();
             crate::agent_debug::install(move |request| {
-                proxy
-                    .send_event(Message::AgentDebug(request))
-                    .map_err(|_| "LiliaCode event loop is unavailable".to_owned())
+                dispatcher.dispatch(Message::AgentDebug(request));
+                Ok(())
             })?;
         }
         let settings_model = SettingsModel::new(
@@ -40182,7 +28937,7 @@ impl HostedProgram for DesktopProgram {
             .clone()
             .unwrap_or_default();
         let project_worktree_instructions =
-            HostedTextareaState::with_text(&project_settings.worktree.auto_instructions);
+            TextEditorState::with_text(&project_settings.worktree.auto_instructions);
         let mut program = Self {
             application,
             application_workspace,
@@ -40269,7 +29024,7 @@ impl HostedProgram for DesktopProgram {
             terminal_scrollback: BTreeMap::new(),
             terminal_notices: BTreeMap::new(),
             composer: None,
-            composer_editor: HostedTextareaState::new(),
+            composer_editor: TextEditorState::new(),
             slash_commands: Vec::new(),
             conversation_reference_results: Vec::new(),
             context_attachment_results: Vec::new(),
@@ -40341,7 +29096,7 @@ impl HostedProgram for DesktopProgram {
             memories: Vec::new(),
             selected_memory: None,
             memory_title: String::new(),
-            memory_body: HostedTextareaState::new(),
+            memory_body: TextEditorState::new(),
             memory_tags: String::new(),
             memory_scope: MemoryScope::Project,
             memory_updated_at: None,
@@ -40388,7 +29143,7 @@ impl HostedProgram for DesktopProgram {
             editing_custom_agent: None,
             custom_agent_name: String::new(),
             custom_agent_description: String::new(),
-            custom_agent_instruction: HostedTextareaState::new(),
+            custom_agent_instruction: TextEditorState::new(),
             agent_interaction_error: None,
             selected_provider,
             provider_secret: String::new(),
@@ -40472,12 +29227,23 @@ impl HostedProgram for DesktopProgram {
             #[cfg(debug_assertions)]
             pending_debug_frame_response: None,
             window_chrome: WindowChromeState::default(),
+            documents: {
+                let mut documents = HashMap::new();
+                if let Ok(document) = crate::runtime_compat::startup_document(PRODUCT_NAME) {
+                    documents.insert(WindowId::PRIMARY, document);
+                }
+                documents
+            },
+            runtime_shell: None,
+            conversation_status_shell: None,
+            task_popup_shells: BTreeMap::new(),
         };
         program.refresh_projects();
         if let Some(state) = loaded_workspace_topology {
             program.restore_task_popup_windows(state);
         }
         program.persist_workspace_topology();
+        program.mount_primary_shell();
         #[cfg(debug_assertions)]
         program.capture_debug_errors();
         Ok((program, initial_messages(update_configured)))
@@ -40496,6 +29262,8 @@ impl HostedProgram for DesktopProgram {
         let window_action = self.update_message(message);
         #[cfg(debug_assertions)]
         self.capture_debug_errors();
+        self.sync_primary_shell();
+        self.sync_secondary_windows();
         let exit = shell_exit || std::mem::take(&mut self.exit_requested);
         let mut window_commands = focus_main
             .then_some(HostedWindowCommand::Focus(HostedWindowId::PRIMARY))
@@ -40511,57 +29279,22 @@ impl HostedProgram for DesktopProgram {
             window_commands.push(HostedWindowCommand::Close(CONVERSATION_STATUS_WINDOW_ID));
         }
         window_commands.append(&mut self.pending_window_commands);
-        let ui_commands = std::mem::take(&mut self.pending_ui_commands);
+        if let Some(action) = window_action {
+            if let Some(command) = action.into_window_command() {
+                window_commands.push(command);
+            }
+        }
         HostedProgramUpdate {
-            window_action,
             redraw: if self.conversation_status_open
                 || !self.task_popups.is_empty()
                 || !self.iab_windows.is_empty()
             {
-                HostedRedraw::All
+                RuntimeRedraw::All
             } else {
-                HostedRedraw::Primary
+                RuntimeRedraw::Window(WindowId::PRIMARY)
             },
             window_commands,
-            ui_commands,
-            capture_input: false,
             exit,
-        }
-    }
-
-    fn view(&self, _native_material: bool) -> Element<'static, Self::Message> {
-        let tokens = self.theme_tokens();
-        let content = self.with_timeline_selection_toolbar(
-            HostedWindowId::PRIMARY,
-            self.view_shell(),
-            tokens,
-        );
-        self.with_markdown_image_preview(HostedWindowId::PRIMARY, content, tokens)
-    }
-
-    fn view_window(
-        &self,
-        id: HostedWindowId,
-        _native_material: bool,
-    ) -> Element<'static, Self::Message> {
-        if id == CONVERSATION_STATUS_WINDOW_ID {
-            self.conversation_status_content(self.theme_tokens())
-        } else if let Some(window) = self.iab_windows.get(&id) {
-            window
-                .view(self.theme_tokens())
-                .map(move |message| Message::IabWindow {
-                    window_id: id,
-                    message,
-                })
-        } else if let Some(popup) = self.task_popups.get(&id) {
-            let tokens = self.theme_tokens();
-            let content = self.task_popup_content(popup, tokens);
-            let content = self.with_command_palette(id, content, tokens);
-            let content = self.with_command_keymap(id, content);
-            let content = self.with_timeline_selection_toolbar(id, content, tokens);
-            self.with_markdown_image_preview(id, content, tokens)
-        } else {
-            self.view_shell()
         }
     }
 
@@ -40569,20 +29302,8 @@ impl HostedProgram for DesktopProgram {
         self.theme
     }
 
-    fn window_material_mode(&self) -> WindowMaterialMode {
-        self.appearance.window_material()
-    }
-
-    fn backdrop_opacity(&self) -> f32 {
-        self.appearance.backdrop_opacity()
-    }
-
-    fn backdrop_target(&self) -> BackdropTarget {
-        self.appearance.backdrop_target()
-    }
-
-    fn titlebar_follows_sidebar(&self) -> bool {
-        self.appearance.titlebar_follows_sidebar()
+    fn window_material_mode(&self) -> nana_ui::MaterialEffect {
+        window_material_effect(self.appearance.window_material())
     }
 
     fn next_wakeup(&self) -> Option<std::time::Instant> {
@@ -40613,16 +29334,16 @@ impl HostedProgram for DesktopProgram {
                 .any(|entry| runtime_phase_is_processing(&entry.runtime_phase))
         {
             self.sidebar_activity_phase = (self.sidebar_activity_phase + 1) % 8;
-            HostedProgramUpdate::redraw()
+            HostedProgramUpdate::redraw_primary()
         } else {
             HostedProgramUpdate::default()
         }
     }
 
     #[cfg(debug_assertions)]
-    fn frame_presented(
+    fn window_frame_presented(
         &mut self,
-        _material: nana_ui::MaterialOutcome,
+        _id: WindowId,
         _context: &HostedProgramContext<Self::Message>,
     ) -> HostedProgramUpdate {
         if let Some(pending) = self.pending_debug_frame_response.take() {
@@ -40638,7 +29359,7 @@ impl HostedProgram for DesktopProgram {
         event: HostedWindowEvent,
         _context: &HostedProgramContext<Self::Message>,
     ) -> HostedProgramUpdate {
-        if event.id() == CONVERSATION_STATUS_WINDOW_ID {
+        if window_event_id(&event) == CONVERSATION_STATUS_WINDOW_ID {
             return match event {
                 HostedWindowEvent::Ready { geometry, .. } => {
                     self.conversation_status_open = true;
@@ -40657,13 +29378,7 @@ impl HostedProgram for DesktopProgram {
                 HostedWindowEvent::VisibilityChanged { .. }
                 | HostedWindowEvent::FocusChanged { .. }
                 | HostedWindowEvent::Ime { .. }
-                | HostedWindowEvent::Closed { .. }
-                | HostedWindowEvent::KeyPressed { .. }
-                | HostedWindowEvent::FileHovered { .. }
-                | HostedWindowEvent::FilesHovered { .. }
-                | HostedWindowEvent::FileDropped { .. }
-                | HostedWindowEvent::FilesDropped { .. }
-                | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
+                | HostedWindowEvent::Closed { .. } => HostedProgramUpdate::default(),
                 HostedWindowEvent::CloseRequested { .. } => {
                     self.conversation_status_open = false;
                     self.conversation_status_ready = false;
@@ -40674,28 +29389,20 @@ impl HostedProgram for DesktopProgram {
                 }
             };
         }
-        if self.iab_windows.contains_key(&event.id()) {
+        if self.iab_windows.contains_key(&window_event_id(&event)) {
             return match event {
                 HostedWindowEvent::Ready { id, .. } => {
-                    let commands = self
-                        .iab_windows
-                        .get_mut(&id)
-                        .map(|window| window.set_visible(true))
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(HostedWindowCommand::Browser);
-                    HostedProgramUpdate::redraw_window(id).with_window_commands(commands)
+                    if let Some(window) = self.iab_windows.get_mut(&id) {
+                        window.set_visible(true);
+                    }
+                    HostedProgramUpdate::redraw_window(id)
                 }
                 HostedWindowEvent::Resized { id, .. } => HostedProgramUpdate::redraw_window(id),
                 HostedWindowEvent::VisibilityChanged { id, hidden, .. } => {
-                    let commands = self
-                        .iab_windows
-                        .get_mut(&id)
-                        .map(|window| window.set_visible(!hidden))
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(HostedWindowCommand::Browser);
-                    HostedProgramUpdate::default().with_window_commands(commands)
+                    if let Some(window) = self.iab_windows.get_mut(&id) {
+                        window.set_visible(!hidden);
+                    }
+                    HostedProgramUpdate::default()
                 }
                 HostedWindowEvent::CloseRequested { id, .. } => {
                     let Some(mut window) = self.iab_windows.remove(&id) else {
@@ -40703,25 +29410,16 @@ impl HostedProgram for DesktopProgram {
                     };
                     self.abandon_iab_capture(id, &mut window);
                     HostedProgramUpdate::default().with_window_commands([
-                        HostedWindowCommand::Browser(HostedBrowserCommand::Detach(
-                            window.browser_id(),
-                        )),
                         HostedWindowCommand::Close(id),
                     ])
                 }
                 HostedWindowEvent::Moved { .. }
                 | HostedWindowEvent::FocusChanged { .. }
                 | HostedWindowEvent::Ime { .. }
-                | HostedWindowEvent::Closed { .. }
-                | HostedWindowEvent::KeyPressed { .. }
-                | HostedWindowEvent::FileHovered { .. }
-                | HostedWindowEvent::FilesHovered { .. }
-                | HostedWindowEvent::FileDropped { .. }
-                | HostedWindowEvent::FilesDropped { .. }
-                | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
+                | HostedWindowEvent::Closed { .. } => HostedProgramUpdate::default(),
             };
         }
-        if self.task_popups.contains_key(&event.id()) {
+        if self.task_popups.contains_key(&window_event_id(&event)) {
             return match event {
                 HostedWindowEvent::Ready { id, geometry, .. } => {
                     if let Some(popup) = self.task_popups.get_mut(&id) {
@@ -40754,44 +29452,7 @@ impl HostedProgram for DesktopProgram {
                 HostedWindowEvent::VisibilityChanged { .. }
                 | HostedWindowEvent::FocusChanged { .. }
                 | HostedWindowEvent::Ime { .. }
-                | HostedWindowEvent::Closed { .. }
-                | HostedWindowEvent::KeyPressed { .. } => HostedProgramUpdate::default(),
-                HostedWindowEvent::FileHovered { id, .. } => {
-                    if self.window_accepts_attachment_drop(id) {
-                        self.file_drop_hovered_windows.insert(id);
-                        HostedProgramUpdate::redraw_window(id)
-                    } else {
-                        HostedProgramUpdate::default()
-                    }
-                }
-                HostedWindowEvent::FilesHovered { id, .. } => {
-                    if self.window_accepts_attachment_drop(id) {
-                        self.file_drop_hovered_windows.insert(id);
-                        HostedProgramUpdate::redraw_window(id)
-                    } else {
-                        HostedProgramUpdate::default()
-                    }
-                }
-                HostedWindowEvent::FileDropped { id, path, .. } => {
-                    self.file_drop_hovered_windows.remove(&id);
-                    if self.window_accepts_attachment_drop(id) {
-                        self.add_dropped_attachment(id, path);
-                    }
-                    HostedProgramUpdate::redraw_window(id)
-                }
-                HostedWindowEvent::FilesDropped { id, paths, .. } => {
-                    self.file_drop_hovered_windows.remove(&id);
-                    if self.window_accepts_attachment_drop(id) {
-                        for path in paths {
-                            self.add_dropped_attachment(id, path);
-                        }
-                    }
-                    HostedProgramUpdate::redraw_window(id)
-                }
-                HostedWindowEvent::FileHoverCancelled { id, .. } => {
-                    self.file_drop_hovered_windows.remove(&id);
-                    HostedProgramUpdate::redraw_window(id)
-                }
+                | HostedWindowEvent::Closed { .. } => HostedProgramUpdate::default(),
                 HostedWindowEvent::CloseRequested { id, .. } => {
                     if self.close_task_popup_with_command(id, false) {
                         HostedProgramUpdate::default()
@@ -40802,42 +29463,6 @@ impl HostedProgram for DesktopProgram {
                 }
             };
         }
-        if let HostedWindowEvent::KeyPressed { id, stroke, .. } = &event {
-            if *id == HostedWindowId::PRIMARY && self.sidebar_search_open {
-                match stroke.key.as_str() {
-                    "Escape" => {
-                        self.close_sidebar_search();
-                        return HostedProgramUpdate::redraw().capture_input();
-                    }
-                    "ArrowDown" | "ArrowUp" => {
-                        let count = self.sidebar_search_targets().len();
-                        self.sidebar_search_selection = move_sidebar_search_selection(
-                            self.sidebar_search_selection,
-                            count,
-                            stroke.key == "ArrowDown",
-                        );
-                        return HostedProgramUpdate::redraw().capture_input();
-                    }
-                    "Enter" => {
-                        let target = self
-                            .sidebar_search_targets()
-                            .get(self.sidebar_search_selection)
-                            .cloned();
-                        if let Some(target) = target {
-                            let message = match target {
-                                SidebarSearchTarget::Project(project_id) => {
-                                    Message::SelectProject(project_id)
-                                }
-                                SidebarSearchTarget::Task(task_id) => Message::SelectTask(task_id),
-                            };
-                            let _ = self.update_message(message);
-                        }
-                        return HostedProgramUpdate::redraw().capture_input();
-                    }
-                    _ => {}
-                }
-            }
-        }
         match event {
             HostedWindowEvent::Ready { geometry, .. }
             | HostedWindowEvent::Resized { geometry, .. } => {
@@ -40846,16 +29471,16 @@ impl HostedProgram for DesktopProgram {
                     self.main_window_geometry = Some(NativeWindowState {
                         x,
                         y,
-                        width: geometry.physical_size.width,
-                        height: geometry.physical_size.height,
+                        width: geometry.physical_size.0,
+                        height: geometry.physical_size.1,
                         scale_factor: geometry.scale_factor,
                         maximized: geometry.maximized,
                     });
                     if let Err(error) = self.window_state.record(NativeWindowSnapshot {
                         x,
                         y,
-                        width: geometry.physical_size.width,
-                        height: geometry.physical_size.height,
+                        width: geometry.physical_size.0,
+                        height: geometry.physical_size.1,
                         scale_factor: geometry.scale_factor,
                         maximized: geometry.maximized,
                     }) {
@@ -40864,15 +29489,15 @@ impl HostedProgram for DesktopProgram {
                 }
                 self.window_chrome.set_maximized(geometry.maximized);
                 self.workspace.update(WorkspaceAction::WindowResized {
-                    width: geometry.logical_size.width,
-                    height: geometry.logical_size.height,
+                    width: geometry.logical_size.0,
+                    height: geometry.logical_size.1,
                 });
                 self.workspace
                     .update(WorkspaceAction::WindowScaleFactorChanged(
                         geometry.scale_factor,
                     ));
                 self.sync_workspace_splits();
-                HostedProgramUpdate::redraw()
+                HostedProgramUpdate::redraw_primary()
             }
             HostedWindowEvent::Moved { geometry, .. } => {
                 self.main_window_scale_factor = geometry.scale_factor;
@@ -40880,16 +29505,16 @@ impl HostedProgram for DesktopProgram {
                     self.main_window_geometry = Some(NativeWindowState {
                         x,
                         y,
-                        width: geometry.physical_size.width,
-                        height: geometry.physical_size.height,
+                        width: geometry.physical_size.0,
+                        height: geometry.physical_size.1,
                         scale_factor: geometry.scale_factor,
                         maximized: geometry.maximized,
                     });
                     if let Err(error) = self.window_state.record(NativeWindowSnapshot {
                         x,
                         y,
-                        width: geometry.physical_size.width,
-                        height: geometry.physical_size.height,
+                        width: geometry.physical_size.0,
+                        height: geometry.physical_size.1,
                         scale_factor: geometry.scale_factor,
                         maximized: geometry.maximized,
                     }) {
@@ -40901,171 +29526,9 @@ impl HostedProgram for DesktopProgram {
             HostedWindowEvent::VisibilityChanged { .. }
             | HostedWindowEvent::FocusChanged { .. }
             | HostedWindowEvent::Ime { .. }
-            | HostedWindowEvent::Closed { .. }
-            | HostedWindowEvent::KeyPressed { .. } => HostedProgramUpdate::default(),
-            HostedWindowEvent::FileHovered {
-                id, path, position, ..
-            } => {
-                self.sidebar_folder_drop_hovered =
-                    self.sidebar_accepts_folder_drop(id, &path, position);
-                if self.sidebar_folder_drop_hovered {
-                    self.file_drop_hovered_windows.remove(&id);
-                    HostedProgramUpdate::redraw()
-                } else if self.window_accepts_attachment_drop(id) {
-                    self.file_drop_hovered_windows.insert(id);
-                    HostedProgramUpdate::redraw()
-                } else {
-                    HostedProgramUpdate::default()
-                }
-            }
-            HostedWindowEvent::FileDropped {
-                id, path, position, ..
-            } => {
-                self.file_drop_hovered_windows.remove(&id);
-                let sidebar_folder = self.sidebar_accepts_folder_drop(id, &path, position);
-                self.sidebar_folder_drop_hovered = false;
-                if sidebar_folder {
-                    self.add_sidebar_project_folder(path);
-                } else if self.window_accepts_attachment_drop(id) {
-                    self.add_dropped_attachment(id, path);
-                }
-                HostedProgramUpdate::redraw()
-            }
-            HostedWindowEvent::FilesHovered {
-                id,
-                paths,
-                position,
-                ..
-            } => {
-                self.sidebar_folder_drop_hovered = paths
-                    .iter()
-                    .any(|path| self.sidebar_accepts_folder_drop(id, path, position));
-                if self.sidebar_folder_drop_hovered {
-                    self.file_drop_hovered_windows.remove(&id);
-                    HostedProgramUpdate::redraw()
-                } else if self.window_accepts_attachment_drop(id) {
-                    self.file_drop_hovered_windows.insert(id);
-                    HostedProgramUpdate::redraw()
-                } else {
-                    HostedProgramUpdate::default()
-                }
-            }
-            HostedWindowEvent::FilesDropped {
-                id,
-                paths,
-                position,
-                ..
-            } => {
-                self.file_drop_hovered_windows.remove(&id);
-                let sidebar_folder = paths
-                    .iter()
-                    .any(|path| self.sidebar_accepts_folder_drop(id, path, position));
-                self.sidebar_folder_drop_hovered = false;
-                if sidebar_folder {
-                    for path in paths.into_iter().filter(|path| path.is_dir()) {
-                        self.add_sidebar_project_folder(path);
-                    }
-                } else if self.window_accepts_attachment_drop(id) {
-                    for path in paths {
-                        self.add_dropped_attachment(id, path);
-                    }
-                }
-                HostedProgramUpdate::redraw()
-            }
-            HostedWindowEvent::FileHoverCancelled { id, .. } => {
-                self.file_drop_hovered_windows.remove(&id);
-                self.sidebar_folder_drop_hovered = false;
-                HostedProgramUpdate::redraw()
-            }
+            | HostedWindowEvent::Closed { .. } => HostedProgramUpdate::default(),
             HostedWindowEvent::CloseRequested { .. } => HostedProgramUpdate::exit(),
         }
-    }
-
-    fn runtime_event(
-        &mut self,
-        event: HostedRuntimeEvent,
-        _context: &HostedProgramContext<Self::Message>,
-    ) -> HostedProgramUpdate {
-        if let HostedRuntimeEvent::Browser(browser_event) = &event {
-            if let HostedBrowserEvent::CommandFailed {
-                command, message, ..
-            } = browser_event
-            {
-                eprintln!("Native IAB browser command {command:?} failed: {message}");
-            }
-            if self.iab.handle_browser_event(browser_event.clone()) {
-                return HostedProgramUpdate::redraw();
-            }
-            if let Some(window_id) = self.iab_windows.iter().find_map(|(window_id, window)| {
-                (window.browser_id() == browser_event.id()).then_some(*window_id)
-            }) {
-                if self
-                    .iab_windows
-                    .get_mut(&window_id)
-                    .is_some_and(|window| window.handle_browser_event(browser_event.clone()))
-                {
-                    return HostedProgramUpdate::redraw_window(window_id);
-                }
-            }
-        }
-        if let HostedRuntimeEvent::WindowCaptured {
-            id,
-            capture_id,
-            path,
-        } = &event
-        {
-            if let Some(expected_path) = self.abandoned_iab_captures.remove(&(id.0, capture_id.0)) {
-                remove_abandoned_iab_snapshot(path);
-                if &expected_path != path {
-                    remove_abandoned_iab_snapshot(&expected_path);
-                }
-                return HostedProgramUpdate::redraw();
-            }
-            self.finish_iab_capture(*id, *capture_id, Some(path.clone()), None);
-            return HostedProgramUpdate::redraw_window(*id);
-        }
-        if let HostedRuntimeEvent::WindowCaptureFailed {
-            id,
-            capture_id,
-            message,
-        } = &event
-        {
-            if let Some(path) = self.abandoned_iab_captures.remove(&(id.0, capture_id.0)) {
-                remove_abandoned_iab_snapshot(&path);
-                return HostedProgramUpdate::redraw();
-            }
-            eprintln!("failed to capture Native IAB window: {message}");
-            self.finish_iab_capture(
-                *id,
-                *capture_id,
-                None,
-                Some("当前环境未附带窗口截图，页面信息已提交。".to_owned()),
-            );
-            return HostedProgramUpdate::redraw_window(*id);
-        }
-        if let HostedRuntimeEvent::WindowOpenFailed { id, message } = event {
-            if id == CONVERSATION_STATUS_WINDOW_ID {
-                eprintln!("failed to open Native conversation-status window: {message}");
-                self.conversation_status_open = false;
-                self.conversation_status_ready = false;
-                self.error_message = Some("无法打开会话状态窗口，请重试。".to_owned());
-                return HostedProgramUpdate::redraw();
-            }
-            if let Some(mut window) = self.iab_windows.remove(&id) {
-                self.abandon_iab_capture(id, &mut window);
-                eprintln!("failed to open Native IAB window: {message}");
-                self.task_action_error = Some("无法打开浏览器窗口，请重试。".to_owned());
-                return HostedProgramUpdate::redraw();
-            }
-            if self.task_popups.remove(&id).is_some() {
-                self.clear_task_popup_ephemeral_state(id);
-                self.persist_workspace_topology();
-                eprintln!("failed to open Native task window: {message}");
-                self.task_action_error = Some("无法打开任务窗口，请重试。".to_owned());
-                return HostedProgramUpdate::redraw();
-            }
-        }
-        HostedProgramUpdate::default()
     }
 }
 
@@ -41076,15 +29539,12 @@ fn conversation_status_window_command(
     if already_open {
         HostedWindowCommand::Focus(CONVERSATION_STATUS_WINDOW_ID)
     } else {
-        let settings = HostedWindowSettings::new("LiliaCode 会话状态")
-            .initial_size(360.0, 520.0)
-            .minimum_size(300.0, 360.0)
-            .tool_window()
-            .always_on_top(state.always_on_top)
-            .transparent(true);
-        let settings = state.geometry.map_or(settings.clone(), |geometry| {
-            settings.placement(geometry.hosted_placement())
-        });
+        let mut settings = tool_window_settings("LiliaCode 会话状态", 360.0, 520.0, 300.0, 360.0);
+        settings.always_on_top = state.always_on_top;
+        settings.transparent = true;
+        if let Some(geometry) = state.geometry {
+            settings = geometry.apply_to_settings(settings);
+        }
         HostedWindowCommand::Open {
             id: CONVERSATION_STATUS_WINDOW_ID,
             settings,
@@ -41125,23 +29585,21 @@ fn task_popup_window_settings(
     title: &str,
     geometry: Option<NativeWindowState>,
 ) -> HostedWindowSettings {
-    let settings = HostedWindowSettings::new(format!("LiliaCode · {title}"))
-        .initial_size(430.0, 760.0)
-        .minimum_size(320.0, 420.0)
-        .tool_window()
-        .transparent(false);
+    let settings = tool_window_settings(format!("LiliaCode · {title}"), 430.0, 760.0, 320.0, 420.0);
     match geometry {
-        Some(geometry) => settings.placement(geometry.hosted_placement()),
+        Some(geometry) => geometry.apply_to_settings(settings),
         None => settings,
     }
 }
 
 fn iab_window_settings(task_title: &str) -> HostedWindowSettings {
-    HostedWindowSettings::new(format!("Lilia IAB · {task_title}"))
-        .initial_size(1180.0, 760.0)
-        .minimum_size(720.0, 480.0)
-        .tool_window()
-        .transparent(false)
+    tool_window_settings(
+        format!("Lilia IAB · {task_title}"),
+        1180.0,
+        760.0,
+        720.0,
+        480.0,
+    )
 }
 
 fn iab_browser_id(window_id: HostedWindowId) -> HostedBrowserId {
@@ -41230,95 +29688,6 @@ fn collect_session_markdown_image_sources(
     }
 }
 
-fn markdown_image_fragment(
-    image_item: MarkdownImage,
-    state: Option<MarkdownImageLoadState>,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    match state {
-        Some(MarkdownImageLoadState::Ready(image_data)) => {
-            let visual = loaded_markdown_image_visual(&image_data, Length::Fixed(240.0));
-            button(visual)
-                .width(Length::Fill)
-                .on_press(Message::OpenMarkdownImage {
-                    window_id,
-                    image: image_item,
-                })
-                .style(button_style(tokens, ButtonKind::Ghost))
-                .into()
-        }
-        Some(MarkdownImageLoadState::Failed) => container(
-            column![
-                text(markdown_image_alt(&image_item))
-                    .size(11)
-                    .color(colors.text),
-                row![
-                    text("图片暂时无法显示").size(10).color(colors.muted),
-                    button(text("重试").size(10))
-                        .on_press(Message::RetryMarkdownImage(image_item.source.clone()))
-                        .style(button_style(tokens, ButtonKind::Ghost)),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(2),
-        )
-        .padding(Padding::from([8, 10]))
-        .style(canvas_style(tokens))
-        .into(),
-        Some(MarkdownImageLoadState::Loading)
-        | Some(MarkdownImageLoadState::Pending { requested: true }) => container(
-            row![
-                icon(Icon::File, 14.0, colors.muted),
-                text("正在加载图片…").size(10).color(colors.muted),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .padding(Padding::from([8, 10]))
-        .style(canvas_style(tokens))
-        .into(),
-        Some(MarkdownImageLoadState::Pending { requested: false }) | None => container(
-            row![
-                text(markdown_image_alt(&image_item))
-                    .size(10)
-                    .width(Length::Fill)
-                    .color(colors.muted),
-                button(text("加载图片").size(10))
-                    .on_press(Message::RetryMarkdownImage(image_item.source.clone()))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .padding(Padding::from([8, 10]))
-        .style(canvas_style(tokens))
-        .into(),
-    }
-}
-
-fn loaded_markdown_image_visual(
-    image_data: &LoadedMarkdownImage,
-    height: Length,
-) -> Element<'static, Message> {
-    let bytes = image_data.bytes().as_ref().to_vec();
-    if image_data.is_svg() {
-        svg(iced::widget::svg::Handle::from_memory(bytes))
-            .width(Length::Fill)
-            .height(height)
-            .content_fit(ContentFit::Contain)
-            .into()
-    } else {
-        image(iced::widget::image::Handle::from_bytes(bytes))
-            .width(Length::Fill)
-            .height(height)
-            .content_fit(ContentFit::Contain)
-            .into()
-    }
-}
-
 fn markdown_image_alt(image: &MarkdownImage) -> String {
     let alt = image.alt.trim();
     if alt.is_empty() {
@@ -41377,87 +29746,6 @@ fn merge_attachments(existing: &mut Vec<ChatAttachment>, incoming: Vec<ChatAttac
     }
 }
 
-fn attachment_supports_inline_preview(attachment: &ChatAttachment) -> bool {
-    attachment.exists
-        && attachment.kind == ChatAttachmentKind::File
-        && attachment
-            .mime
-            .as_deref()
-            .is_some_and(|mime| mime.starts_with("image/"))
-}
-
-fn timeline_attachment_row(
-    attachment: &ChatAttachment,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    let content = row![
-        icon(attachment_icon(attachment), 13.0, colors.muted),
-        text(attachment.name.clone()).size(11).color(colors.text),
-        text(attachment_meta_label(attachment))
-            .size(10)
-            .color(colors.muted),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
-    if attachment_supports_inline_preview(attachment) {
-        button(content)
-            .width(Length::Fill)
-            .on_press(Message::OpenAttachmentPreview {
-                window_id,
-                attachment: attachment.clone(),
-            })
-            .style(button_style(tokens, ButtonKind::Ghost))
-            .into()
-    } else {
-        content.into()
-    }
-}
-
-fn attachment_preview_card(
-    attachment: &ChatAttachment,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    let visual: Element<'static, Message> = if attachment.mime.as_deref() == Some("image/svg+xml") {
-        svg(iced::widget::svg::Handle::from_path(&attachment.path))
-            .width(Length::Fill)
-            .height(Length::Fixed(320.0))
-            .content_fit(ContentFit::Contain)
-            .into()
-    } else {
-        image(iced::widget::image::Handle::from_path(&attachment.path))
-            .width(Length::Fill)
-            .height(Length::Fixed(320.0))
-            .content_fit(ContentFit::Contain)
-            .into()
-    };
-    Card::new(
-        column![
-            visual,
-            row![
-                text(attachment_meta_label(attachment))
-                    .size(10)
-                    .width(Length::Fill)
-                    .color(colors.muted),
-                button(text("系统打开").size(11))
-                    .on_press(Message::OpenAttachmentPreviewPath(window_id))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                button(text("关闭预览").size(11))
-                    .on_press(Message::CloseAttachmentPreview(window_id))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        ]
-        .spacing(8),
-    )
-    .title(format!("图片预览 · {}", attachment.name))
-    .view(tokens)
-}
-
 fn context_usage_label(usage: &ChatContextUsage) -> String {
     match (usage.limit_tokens, usage.used_percent) {
         (Some(limit), Some(percent)) => format!(
@@ -41468,7 +29756,7 @@ fn context_usage_label(usage: &ChatContextUsage) -> String {
     }
 }
 
-fn context_usage_color(usage: &ChatContextUsage, colors: Colors) -> iced::Color {
+fn context_usage_color(usage: &ChatContextUsage, colors: Colors) -> nana_ui::Color {
     match usage.used_percent {
         Some(percent) if percent >= 90.0 => colors.danger,
         Some(percent) if percent >= 75.0 => colors.warning,
@@ -41476,7 +29764,7 @@ fn context_usage_color(usage: &ChatContextUsage, colors: Colors) -> iced::Color 
     }
 }
 
-fn timeline_status_color(status: &str, colors: Colors) -> iced::Color {
+fn timeline_status_color(status: &str, colors: Colors) -> nana_ui::Color {
     match status {
         "completed" | "done" | "success" | "succeeded" => colors.success,
         "failed" | "error" | "cancelled" | "canceled" => colors.danger,
@@ -41512,40 +29800,6 @@ fn timeline_viewport_is_at_end(viewport: TimelineViewport, content_extent: f32) 
     viewport.offset >= (maximum_offset - TIMELINE_TAIL_TOLERANCE).max(0.0)
 }
 
-fn timeline_with_latest_control(
-    timeline: Element<'static, Message>,
-    visible: bool,
-    surface: TimelineSurfaceKey,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    if !visible {
-        return timeline;
-    }
-    let latest = button(
-        row![text("↓").size(12), text("最新消息").size(11)]
-            .spacing(5)
-            .align_y(Alignment::Center),
-    )
-    .padding([6.0, 10.0])
-    .on_press(Message::ScrollTimelineToEnd(surface))
-    .style(button_style(tokens, ButtonKind::Subtle));
-    stack![
-        timeline,
-        container(latest)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::End)
-            .padding(Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: 8.0,
-                left: 0.0,
-            }),
-    ]
-    .into()
-}
-
 fn timeline_event_is_toggleable(event: &TaskTimelineItem) -> bool {
     event.message_role.is_none() && timeline_event_has_details(event)
 }
@@ -41574,151 +29828,6 @@ fn timeline_event_is_expanded(event: &TaskTimelineItem, toggled_events: &BTreeSe
     } else {
         default
     }
-}
-
-fn timeline_event_shell(
-    event: &TaskTimelineItem,
-    body: Element<'static, Message>,
-    expanded: bool,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    let event_id = event.id.clone();
-    let content: Element<'static, Message> = match event.message_role.as_deref() {
-        Some("user") => {
-            let bubble = container(body).padding([10.0, 14.0]).style(move |_| {
-                iced::widget::container::Style {
-                    background: Some(colors.accent_soft.into()),
-                    border: iced::Border {
-                        radius: iced::border::Radius {
-                            top_left: 12.0,
-                            top_right: 12.0,
-                            bottom_right: 4.0,
-                            bottom_left: 12.0,
-                        },
-                        ..Default::default()
-                    },
-                    text_color: Some(colors.text),
-                    ..Default::default()
-                }
-            });
-            container(
-                row![
-                    space().width(Length::FillPortion(1)),
-                    container(bubble)
-                        .width(Length::FillPortion(3))
-                        .align_x(iced::alignment::Horizontal::Right)
-                ]
-                .width(Length::Fill)
-                .align_y(Alignment::Center),
-            )
-            .padding([7.0, 0.0])
-            .into()
-        }
-        Some("assistant") => container(body)
-            .padding(Padding {
-                top: 7.0,
-                right: 0.0,
-                bottom: 7.0,
-                left: 28.0,
-            })
-            .into(),
-        _ => {
-            let status_color = timeline_status_color(&event.status, colors);
-            let title_color = match event.status.as_str() {
-                "failed" | "error" | "cancelled" | "canceled" => colors.danger,
-                "running" | "started" | "in_progress" => colors.text,
-                _ => colors.muted,
-            };
-            let rail_line = container(space())
-                .width(Length::Fixed(1.0))
-                .height(Length::Fill)
-                .style(move |_| {
-                    iced::widget::container::Style::default().background(colors.border_soft)
-                });
-            let rail = stack![
-                container(rail_line)
-                    .width(28)
-                    .height(Length::Fill)
-                    .center_x(28),
-                container(icon(timeline_event_icon(&event.kind), 13.0, status_color))
-                    .width(28)
-                    .height(22)
-                    .center_x(28)
-                    .center_y(22),
-            ]
-            .width(Length::Fixed(28.0))
-            .height(Length::Fill);
-            let has_details = timeline_event_is_toggleable(event);
-            let title: Element<'static, Message> = if has_details {
-                button(
-                    row![
-                        text(event.title.clone())
-                            .size(13)
-                            .font(ui_font(font::Weight::Medium))
-                            .color(title_color),
-                        text(if expanded { "⌄" } else { "›" })
-                            .size(12)
-                            .color(colors.faint),
-                    ]
-                    .spacing(5)
-                    .align_y(Alignment::Center),
-                )
-                .on_press(Message::ToggleTimelineEvent(event.id.clone()))
-                .padding(0)
-                .style(button_style(tokens, ButtonKind::Ghost))
-                .into()
-            } else {
-                text(event.title.clone())
-                    .size(13)
-                    .font(ui_font(font::Weight::Medium))
-                    .color(title_color)
-                    .into()
-            };
-            let mut header = row![title]
-                .spacing(10)
-                .align_y(Alignment::Center)
-                .width(Length::Fill);
-            if !expanded {
-                if let Some(preview) = event
-                    .summary
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|preview| !preview.is_empty() && *preview != event.title.as_str())
-                {
-                    header = header.push(
-                        text(preview.to_owned())
-                            .size(11)
-                            .width(Length::Fill)
-                            .wrapping(iced::widget::text::Wrapping::None)
-                            .ellipsis(iced::widget::text::Ellipsis::End)
-                            .color(colors.faint),
-                    );
-                }
-            }
-            let mut process = column![container(header).height(22).center_y(22)]
-                .spacing(7)
-                .width(Length::Fill);
-            if expanded && has_details {
-                process = process.push(body);
-            }
-            let process = process.padding(Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: 7.0,
-                left: 0.0,
-            });
-            row![rail, process]
-                .spacing(0)
-                .align_y(Alignment::Start)
-                .width(Length::Fill)
-                .into()
-        }
-    };
-    mouse_area(content)
-        .on_enter(Message::TimelineEventHover(Some(event_id)))
-        .on_exit(Message::TimelineEventHover(None))
-        .into()
 }
 
 fn timeline_event_icon(kind: &str) -> Icon {
@@ -41957,133 +30066,6 @@ fn optional_hook_text(value: String) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
-fn hook_handler_editor(
-    source_id: String,
-    index: usize,
-    handler: &DesktopHookHandlerUpdate,
-    disabled: bool,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let remove_source = source_id.clone();
-    let remove = button(text("删除 Handler").size(10))
-        .on_press_maybe((!disabled).then(move || Message::RemoveHookHandler {
-            source_id: remove_source,
-            index,
-        }))
-        .style(button_style(tokens, ButtonKind::Danger));
-    let content = column![
-        row![
-            text(format!("Handler {}", index + 1))
-                .size(11)
-                .width(Length::Fill)
-                .color(tokens.colors.text),
-            remove,
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
-        row![
-            hook_handler_input(
-                "事件",
-                handler.event.clone(),
-                source_id.clone(),
-                index,
-                HookHandlerDraftField::Event,
-                disabled,
-                tokens,
-            ),
-            hook_handler_input(
-                "匹配器（可选）",
-                handler.matcher.clone().unwrap_or_default(),
-                source_id.clone(),
-                index,
-                HookHandlerDraftField::Matcher,
-                disabled,
-                tokens,
-            ),
-        ]
-        .spacing(6),
-        row![
-            hook_handler_input(
-                "类型",
-                handler.handler_type.clone(),
-                source_id.clone(),
-                index,
-                HookHandlerDraftField::Type,
-                disabled,
-                tokens,
-            ),
-            hook_handler_input(
-                "超时（秒）",
-                handler
-                    .timeout_seconds
-                    .map(|timeout| timeout.to_string())
-                    .unwrap_or_default(),
-                source_id.clone(),
-                index,
-                HookHandlerDraftField::TimeoutSeconds,
-                disabled,
-                tokens,
-            ),
-        ]
-        .spacing(6),
-        hook_handler_input(
-            "命令",
-            handler.command.clone().unwrap_or_default(),
-            source_id.clone(),
-            index,
-            HookHandlerDraftField::Command,
-            disabled,
-            tokens,
-        ),
-        hook_handler_input(
-            "Windows 命令（可选）",
-            handler.command_windows.clone().unwrap_or_default(),
-            source_id.clone(),
-            index,
-            HookHandlerDraftField::CommandWindows,
-            disabled,
-            tokens,
-        ),
-        hook_handler_input(
-            "运行状态文案（可选）",
-            handler.status_message.clone().unwrap_or_default(),
-            source_id,
-            index,
-            HookHandlerDraftField::StatusMessage,
-            disabled,
-            tokens,
-        ),
-    ]
-    .spacing(6);
-    Card::new(content).view(tokens)
-}
-
-fn hook_handler_input(
-    label: &'static str,
-    value: String,
-    source_id: String,
-    index: usize,
-    field: HookHandlerDraftField,
-    disabled: bool,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    column![
-        text(label).size(9).color(tokens.colors.faint),
-        Input::new(label, value)
-            .on_input(move |value| Message::HookHandlerDraftChanged {
-                source_id: source_id.clone(),
-                index,
-                field,
-                value,
-            })
-            .disabled(disabled)
-            .view(tokens),
-    ]
-    .spacing(2)
-    .width(Length::Fill)
-    .into()
-}
-
 fn mcp_transport_label(transport: DesktopMcpTransport) -> &'static str {
     match transport {
         DesktopMcpTransport::Stdio => "Stdio",
@@ -42163,56 +30145,6 @@ fn mcp_prompt_preview(prompt: DesktopMcpPromptGetView) -> McpContentPreview {
     }
 }
 
-fn quota_backend_label(backend: &str) -> &'static str {
-    if backend == "native-agentkit" {
-        "Native AgentKit"
-    } else {
-        "全部后端"
-    }
-}
-
-fn remote_state_label(state: &str) -> &'static str {
-    match state {
-        "pairing" => "等待设备扫码",
-        "connected" => "设备已连接",
-        "listening" => "等待连接",
-        "disabled" => "远控已关闭",
-        _ => "状态未知",
-    }
-}
-
-fn mcp_state_label(state: &str) -> &'static str {
-    match state {
-        "ready" => "就绪",
-        "connecting" => "连接中",
-        "failed" => "失败",
-        "draining" => "正在关闭",
-        _ => "未知",
-    }
-}
-
-fn format_token_count(value: i64) -> String {
-    if value >= 1_000_000 {
-        format!("{:.1}M", value as f64 / 1_000_000.0)
-    } else if value >= 1_000 {
-        format!("{:.1}K", value as f64 / 1_000.0)
-    } else {
-        value.to_string()
-    }
-}
-
-fn dashboard_metric(label: &'static str, value: i64, colors: Colors) -> Element<'static, Message> {
-    column![
-        text(value)
-            .size(14)
-            .font(ui_font(font::Weight::Semibold))
-            .color(colors.text),
-        text(label).size(10).color(colors.muted),
-    ]
-    .spacing(1)
-    .into()
-}
-
 fn status_label(status: ProductTaskStatus) -> &'static str {
     match status {
         ProductTaskStatus::Draft => "草稿",
@@ -42251,19 +30183,7 @@ fn composer_toolbar_is_compact(window_id: HostedWindowId, primary_width: f32) ->
     window_id != HostedWindowId::PRIMARY || primary_width < CHAT_COMPACT_TOOLBAR_WIDTH
 }
 
-fn composer_round_button_style(
-    tokens: ThemeTokens,
-    kind: ButtonKind,
-) -> impl Fn(&iced::Theme, iced::widget::button::Status) -> iced::widget::button::Style + 'static {
-    button_style_overridden(
-        tokens,
-        kind,
-        ButtonPaintOverride {
-            border_radius: Some(999.0),
-            ..ButtonPaintOverride::default()
-        },
-    )
-}
+fn composer_round_button_style(_tokens: ThemeTokens, _kind: ButtonKind) {}
 
 fn move_sidebar_search_selection(current: usize, count: usize, forward: bool) -> usize {
     if count == 0 {
@@ -42646,219 +30566,6 @@ fn pending_architecture_debug_decision(
 }
 
 #[cfg(any(debug_assertions, test))]
-fn pending_debug_cancels_turn(pending: &PendingActionView, target_id: &str) -> bool {
-    pending.kind == "plan_approval" && target_ids::plan_cancel(&pending.request_id) == target_id
-}
-
-fn ask_user_action_view(
-    pending: &PendingActionView,
-    draft: Option<&AskUserDraft>,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    let Some(spec) = AskUserSpec::from_payload(&pending.payload) else {
-        return text("提问内容暂时无法读取。")
-            .size(11)
-            .color(colors.danger)
-            .into();
-    };
-    let draft = draft.cloned().unwrap_or_default();
-    let Some(question) = draft.question(&spec).cloned() else {
-        return text("提问内容暂时无法读取。")
-            .size(11)
-            .color(colors.danger)
-            .into();
-    };
-    let request_id = pending.request_id.clone();
-    let mut header = row![text(spec.title())
-        .size(12)
-        .font(ui_font(font::Weight::Semibold))
-        .color(colors.text)]
-    .spacing(6)
-    .align_y(Alignment::Center);
-    if let Some(source) = spec
-        .source
-        .clone()
-        .filter(|source| !source.trim().is_empty())
-    {
-        header = header.push(text(source).size(10).color(colors.muted));
-    }
-    if spec.questions.len() > 1 {
-        header = header.push(
-            text(format!(
-                "{} / {}",
-                draft.question_index() + 1,
-                spec.questions.len()
-            ))
-            .size(10)
-            .color(colors.muted),
-        );
-    }
-    let mut content = column![header].spacing(7);
-    let mut prompt = row![].spacing(6).align_y(Alignment::Center);
-    if let Some(label) = question.header.filter(|label| !label.trim().is_empty()) {
-        prompt = prompt.push(text(label).size(10).color(colors.warning));
-    }
-    prompt = prompt.push(text(question.question).size(11).color(if question.danger {
-        colors.danger
-    } else {
-        colors.text
-    }));
-    content = content.push(prompt);
-
-    if question.mode != AskUserMode::Confirm {
-        let mut options = column![].spacing(5);
-        for (index, option) in question.options.iter().enumerate() {
-            let option_id = option.id(index);
-            let selected = draft.selected(&option_id);
-            let mut label = if selected {
-                format!("✓ {}", option.label)
-            } else {
-                option.label.clone()
-            };
-            if option.recommended {
-                label.push_str(" · 推荐");
-            }
-            let mut option_content = column![text(label).size(11)].spacing(2);
-            if let Some(description) = option
-                .description
-                .clone()
-                .filter(|description| !description.trim().is_empty())
-            {
-                option_content =
-                    option_content.push(text(description).size(10).color(colors.muted));
-            }
-            options = options.push(
-                button(option_content)
-                    .width(Length::Fill)
-                    .on_press(Message::AskUserDraftAction {
-                        window_id,
-                        request_id: request_id.clone(),
-                        action: AskUserAction::Select(option_id),
-                    })
-                    .style(button_style(
-                        tokens,
-                        if selected {
-                            ButtonKind::Primary
-                        } else if option.danger {
-                            ButtonKind::Danger
-                        } else {
-                            ButtonKind::Ghost
-                        },
-                    )),
-            );
-        }
-        if question.allow_other {
-            let selected = draft.other_selected();
-            options = options.push(
-                button(text(if selected { "✓ 其他" } else { "其他" }).size(11))
-                    .width(Length::Fill)
-                    .on_press(Message::AskUserDraftAction {
-                        window_id,
-                        request_id: request_id.clone(),
-                        action: AskUserAction::Select("other".to_owned()),
-                    })
-                    .style(button_style(
-                        tokens,
-                        if selected {
-                            ButtonKind::Primary
-                        } else {
-                            ButtonKind::Ghost
-                        },
-                    )),
-            );
-        }
-        content = content.push(options);
-        if let Some(preview) = draft.selected_preview(&spec) {
-            content = content.push(
-                container(text(preview.to_owned()).size(10).color(colors.muted))
-                    .width(Length::Fill)
-                    .padding(Padding::from([7, 8]))
-                    .style(canvas_style(tokens)),
-            );
-        }
-        if question.allow_other && draft.other_selected() {
-            let input_request_id = request_id.clone();
-            content = content.push(
-                Input::new("自定义回答", draft.freeform().to_owned())
-                    .on_input(move |value| Message::AskUserDraftAction {
-                        window_id,
-                        request_id: input_request_id.clone(),
-                        action: AskUserAction::SetFreeform(value),
-                    })
-                    .view(tokens),
-            );
-        }
-    }
-
-    let mut actions = row![].spacing(6).align_y(Alignment::Center);
-    if spec.questions.len() > 1 && question.skippable != Some(false) {
-        actions = actions.push(
-            button(text("跳过").size(11))
-                .on_press(Message::AskUserDraftAction {
-                    window_id,
-                    request_id: request_id.clone(),
-                    action: AskUserAction::Skip,
-                })
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        );
-    }
-    actions = actions.push(space().width(Length::Fill));
-    if draft.question_index() > 0 {
-        actions = actions.push(
-            button(text("上一题").size(11))
-                .on_press(Message::AskUserDraftAction {
-                    window_id,
-                    request_id: request_id.clone(),
-                    action: AskUserAction::Back,
-                })
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        );
-    }
-    if spec.is_dismissable() {
-        actions = actions.push(
-            button(text("关闭").size(11))
-                .on_press(Message::AskUserDraftAction {
-                    window_id,
-                    request_id: request_id.clone(),
-                    action: AskUserAction::Cancel,
-                })
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        );
-    }
-    if question.mode == AskUserMode::Confirm {
-        actions = actions.push(
-            button(text(question.cancel_label.unwrap_or_else(|| "不要".to_owned())).size(11))
-                .on_press(Message::AskUserDraftAction {
-                    window_id,
-                    request_id: request_id.clone(),
-                    action: AskUserAction::Reject,
-                })
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        );
-    }
-    let submit_label = if question.mode == AskUserMode::Confirm {
-        question.confirm_label.unwrap_or_else(|| "好的".to_owned())
-    } else if draft.question_index() + 1 == spec.questions.len() {
-        "完成".to_owned()
-    } else {
-        "继续".to_owned()
-    };
-    let submit =
-        button(text(submit_label).size(11)).style(button_style(tokens, ButtonKind::Primary));
-    actions = actions.push(if draft.can_submit(&spec) {
-        submit.on_press(Message::AskUserDraftAction {
-            window_id,
-            request_id,
-            action: AskUserAction::Submit,
-        })
-    } else {
-        submit
-    });
-    content.push(actions).into()
-}
-
 #[cfg(any(debug_assertions, test))]
 #[derive(Debug, Clone, PartialEq)]
 enum McpDebugAction {
@@ -43058,445 +30765,6 @@ fn tool_consent_draft(
     draft
 }
 
-fn tool_consent_action_view(
-    pending: &PendingActionView,
-    stored: Option<&ToolConsentDraft>,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    let request_id = pending.request_id.clone();
-    let Ok(consent) = DesktopToolConsent::from_payload(&pending.payload) else {
-        return text("无法读取工具授权请求，请刷新任务状态。")
-            .size(11)
-            .color(colors.danger)
-            .into();
-    };
-    let draft = tool_consent_draft(pending, stored);
-    let headline = consent
-        .display_name
-        .clone()
-        .or_else(|| consent.title.clone())
-        .unwrap_or_else(|| consent.tool_name.clone());
-    let mut content = column![row![
-        text(consent.tool_name.clone())
-            .size(11)
-            .font(ui_font(font::Weight::Semibold))
-            .color(colors.text),
-        text(headline).size(11).color(colors.muted),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center)]
-    .spacing(6)
-    .width(Length::Fill);
-    if let Some(detail) = consent
-        .description
-        .clone()
-        .or(consent.reason.clone())
-        .or(consent.decision_reason.clone())
-    {
-        content = content.push(text(detail).size(10).color(colors.muted));
-    }
-    if let Some(path) = consent.blocked_path.clone().or(consent.cwd.clone()) {
-        content = content.push(text(path).size(10).color(colors.faint));
-    }
-    if consent.editable_command().is_some() {
-        let denial_message = draft.message.clone();
-        let input_request_id = request_id.clone();
-        content = content.push(
-            Input::new("确认执行的命令", draft.command.clone())
-                .on_input(move |command| Message::ToolConsentDraftChanged {
-                    window_id,
-                    request_id: input_request_id.clone(),
-                    command,
-                    message: denial_message.clone(),
-                })
-                .view(tokens),
-        );
-    } else if !consent.input.is_empty() {
-        let input = serde_json::to_string_pretty(&consent.input).unwrap_or_default();
-        content = content.push(text(input).size(10).color(colors.muted));
-    }
-    let command = draft.command.clone();
-    let message_request_id = request_id.clone();
-    content = content.push(
-        Input::new("拒绝理由", draft.message.clone())
-            .on_input(move |message| Message::ToolConsentDraftChanged {
-                window_id,
-                request_id: message_request_id.clone(),
-                command: command.clone(),
-                message,
-            })
-            .view(tokens),
-    );
-    let mut allow = button(text("允许").size(11)).style(button_style(tokens, ButtonKind::Primary));
-    if consent.editable_command().is_none() || !draft.command.trim().is_empty() {
-        allow = allow.on_press(Message::RespondToolConsent {
-            window_id,
-            request_id: request_id.clone(),
-            decision: DesktopToolConsentDecision::Allow,
-        });
-    }
-    let mut deny = button(text("拒绝").size(11)).style(button_style(tokens, ButtonKind::Ghost));
-    if !draft.message.trim().is_empty() {
-        deny = deny.on_press(Message::RespondToolConsent {
-            window_id,
-            request_id,
-            decision: DesktopToolConsentDecision::Deny,
-        });
-    }
-    content.push(row![allow, deny].spacing(6)).into()
-}
-
-fn mcp_elicitation_action_view(
-    pending: &PendingActionView,
-    stored: Option<&Map<String, Value>>,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    let request_id = pending.request_id.clone();
-    let draft = mcp_elicitation_draft(pending, stored);
-    let elicitation = DesktopMcpElicitation::from_payload(&pending.payload);
-    let mut content = column![].spacing(6).width(Length::Fill);
-    let Ok(elicitation) = elicitation else {
-        return column![
-            text("无法读取 MCP 请求内容，可拒绝或取消以释放当前任务。")
-                .size(11)
-                .color(colors.danger),
-            row![
-                button(text("拒绝").size(11))
-                    .on_press(pending_interaction_response_message(
-                        window_id,
-                        request_id.clone(),
-                        false,
-                        json!({"action": "decline"}),
-                    ))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                button(text("取消").size(11))
-                    .on_press(pending_interaction_response_message(
-                        window_id,
-                        request_id,
-                        false,
-                        json!({"action": "cancel"}),
-                    ))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            ]
-            .spacing(6),
-        ]
-        .spacing(6)
-        .into();
-    };
-    content = content.push(
-        text(format!(
-            "{} · {}",
-            elicitation.server_name,
-            if elicitation.mode == DesktopMcpElicitationMode::Form {
-                "表单请求"
-            } else {
-                "链接请求"
-            }
-        ))
-        .size(11)
-        .color(colors.muted),
-    );
-    if !elicitation.message.trim().is_empty() && elicitation.message.trim() != pending.prompt.trim()
-    {
-        content = content.push(
-            text(elicitation.message.clone())
-                .size(11)
-                .color(colors.text),
-        );
-    }
-
-    if elicitation.mode == DesktopMcpElicitationMode::Url {
-        if let Some(url) = elicitation.url.clone() {
-            content = content.push(
-                row![
-                    text(url.clone()).size(10).color(colors.muted),
-                    button(text("打开链接").size(11))
-                        .on_press(Message::OpenMarkdownLink(url))
-                        .style(button_style(tokens, ButtonKind::Ghost)),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            );
-        }
-    } else {
-        let fields = elicitation.fields();
-        if fields.is_empty() {
-            let raw = draft
-                .get(MCP_RAW_JSON_DRAFT_KEY)
-                .and_then(Value::as_str)
-                .unwrap_or("{}")
-                .to_owned();
-            content = content.push(
-                column![
-                    text("表单 JSON").size(11).color(colors.muted),
-                    Input::new("{}", raw)
-                        .on_input({
-                            let request_id = request_id.clone();
-                            move |value| Message::McpRawJsonChanged {
-                                window_id,
-                                request_id: request_id.clone(),
-                                value,
-                            }
-                        })
-                        .view(tokens),
-                ]
-                .spacing(4),
-            );
-        } else {
-            for field in fields {
-                let label = if field.required {
-                    format!("{} *", field.label)
-                } else {
-                    field.label.clone()
-                };
-                let mut field_view = column![text(label).size(11).color(colors.text)].spacing(4);
-                if !field.description.trim().is_empty() {
-                    field_view = field_view
-                        .push(text(field.description.clone()).size(10).color(colors.muted));
-                }
-                if !field.options.is_empty() {
-                    let mut options = row![].spacing(5).align_y(Alignment::Center);
-                    for option in field.options {
-                        let selected = if field.kind == DesktopMcpFormFieldKind::Array {
-                            draft
-                                .get(&field.key)
-                                .and_then(Value::as_array)
-                                .is_some_and(|values| {
-                                    values
-                                        .iter()
-                                        .any(|value| value.as_str() == Some(option.value.as_str()))
-                                })
-                        } else {
-                            draft.get(&field.key).and_then(Value::as_str)
-                                == Some(option.value.as_str())
-                        };
-                        let option_label = if selected {
-                            format!("✓ {}", option.label)
-                        } else {
-                            option.label
-                        };
-                        options = options.push(
-                            button(text(option_label).size(10))
-                                .on_press(Message::McpToggleOption {
-                                    window_id,
-                                    request_id: request_id.clone(),
-                                    field_key: field.key.clone(),
-                                    value: option.value,
-                                    multi: field.kind == DesktopMcpFormFieldKind::Array,
-                                })
-                                .style(button_style(
-                                    tokens,
-                                    if selected {
-                                        ButtonKind::Primary
-                                    } else {
-                                        ButtonKind::Ghost
-                                    },
-                                )),
-                        );
-                    }
-                    field_view = field_view.push(options);
-                } else if field.kind == DesktopMcpFormFieldKind::Boolean {
-                    let enabled = draft
-                        .get(&field.key)
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
-                    field_view = field_view.push(
-                        button(text(if enabled { "已开启" } else { "已关闭" }).size(10))
-                            .on_press(Message::McpToggleBoolean {
-                                window_id,
-                                request_id: request_id.clone(),
-                                field_key: field.key,
-                            })
-                            .style(button_style(
-                                tokens,
-                                if enabled {
-                                    ButtonKind::Primary
-                                } else {
-                                    ButtonKind::Ghost
-                                },
-                            )),
-                    );
-                } else {
-                    let placeholder = if field.kind == DesktopMcpFormFieldKind::Array {
-                        "用逗号或换行分隔多个值"
-                    } else {
-                        "输入内容"
-                    };
-                    let value = draft
-                        .get(&field.key)
-                        .map(|value| match value {
-                            Value::String(value) => value.clone(),
-                            value if value.is_null() => String::new(),
-                            value => value.to_string(),
-                        })
-                        .unwrap_or_default();
-                    field_view = field_view.push(
-                        Input::new(placeholder, value)
-                            .on_input({
-                                let request_id = request_id.clone();
-                                let field_key = field.key.clone();
-                                move |value| Message::McpFieldChanged {
-                                    window_id,
-                                    request_id: request_id.clone(),
-                                    field_key: field_key.clone(),
-                                    value,
-                                }
-                            })
-                            .view(tokens),
-                    );
-                }
-                content = content.push(field_view);
-            }
-        }
-    }
-
-    let accept = mcp_elicitation_response(pending, &draft, DesktopMcpElicitationAction::Accept);
-    if let Err(error) = &accept {
-        content = content.push(text(error.clone()).size(10).color(colors.danger));
-    }
-    let mut accept_button =
-        button(text("接受").size(11)).style(button_style(tokens, ButtonKind::Primary));
-    if let Ok((accepted, response)) = accept {
-        accept_button = accept_button.on_press(pending_interaction_response_message(
-            window_id,
-            request_id.clone(),
-            accepted,
-            response,
-        ));
-    }
-    content
-        .push(
-            row![
-                accept_button,
-                button(text("拒绝").size(11))
-                    .on_press(pending_interaction_response_message(
-                        window_id,
-                        request_id.clone(),
-                        false,
-                        json!({"action": "decline"}),
-                    ))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-                button(text("取消").size(11))
-                    .on_press(pending_interaction_response_message(
-                        window_id,
-                        request_id,
-                        false,
-                        json!({"action": "cancel"}),
-                    ))
-                    .style(button_style(tokens, ButtonKind::Ghost)),
-            ]
-            .spacing(6),
-        )
-        .into()
-}
-
-fn architecture_interaction_action_view(
-    pending: &PendingActionView,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    let permission = pending
-        .payload
-        .get("permission")
-        .cloned()
-        .and_then(|value| serde_json::from_value::<ArchitecturePermission>(value).ok());
-    let changes = pending
-        .payload
-        .get("changes")
-        .cloned()
-        .and_then(|value| serde_json::from_value::<Vec<ProjectArchitectureChange>>(value).ok());
-    let expected_version = pending
-        .payload
-        .get("expectedVersion")
-        .and_then(Value::as_i64);
-    let cancel = if window_id == HostedWindowId::PRIMARY {
-        Message::InterruptTurn
-    } else {
-        Message::TaskPopupInterruptTurn(window_id)
-    };
-    let (Some(permission), Some(changes), Some(expected_version)) =
-        (permission, changes, expected_version)
-    else {
-        return column![
-            text("无法读取这项架构提议，请取消任务后重试。")
-                .size(11)
-                .color(colors.danger),
-            button(text("取消任务").size(11))
-                .on_press(cancel)
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        ]
-        .spacing(6)
-        .into();
-    };
-
-    let mut content = column![text(format!(
-        "基于架构 v{expected_version} · {} 项变更 · {}",
-        changes.len(),
-        architecture_permission_label(permission)
-    ))
-    .size(10)
-    .color(colors.muted),]
-    .spacing(5)
-    .width(Length::Fill);
-    if let Some(reason) = pending
-        .payload
-        .get("reason")
-        .and_then(Value::as_str)
-        .filter(|reason| !reason.trim().is_empty() && reason.trim() != pending.prompt.trim())
-    {
-        content = content.push(text(reason.to_owned()).size(11).color(colors.text));
-    }
-    for change in changes.iter().take(8) {
-        content = content.push(
-            text(format!("• {}", architecture_change_label(change)))
-                .size(10)
-                .color(colors.muted),
-        );
-    }
-    if changes.len() > 8 {
-        content = content.push(
-            text(format!("另有 {} 项变更", changes.len() - 8))
-                .size(10)
-                .color(colors.muted),
-        );
-    }
-
-    let request_id = pending.request_id.clone();
-    let mut actions = row![].spacing(6).align_y(Alignment::Center);
-    if permission != ArchitecturePermission::Readonly {
-        actions = actions.push(
-            button(text("应用变更").size(11))
-                .on_press(architecture_response_message(
-                    window_id,
-                    request_id.clone(),
-                    DesktopArchitectureInteractionDecision::Allow,
-                ))
-                .style(button_style(tokens, ButtonKind::Primary)),
-        );
-    } else {
-        content = content.push(
-            text("当前任务为只读模式，不能写入项目架构。")
-                .size(10)
-                .color(colors.warning),
-        );
-    }
-    actions = actions.push(
-        button(text("拒绝").size(11))
-            .on_press(architecture_response_message(
-                window_id,
-                request_id,
-                DesktopArchitectureInteractionDecision::Deny,
-            ))
-            .style(button_style(tokens, ButtonKind::Ghost)),
-    );
-    content.push(actions).into()
-}
-
 fn architecture_response_message(
     window_id: HostedWindowId,
     request_id: String,
@@ -43627,92 +30895,6 @@ fn collect_debug_workspace_splits(node: &PaneNode, splits: &mut Vec<DebugWorkspa
     collect_debug_workspace_splits(second, splits);
 }
 
-fn next_permission(permission: DesktopExecutionPermission) -> DesktopExecutionPermission {
-    match permission {
-        DesktopExecutionPermission::Ask => DesktopExecutionPermission::Readonly,
-        DesktopExecutionPermission::Readonly => DesktopExecutionPermission::Full,
-        DesktopExecutionPermission::Full => DesktopExecutionPermission::Ask,
-    }
-}
-
-#[cfg(any(debug_assertions, test))]
-fn permission_key(permission: DesktopExecutionPermission) -> &'static str {
-    match permission {
-        DesktopExecutionPermission::Ask => "ask",
-        DesktopExecutionPermission::Readonly => "readonly",
-        DesktopExecutionPermission::Full => "full",
-    }
-}
-
-fn permission_label(permission: DesktopExecutionPermission) -> &'static str {
-    match permission {
-        DesktopExecutionPermission::Ask => "权限：询问",
-        DesktopExecutionPermission::Readonly => "权限：只读",
-        DesktopExecutionPermission::Full => "权限：完全",
-    }
-}
-
-fn prompt_route_suggestion_view(
-    route: &DesktopPromptRoute,
-    applied: bool,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    let workflow_label = route
-        .workflow
-        .as_ref()
-        .map(prompt_route_workflow_label)
-        .unwrap_or("工作流");
-    let apply = button(text(if applied { "已应用" } else { "应用" }).size(10))
-        .style(button_style(tokens, ButtonKind::Ghost));
-    let apply = if applied {
-        apply
-    } else {
-        apply.on_press(Message::ApplyPromptRouteWorkflow(window_id))
-    };
-    Card::new(
-        row![
-            text(format!("建议作为 {workflow_label} 发送"))
-                .size(10)
-                .width(Length::Fill)
-                .color(colors.muted),
-            apply,
-            button(text("忽略").size(10))
-                .on_press(Message::DismissPromptRouteWorkflow(window_id))
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
-    )
-    .view(tokens)
-}
-
-fn applied_prompt_workflow_view(
-    workflow: &LiliaAgentWorkflow,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    Card::new(
-        row![
-            text(format!(
-                "将作为 {} 发送",
-                prompt_route_workflow_label(workflow)
-            ))
-            .size(10)
-            .width(Length::Fill)
-            .color(colors.muted),
-            button(text("取消").size(10))
-                .on_press(Message::DismissPromptRouteWorkflow(window_id))
-                .style(button_style(tokens, ButtonKind::Ghost)),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
-    )
-    .view(tokens)
-}
-
 fn prompt_route_workflow_label(workflow: &LiliaAgentWorkflow) -> &'static str {
     match workflow {
         LiliaAgentWorkflow::LiliaTaskWorkflow { .. } => "任务工作流",
@@ -43739,6 +30921,243 @@ fn composer_has_turn_payload(composer: &DesktopComposerState) -> bool {
         || !composer.attachments.is_empty()
         || !composer.conversation_references.is_empty()
         || composer.workflow.is_some()
+}
+
+fn attachment_supports_inline_preview(attachment: &ChatAttachment) -> bool {
+    attachment.exists
+        && attachment.kind == ChatAttachmentKind::File
+        && attachment
+            .mime
+            .as_deref()
+            .is_some_and(|mime| mime.starts_with("image/"))
+}
+
+fn pending_debug_cancels_turn(pending: &PendingActionView, target_id: &str) -> bool {
+    pending.kind == "plan_approval" && target_ids::plan_cancel(&pending.request_id) == target_id
+}
+
+fn next_permission(permission: DesktopExecutionPermission) -> DesktopExecutionPermission {
+    match permission {
+        DesktopExecutionPermission::Ask => DesktopExecutionPermission::Readonly,
+        DesktopExecutionPermission::Readonly => DesktopExecutionPermission::Full,
+        DesktopExecutionPermission::Full => DesktopExecutionPermission::Ask,
+    }
+}
+
+#[cfg(any(debug_assertions, test))]
+fn permission_key(permission: DesktopExecutionPermission) -> &'static str {
+    match permission {
+        DesktopExecutionPermission::Ask => "ask",
+        DesktopExecutionPermission::Readonly => "readonly",
+        DesktopExecutionPermission::Full => "full",
+    }
+}
+
+fn permission_label(permission: DesktopExecutionPermission) -> &'static str {
+    match permission {
+        DesktopExecutionPermission::Ask => "权限：询问",
+        DesktopExecutionPermission::Readonly => "权限：只读",
+        DesktopExecutionPermission::Full => "权限：完全",
+    }
+}
+
+fn project_clone_error_message(error: DesktopProjectCloneError) -> String {
+    match error {
+        DesktopProjectCloneError::EmptyRepository => "请输入仓库地址。".to_owned(),
+        DesktopProjectCloneError::RepositoryCredentialsUnsupported => {
+            "仓库地址不能包含账号或令牌，请使用系统凭据管理。".to_owned()
+        }
+        DesktopProjectCloneError::ParentDirectoryUnavailable(_) => {
+            "克隆位置不存在或当前不可访问。".to_owned()
+        }
+        DesktopProjectCloneError::TargetUnavailable(_) => {
+            "克隆位置中没有可用的仓库目录名。".to_owned()
+        }
+        DesktopProjectCloneError::GitUnavailable => {
+            "无法启动 Git，请确认 Git 已安装并加入 PATH。".to_owned()
+        }
+        DesktopProjectCloneError::GitProcessTreeUnavailable => {
+            "无法建立可安全取消的 Git 进程，请稍后重试。".to_owned()
+        }
+        DesktopProjectCloneError::WorkerUnavailable => {
+            "无法启动仓库克隆任务，请稍后重试。".to_owned()
+        }
+        DesktopProjectCloneError::GitFailed { .. } | DesktopProjectCloneError::GitWaitFailed => {
+            "Git 克隆失败，请检查仓库地址、网络和访问权限。".to_owned()
+        }
+        DesktopProjectCloneError::Cancelled => "克隆已取消，未创建项目。".to_owned(),
+        DesktopProjectCloneError::CleanupFailed { path, .. } => {
+            format!("克隆未完成，且无法清理 {}，请检查该目录。", path.display())
+        }
+    }
+}
+
+fn unbound_github_status() -> DesktopGitHubBindingStatus {
+    DesktopGitHubBindingStatus {
+        state: "unbound".to_owned(),
+        client_id_configured: true,
+        client_id_source: DesktopGitHubClientIdSource::Bundled,
+        binding: None,
+    }
+}
+
+fn github_error_message(error: &DesktopGitHubError) -> String {
+    match error {
+        DesktopGitHubError::ClientIdMissing => "当前版本未配置 GitHub 绑定。".to_owned(),
+        DesktopGitHubError::Request { .. }
+        | DesktopGitHubError::Http { .. }
+        | DesktopGitHubError::Response { .. } => {
+            "暂时无法连接 GitHub，请检查网络后重试。".to_owned()
+        }
+        DesktopGitHubError::Unbound => "请先绑定 GitHub。".to_owned(),
+        DesktopGitHubError::BindingExpired { .. } => "GitHub 绑定已失效，请重新绑定。".to_owned(),
+        DesktopGitHubError::InvalidDeviceCode => "GitHub 授权会话无效，请重新绑定。".to_owned(),
+        DesktopGitHubError::InvalidRepository => {
+            "请选择 GitHub 仓库，或输入 owner/repo。".to_owned()
+        }
+        DesktopGitHubError::Persistence(_) | DesktopGitHubError::Credential(_) => {
+            "无法保存 GitHub 绑定，请稍后重试。".to_owned()
+        }
+        DesktopGitHubError::Clone(error) => project_clone_error_message(error.clone()),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn project_clone_outcome_key(outcome: ProjectCloneOutcome) -> &'static str {
+    match outcome {
+        ProjectCloneOutcome::Idle => "idle",
+        ProjectCloneOutcome::Running => "running",
+        ProjectCloneOutcome::Completed => "completed",
+        ProjectCloneOutcome::Cancelled => "cancelled",
+        ProjectCloneOutcome::Failed => "failed",
+    }
+}
+
+fn project_clone_phase_key(phase: &DesktopProjectClonePhase) -> &'static str {
+    match phase {
+        DesktopProjectClonePhase::Preparing => "preparing",
+        DesktopProjectClonePhase::Cloning => "cloning",
+        DesktopProjectClonePhase::Cancelling => "cancelling",
+        DesktopProjectClonePhase::Completed => "completed",
+        DesktopProjectClonePhase::Failed => "failed",
+        DesktopProjectClonePhase::Cancelled => "cancelled",
+    }
+}
+
+fn project_clone_phase_label(phase: &DesktopProjectClonePhase) -> &'static str {
+    match phase {
+        DesktopProjectClonePhase::Preparing => "正在准备克隆…",
+        DesktopProjectClonePhase::Cloning => "正在克隆仓库…",
+        DesktopProjectClonePhase::Cancelling => "正在停止并清理…",
+        DesktopProjectClonePhase::Completed => "仓库克隆完成。",
+        DesktopProjectClonePhase::Failed => "仓库克隆失败。",
+        DesktopProjectClonePhase::Cancelled => "克隆已取消。",
+    }
+}
+
+fn project_clone_detail_label(
+    phase: &DesktopProjectClonePhase,
+    detail: Option<&str>,
+) -> &'static str {
+    match detail.unwrap_or_default() {
+        detail if detail.starts_with("Enumerating objects") => "正在扫描仓库对象…",
+        detail if detail.starts_with("Counting objects") => "正在统计仓库对象…",
+        detail if detail.starts_with("Compressing objects") => "正在压缩仓库对象…",
+        detail if detail.starts_with("Receiving objects") => "正在接收仓库对象…",
+        detail if detail.starts_with("Resolving deltas") => "正在整理仓库对象…",
+        _ => project_clone_phase_label(phase),
+    }
+}
+
+fn project_clone_phase_is_terminal(phase: &DesktopProjectClonePhase) -> bool {
+    matches!(
+        phase,
+        DesktopProjectClonePhase::Completed
+            | DesktopProjectClonePhase::Failed
+            | DesktopProjectClonePhase::Cancelled
+    )
+}
+
+fn provider_runtime_settings_error_message(error: &DesktopApplicationError) -> String {
+    match error {
+        DesktopApplicationError::Provider(DesktopProviderError::InvalidEndpoint {
+            field, ..
+        }) => {
+            if *field == "anthropicEndpoint" {
+                "Anthropic 端点必须是有效的 HTTP(S) 地址。".to_owned()
+            } else {
+                "OpenAI 兼容端点必须是有效的 HTTP(S) 地址。".to_owned()
+            }
+        }
+        DesktopApplicationError::Provider(DesktopProviderError::InvalidModel) => {
+            "模型 ID 不能包含空格或控制字符。".to_owned()
+        }
+        DesktopApplicationError::Provider(DesktopProviderError::SettingsRevisionConflict {
+            ..
+        }) => "模型配置已在其他窗口更新，请刷新后重试。".to_owned(),
+        DesktopApplicationError::Provider(
+            DesktopProviderError::Persistence(_)
+            | DesktopProviderError::SettingsStateUnavailable
+            | DesktopProviderError::CorruptSettings(_)
+            | DesktopProviderError::UnsupportedSettingsSchema(_),
+        ) => "无法保存模型运行配置，请稍后重试。".to_owned(),
+        _ => "模型运行配置未能应用，请稍后重试。".to_owned(),
+    }
+}
+
+fn agent_interaction_error_message(error: &DesktopApplicationError) -> String {
+    match error {
+        DesktopApplicationError::AgentInteraction(
+            DesktopAgentInteractionError::RevisionConflict { .. },
+        ) => "Agent 设置已在其他窗口更新，请刷新后重试。".to_owned(),
+        DesktopApplicationError::AgentInteraction(
+            DesktopAgentInteractionError::DuplicateAgentName(_),
+        ) => "Agent 名称不能重复。".to_owned(),
+        DesktopApplicationError::AgentInteraction(DesktopAgentInteractionError::AgentNotFound(
+            _,
+        )) => "这个 Agent 已不存在，请刷新后重试。".to_owned(),
+        DesktopApplicationError::AgentInteraction(DesktopAgentInteractionError::CatalogLimit) => {
+            "最多可以保存 64 个自定义 Agent。".to_owned()
+        }
+        DesktopApplicationError::AgentInteraction(
+            DesktopAgentInteractionError::InvalidAgent(_)
+            | DesktopAgentInteractionError::InvalidAgentId
+            | DesktopAgentInteractionError::DuplicateAgentId(_)
+            | DesktopAgentInteractionError::InvalidPromptMode
+            | DesktopAgentInteractionError::InvalidCustomPrompt,
+        ) => "请检查 Agent 名称、简介和指令后重试。".to_owned(),
+        DesktopApplicationError::AgentInteraction(
+            DesktopAgentInteractionError::StateUnavailable
+            | DesktopAgentInteractionError::RevisionOverflow
+            | DesktopAgentInteractionError::UnsupportedSchema(_)
+            | DesktopAgentInteractionError::Corrupt(_)
+            | DesktopAgentInteractionError::Persistence(_)
+            | DesktopAgentInteractionError::RuntimeApply { .. },
+        ) => "无法保存 Agent 设置，请稍后重试。".to_owned(),
+        _ => "Agent 设置未能应用，请稍后重试。".to_owned(),
+    }
+}
+
+fn provider_operation_error_message(error: &DesktopApplicationError) -> &'static str {
+    match error {
+        DesktopApplicationError::Provider(
+            DesktopProviderError::UnknownProvider(_)
+            | DesktopProviderError::UnsupportedCredentialKind { .. },
+        ) => "当前模型服务不支持这种凭据。",
+        DesktopApplicationError::Provider(
+            DesktopProviderError::EmptySecret | DesktopProviderError::InvalidSecretEncoding,
+        ) => "API Key 无效，请检查后重试。",
+        DesktopApplicationError::Provider(DesktopProviderError::InvalidCredentialId) => {
+            "找不到要撤销的凭据，请刷新后重试。"
+        }
+        DesktopApplicationError::Provider(DesktopProviderError::Persistence(_)) => {
+            "安全存储暂时不可用，请稍后重试。"
+        }
+        DesktopApplicationError::Provider(DesktopProviderError::Runtime(_)) => {
+            "模型凭据操作失败，请检查凭据后重试。"
+        }
+        _ => "模型凭据操作失败，请稍后重试。",
+    }
 }
 
 fn composer_conversation_query(content: &str) -> Option<String> {
@@ -43799,88 +31218,6 @@ fn composer_content_without_trigger(content: &str, marker: char) -> Option<Strin
         prefix.push(' ');
     }
     Some(prefix)
-}
-
-fn slash_command_source_label(source: DesktopSlashCommandSource) -> &'static str {
-    match source {
-        DesktopSlashCommandSource::Native => "内置",
-        DesktopSlashCommandSource::Project => "项目",
-    }
-}
-
-fn review_slash_workflow_view(
-    pending: &PendingReviewSlashWorkflow,
-    window_id: HostedWindowId,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    let title = match pending.workflow_kind {
-        PendingReviewWorkflowKind::Review => "选择代码审查范围",
-        PendingReviewWorkflowKind::FixSuggestion => "选择修复建议范围",
-    };
-    let mut targets = row![].spacing(6);
-    for (kind, label) in [
-        (PendingReviewTargetKind::UncommittedChanges, "未提交改动"),
-        (PendingReviewTargetKind::BaseBranch, "对比分支"),
-        (PendingReviewTargetKind::Commit, "指定提交"),
-    ] {
-        targets = targets.push(
-            button(text(label).size(10))
-                .on_press(Message::SelectReviewWorkflowTarget { window_id, kind })
-                .style(button_style(
-                    tokens,
-                    if pending.target_kind == kind {
-                        ButtonKind::Selected
-                    } else {
-                        ButtonKind::Ghost
-                    },
-                )),
-        );
-    }
-    let mut form = column![
-        text(title).size(11).color(colors.text),
-        text("审查与修复建议只读取所选范围；应用修改仍由后续明确操作决定。")
-            .size(10)
-            .color(colors.muted),
-        targets,
-    ]
-    .spacing(7)
-    .width(Length::Fill);
-    if pending.target_kind != PendingReviewTargetKind::UncommittedChanges {
-        let placeholder = match pending.target_kind {
-            PendingReviewTargetKind::BaseBranch => "例如 main",
-            PendingReviewTargetKind::Commit => "提交 SHA",
-            PendingReviewTargetKind::UncommittedChanges => "",
-        };
-        form = form.push(
-            Input::new(placeholder, pending.target_value.clone())
-                .on_input(move |value| Message::ReviewWorkflowTargetChanged { window_id, value })
-                .view(tokens),
-        );
-    }
-    let can_submit = pending.target_kind == PendingReviewTargetKind::UncommittedChanges
-        || !pending.target_value.trim().is_empty();
-    let mut submit = button(text("开始").size(10)).style(button_style(
-        tokens,
-        if can_submit {
-            ButtonKind::Primary
-        } else {
-            ButtonKind::Ghost
-        },
-    ));
-    if can_submit {
-        submit = submit.on_press(Message::SubmitReviewWorkflow(window_id));
-    }
-    form = form.push(
-        row![
-            submit,
-            button(text("取消").size(10))
-                .on_press(Message::CancelReviewWorkflow(window_id))
-                .style(button_style(tokens, ButtonKind::Text)),
-        ]
-        .spacing(6),
-    );
-    Card::new(form).view(tokens)
 }
 
 fn pending_review_target_id(kind: PendingReviewTargetKind) -> &'static str {
@@ -44011,238 +31348,6 @@ fn preferred_provider_id(provider: &DesktopProviderSnapshot) -> Option<String> {
 fn normalized_provider_draft(value: &str) -> Option<&str> {
     let value = value.trim();
     (!value.is_empty()).then_some(value)
-}
-
-fn project_clone_error_message(error: DesktopProjectCloneError) -> String {
-    match error {
-        DesktopProjectCloneError::EmptyRepository => "请输入仓库地址。".to_owned(),
-        DesktopProjectCloneError::RepositoryCredentialsUnsupported => {
-            "仓库地址不能包含账号或令牌，请使用系统凭据管理。".to_owned()
-        }
-        DesktopProjectCloneError::ParentDirectoryUnavailable(_) => {
-            "克隆位置不存在或当前不可访问。".to_owned()
-        }
-        DesktopProjectCloneError::TargetUnavailable(_) => {
-            "克隆位置中没有可用的仓库目录名。".to_owned()
-        }
-        DesktopProjectCloneError::GitUnavailable => {
-            "无法启动 Git，请确认 Git 已安装并加入 PATH。".to_owned()
-        }
-        DesktopProjectCloneError::GitProcessTreeUnavailable => {
-            "无法建立可安全取消的 Git 进程，请稍后重试。".to_owned()
-        }
-        DesktopProjectCloneError::WorkerUnavailable => {
-            "无法启动仓库克隆任务，请稍后重试。".to_owned()
-        }
-        DesktopProjectCloneError::GitFailed { .. } | DesktopProjectCloneError::GitWaitFailed => {
-            "Git 克隆失败，请检查仓库地址、网络和访问权限。".to_owned()
-        }
-        DesktopProjectCloneError::Cancelled => "克隆已取消，未创建项目。".to_owned(),
-        DesktopProjectCloneError::CleanupFailed { path, .. } => {
-            format!("克隆未完成，且无法清理 {}，请检查该目录。", path.display())
-        }
-    }
-}
-
-fn unbound_github_status() -> DesktopGitHubBindingStatus {
-    DesktopGitHubBindingStatus {
-        state: "unbound".to_owned(),
-        client_id_configured: true,
-        client_id_source: DesktopGitHubClientIdSource::Bundled,
-        binding: None,
-    }
-}
-
-fn github_error_message(error: &DesktopGitHubError) -> String {
-    match error {
-        DesktopGitHubError::ClientIdMissing => "当前版本未配置 GitHub 绑定。".to_owned(),
-        DesktopGitHubError::Request { .. }
-        | DesktopGitHubError::Http { .. }
-        | DesktopGitHubError::Response { .. } => {
-            "暂时无法连接 GitHub，请检查网络后重试。".to_owned()
-        }
-        DesktopGitHubError::Unbound => "请先绑定 GitHub。".to_owned(),
-        DesktopGitHubError::BindingExpired { .. } => "GitHub 绑定已失效，请重新绑定。".to_owned(),
-        DesktopGitHubError::InvalidDeviceCode => "GitHub 授权会话无效，请重新绑定。".to_owned(),
-        DesktopGitHubError::InvalidRepository => {
-            "请选择 GitHub 仓库，或输入 owner/repo。".to_owned()
-        }
-        DesktopGitHubError::Persistence(_) | DesktopGitHubError::Credential(_) => {
-            "无法保存 GitHub 绑定，请稍后重试。".to_owned()
-        }
-        DesktopGitHubError::Clone(error) => project_clone_error_message(error.clone()),
-    }
-}
-
-#[cfg(debug_assertions)]
-fn project_clone_outcome_key(outcome: ProjectCloneOutcome) -> &'static str {
-    match outcome {
-        ProjectCloneOutcome::Idle => "idle",
-        ProjectCloneOutcome::Running => "running",
-        ProjectCloneOutcome::Completed => "completed",
-        ProjectCloneOutcome::Cancelled => "cancelled",
-        ProjectCloneOutcome::Failed => "failed",
-    }
-}
-
-fn project_clone_phase_key(phase: &DesktopProjectClonePhase) -> &'static str {
-    match phase {
-        DesktopProjectClonePhase::Preparing => "preparing",
-        DesktopProjectClonePhase::Cloning => "cloning",
-        DesktopProjectClonePhase::Cancelling => "cancelling",
-        DesktopProjectClonePhase::Completed => "completed",
-        DesktopProjectClonePhase::Failed => "failed",
-        DesktopProjectClonePhase::Cancelled => "cancelled",
-    }
-}
-
-fn project_clone_phase_label(phase: &DesktopProjectClonePhase) -> &'static str {
-    match phase {
-        DesktopProjectClonePhase::Preparing => "正在准备克隆…",
-        DesktopProjectClonePhase::Cloning => "正在克隆仓库…",
-        DesktopProjectClonePhase::Cancelling => "正在停止并清理…",
-        DesktopProjectClonePhase::Completed => "仓库克隆完成。",
-        DesktopProjectClonePhase::Failed => "仓库克隆失败。",
-        DesktopProjectClonePhase::Cancelled => "克隆已取消。",
-    }
-}
-
-fn project_clone_detail_label(
-    phase: &DesktopProjectClonePhase,
-    detail: Option<&str>,
-) -> &'static str {
-    match detail.unwrap_or_default() {
-        detail if detail.starts_with("Enumerating objects") => "正在扫描仓库对象…",
-        detail if detail.starts_with("Counting objects") => "正在统计仓库对象…",
-        detail if detail.starts_with("Compressing objects") => "正在压缩仓库对象…",
-        detail if detail.starts_with("Receiving objects") => "正在接收仓库对象…",
-        detail if detail.starts_with("Resolving deltas") => "正在整理仓库对象…",
-        _ => project_clone_phase_label(phase),
-    }
-}
-
-fn project_clone_phase_is_terminal(phase: &DesktopProjectClonePhase) -> bool {
-    matches!(
-        phase,
-        DesktopProjectClonePhase::Completed
-            | DesktopProjectClonePhase::Failed
-            | DesktopProjectClonePhase::Cancelled
-    )
-}
-
-fn provider_operation_error_message(error: &DesktopApplicationError) -> &'static str {
-    match error {
-        DesktopApplicationError::Provider(
-            DesktopProviderError::UnknownProvider(_)
-            | DesktopProviderError::UnsupportedCredentialKind { .. },
-        ) => "当前模型服务不支持这种凭据。",
-        DesktopApplicationError::Provider(
-            DesktopProviderError::EmptySecret | DesktopProviderError::InvalidSecretEncoding,
-        ) => "API Key 无效，请检查后重试。",
-        DesktopApplicationError::Provider(DesktopProviderError::InvalidCredentialId) => {
-            "找不到要撤销的凭据，请刷新后重试。"
-        }
-        DesktopApplicationError::Provider(DesktopProviderError::Persistence(_)) => {
-            "安全存储暂时不可用，请稍后重试。"
-        }
-        DesktopApplicationError::Provider(DesktopProviderError::Runtime(_)) => {
-            "模型凭据操作失败，请检查凭据后重试。"
-        }
-        _ => "模型凭据操作失败，请稍后重试。",
-    }
-}
-
-fn provider_runtime_settings_error_message(error: &DesktopApplicationError) -> String {
-    match error {
-        DesktopApplicationError::Provider(DesktopProviderError::InvalidEndpoint {
-            field, ..
-        }) => {
-            if *field == "anthropicEndpoint" {
-                "Anthropic 端点必须是有效的 HTTP(S) 地址。".to_owned()
-            } else {
-                "OpenAI 兼容端点必须是有效的 HTTP(S) 地址。".to_owned()
-            }
-        }
-        DesktopApplicationError::Provider(DesktopProviderError::InvalidModel) => {
-            "模型 ID 不能包含空格或控制字符。".to_owned()
-        }
-        DesktopApplicationError::Provider(DesktopProviderError::SettingsRevisionConflict {
-            ..
-        }) => "模型配置已在其他窗口更新，请刷新后重试。".to_owned(),
-        DesktopApplicationError::Provider(
-            DesktopProviderError::Persistence(_)
-            | DesktopProviderError::SettingsStateUnavailable
-            | DesktopProviderError::CorruptSettings(_)
-            | DesktopProviderError::UnsupportedSettingsSchema(_),
-        ) => "无法保存模型运行配置，请稍后重试。".to_owned(),
-        _ => "模型运行配置未能应用，请稍后重试。".to_owned(),
-    }
-}
-
-fn agent_interaction_error_message(error: &DesktopApplicationError) -> String {
-    match error {
-        DesktopApplicationError::AgentInteraction(
-            DesktopAgentInteractionError::RevisionConflict { .. },
-        ) => "Agent 设置已在其他窗口更新，请刷新后重试。".to_owned(),
-        DesktopApplicationError::AgentInteraction(
-            DesktopAgentInteractionError::DuplicateAgentName(_),
-        ) => "Agent 名称不能重复。".to_owned(),
-        DesktopApplicationError::AgentInteraction(DesktopAgentInteractionError::AgentNotFound(
-            _,
-        )) => "这个 Agent 已不存在，请刷新后重试。".to_owned(),
-        DesktopApplicationError::AgentInteraction(DesktopAgentInteractionError::CatalogLimit) => {
-            "最多可以保存 64 个自定义 Agent。".to_owned()
-        }
-        DesktopApplicationError::AgentInteraction(
-            DesktopAgentInteractionError::InvalidAgent(_)
-            | DesktopAgentInteractionError::InvalidAgentId
-            | DesktopAgentInteractionError::DuplicateAgentId(_)
-            | DesktopAgentInteractionError::InvalidPromptMode
-            | DesktopAgentInteractionError::InvalidCustomPrompt,
-        ) => "请检查 Agent 名称、简介和指令后重试。".to_owned(),
-        DesktopApplicationError::AgentInteraction(
-            DesktopAgentInteractionError::StateUnavailable
-            | DesktopAgentInteractionError::RevisionOverflow
-            | DesktopAgentInteractionError::UnsupportedSchema(_)
-            | DesktopAgentInteractionError::Corrupt(_)
-            | DesktopAgentInteractionError::Persistence(_)
-            | DesktopAgentInteractionError::RuntimeApply { .. },
-        ) => "无法保存 Agent 设置，请稍后重试。".to_owned(),
-        _ => "Agent 设置未能应用，请稍后重试。".to_owned(),
-    }
-}
-
-fn settings_toggle_row(
-    title: impl Into<String>,
-    description: impl Into<String>,
-    enabled: bool,
-    message: Message,
-    tokens: ThemeTokens,
-) -> Element<'static, Message> {
-    let colors = tokens.colors;
-    row![
-        column![
-            text(title.into()).size(12).color(colors.text),
-            text(description.into()).size(10).color(colors.muted),
-        ]
-        .spacing(3)
-        .width(Length::Fill),
-        button(text(if enabled { "已开启" } else { "已关闭" }).size(11))
-            .height(Length::Fixed(ControlSize::Medium.height_in(tokens.metrics)))
-            .padding([0.0, 12.0])
-            .on_press(message)
-            .style(button_style(
-                tokens,
-                if enabled {
-                    ButtonKind::Selected
-                } else {
-                    ButtonKind::Ghost
-                },
-            )),
-    ]
-    .spacing(10)
-    .align_y(Alignment::Center)
-    .into()
 }
 
 fn update_operation_error_message(error: &DesktopApplicationError) -> String {
@@ -44526,7 +31631,7 @@ fn composer_draft_title(composer: &DesktopComposerState) -> String {
     title
 }
 
-fn turn_state_color(state: &DesktopTurnState, colors: Colors) -> iced::Color {
+fn turn_state_color(state: &DesktopTurnState, colors: Colors) -> nana_ui::Color {
     match state {
         DesktopTurnState::Completed => colors.success,
         DesktopTurnState::Cancelled | DesktopTurnState::Failed { .. } => colors.danger,
@@ -45212,19 +32317,20 @@ fn collect_workspace_split_specs(
     }
 }
 
-fn nana_pane_tree_node(node: &PaneNode) -> PaneTreeNode<PaneId, WorkspaceSplitKey> {
+fn nana_pane_tree_node(node: &PaneNode) -> PaneTreeNode {
     match node {
-        PaneNode::Leaf { id, .. } => PaneTreeNode::leaf(id.clone()),
+        PaneNode::Leaf { id, .. } => PaneTreeNode::leaf(id.as_str()),
         PaneNode::Split {
             axis,
             ratio,
             first,
             second,
         } => PaneTreeNode::split(
-            WorkspaceSplitKey {
-                first_pane_id: first_workspace_pane_id(first).clone(),
-                second_pane_id: first_workspace_pane_id(second).clone(),
-            },
+            format!(
+                "{}:{}",
+                first_workspace_pane_id(first).as_str(),
+                first_workspace_pane_id(second).as_str()
+            ),
             match axis {
                 SplitAxis::Horizontal => NanaSplitAxis::Horizontal,
                 SplitAxis::Vertical => NanaSplitAxis::Vertical,
@@ -45462,7 +32568,7 @@ mod tests {
             CHAT_COMPACT_TOOLBAR_WIDTH - 1.0,
         ));
         assert!(composer_toolbar_is_compact(
-            HostedWindowId(42),
+            WindowId(42),
             CHAT_COMPACT_TOOLBAR_WIDTH + 400.0,
         ));
     }
@@ -45610,13 +32716,18 @@ mod tests {
 
         let tree = nana_pane_tree_node(&layout.panes);
         let mut panes = Vec::new();
-        tree.visit_leaves(|pane_id| panes.push(pane_id.clone()));
-        assert_eq!(panes, vec![primary.clone(), secondary.clone()]);
+        tree.visit_leaves(|pane_id| panes.push(pane_id.to_string()));
+        assert_eq!(
+            panes,
+            vec![primary.as_str().to_owned(), secondary.as_str().to_owned()]
+        );
         let mut splits = Vec::new();
         tree.visit_splits(|key, axis, ratio| splits.push((key.clone(), axis, ratio)));
         assert_eq!(splits.len(), 1);
-        assert_eq!(splits[0].0.first_pane_id, primary);
-        assert_eq!(splits[0].0.second_pane_id, secondary);
+        assert_eq!(
+            splits[0].0.as_ref(),
+            format!("{}:{}", primary.as_str(), secondary.as_str())
+        );
         assert_eq!(splits[0].1, NanaSplitAxis::Vertical);
         assert_eq!(splits[0].2, 0.25);
     }
@@ -46343,9 +33454,9 @@ mod tests {
 
     #[test]
     fn composer_grows_with_content_and_stops_at_three_visible_lines() {
-        let one_line = HostedTextareaState::with_text("第一行");
-        let two_lines = HostedTextareaState::with_text("第一行\n第二行");
-        let four_lines = HostedTextareaState::with_text("一\n二\n三\n四");
+        let one_line = TextEditorState::with_text("第一行");
+        let two_lines = TextEditorState::with_text("第一行\n第二行");
+        let four_lines = TextEditorState::with_text("一\n二\n三\n四");
 
         assert_eq!(composer_textarea_height(&one_line), 32.0);
         assert_eq!(composer_textarea_height(&two_lines), 52.0);

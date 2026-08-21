@@ -5,7 +5,6 @@ pub const TITLEBAR_MORE: &str = "lilia.titlebar.more";
 pub const TITLEBAR_MORE_BACK_TO_TASKS: &str = "lilia.titlebar.more.back-to-tasks";
 pub const TITLEBAR_MORE_OPEN_TASK_POPUP: &str = "lilia.titlebar.more.open-task-popup";
 pub const TITLEBAR_MORE_ASK_TASK_POPUP: &str = "lilia.titlebar.more.ask-task-popup";
-pub const TITLEBAR_MORE_OPEN_TASK_BROWSER: &str = "lilia.titlebar.more.open-task-browser";
 pub const TITLEBAR_MORE_SPLIT_HORIZONTAL: &str = "lilia.titlebar.more.split-horizontal";
 pub const TITLEBAR_MORE_SPLIT_VERTICAL: &str = "lilia.titlebar.more.split-vertical";
 pub const TITLEBAR_MORE_CLOSE_CURRENT: &str = "lilia.titlebar.more.close-current";

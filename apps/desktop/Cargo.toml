@@ -19,7 +19,6 @@ arboard = "3.6.1"
 base64 = "0.22.1"
 fs2 = "0.4.3"
 libloading = "0.9.0"
-iced = { git = "https://github.com/sena-nana/iced.git", rev = "31bde4e4bac6de08f5ba581a8ea9c55ad0031e67", default-features = false, features = ["wgpu", "canvas", "image", "svg", "advanced", "smol", "thread-pool", "x11", "wayland"] }
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
 keyring = "4.1.2"
 lilia-contracts = { workspace = true }
@@ -28,7 +27,8 @@ lilia-agent-integration = { workspace = true }
 lilia-storage = { workspace = true }
 minisign-verify = "0.2.5"
 mutsuki-agent-contracts = { workspace = true }
-nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "6775c1fd133d4aca45ceacdbb5bfd4e3b1a7c73e", features = ["browser", "bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "image-viewer", "math", "overlays", "popover", "qr-code", "rich-text", "selects", "settings-components", "surfaces", "syntax-highlighting"] }
+nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "7f37780257f1ef479af81a6d654e6c2c6034aaa1", features = ["bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "image-viewer", "math", "overlays", "popover", "qr-code", "rich-text", "selects", "settings-components", "surfaces", "syntax-highlighting"] }
+nana-ui-platform = { git = "https://github.com/sena-nana/NanaUI.git", rev = "7f37780257f1ef479af81a6d654e6c2c6034aaa1", package = "nana-ui-platform" }
 rfd = "0.17.2"
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
@@ -39,12 +39,6 @@ sha2 = { workspace = true }
 uuid = { workspace = true }
 url = { workspace = true }
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
-
-# The pinned Iced runtime fixes this Web API generation as one unit. Keeping the
-# same constraint here lets the workspace resolver converge with reqwest's
-# broader web-sys range instead of selecting a newer incompatible generation.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-web-sys = "=0.3.85"
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 global-hotkey = "0.8.0"

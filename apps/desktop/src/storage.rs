@@ -9,7 +9,7 @@ use std::time::Duration;
 use lilia_desktop_application::{
     DesktopWorkspaceSessionState, MemorySettings, MemorySettingsStore, MemoryStoreError,
 };
-use nana_ui::{AppearanceSettings, HostedWindowPlacement, ThemeMode};
+use nana_ui::{AppearanceSettings, ThemeMode};
 use serde::{Deserialize, Serialize};
 
 const HOME_ENV: &str = "LILIA_HOME";
@@ -79,15 +79,11 @@ pub struct NativeWindowState {
 }
 
 impl NativeWindowState {
-    pub fn hosted_placement(self) -> HostedWindowPlacement {
-        HostedWindowPlacement::new(
-            self.x,
-            self.y,
-            self.width,
-            self.height,
-            self.scale_factor,
-            self.maximized,
-        )
+    pub fn apply_to_settings(self, mut settings: nana_ui::RuntimeWindowSettings) -> nana_ui::RuntimeWindowSettings {
+        settings.initial_position = Some((f64::from(self.x), f64::from(self.y)));
+        settings.initial_size = (f64::from(self.width), f64::from(self.height));
+        settings.maximized = self.maximized;
+        settings
     }
 }
 
@@ -1116,7 +1112,6 @@ mod tests {
         .unwrap();
 
         assert_eq!(state.scale_factor, 1.0);
-        assert_eq!(state.hosted_placement().scale_factor, 1.0);
     }
 
     #[test]

@@ -1,20 +1,15 @@
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use iced::widget::{button, column, container, row, text};
-use iced::{Alignment, Element, Length, Padding};
 use lilia_contracts::TaskId;
 use lilia_desktop_application::{
     DesktopIabSnapshotInput, DesktopIabSubmission, DesktopTurnDispatchKind,
 };
-use nana_ui::widgets::{button_style, canvas_style};
-use nana_ui::{
-    ButtonKind, ControlSize, HostedBrowserCommand, HostedBrowserEvent, HostedBrowserId,
-    HostedWindowCaptureId, HostedWindowId, Input, ThemeTokens,
-};
 use uuid::Uuid;
 
-use crate::iab_panel::{IabPanelMessage, IabPanelState};
+use crate::iab_panel::{HostedBrowserId, IabPanelMessage, IabPanelState};
+use crate::runtime_compat::{HostedWindowCaptureId, HostedWindowId};
+use nana_ui_platform::WindowId;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum IabWindowMessage {
@@ -63,10 +58,6 @@ impl IabWindowState {
         }
     }
 
-    pub fn browser_id(&self) -> HostedBrowserId {
-        self.browser.browser_id()
-    }
-
     pub fn browser_ready(&self) -> bool {
         self.browser.browser_ready()
     }
@@ -87,10 +78,10 @@ impl IabWindowState {
         self.error.as_deref().or_else(|| self.browser.error())
     }
 
-    pub fn update_browser(&mut self, message: IabPanelMessage) -> Vec<HostedBrowserCommand> {
+    pub fn update_browser(&mut self, message: IabPanelMessage) {
         self.notice = None;
         self.error = None;
-        self.browser.update(message, self.id)
+        self.browser.update(message, self.id);
     }
 
     pub fn set_note(&mut self, note: String) {
@@ -99,12 +90,8 @@ impl IabWindowState {
         self.error = None;
     }
 
-    pub fn set_visible(&mut self, visible: bool) -> Vec<HostedBrowserCommand> {
-        self.browser.set_panel_visible(visible, self.id)
-    }
-
-    pub fn handle_browser_event(&mut self, event: HostedBrowserEvent) -> bool {
-        self.browser.handle_browser_event(event)
+    pub fn set_visible(&mut self, visible: bool) {
+        self.browser.set_panel_visible(visible, self.id);
     }
 
     pub fn begin_capture(&mut self, home: &Path) -> Option<(HostedWindowCaptureId, PathBuf)> {
@@ -167,47 +154,6 @@ impl IabWindowState {
         self.notice = None;
         self.error = Some(message.into());
     }
-
-    pub fn view(&self, tokens: ThemeTokens) -> Element<'static, IabWindowMessage> {
-        let colors = tokens.colors;
-        let browser = self
-            .browser
-            .view(tokens, false)
-            .map(IabWindowMessage::Browser);
-        let note = Input::new("补充给 Agent 的备注（可选）", self.note.clone())
-            .on_input(IabWindowMessage::NoteChanged)
-            .size(ControlSize::Small)
-            .view(tokens);
-        let mut submit = button(text(if self.capture_pending() {
-            "正在提交"
-        } else {
-            "提交给 Agent"
-        }))
-        .style(button_style(tokens, ButtonKind::Primary));
-        if !self.capture_pending() && self.browser.browser_ready() {
-            submit = submit.on_press(IabWindowMessage::Submit);
-        }
-        let footer = row![note, submit]
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .width(Length::Fill);
-        let mut content = column![browser, footer]
-            .spacing(8)
-            .width(Length::Fill)
-            .height(Length::Fill);
-        if let Some(notice) = &self.notice {
-            content = content.push(text(notice.clone()).size(10).color(colors.success));
-        }
-        if let Some(error) = &self.error {
-            content = content.push(text(error.to_owned()).size(10).color(colors.danger));
-        }
-        container(content)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .padding(Padding::from([8, 8]))
-            .style(canvas_style(tokens))
-            .into()
-    }
 }
 
 fn capture_path(home: &Path, task_id: &TaskId, captured_at: u64) -> PathBuf {
@@ -259,7 +205,7 @@ mod tests {
     fn capture_completion_preserves_the_page_metadata_from_submit_time() {
         let root = Path::new("C:/lilia");
         let mut state = IabWindowState::new(
-            HostedWindowId(10),
+            WindowId(10),
             HostedBrowserId(11),
             TaskId::new("task/1").unwrap(),
             "https://example.com/",
@@ -281,7 +227,7 @@ mod tests {
     #[test]
     fn mismatched_capture_result_does_not_consume_the_pending_submission() {
         let mut state = IabWindowState::new(
-            HostedWindowId(10),
+            WindowId(10),
             HostedBrowserId(11),
             TaskId::new("task-1").unwrap(),
             "about:blank",
@@ -297,7 +243,7 @@ mod tests {
     #[test]
     fn closing_a_pending_capture_returns_the_uncommitted_attachment_path() {
         let mut state = IabWindowState::new(
-            HostedWindowId(10),
+            WindowId(10),
             HostedBrowserId(11),
             TaskId::new("task-1").unwrap(),
             "about:blank",
