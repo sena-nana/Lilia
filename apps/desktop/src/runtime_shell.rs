@@ -6,25 +6,27 @@ use nana_ui::runtime::{
     AboutMetadata, AboutSection, ActionMenu, ActionMenuItem, Activate, AlignSpec,
     AppearanceSection, AppContext, Button, CommandPalette, ConfirmDialog, ConfirmIntent,
     ConfirmSlots, ContextMenu, ContextMenuEvent, ContextMenuItem, DesktopShell, DocumentId,
-    Dropdown, DropdownOption, EmptyState, Entity, FrameworkError, GraphCanvas, IconButton,
-    InteractiveCard, KeyCaptureLayer, LengthSpec, List, NativeMarkdown, OverlayHost, PaneChrome,
-    PaneChromeAction, PaneChromeActionKind, PopoverToggled, ScrollAxes, ScrollOffset, ScrollView,
-    SettingsBack,
-    SettingsPage, SettingsSidebar, SettingsTabSelected, SidebarFooter, SidebarFooterButton,
-    SidebarFrame, SidebarRow, SidebarRowIcon, SidebarRowState, SidebarSection, SidebarSectionState,
-    ListItem, StableNodeId,
-    TabOption, Tabs, TabsEvent, Text, TextArea, TextChanged, TimeSeriesChart, TreeView,
-    TreeViewEvent, View,
+    Dropdown, DropdownOption, EmptyState, Entity, FormField, FrameworkError, GraphCanvas, IconButton,
+    HighlightRequest, ImageViewer, ImageViewerContent, ImageViewerEvent, InteractiveCard, JustifySpec, KeyCaptureLayer, LengthSpec,
+    List, NativeMarkdown, OverlayHost, PaneChrome, PaneChromeAction, PaneChromeActionKind,
+    PopoverToggled, ScrollAxes, ScrollOffset, ScrollView, SettingsBack, SettingsCard, SettingsPage,
+    SettingsRow, SettingsSidebar, SettingsTabSelected, SidebarFooter, SidebarFooterButton, SidebarFrame,
+    SidebarRow, SidebarRowIcon, SidebarRowState, SidebarSection, SidebarSectionState, ListItem,
+    StableNodeId, Switch, TabOption, Tabs, TabsEvent, Text, TextArea, TextChanged, TimeSeriesChart,
+    ToggleChanged, TreeView, TreeViewEvent, View,
 };
 use nana_ui::{
     AppearanceEvent, AppearanceSettings, ButtonKind,
     CommandPaletteEvent, CommandPaletteItem, ControlSize, DropdownEvent, Icon, SettingsModel,
-    SettingsState, SettingsTabId, ThemeMode, WindowChrome, WindowChromeAction, WindowChromeEvent,
-    WorkspaceModel,
+    SettingsState, SettingsTabId, ThemeMode, UI_METRICS, WindowChrome, WindowChromeAction,
+    WindowChromeEvent, WorkspaceModel,
 };
 
 use crate::runtime_compat::{HostedUiCommand, HostedWindowId};
-use crate::runtime_layout::{reconcile_children, HostStack};
+use crate::runtime_layout::{
+    composer_interrupt_button, composer_send_button, flatten_composer_textarea, pill_button,
+    reconcile_children, sidebar_icon_button, sidebar_text_button, HostStack,
+};
 use crate::target_ids;
 
 const PRIMARY_DOCUMENT: u64 = 1;
@@ -32,10 +34,7 @@ const SESSIONS_EMPTY_TEXT: &str = "还没有会话";
 const INBOX_EMPTY_TEXT: &str = "没有未绑定的对话";
 const PROJECTS_EMPTY_TEXT: &str = "暂无项目";
 const PLUS_SLOT_SIZE: f32 = 28.0;
-const PERMISSION_SLOT_WIDTH: f32 = 120.0;
-const PERMISSION_SLOT_HEIGHT: f32 = 28.0;
 const COMPOSER_MIN_HEIGHT: f32 = 32.0;
-const COMPOSER_LINE_HEIGHT: f32 = 20.0;
 const COMPOSER_MAX_HEIGHT: f32 = 72.0;
 const CHAT_CONTENT_MAX_WIDTH: f32 = 860.0;
 
@@ -347,6 +346,7 @@ pub struct ShellPaneItem {
     pub title: String,
     pub kind: String,
     pub selected: bool,
+    pub closable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -368,9 +368,23 @@ pub struct ShellDocumentSnapshot {
     pub item_id: String,
     pub title: String,
     pub text: String,
+    pub language: String,
     pub status: String,
     pub read_only: bool,
     pub dirty: bool,
+    pub diagnostics: Vec<ShellDiagnosticRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellDiagnosticRow {
+    pub severity: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct ShellMarkdownPreview {
+    pub title: String,
+    pub metadata: String,
 }
 
 #[derive(Debug, Clone)]
@@ -479,6 +493,7 @@ pub struct PrimaryShellSnapshot {
     pub document: Option<ShellDocumentSnapshot>,
     pub files: Option<ShellFilesSnapshot>,
     pub terminal: Option<ShellTerminalSnapshot>,
+    pub markdown_preview: Option<ShellMarkdownPreview>,
     pub inspector_title: String,
     pub inspector_body: String,
     pub inspector_todos: Vec<ShellTodoRow>,
@@ -544,6 +559,18 @@ pub enum ShellIntent {
         item_id: String,
         before: Option<String>,
     },
+    ClosePaneTab {
+        pane_id: String,
+        item_id: String,
+    },
+    TransferPaneTab {
+        source_strip: String,
+        target_strip: String,
+        item_id: String,
+        before: Option<String>,
+    },
+    CloseMarkdownPreview,
+    MarkdownImageViewerInteraction,
     IabUrlChanged(String),
     IabNavigate,
     IabOpenWindow,
@@ -712,6 +739,9 @@ pub struct ShellHandles {
     inspector_toggle: Entity<IconButton>,
     more_button: Entity<IconButton>,
     form_fields: HashMap<String, Entity<TextArea>>,
+    form_wrappers: HashMap<String, Entity<FormField>>,
+    form_switches: HashMap<String, Entity<Switch>>,
+    settings_card: Entity<SettingsCard>,
     quota_chart: Option<Entity<TimeSeriesChart>>,
     pane_bar: Entity<HostStack>,
     pane_buttons: HashMap<String, Entity<Button>>,
@@ -760,7 +790,9 @@ pub struct ShellHandles {
     product_body: Entity<Text>,
     product_error: Entity<Text>,
     project_name: Entity<TextArea>,
+    project_name_field: Entity<FormField>,
     project_workspace: Entity<Text>,
+    project_workspace_row: Entity<SettingsRow>,
     product_actions: HashMap<String, Entity<Button>>,
     provider_rows: HashMap<String, Entity<Button>>,
     heading: Entity<Text>,
@@ -772,6 +804,7 @@ pub struct ShellHandles {
     timeline_actions: HashMap<String, Entity<Button>>,
     load_earlier: Option<Entity<Button>>,
     composer: Entity<TextArea>,
+    composer_toolbar: Entity<HostStack>,
     extras: Entity<HostStack>,
     extra_buttons: HashMap<String, Entity<Button>>,
     plus_items: HashMap<String, Entity<ActionMenuItem>>,
@@ -789,8 +822,8 @@ pub struct ShellHandles {
     pending_tool_command_value: Arc<Mutex<String>>,
     pending_tool_message_value: Arc<Mutex<String>>,
     composer_actions: Entity<HostStack>,
-    send: Entity<Button>,
-    interrupt: Option<Entity<Button>>,
+    send: Entity<IconButton>,
+    interrupt: Option<Entity<IconButton>>,
     project_page: Entity<HostStack>,
     project_page_title: Entity<Text>,
     project_page_body: Entity<Text>,
@@ -807,6 +840,9 @@ pub struct ShellHandles {
     workspace_status: Entity<Text>,
     workspace_editor: Entity<TextArea>,
     workspace_input: Entity<TextArea>,
+    diagnostics_panel: Entity<HostStack>,
+    diagnostic_rows: HashMap<String, Entity<Text>>,
+    image_viewer: Option<Entity<ImageViewer>>,
     workspace_actions: Entity<HostStack>,
     workspace_buttons: HashMap<String, Entity<Button>>,
     workspace_tree: Entity<TreeView>,
@@ -870,27 +906,19 @@ fn inspector_toggle_button(open: bool) -> IconButton {
 }
 
 fn new_conversation_button() -> Button {
-    Button::new("新对话")
-        .kind(ButtonKind::Text)
-        .size(ControlSize::Medium)
+    sidebar_text_button("新对话")
 }
 
 fn sidebar_search_toggle() -> IconButton {
-    IconButton::new(Icon::Search, "搜索")
-        .size(ControlSize::Small)
-        .kind(ButtonKind::Text)
+    sidebar_icon_button(Icon::Search, "搜索")
 }
 
 fn sidebar_search_close() -> IconButton {
-    IconButton::new(Icon::Close, "关闭搜索")
-        .size(ControlSize::Small)
-        .kind(ButtonKind::Text)
+    sidebar_icon_button(Icon::Close, "关闭搜索")
 }
 
 fn sidebar_add_button() -> IconButton {
-    IconButton::new(Icon::Add, "添加项目")
-        .size(ControlSize::Small)
-        .kind(ButtonKind::Text)
+    sidebar_icon_button(Icon::Add, "添加项目")
 }
 
 fn breadcrumb_parent(text: &str) -> Text {
@@ -903,20 +931,6 @@ fn breadcrumb_separator() -> Text {
 
 fn breadcrumb_context(text: &str) -> Text {
     Text::new(text.to_owned())
-}
-
-fn send_button(enabled: bool) -> Button {
-    Button::new("发送")
-        .kind(ButtonKind::Primary)
-        .size(ControlSize::Medium)
-        .disabled(!enabled)
-}
-
-fn interrupt_button(enabled: bool) -> Button {
-    Button::new("停止")
-        .kind(ButtonKind::Danger)
-        .size(ControlSize::Medium)
-        .disabled(!enabled)
 }
 
 fn window_control(icon: Icon, label: &'static str) -> IconButton {
@@ -936,7 +950,29 @@ fn more_button() -> IconButton {
 }
 
 fn extra_button(label: &str, kind: ButtonKind) -> Button {
-    Button::new(label).kind(kind).size(ControlSize::Small)
+    pill_button(label, kind)
+}
+
+fn markdown_image_viewer(preview: &ShellMarkdownPreview) -> ImageViewer {
+    ImageViewer::new(ImageViewerContent::None)
+        .name(preview.title.clone())
+        .metadata(preview.metadata.clone())
+}
+
+fn fill_workspace_editor(value: impl Into<String>, language: Option<&str>) -> TextArea {
+    let mut editor = TextArea::new(value.into());
+    apply_workspace_editor_chrome(&mut editor, language);
+    editor
+}
+
+fn apply_workspace_editor_chrome(editor: &mut TextArea, language: Option<&str>) {
+    editor.highlight = language
+        .filter(|language| !language.is_empty())
+        .map(|language| HighlightRequest::highlight(language.to_owned()));
+    let layout = Arc::make_mut(&mut editor.style.layout);
+    layout.height = Some(LengthSpec::Fill);
+    layout.flex_grow = Some(1.0);
+    layout.min_height = Some(LengthSpec::Px(0.0));
 }
 
 fn row_menu_button() -> Button {
@@ -958,10 +994,12 @@ fn row_draft_button() -> Button {
 }
 
 fn composer_view(snapshot: &PrimaryShellSnapshot) -> TextArea {
-    TextArea::new(snapshot.composer.clone())
-        .placeholder(snapshot.composer_placeholder.clone())
-        .disabled(snapshot.composer_disabled)
-        .height(snapshot.composer_height.clamp(COMPOSER_MIN_HEIGHT, COMPOSER_MAX_HEIGHT))
+    flatten_composer_textarea(
+        TextArea::new(snapshot.composer.clone())
+            .placeholder(snapshot.composer_placeholder.clone())
+            .disabled(snapshot.composer_disabled)
+            .height(snapshot.composer_height.clamp(COMPOSER_MIN_HEIGHT, COMPOSER_MAX_HEIGHT)),
+    )
 }
 
 fn permission_dropdown(label: &str) -> Dropdown {
@@ -975,9 +1013,9 @@ fn permission_dropdown(label: &str) -> Dropdown {
     Dropdown::single(Some(selected))
         .size(ControlSize::Small)
         .options([
-            DropdownOption::new("ask", "权限：询问"),
-            DropdownOption::new("readonly", "权限：只读"),
-            DropdownOption::new("full", "权限：完全"),
+            DropdownOption::new("ask", "询问"),
+            DropdownOption::new("readonly", "只读"),
+            DropdownOption::new("full", "完全"),
         ])
 }
 
@@ -1030,11 +1068,80 @@ fn pane_tab_options(snapshot: &PrimaryShellSnapshot) -> (String, Vec<TabOption>)
         .map(|pane| {
             pane.items
                 .iter()
-                .map(|item| TabOption::new(item.id.clone(), item.title.clone()))
+                .map(|item| {
+                    TabOption::new(item.id.clone(), item.title.clone()).closable(item.closable)
+                })
                 .collect()
         })
         .unwrap_or_default();
     (selected, options)
+}
+
+fn active_pane_strip_id(snapshot: &PrimaryShellSnapshot) -> String {
+    snapshot
+        .panes
+        .iter()
+        .find(|pane| pane.active)
+        .or_else(|| snapshot.panes.first())
+        .map(|pane| format!("workspace/main/pane/{}", pane.id))
+        .unwrap_or_else(|| "workspace/main/pane/active".to_owned())
+}
+
+fn workspace_tabs_intent(event: &TabsEvent) -> ShellIntent {
+    match event {
+        TabsEvent::Select(value) => {
+            let item_id = if value.as_ref() == "conversation" {
+                None
+            } else {
+                Some(value.to_string())
+            };
+            ShellIntent::SelectPaneTab {
+                pane_id: "active".into(),
+                item_id,
+            }
+        }
+        TabsEvent::Reorder { value, before } => ShellIntent::ReorderPaneTab {
+            pane_id: "active".into(),
+            item_id: value.to_string(),
+            before: before.as_ref().map(|value| value.to_string()),
+        },
+        TabsEvent::Close(value) => ShellIntent::ClosePaneTab {
+            pane_id: "active".into(),
+            item_id: value.to_string(),
+        },
+        TabsEvent::Transfer {
+            source_strip,
+            value,
+            target_strip,
+            before,
+        } => ShellIntent::TransferPaneTab {
+            source_strip: source_strip.to_string(),
+            target_strip: target_strip.to_string(),
+            item_id: value.to_string(),
+            before: before.as_ref().map(|value| value.to_string()),
+        },
+    }
+}
+
+fn settings_field_label(id: &str) -> &'static str {
+    match id {
+        "provider_secret" => "访问密钥",
+        "provider_model" => "模型",
+        "provider_openai" => "OpenAI 端点",
+        "provider_anthropic" => "Anthropic 端点",
+        "agent_name" => "名称",
+        "agent_description" => "说明",
+        "agent_instruction" => "指令",
+        "skill_id" => "技能标识",
+        "skill_description" => "技能说明",
+        "mcp_server_id" => "MCP 标识",
+        "mcp_location" => "位置",
+        "mcp_args" => "参数",
+        "project-clone-repository" => "仓库",
+        "project-milestone-title" => "里程碑",
+        _ if id.starts_with("pending-") => "内容",
+        _ => "值",
+    }
 }
 
 fn product_action_button(label: &str, primary: bool) -> Button {
@@ -1148,7 +1255,7 @@ pub fn mount_primary_shell(
         )?;
     }
 
-    let sidebar_top = context.create_detached_component(document_id, HostStack::bar(4.0))?;
+    let sidebar_top = context.create_detached_component(document_id, HostStack::bar(6.0))?;
     let new_conversation =
         context.create_detached_component(document_id, new_conversation_button())?;
     let search_toggle = context.create_detached_component(document_id, sidebar_search_toggle())?;
@@ -1275,7 +1382,8 @@ pub fn mount_primary_shell(
     let conversation = context.create_detached_component(
         document_id,
         HostStack::fill_column(0.0)
-            .padding(16.0)
+            .padding_xy(24.0, 20.0)
+            .radius(UI_METRICS.radius_lg)
             .align(AlignSpec::Center),
     )?;
     let conversation_column = context.create_detached_component(
@@ -1298,7 +1406,8 @@ pub fn mount_primary_shell(
     context.append_child(conversation_body, empty_hint)?;
     context.append_child(conversation_body, error)?;
     context.append_child(conversation_body, timeline_scroll)?;
-    let composer_dock = context.create_detached_component(document_id, HostStack::column(8.0))?;
+    let composer_dock =
+        context.create_detached_component(document_id, HostStack::composer_card())?;
     let composer = context.create_detached_component(document_id, composer_view(snapshot))?;
     let composer_sink = Arc::clone(&sink);
     context.on(composer, move |_, event: &TextChanged, _| {
@@ -1307,7 +1416,7 @@ pub fn mount_primary_shell(
             ShellIntent::ComposerChanged(event.value.clone()),
         );
     })?;
-    let extras = context.create_detached_component(document_id, HostStack::bar(8.0))?;
+    let extras = context.create_detached_component(document_id, HostStack::fill_row(6.0))?;
     let plus_slot = context.create_detached_component(
         document_id,
         HostStack::trigger_slot(PLUS_SLOT_SIZE, PLUS_SLOT_SIZE),
@@ -1320,10 +1429,8 @@ pub fn mount_primary_shell(
         let sink = Arc::clone(&sink);
         move |_, _: &PopoverToggled, _| emit(&sink, ShellIntent::ToggleComposerPlus)
     })?;
-    let permission_slot = context.create_detached_component(
-        document_id,
-        HostStack::trigger_slot(PERMISSION_SLOT_WIDTH, PERMISSION_SLOT_HEIGHT),
-    )?;
+    let permission_slot =
+        context.create_detached_component(document_id, HostStack::leading_row(0.0))?;
     let permission = context.create_detached_component(
         document_id,
         permission_dropdown(&snapshot.permission_label),
@@ -1431,14 +1538,17 @@ pub fn mount_primary_shell(
     })?;
     context.append_child(pending_panel, pending_title)?;
     context.append_child(pending_panel, pending_prompt)?;
-    let actions = context.create_detached_component(document_id, HostStack::bar(8.0))?;
-    let send = context.create_detached_component(document_id, send_button(snapshot.can_send))?;
+    let actions = context.create_detached_component(document_id, HostStack::row(6.0))?;
+    let send = context.create_detached_component(document_id, composer_send_button(snapshot.can_send))?;
     bind_activate(context, send, Arc::clone(&sink), ShellIntent::SubmitTurn)?;
     context.append_child(actions, send)?;
+    let composer_toolbar =
+        context.create_detached_component(document_id, HostStack::bar(8.0).justify(JustifySpec::SpaceBetween))?;
+    context.append_child(composer_toolbar, extras)?;
+    context.append_child(composer_toolbar, actions)?;
     context.append_child(composer_dock, pending_panel)?;
     context.append_child(composer_dock, composer)?;
-    context.append_child(composer_dock, extras)?;
-    context.append_child(composer_dock, actions)?;
+    context.append_child(composer_dock, composer_toolbar)?;
     context.append_child(conversation_column, conversation_body)?;
     context.append_child(conversation_column, composer_dock)?;
     context.append_child(conversation, conversation_column)?;
@@ -1474,6 +1584,8 @@ pub fn mount_primary_shell(
     )?;
     let product_settings = context
         .create_detached_component(document_id, HostStack::fill_column(10.0).padding(4.0))?;
+    let settings_card =
+        context.create_detached_component(document_id, SettingsCard::new(String::new()))?;
     let product_heading = context.create_detached_component(document_id, Text::new(String::new()))?;
     let product_body = context.create_detached_component(document_id, Text::new(String::new()))?;
     let product_error = context.create_detached_component(document_id, Text::new(String::new()))?;
@@ -1490,15 +1602,26 @@ pub fn mount_primary_shell(
             ShellIntent::ProjectNameChanged(event.value.clone()),
         );
     })?;
+    let project_name_field = context.create_detached_component(
+        document_id,
+        FormField::new("项目名称").control_child(project_name.stable_id()),
+    )?;
+    context.append_child(project_name_field, project_name)?;
     let project_workspace = context.create_detached_component(
         document_id,
         Text::new(snapshot.settings.project_workspace.clone()),
     )?;
+    let project_workspace_row = context.create_detached_component(
+        document_id,
+        SettingsRow::new("工作区")
+            .stacked(true)
+            .control_child(project_workspace.stable_id()),
+    )?;
+    context.append_child(project_workspace_row, project_workspace)?;
     context.append_child(product_settings, product_heading)?;
     context.append_child(product_settings, product_body)?;
     context.append_child(product_settings, product_error)?;
-    context.append_child(product_settings, project_name)?;
-    context.append_child(product_settings, project_workspace)?;
+    context.append_child(product_settings, settings_card)?;
     let settings_page = context.create_detached_component(
         document_id,
         SettingsPage::new(snapshot.settings.model.clone(), snapshot.settings.state.clone())
@@ -1513,38 +1636,12 @@ pub fn mount_primary_shell(
         document_id,
         Tabs::new(pane_selected)
             .options(pane_options)
-            .strip_id("workspace")
+            .strip_id(active_pane_strip_id(snapshot))
             .fill(true),
     )?;
     let pane_sink = Arc::clone(&sink);
     context.on(pane_tabs, move |_, event: &TabsEvent, _| {
-        match event {
-            TabsEvent::Select(value) => {
-                let item_id = if value.as_ref() == "conversation" {
-                    None
-                } else {
-                    Some(value.to_string())
-                };
-                emit(
-                    &pane_sink,
-                    ShellIntent::SelectPaneTab {
-                        pane_id: "active".into(),
-                        item_id,
-                    },
-                );
-            }
-            TabsEvent::Reorder { value, before } => {
-                emit(
-                    &pane_sink,
-                    ShellIntent::ReorderPaneTab {
-                        pane_id: "active".into(),
-                        item_id: value.to_string(),
-                        before: before.as_ref().map(|value| value.to_string()),
-                    },
-                );
-            }
-            TabsEvent::Transfer { .. } | TabsEvent::Close(_) => {}
-        }
+        emit(&pane_sink, workspace_tabs_intent(event));
     })?;
     let pane_split_h = context.create_detached_component(
         document_id,
@@ -1586,10 +1683,6 @@ pub fn mount_primary_shell(
         Arc::clone(&sink),
         ShellIntent::MovePaneToNext,
     )?;
-    context.append_child(pane_header, pane_split_h)?;
-    context.append_child(pane_header, pane_split_v)?;
-    context.append_child(pane_header, pane_move_window)?;
-    context.append_child(pane_header, pane_move_next)?;
     let pane_body =
         context.create_detached_component(document_id, HostStack::fill_column(0.0))?;
     let pane_chrome = context.create_detached_component(
@@ -1620,10 +1713,8 @@ pub fn mount_primary_shell(
     let workspace_heading =
         context.create_detached_component(document_id, Text::new(String::new()))?;
     let workspace_status = context.create_detached_component(document_id, Text::new(String::new()))?;
-    let workspace_editor = context.create_detached_component(
-        document_id,
-        TextArea::new(String::new()).height(420.0),
-    )?;
+    let workspace_editor =
+        context.create_detached_component(document_id, fill_workspace_editor(String::new(), None))?;
     let workspace_editor_sink = Arc::clone(&sink);
     context.on(workspace_editor, move |_, event: &TextChanged, _| {
         emit(
@@ -1693,6 +1784,8 @@ pub fn mount_primary_shell(
     context.append_child(inspector, iab_url)?;
     context.append_child(inspector, iab_navigate)?;
     context.append_child(inspector, iab_open)?;
+    let diagnostics_panel =
+        context.create_detached_component(document_id, HostStack::column(4.0).padding(8.0))?;
     let coding_panel =
         context.create_detached_component(document_id, HostStack::fill_column(8.0))?;
     let coding_query = context.create_detached_component(
@@ -1858,6 +1951,9 @@ pub fn mount_primary_shell(
         inspector_toggle,
         more_button: more,
         form_fields: HashMap::new(),
+        form_wrappers: HashMap::new(),
+        form_switches: HashMap::new(),
+        settings_card,
         quota_chart: None,
         pane_bar,
         pane_buttons: HashMap::new(),
@@ -1906,7 +2002,9 @@ pub fn mount_primary_shell(
         product_body,
         product_error,
         project_name,
+        project_name_field,
         project_workspace,
+        project_workspace_row,
         product_actions: HashMap::new(),
         provider_rows: HashMap::new(),
         heading,
@@ -1918,6 +2016,7 @@ pub fn mount_primary_shell(
         timeline_actions: HashMap::new(),
         load_earlier: None,
         composer,
+        composer_toolbar,
         extras,
         extra_buttons: HashMap::new(),
         plus_items: HashMap::new(),
@@ -1953,6 +2052,9 @@ pub fn mount_primary_shell(
         workspace_status,
         workspace_editor,
         workspace_input,
+        diagnostics_panel,
+        diagnostic_rows: HashMap::new(),
+        image_viewer: None,
         workspace_actions,
         workspace_buttons: HashMap::new(),
         workspace_tree,
@@ -2130,6 +2232,7 @@ impl ShellHandles {
         self.sync_composer_stage(context, document_id, snapshot)?;
         self.sync_project_page(context, document_id, snapshot)?;
         self.sync_inspector_details(context, document_id, snapshot)?;
+        self.sync_diagnostics(context, document_id, snapshot)?;
         self.sync_overlay(context, document_id, snapshot)?;
         let navigation = if snapshot.settings_open {
             self.settings_sidebar.stable_id()
@@ -2158,6 +2261,15 @@ impl ShellHandles {
                 None
             } else {
                 Some(self.inspector.stable_id())
+            };
+            shell.bottom = if snapshot
+                .document
+                .as_ref()
+                .is_some_and(|document| !document.diagnostics.is_empty())
+            {
+                Some(self.diagnostics_panel.stable_id())
+            } else {
+                None
             };
         })?;
         context.assemble_desktop_shell(self.shell)?;
@@ -2533,12 +2645,12 @@ impl ShellHandles {
         if snapshot.can_interrupt && !snapshot.can_send {
             let interrupt = if let Some(interrupt) = self.interrupt {
                 context.update_component(interrupt, |button, _| {
-                    *button = interrupt_button(true);
+                    *button = composer_interrupt_button(true);
                 })?;
                 interrupt
             } else {
                 let interrupt =
-                    context.create_detached_component(document_id, interrupt_button(true))?;
+                    context.create_detached_component(document_id, composer_interrupt_button(true))?;
                 bind_activate(
                     context,
                     interrupt,
@@ -2556,7 +2668,7 @@ impl ShellHandles {
             order.push(self.send.stable_id());
         }
         context.update_component(self.send, |button, _| {
-            button.disabled = !snapshot.can_send || snapshot.pending_blocks_send;
+            *button = composer_send_button(snapshot.can_send && !snapshot.pending_blocks_send);
         })?;
         reconcile_children(context, self.composer_actions.stable_id(), &order)
     }
@@ -2627,9 +2739,16 @@ impl ShellHandles {
             stage.push(self.pending_panel.stable_id());
         }
         stage.push(self.composer.stable_id());
-        stage.push(self.extras.stable_id());
-        stage.push(self.composer_actions.stable_id());
-        reconcile_children(context, dock, &stage)
+        stage.push(self.composer_toolbar.stable_id());
+        reconcile_children(context, dock, &stage)?;
+        reconcile_children(
+            context,
+            self.composer_toolbar.stable_id(),
+            &[
+                self.extras.stable_id(),
+                self.composer_actions.stable_id(),
+            ],
+        )
     }
 
     fn sync_pending_panel(
@@ -3125,6 +3244,9 @@ impl ShellHandles {
         for key in stale_fields {
             if let Some(field) = self.form_fields.remove(&key) {
                 let _ = context.remove_view(field);
+            }
+            if let Some(wrapper) = self.form_wrappers.remove(&key) {
+                let _ = context.remove_view(wrapper);
             }
         }
         reconcile_children(context, self.pending_panel.stable_id(), &order)
@@ -3869,7 +3991,7 @@ impl ShellHandles {
         let tab = snapshot.settings.state.active_tab().as_str();
         let (heading, body, error, show_project, actions) = settings_tab_copy(&snapshot.settings);
         context.update_component(self.product_heading, |text, _| {
-            *text = Text::new(heading);
+            *text = Text::new(heading.clone());
         })?;
         context.update_component(self.product_body, |text, _| {
             *text = Text::new(body);
@@ -3906,20 +4028,16 @@ impl ShellHandles {
         context.assemble_settings_page(self.settings_page)?;
 
         let mut keep = HashSet::new();
-        let mut order = vec![
-            self.product_heading.stable_id(),
-            self.product_body.stable_id(),
-            self.product_error.stable_id(),
-        ];
+        let mut card_order = Vec::new();
         if show_project {
-            order.push(self.project_name.stable_id());
-            order.push(self.project_workspace.stable_id());
+            card_order.push(self.project_name_field.stable_id());
+            card_order.push(self.project_workspace_row.stable_id());
         }
         if tab == "desktop" {
             context.update_component(self.shortcut_capture, |layer, _| {
                 layer.set_recording(snapshot.settings.shortcut_capturing);
             })?;
-            order.push(self.shortcut_capture.stable_id());
+            card_order.push(self.shortcut_capture.stable_id());
         }
         for action in actions {
             keep.insert(action.id.clone());
@@ -3937,7 +4055,7 @@ impl ShellHandles {
                 self.product_actions.insert(action.id.clone(), button);
                 button
             };
-            order.push(button.stable_id());
+            card_order.push(button.stable_id());
         }
         if tab == "provider" {
             for provider in &snapshot.settings.providers {
@@ -3973,15 +4091,16 @@ impl ShellHandles {
                     self.provider_rows.insert(provider.id.clone(), button);
                     button
                 };
-                order.push(button.stable_id());
+                card_order.push(button.stable_id());
             }
         }
-        self.append_settings_forms(context, document_id, snapshot, &mut keep, &mut order)?;
+        self.append_settings_forms(context, document_id, snapshot, &mut keep, &mut card_order)?;
         let stale: Vec<_> = self
             .product_actions
             .keys()
             .chain(self.provider_rows.keys())
             .chain(self.form_fields.keys())
+            .chain(self.form_switches.keys())
             .filter(|key| {
                 !keep.contains(*key)
                     && !key.starts_with("project-")
@@ -3999,8 +4118,27 @@ impl ShellHandles {
             if let Some(field) = self.form_fields.remove(&key) {
                 let _ = context.remove_view(field);
             }
+            if let Some(wrapper) = self.form_wrappers.remove(&key) {
+                let _ = context.remove_view(wrapper);
+            }
+            if let Some(toggle) = self.form_switches.remove(&key) {
+                let _ = context.remove_view(toggle);
+            }
         }
-        reconcile_children(context, self.product_settings.stable_id(), &order)
+        context.update_component(self.settings_card, |card, _| {
+            *card = SettingsCard::new(heading);
+        })?;
+        reconcile_children(context, self.settings_card.stable_id(), &card_order)?;
+        reconcile_children(
+            context,
+            self.product_settings.stable_id(),
+            &[
+                self.product_heading.stable_id(),
+                self.product_body.stable_id(),
+                self.product_error.stable_id(),
+                self.settings_card.stable_id(),
+            ],
+        )
     }
 
     fn append_settings_forms(
@@ -4287,6 +4425,28 @@ impl ShellHandles {
                     )?;
                 }
             }
+            "remote" => {
+                self.upsert_switch(
+                    context,
+                    document_id,
+                    keep,
+                    order,
+                    "remote_host",
+                    "远程主机",
+                    settings.remote_host_enabled,
+                    ShellIntent::ToggleRemoteHost,
+                )?;
+                self.upsert_switch(
+                    context,
+                    document_id,
+                    keep,
+                    order,
+                    "remote_keep_awake",
+                    "保持唤醒",
+                    settings.remote_keep_awake,
+                    ShellIntent::ToggleRemoteKeepAwake,
+                )?;
+            }
             _ => {}
         }
         Ok(())
@@ -4303,7 +4463,8 @@ impl ShellHandles {
         intent: impl Fn(String) -> ShellIntent + Send + Sync + 'static,
     ) -> Result<(), FrameworkError> {
         keep.insert(id.to_owned());
-        let field = if let Some(field) = self.form_fields.get(id).copied() {
+        let label = settings_field_label(id);
+        let editor = if let Some(field) = self.form_fields.get(id).copied() {
             context.update_component(field, |editor, _| {
                 if editor.state.value != value {
                     editor.state.replace_value(value.to_owned());
@@ -4311,8 +4472,10 @@ impl ShellHandles {
             })?;
             field
         } else {
-            let field = context
-                .create_detached_component(document_id, TextArea::new(value.to_owned()).height(40.0))?;
+            let field = context.create_detached_component(
+                document_id,
+                TextArea::new(value.to_owned()).height(40.0),
+            )?;
             let sink = Arc::clone(&self.sink);
             context.on(field, move |_, event: &TextChanged, _| {
                 emit(&sink, intent(event.value.clone()));
@@ -4320,7 +4483,52 @@ impl ShellHandles {
             self.form_fields.insert(id.to_owned(), field);
             field
         };
-        order.push(field.stable_id());
+        let wrapper = if let Some(wrapper) = self.form_wrappers.get(id).copied() {
+            context.update_component(wrapper, |field, _| {
+                *field = FormField::new(label).control_child(editor.stable_id());
+            })?;
+            wrapper
+        } else {
+            let wrapper = context.create_detached_component(
+                document_id,
+                FormField::new(label).control_child(editor.stable_id()),
+            )?;
+            context.append_child(wrapper, editor)?;
+            self.form_wrappers.insert(id.to_owned(), wrapper);
+            wrapper
+        };
+        order.push(wrapper.stable_id());
+        Ok(())
+    }
+
+    fn upsert_switch(
+        &mut self,
+        context: &mut AppContext,
+        document_id: DocumentId,
+        keep: &mut HashSet<String>,
+        order: &mut Vec<StableNodeId>,
+        id: &str,
+        label: &str,
+        checked: bool,
+        intent: ShellIntent,
+    ) -> Result<(), FrameworkError> {
+        keep.insert(id.to_owned());
+        let toggle = if let Some(toggle) = self.form_switches.get(id).copied() {
+            context.update_component(toggle, |view, _| {
+                *view = Switch::new(label, checked);
+            })?;
+            toggle
+        } else {
+            let toggle =
+                context.create_detached_component(document_id, Switch::new(label, checked))?;
+            let sink = Arc::clone(&self.sink);
+            context.on(toggle, move |_, _event: &ToggleChanged, _| {
+                emit(&sink, intent.clone());
+            })?;
+            self.form_switches.insert(id.to_owned(), toggle);
+            toggle
+        };
+        order.push(toggle.stable_id());
         Ok(())
     }
 
@@ -4330,12 +4538,13 @@ impl ShellHandles {
         document_id: DocumentId,
         snapshot: &PrimaryShellSnapshot,
     ) -> Result<(), FrameworkError> {
-        let (title, status, editor, disabled) = if let Some(document) = &snapshot.document {
+        let (title, status, editor, disabled, language) = if let Some(document) = &snapshot.document {
             (
                 document.title.clone(),
                 document.status.clone(),
                 document.text.clone(),
                 document.read_only,
+                Some(document.language.as_str()),
             )
         } else if let Some(terminal) = &snapshot.terminal {
             (
@@ -4343,6 +4552,7 @@ impl ShellHandles {
                 terminal.notice.clone().unwrap_or_default(),
                 terminal.output.clone(),
                 true,
+                None,
             )
         } else if let Some(files) = &snapshot.files {
             (
@@ -4350,9 +4560,10 @@ impl ShellHandles {
                 files.preview.clone().unwrap_or_default(),
                 String::new(),
                 true,
+                None,
             )
         } else {
-            (String::new(), String::new(), String::new(), true)
+            (String::new(), String::new(), String::new(), true, None)
         };
         context.update_component(self.workspace_heading, |text, _| {
             *text = Text::new(title);
@@ -4365,6 +4576,7 @@ impl ShellHandles {
                 editor_view.state.replace_value(editor);
             }
             editor_view.disabled = disabled;
+            apply_workspace_editor_chrome(editor_view, language);
         })?;
         let terminal_input = snapshot
             .terminal
@@ -4497,7 +4709,7 @@ impl ShellHandles {
         context.update_component(self.pane_tabs, |tabs, _| {
             *tabs = Tabs::new(pane_selected)
                 .options(pane_options)
-                .strip_id("workspace")
+                .strip_id(active_pane_strip_id(snapshot))
                 .fill(true);
         })?;
         let mut keep = HashSet::new();
@@ -4965,10 +5177,81 @@ impl ShellHandles {
             let _ = context.remove_view(menu);
         }
 
+        if let Some(preview) = &snapshot.markdown_preview {
+            let viewer = if let Some(viewer) = self.image_viewer {
+                context.update_component(viewer, |view, _| {
+                    *view = markdown_image_viewer(preview);
+                })?;
+                viewer
+            } else {
+                let viewer = context
+                    .create_detached_component(document_id, markdown_image_viewer(preview))?;
+                let sink = Arc::clone(&self.sink);
+                context.on(viewer, move |_, event: &ImageViewerEvent, _| match event {
+                    ImageViewerEvent::Close | ImageViewerEvent::Outside => {
+                        emit(&sink, ShellIntent::CloseMarkdownPreview);
+                    }
+                    ImageViewerEvent::Interaction => {
+                        emit(&sink, ShellIntent::MarkdownImageViewerInteraction);
+                    }
+                })?;
+                context.append_child(host, viewer)?;
+                self.image_viewer = Some(viewer);
+                viewer
+            };
+            overlays.push(viewer.stable_id());
+            context.activate_overlay(host, viewer)?;
+        } else if let Some(viewer) = self.image_viewer.take() {
+            let _ = context.remove_view(viewer);
+        }
+
         context.update_component(self.shell, |shell, _| {
             shell.overlays = overlays;
         })?;
         Ok(())
+    }
+
+    fn sync_diagnostics(
+        &mut self,
+        context: &mut AppContext,
+        document_id: DocumentId,
+        snapshot: &PrimaryShellSnapshot,
+    ) -> Result<(), FrameworkError> {
+        let diagnostics = snapshot
+            .document
+            .as_ref()
+            .map(|document| document.diagnostics.as_slice())
+            .unwrap_or(&[]);
+        let mut keep = HashSet::new();
+        let mut order = Vec::new();
+        for (index, diagnostic) in diagnostics.iter().enumerate() {
+            let id = format!("{index}");
+            keep.insert(id.clone());
+            let label = format!("{}  {}", diagnostic.severity, diagnostic.message);
+            let row = if let Some(row) = self.diagnostic_rows.get(&id).copied() {
+                context.update_component(row, |text, _| {
+                    *text = Text::new(label);
+                })?;
+                row
+            } else {
+                let row = context.create_detached_component(document_id, Text::new(label))?;
+                self.diagnostic_rows.insert(id, row);
+                row
+            };
+            order.push(row.stable_id());
+        }
+        let stale: Vec<_> = self
+            .diagnostic_rows
+            .keys()
+            .filter(|key| !keep.contains(*key))
+            .cloned()
+            .collect();
+        for key in stale {
+            if let Some(row) = self.diagnostic_rows.remove(&key) {
+                let _ = context.remove_view(row);
+            }
+        }
+        reconcile_children(context, self.diagnostics_panel.stable_id(), &order)
     }
 }
 
@@ -5346,30 +5629,7 @@ fn settings_tab_copy(settings: &SettingsSnapshot) -> (String, String, Option<Str
             settings.remote_status.clone(),
             None,
             false,
-            vec![
-                SettingsAction {
-                    id: "toggle-remote-host".into(),
-                    label: if settings.remote_host_enabled {
-                        "关闭远程主机"
-                    } else {
-                        "开启远程主机"
-                    }
-                    .into(),
-                    primary: true,
-                    intent: ShellIntent::ToggleRemoteHost,
-                },
-                SettingsAction {
-                    id: "toggle-keep-awake".into(),
-                    label: if settings.remote_keep_awake {
-                        "关闭保持唤醒"
-                    } else {
-                        "保持唤醒"
-                    }
-                    .into(),
-                    primary: false,
-                    intent: ShellIntent::ToggleRemoteKeepAwake,
-                },
-            ],
+            Vec::new(),
         ),
         "desktop" => (
             "桌面".to_owned(),
@@ -5586,6 +5846,7 @@ mod tests {
             document: None,
             files: None,
             terminal: None,
+            markdown_preview: None,
             inspector_title: String::new(),
             inspector_body: String::new(),
             inspector_todos: Vec::new(),
@@ -5688,13 +5949,12 @@ mod tests {
             Some(nana_ui::runtime::LengthSpec::Px(0.0))
         );
 
-        let composer = handles.composer.stable_id();
         let extras = handles.extras.stable_id();
-        let actions = handles.send.stable_id();
+        let send = handles.send.stable_id();
         let dock = document
             .context()
             .world()
-            .node(composer)
+            .node(handles.composer.stable_id())
             .and_then(|node| node.parent)
             .expect("composer dock");
         assert_eq!(
@@ -5703,15 +5963,22 @@ mod tests {
                 .world()
                 .node(extras)
                 .and_then(|node| node.parent),
-            Some(dock)
+            Some(handles.composer_toolbar.stable_id())
         );
         assert_eq!(
             document
                 .context()
                 .world()
-                .node(actions)
-                .and_then(|node| node.parent)
-                .and_then(|parent| document.context().world().node(parent)?.parent),
+                .node(send)
+                .and_then(|node| node.parent),
+            Some(handles.composer_actions.stable_id())
+        );
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .node(handles.composer_toolbar.stable_id())
+                .and_then(|node| node.parent),
             Some(dock)
         );
         let dock_layout = &document
@@ -5722,6 +5989,16 @@ mod tests {
             .layout;
         assert_eq!(dock_layout.flex_grow, Some(0.0));
         assert_eq!(dock_layout.height, Some(nana_ui::runtime::LengthSpec::Shrink));
+        assert_eq!(dock_layout.border_radius, Some(nana_ui::UI_METRICS.radius_md));
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .node_style(dock)
+                .expect("composer dock style")
+                .background,
+            Some(nana_ui::runtime::SemanticColorRole::Surface)
+        );
         assert_eq!(
             document
                 .context()
@@ -5747,15 +6024,18 @@ mod tests {
             item_id: "doc-1".to_owned(),
             title: "notes.md".to_owned(),
             text: String::new(),
+            language: "markdown".to_owned(),
             status: String::new(),
             read_only: false,
             dirty: false,
+            diagnostics: Vec::new(),
         });
         snapshot.panes[0].items.push(ShellPaneItem {
             id: "doc-1".to_owned(),
             title: "notes.md".to_owned(),
             kind: "document-editor".to_owned(),
             selected: true,
+            closable: true,
         });
         let (_document, handles, primary) = mounted_primary(&snapshot);
         assert_eq!(primary, Some(handles.workspace_page.stable_id()));
@@ -5773,6 +6053,7 @@ mod tests {
             title: "文件".to_owned(),
             kind: "project-files".to_owned(),
             selected: true,
+            closable: true,
         });
         let (_document, handles, primary) = mounted_primary(&snapshot);
         assert_eq!(primary, Some(handles.workspace_page.stable_id()));
@@ -5791,6 +6072,7 @@ mod tests {
             title: "终端".to_owned(),
             kind: "terminal".to_owned(),
             selected: true,
+            closable: true,
         });
         let (_document, handles, primary) = mounted_primary(&snapshot);
         assert_eq!(primary, Some(handles.workspace_page.stable_id()));
@@ -5807,6 +6089,7 @@ mod tests {
                 title: "会话".to_owned(),
                 kind: "task".to_owned(),
                 selected: true,
+                closable: true,
             }],
         }];
         let (_document, handles, primary) = mounted_primary(&snapshot);
@@ -5820,9 +6103,11 @@ mod tests {
             item_id: "item-1".to_owned(),
             title: "main.rs".to_owned(),
             text: String::new(),
+            language: "rust".to_owned(),
             status: String::new(),
             read_only: false,
             dirty: false,
+            diagnostics: Vec::new(),
         });
         snapshot.panes = vec![ShellPaneRow {
             id: "primary".to_owned(),
@@ -5832,6 +6117,7 @@ mod tests {
                 title: "main.rs".to_owned(),
                 kind: "document-editor".to_owned(),
                 selected: true,
+                closable: true,
             }],
         }];
         let (_document, handles, primary) = mounted_primary(&snapshot);
@@ -6086,5 +6372,120 @@ mod tests {
                 handles.inbox_section.stable_id(),
             ]
         );
+    }
+
+    #[test]
+    fn workspace_tabs_close_and_transfer_emit_intents() {
+        assert!(matches!(
+            workspace_tabs_intent(&TabsEvent::Close(Arc::from("doc-1"))),
+            ShellIntent::ClosePaneTab { item_id, .. } if item_id == "doc-1"
+        ));
+        assert!(matches!(
+            workspace_tabs_intent(&TabsEvent::Transfer {
+                source_strip: Arc::from("workspace/main/pane/a"),
+                value: Arc::from("doc-1"),
+                target_strip: Arc::from("workspace/main/pane/b"),
+                before: None,
+            }),
+            ShellIntent::TransferPaneTab { item_id, .. } if item_id == "doc-1"
+        ));
+    }
+
+    #[test]
+    fn document_editor_requests_syntax_highlight() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.document = Some(ShellDocumentSnapshot {
+            item_id: "doc-1".to_owned(),
+            title: "main.rs".to_owned(),
+            text: "fn main() {}".to_owned(),
+            language: "rust".to_owned(),
+            status: String::new(),
+            read_only: false,
+            dirty: false,
+            diagnostics: Vec::new(),
+        });
+        snapshot.panes[0].items.push(ShellPaneItem {
+            id: "doc-1".to_owned(),
+            title: "main.rs".to_owned(),
+            kind: "document-editor".to_owned(),
+            selected: true,
+            closable: true,
+        });
+        let (mut document, handles, _) = mounted_primary(&snapshot);
+        let language = document
+            .context_mut()
+            .read(handles.workspace_editor, |editor| {
+                editor
+                    .highlight
+                    .as_ref()
+                    .map(|request| request.language.to_string())
+            })
+            .expect("read editor");
+        assert_eq!(language.as_deref(), Some("rust"));
+    }
+
+    #[test]
+    fn diagnostics_attach_bottom_slot() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.document = Some(ShellDocumentSnapshot {
+            item_id: "doc-1".to_owned(),
+            title: "main.rs".to_owned(),
+            text: String::new(),
+            language: "rust".to_owned(),
+            status: String::new(),
+            read_only: false,
+            dirty: false,
+            diagnostics: vec![ShellDiagnosticRow {
+                severity: "错误".to_owned(),
+                message: "unused".to_owned(),
+            }],
+        });
+        snapshot.panes[0].items.push(ShellPaneItem {
+            id: "doc-1".to_owned(),
+            title: "main.rs".to_owned(),
+            kind: "document-editor".to_owned(),
+            selected: true,
+            closable: true,
+        });
+        let (mut document, handles, _) = mounted_primary(&snapshot);
+        let bottom = document
+            .context_mut()
+            .read(handles.shell, |shell| shell.bottom)
+            .expect("read bottom");
+        assert_eq!(bottom, Some(handles.diagnostics_panel.stable_id()));
+    }
+
+    #[test]
+    fn provider_settings_use_form_fields() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.settings_open = true;
+        let model = SettingsModel::new(
+            "provider",
+            [nana_ui::SettingsTab::new("provider", "模型服务")],
+        )
+        .expect("settings model");
+        snapshot.settings.state = SettingsState::new(&model);
+        snapshot.settings.model = model;
+        snapshot.settings.provider_secret = "secret".to_owned();
+        let (_document, handles, _) = mounted_primary(&snapshot);
+        assert!(handles.form_wrappers.contains_key("provider_secret"));
+        assert!(handles.form_switches.is_empty());
+    }
+
+    #[test]
+    fn remote_settings_use_switches() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.settings_open = true;
+        let model = SettingsModel::new(
+            "remote",
+            [nana_ui::SettingsTab::new("remote", "远程控制")],
+        )
+        .expect("settings model");
+        snapshot.settings.state = SettingsState::new(&model);
+        snapshot.settings.model = model;
+        snapshot.settings.remote_host_enabled = true;
+        let (_document, handles, _) = mounted_primary(&snapshot);
+        assert!(handles.form_switches.contains_key("remote_host"));
+        assert!(handles.form_switches.contains_key("remote_keep_awake"));
     }
 }

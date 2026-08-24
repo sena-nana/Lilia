@@ -31,7 +31,7 @@ use lilia_desktop_application::{
     DesktopCredentialStatus, DesktopCredentialView, DesktopCustomSubagentCatalog,
     DesktopCustomSubagentUpsert, DesktopDataImportService, DesktopDocumentDefinitionResult,
     DesktopDocumentDefinitionTarget, DesktopDocumentDiagnosticsSnapshot, DesktopEvent,
-    DesktopEventKind, DesktopExecutionPermission, DesktopExtensionsSnapshot,
+    DesktopEventKind, DesktopExecutionPermission, DesktopExtensionsSnapshot, DiagnosticSeverity,
     DesktopFileDialogRequest, DesktopGitDiff, DesktopGitDiffScope, DesktopGitFileStatus,
     DesktopGitHubBindingStatus, DesktopGitHubClientIdSource, DesktopGitHubDeviceFlowPollResult,
     DesktopGitHubDeviceFlowStart, DesktopGitHubError, DesktopGitHubRepoPage,
@@ -74,7 +74,7 @@ use lilia_desktop_application::{
 use nana_ui::runtime::RuntimeDocument;
 use nana_ui::{
     window_material_effect, ActionDescriptor, ActionId, ActionPickerState, ActionRegistry,
-    AppearanceEvent, AppearanceSettings, ButtonKind, Colors, CommandPaletteEvent,
+    AppearanceEvent, AppearanceSettings, Colors, CommandPaletteEvent,
     CommandPaletteItem, ContextPredicate, DropdownEvent, DropdownOption,
     GraphCanvasEvent, GraphEdge as CanvasGraphEdge, GraphEndpoint, GraphModel,
     GraphNode as CanvasGraphNode, GraphPoint, GraphPort, GraphPortKind, GraphPortSide,
@@ -2444,6 +2444,32 @@ impl DesktopProgram {
                     Err(_) => Message::FocusWorkspacePane(pane_id),
                 }
             }
+            crate::runtime_shell::ShellIntent::ClosePaneTab { item_id, .. } => {
+                match WorkspaceItemId::new(item_id) {
+                    Ok(item_id) => Message::CloseWorkspaceItem(item_id),
+                    Err(_) => return None,
+                }
+            }
+            crate::runtime_shell::ShellIntent::TransferPaneTab {
+                source_strip,
+                target_strip,
+                item_id,
+                before,
+            } => match WorkspaceItemId::new(item_id) {
+                Ok(item_id) => Message::TransferWorkspaceTab {
+                    source_strip,
+                    target_strip,
+                    item_id,
+                    before: before.and_then(|id| WorkspaceItemId::new(id).ok()),
+                },
+                Err(_) => return None,
+            },
+            crate::runtime_shell::ShellIntent::CloseMarkdownPreview => {
+                Message::CloseMarkdownImage(HostedWindowId::PRIMARY)
+            }
+            crate::runtime_shell::ShellIntent::MarkdownImageViewerInteraction => {
+                Message::MarkdownImageViewerInteraction
+            }
             crate::runtime_shell::ShellIntent::IabUrlChanged(value) => {
                 Message::Iab(IabPanelMessage::DraftUrlChanged(value))
             }
@@ -4200,6 +4226,7 @@ impl DesktopProgram {
             document: self.active_document_shell_snapshot(),
             files: self.project_files_shell_snapshot(),
             terminal: self.active_terminal_shell_snapshot(),
+            markdown_preview: self.primary_markdown_preview_snapshot(),
             inspector_title: if self.inspector_region_is_visible() {
                 match self.inspector_surface {
                     InspectorSurface::CodingTools => "编码工具".to_owned(),
@@ -4256,6 +4283,7 @@ impl DesktopProgram {
                                 id: item.id.as_str().to_owned(),
                                 title: item.title.clone(),
                                 kind: item.kind.as_str().to_owned(),
+                                closable: item.capabilities.closable,
                             })
                         })
                         .collect();
@@ -4630,6 +4658,7 @@ impl DesktopProgram {
             item_id: item_id.as_str().to_owned(),
             title: state.path_label.clone(),
             text: state.editor.text(),
+            language: state.language_label.clone(),
             status: state
                 .conflict_message
                 .clone()
@@ -4643,6 +4672,19 @@ impl DesktopProgram {
                 }),
             read_only: state.read_only,
             dirty: state.dirty,
+            diagnostics: state
+                .diagnostics
+                .iter()
+                .map(|diagnostic| crate::runtime_shell::ShellDiagnosticRow {
+                    severity: match diagnostic.severity {
+                        DiagnosticSeverity::Error => "错误".to_owned(),
+                        DiagnosticSeverity::Warning => "警告".to_owned(),
+                        DiagnosticSeverity::Information => "信息".to_owned(),
+                        DiagnosticSeverity::Hint => "提示".to_owned(),
+                    },
+                    message: diagnostic.message.clone(),
+                })
+                .collect(),
         })
     }
 
@@ -4676,6 +4718,24 @@ impl DesktopProgram {
                 .cloned()
                 .unwrap_or_default(),
             notice: self.terminal_notices.get(&snapshot.id).cloned(),
+        })
+    }
+
+    fn primary_markdown_preview_snapshot(
+        &self,
+    ) -> Option<crate::runtime_shell::ShellMarkdownPreview> {
+        let preview = self.markdown_image_previews.get(&HostedWindowId::PRIMARY)?;
+        let metadata = match self.markdown_images.get(&preview.source) {
+            Some(MarkdownImageLoadState::Ready(image)) => {
+                markdown_image_format_label(image.media_type()).to_owned()
+            }
+            Some(MarkdownImageLoadState::Loading) => "正在加载".to_owned(),
+            Some(MarkdownImageLoadState::Failed) => "无法显示".to_owned(),
+            _ => String::new(),
+        };
+        Some(crate::runtime_shell::ShellMarkdownPreview {
+            title: markdown_image_label(preview),
+            metadata,
         })
     }
 
@@ -31880,8 +31940,6 @@ fn runtime_phase_is_processing(phase: &str) -> bool {
 fn composer_toolbar_is_compact(window_id: HostedWindowId, primary_width: f32) -> bool {
     window_id != HostedWindowId::PRIMARY || primary_width < CHAT_COMPACT_TOOLBAR_WIDTH
 }
-
-fn composer_round_button_style(_tokens: ThemeTokens, _kind: ButtonKind) {}
 
 fn move_sidebar_search_selection(current: usize, count: usize, forward: bool) -> usize {
     if count == 0 {

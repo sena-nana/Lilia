@@ -3,13 +3,13 @@ use std::sync::Arc;
 
 use lilia_contracts::TaskId;
 use nana_ui::runtime::{
-    AppContext, Button, DesktopShell, DocumentId, Entity, FrameworkError, List,
+    AppContext, Button, DesktopShell, DocumentId, Entity, FrameworkError, IconButton, List,
     NativeMarkdown, ScrollAxes, ScrollView, Text, TextArea, TextChanged,
 };
 use nana_ui::{ButtonKind, ControlSize, ThemeMode, WindowChrome};
 use nana_ui_platform::WindowId;
 
-use crate::runtime_layout::{reconcile_children, HostStack};
+use crate::runtime_layout::{composer_interrupt_button, composer_send_button, reconcile_children, HostStack};
 use crate::runtime_shell::{bind_activate, emit, ShellIntent, ShellTimelineRow};
 
 const CONVERSATION_STATUS_DOCUMENT: u64 = 10_001;
@@ -65,8 +65,8 @@ pub struct TaskPopupHandles {
     timeline_scroll: Entity<ScrollView>,
     timeline_items: HashMap<String, Entity<NativeMarkdown>>,
     composer: Entity<TextArea>,
-    send: Entity<Button>,
-    interrupt: Entity<Button>,
+    send: Entity<IconButton>,
+    interrupt: Entity<IconButton>,
 }
 
 fn action_button(label: &str, kind: ButtonKind) -> Button {
@@ -302,17 +302,11 @@ pub fn mount_task_popup(
     })?;
     let send = context.create_detached_component(
         document_id,
-        Button::new("发送")
-            .kind(ButtonKind::Primary)
-            .size(ControlSize::Medium)
-            .disabled(!snapshot.can_send),
+        composer_send_button(snapshot.can_send),
     )?;
     let interrupt = context.create_detached_component(
         document_id,
-        Button::new("停止")
-            .kind(ButtonKind::Danger)
-            .size(ControlSize::Medium)
-            .disabled(!snapshot.can_interrupt),
+        composer_interrupt_button(snapshot.can_interrupt),
     )?;
     let close =
         context.create_detached_component(document_id, action_button("关闭窗口", ButtonKind::Subtle))?;
@@ -397,16 +391,10 @@ impl TaskPopupHandles {
             editor.disabled = snapshot.composer_disabled;
         })?;
         context.update_component(self.send, |button, _| {
-            *button = Button::new("发送")
-                .kind(ButtonKind::Primary)
-                .size(ControlSize::Medium)
-                .disabled(!snapshot.can_send);
+            *button = composer_send_button(snapshot.can_send);
         })?;
         context.update_component(self.interrupt, |button, _| {
-            *button = Button::new("停止")
-                .kind(ButtonKind::Danger)
-                .size(ControlSize::Medium)
-                .disabled(!snapshot.can_interrupt);
+            *button = composer_interrupt_button(snapshot.can_interrupt);
         })?;
         self.sync_timeline(context, document_id, snapshot)?;
         context.assemble_desktop_shell(self.shell)?;

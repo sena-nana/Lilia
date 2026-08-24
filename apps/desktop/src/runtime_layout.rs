@@ -1,9 +1,16 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use nana_ui::runtime::{
-    AlignSpec, AppContext, ComponentView, FlexDirection, FrameworkError, InteractionState,
-    JustifySpec, LengthSpec, MutationQueue, NodeKind, NodeStyle, StableNodeId,
+    AlignSpec, AppContext, Button, ComponentView, FlexDirection, FrameworkError, IconButton,
+    InteractionState, JustifySpec, LengthSpec, MutationQueue, NodeKind, NodeStyle,
+    SemanticColorRole, StableNodeId, TextArea,
 };
+use nana_ui::{ButtonKind, ControlSize, Icon, UI_METRICS};
+
+const COMPOSER_SEND_SIZE: f32 = 30.0;
+const SIDEBAR_ACTION_SIZE: f32 = 30.0;
+const COMPOSER_CHIP_HEIGHT: f32 = 24.0;
 
 #[derive(Clone)]
 pub(crate) struct HostStack {
@@ -18,7 +25,13 @@ pub(crate) struct HostStack {
     grow: Option<f32>,
     shrink: Option<f32>,
     padding: Option<f32>,
+    padding_x: Option<f32>,
+    padding_y: Option<f32>,
     max_width: Option<LengthSpec>,
+    background: Option<SemanticColorRole>,
+    border: Option<SemanticColorRole>,
+    border_width: Option<f32>,
+    radius: Option<f32>,
 }
 
 impl HostStack {
@@ -35,8 +48,22 @@ impl HostStack {
             grow: None,
             shrink: None,
             padding: None,
+            padding_x: None,
+            padding_y: None,
             max_width: None,
+            background: None,
+            border: None,
+            border_width: None,
+            radius: None,
         }
+    }
+
+    pub(crate) fn composer_card() -> Self {
+        Self::column(7.0)
+            .padding(10.0)
+            .surface(SemanticColorRole::Surface)
+            .outline(SemanticColorRole::Border, 1.0)
+            .radius(UI_METRICS.radius_md)
     }
 
     pub(crate) fn row(gap: f32) -> Self {
@@ -157,6 +184,33 @@ impl HostStack {
         self
     }
 
+    pub(crate) fn padding_xy(mut self, padding_x: f32, padding_y: f32) -> Self {
+        self.padding_x = Some(padding_x);
+        self.padding_y = Some(padding_y);
+        self
+    }
+
+    pub(crate) fn justify(mut self, justify: JustifySpec) -> Self {
+        self.justify = justify;
+        self
+    }
+
+    fn surface(mut self, background: SemanticColorRole) -> Self {
+        self.background = Some(background);
+        self
+    }
+
+    fn outline(mut self, border: SemanticColorRole, width: f32) -> Self {
+        self.border = Some(border);
+        self.border_width = Some(width);
+        self
+    }
+
+    pub(crate) fn radius(mut self, radius: f32) -> Self {
+        self.radius = Some(radius);
+        self
+    }
+
     pub(crate) fn max_width(mut self, width: f32) -> Self {
         self.max_width = Some(LengthSpec::Px(width));
         self
@@ -182,7 +236,7 @@ impl ComponentView for HostStack {
         mutations: &mut MutationQueue,
     ) {
         let mut style = NodeStyle::default();
-        let layout = std::sync::Arc::make_mut(&mut style.layout);
+        let layout = Arc::make_mut(&mut style.layout);
         layout.direction = Some(self.direction);
         layout.gap = Some(LengthSpec::Px(self.gap));
         layout.align_items = self.align;
@@ -194,6 +248,22 @@ impl ComponentView for HostStack {
         if let Some(padding) = self.padding {
             layout.padding = Some(LengthSpec::Px(padding));
         }
+        if let Some(padding_x) = self.padding_x {
+            let value = LengthSpec::Px(padding_x);
+            layout.padding_left = Some(value);
+            layout.padding_right = Some(value);
+        }
+        if let Some(padding_y) = self.padding_y {
+            let value = LengthSpec::Px(padding_y);
+            layout.padding_top = Some(value);
+            layout.padding_bottom = Some(value);
+        }
+        if let Some(width) = self.border_width {
+            layout.border_width = Some(width);
+        }
+        if let Some(radius) = self.radius {
+            layout.border_radius = Some(radius);
+        }
         layout.max_width = self.max_width;
         if let Some(grow) = self.grow {
             layout.flex_grow = Some(grow);
@@ -201,6 +271,8 @@ impl ComponentView for HostStack {
         if let Some(shrink) = self.shrink {
             layout.flex_shrink = Some(shrink);
         }
+        style.background = self.background;
+        style.border = self.border;
         if world.node_style(id) != Some(&style) {
             mutations.set_style(id, style);
         }
@@ -244,4 +316,77 @@ pub(crate) fn reconcile_children(
     }
     context.commit_mutations(mutations)?;
     Ok(())
+}
+
+fn round_icon_button(icon: Icon, label: &'static str, kind: ButtonKind) -> IconButton {
+    let mut button = IconButton::new(icon, label).kind(kind);
+    let layout = Arc::make_mut(&mut button.style.layout);
+    let edge = LengthSpec::Px(COMPOSER_SEND_SIZE);
+    layout.min_width = Some(edge);
+    layout.min_height = Some(edge);
+    layout.width = Some(edge);
+    layout.height = Some(edge);
+    layout.padding_left = Some(LengthSpec::Px(0.0));
+    layout.padding_right = Some(LengthSpec::Px(0.0));
+    layout.border_radius = Some(COMPOSER_SEND_SIZE * 0.5);
+    button
+}
+
+pub(crate) fn composer_send_button(enabled: bool) -> IconButton {
+    round_icon_button(Icon::ArrowRight, "发送", ButtonKind::Primary).disabled(!enabled)
+}
+
+pub(crate) fn composer_interrupt_button(enabled: bool) -> IconButton {
+    round_icon_button(Icon::Close, "停止", ButtonKind::Danger).disabled(!enabled)
+}
+
+pub(crate) fn sidebar_icon_button(icon: Icon, label: &'static str) -> IconButton {
+    let mut button = IconButton::new(icon, label)
+        .kind(ButtonKind::Text)
+        .size(ControlSize::Small);
+    let layout = Arc::make_mut(&mut button.style.layout);
+    let edge = LengthSpec::Px(SIDEBAR_ACTION_SIZE);
+    layout.min_width = Some(edge);
+    layout.min_height = Some(edge);
+    layout.width = Some(edge);
+    layout.height = Some(edge);
+    layout.border_radius = Some(UI_METRICS.radius_sm);
+    button
+}
+
+pub(crate) fn sidebar_text_button(label: &'static str) -> Button {
+    let mut button = Button::new(label)
+        .kind(ButtonKind::Text)
+        .size(ControlSize::Medium);
+    let layout = Arc::make_mut(&mut button.style.layout);
+    layout.min_height = Some(LengthSpec::Px(SIDEBAR_ACTION_SIZE));
+    layout.border_radius = Some(UI_METRICS.radius_sm);
+    button
+}
+
+pub(crate) fn pill_button(label: &str, kind: ButtonKind) -> Button {
+    let mut button = Button::new(label).kind(kind).size(ControlSize::Small);
+    let layout = Arc::make_mut(&mut button.style.layout);
+    layout.min_height = Some(LengthSpec::Px(COMPOSER_CHIP_HEIGHT));
+    layout.padding_left = Some(LengthSpec::Px(6.0));
+    layout.padding_right = Some(LengthSpec::Px(6.0));
+    layout.border_radius = Some(999.0);
+    button
+}
+
+pub(crate) fn flatten_composer_textarea(area: TextArea) -> TextArea {
+    let mut style = area.style.clone();
+    style.background = None;
+    style.border = None;
+    style.interaction.hovered.border = None;
+    style.interaction.focused.border = None;
+    let layout = Arc::make_mut(&mut style.layout);
+    layout.border_width = Some(0.0);
+    layout.border_radius = Some(0.0);
+    layout.min_height = Some(LengthSpec::Px(ControlSize::Medium.height()));
+    layout.padding_left = Some(LengthSpec::Px(6.0));
+    layout.padding_right = Some(LengthSpec::Px(6.0));
+    layout.padding_top = Some(LengthSpec::Px(4.0));
+    layout.padding_bottom = Some(LengthSpec::Px(4.0));
+    area.style(style)
 }
