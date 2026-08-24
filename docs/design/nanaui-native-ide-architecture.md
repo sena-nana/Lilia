@@ -44,6 +44,8 @@ legacy `db/lilia.db` 不得被打开、写入或双写。旧数据只能通过�
 
 编辑器、LSP、诊断、Git diff 和调试器通过明确端口接入，不把协议细节塞进 NanaUI widget。可复用编辑、Dock 或窗口能力属于 NanaUI；项目、任务和 Agent 语义属于 LiliaCode。
 
+侧栏行继续用 `SidebarRow`（行内停止 / 菜单 / 草稿需要指针处理）；NanaUI `ReorderList` 只能放被动 `ReorderItem`，接上可嵌行工具的重排容器前不发明拖拽。
+
 ## 自动化
 
 workflow draft、发布版本、run 和 node state 由 `DesktopAutomationService` 持有。创建 run 与全部 node state 必须在单个事务中完成，并原子拒绝同 workflow version 的重复并发执行。

@@ -10,7 +10,9 @@ mod macos;
 #[cfg(windows)]
 mod win;
 
+#[cfg(any(windows, target_os = "linux"))]
 const ICON_128: &[u8] = include_bytes!("../../assets/icons/128x128.png");
+#[cfg(any(windows, target_os = "linux"))]
 const ICON_256: &[u8] = include_bytes!("../../assets/icons/128x128@2x.png");
 
 #[cfg(windows)]
@@ -121,7 +123,7 @@ fn create_splash() -> Result<isize, String> {
     }
     #[cfg(target_os = "macos")]
     {
-        macos::create()
+        Ok(0)
     }
     #[cfg(target_os = "linux")]
     {

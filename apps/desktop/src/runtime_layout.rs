@@ -95,6 +95,21 @@ impl HostStack {
         .shrink(0.0)
     }
 
+    pub(crate) fn trigger_slot(width: f32, height: f32) -> Self {
+        Self::base(
+            FlexDirection::Row,
+            0.0,
+            AlignSpec::Center,
+            JustifySpec::Center,
+        )
+        .width(LengthSpec::Px(width))
+        .height(LengthSpec::Px(height))
+        .min_width(LengthSpec::Px(width))
+        .min_height(LengthSpec::Px(height))
+        .grow(0.0)
+        .shrink(0.0)
+    }
+
     pub(crate) fn fill_row(gap: f32) -> Self {
         Self::base(
             FlexDirection::Row,

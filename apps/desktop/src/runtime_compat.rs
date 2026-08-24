@@ -82,7 +82,10 @@ pub fn window_event_id(event: &WindowEvent) -> WindowId {
         | WindowEvent::FocusChanged { id, .. }
         | WindowEvent::Ime { id, .. }
         | WindowEvent::CloseRequested { id }
-        | WindowEvent::Closed { id } => *id,
+        | WindowEvent::Closed { id }
+        | WindowEvent::FileHovered { id, .. }
+        | WindowEvent::FileDropped { id, .. }
+        | WindowEvent::FileHoverCancelled { id } => *id,
     }
 }
 
@@ -106,4 +109,35 @@ pub fn startup_document(status: &str) -> Result<nana_ui::runtime::RuntimeDocumen
         .create_component(document_id, nana_ui::runtime::Text::new(status))?;
     document.context_mut().append_child(title, message)?;
     Ok(document)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn window_event_id_covers_file_drop_events() {
+        let id = WindowId(7);
+        assert_eq!(
+            window_event_id(&WindowEvent::FileHovered {
+                id,
+                paths: vec![PathBuf::from("/tmp/project")],
+                position: Some((12.0, 40.0)),
+            }),
+            id
+        );
+        assert_eq!(
+            window_event_id(&WindowEvent::FileDropped {
+                id,
+                paths: vec![PathBuf::from("/tmp/note.md")],
+                position: None,
+            }),
+            id
+        );
+        assert_eq!(
+            window_event_id(&WindowEvent::FileHoverCancelled { id }),
+            id
+        );
+    }
 }

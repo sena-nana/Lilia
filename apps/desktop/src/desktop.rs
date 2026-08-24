@@ -2323,6 +2323,15 @@ impl DesktopProgram {
                     None => return None,
                 }
             }
+            crate::runtime_shell::ShellIntent::OpenTaskMenu(id) => {
+                match TaskId::new(&id) {
+                    Ok(task_id) => Message::OpenSidebarMenu {
+                        target: SidebarMenuTarget::Task(task_id),
+                        anchor_y: 126.0,
+                    },
+                    Err(_) => return None,
+                }
+            }
             crate::runtime_shell::ShellIntent::OpenProjectDraft(id) => {
                 match self
                     .projects
@@ -3236,7 +3245,7 @@ impl DesktopProgram {
                     expanded: None,
                     icon: Icon::Workspace,
                     can_stop: false,
-                    can_menu: false,
+                    can_menu: true,
                     can_draft: false,
                 });
             }
@@ -3312,7 +3321,7 @@ impl DesktopProgram {
                         expanded: None,
                         icon: Icon::Workspace,
                         can_stop: false,
-                        can_menu: false,
+                        can_menu: true,
                         can_draft: false,
                     });
                 }
@@ -3378,7 +3387,7 @@ impl DesktopProgram {
                     expanded: None,
                     icon: Icon::Workspace,
                     can_stop: false,
-                    can_menu: false,
+                    can_menu: true,
                     can_draft: false,
                 });
             }
@@ -15233,6 +15242,78 @@ fn refresh_archived_records(&mut self) {
             self.add_composer_attachments(attachments);
         } else {
             self.add_task_popup_attachments(window_id, attachments);
+        }
+    }
+
+    fn file_drop_point(position: Option<(f32, f32)>) -> Option<Point> {
+        position.map(|(x, y)| Point::new(x, y))
+    }
+
+    fn apply_file_hover(
+        &mut self,
+        window_id: HostedWindowId,
+        paths: &[PathBuf],
+        position: Option<(f32, f32)>,
+    ) {
+        let point = Self::file_drop_point(position);
+        self.sidebar_folder_drop_hovered = paths
+            .iter()
+            .any(|path| self.sidebar_accepts_folder_drop(window_id, path, point));
+        if self.window_accepts_attachment_drop(window_id) {
+            self.file_drop_hovered_windows.insert(window_id);
+        } else {
+            self.file_drop_hovered_windows.remove(&window_id);
+        }
+    }
+
+    fn apply_file_drop(
+        &mut self,
+        window_id: HostedWindowId,
+        paths: &[PathBuf],
+        position: Option<(f32, f32)>,
+    ) {
+        let point = Self::file_drop_point(position);
+        for path in paths {
+            if self.sidebar_accepts_folder_drop(window_id, path, point) {
+                self.add_sidebar_project_folder(path.clone());
+            } else {
+                self.add_dropped_attachment(window_id, path.clone());
+            }
+        }
+        self.clear_file_hover(window_id);
+    }
+
+    fn clear_file_hover(&mut self, window_id: HostedWindowId) {
+        if window_id == HostedWindowId::PRIMARY {
+            self.sidebar_folder_drop_hovered = false;
+        }
+        self.file_drop_hovered_windows.remove(&window_id);
+    }
+
+    fn handle_file_window_event(
+        &mut self,
+        event: &HostedWindowEvent,
+    ) -> Option<HostedProgramUpdate> {
+        match event {
+            HostedWindowEvent::FileHovered { id, paths, position } => {
+                if *id == CONVERSATION_STATUS_WINDOW_ID || self.iab_windows.contains_key(id) {
+                    return Some(HostedProgramUpdate::default());
+                }
+                self.apply_file_hover(*id, paths, *position);
+                Some(HostedProgramUpdate::redraw_window(*id))
+            }
+            HostedWindowEvent::FileDropped { id, paths, position } => {
+                if *id == CONVERSATION_STATUS_WINDOW_ID || self.iab_windows.contains_key(id) {
+                    return Some(HostedProgramUpdate::default());
+                }
+                self.apply_file_drop(*id, paths, *position);
+                Some(HostedProgramUpdate::redraw_window(*id))
+            }
+            HostedWindowEvent::FileHoverCancelled { id } => {
+                self.clear_file_hover(*id);
+                Some(HostedProgramUpdate::redraw_window(*id))
+            }
+            _ => None,
         }
     }
 
@@ -30961,6 +31042,9 @@ impl RuntimeProgram for DesktopProgram {
         event: HostedWindowEvent,
         _context: &HostedProgramContext<Self::Message>,
     ) -> HostedProgramUpdate {
+        if let Some(update) = self.handle_file_window_event(&event) {
+            return update;
+        }
         if window_event_id(&event) == CONVERSATION_STATUS_WINDOW_ID {
             return match event {
                 HostedWindowEvent::Ready { geometry, .. } => {
@@ -30980,7 +31064,10 @@ impl RuntimeProgram for DesktopProgram {
                 HostedWindowEvent::VisibilityChanged { .. }
                 | HostedWindowEvent::FocusChanged { .. }
                 | HostedWindowEvent::Ime { .. }
-                | HostedWindowEvent::Closed { .. } => HostedProgramUpdate::default(),
+                | HostedWindowEvent::Closed { .. }
+                | HostedWindowEvent::FileHovered { .. }
+                | HostedWindowEvent::FileDropped { .. }
+                | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
                 HostedWindowEvent::CloseRequested { .. } => {
                     self.conversation_status_open = false;
                     self.conversation_status_ready = false;
@@ -31018,7 +31105,10 @@ impl RuntimeProgram for DesktopProgram {
                 HostedWindowEvent::Moved { .. }
                 | HostedWindowEvent::FocusChanged { .. }
                 | HostedWindowEvent::Ime { .. }
-                | HostedWindowEvent::Closed { .. } => HostedProgramUpdate::default(),
+                | HostedWindowEvent::Closed { .. }
+                | HostedWindowEvent::FileHovered { .. }
+                | HostedWindowEvent::FileDropped { .. }
+                | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
             };
         }
         if self.task_popups.contains_key(&window_event_id(&event)) {
@@ -31054,7 +31144,10 @@ impl RuntimeProgram for DesktopProgram {
                 HostedWindowEvent::VisibilityChanged { .. }
                 | HostedWindowEvent::FocusChanged { .. }
                 | HostedWindowEvent::Ime { .. }
-                | HostedWindowEvent::Closed { .. } => HostedProgramUpdate::default(),
+                | HostedWindowEvent::Closed { .. }
+                | HostedWindowEvent::FileHovered { .. }
+                | HostedWindowEvent::FileDropped { .. }
+                | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
                 HostedWindowEvent::CloseRequested { id, .. } => {
                     if self.close_task_popup_with_command(id, false) {
                         HostedProgramUpdate::default()
@@ -31128,7 +31221,10 @@ impl RuntimeProgram for DesktopProgram {
             HostedWindowEvent::VisibilityChanged { .. }
             | HostedWindowEvent::FocusChanged { .. }
             | HostedWindowEvent::Ime { .. }
-            | HostedWindowEvent::Closed { .. } => HostedProgramUpdate::default(),
+            | HostedWindowEvent::Closed { .. }
+            | HostedWindowEvent::FileHovered { .. }
+            | HostedWindowEvent::FileDropped { .. }
+            | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
             HostedWindowEvent::CloseRequested { .. } => HostedProgramUpdate::exit(),
         }
     }
@@ -34314,6 +34410,17 @@ mod tests {
             .expect("resources sidebar");
         assert_eq!(sidebar.extent(), SIDEBAR_MAX_WIDTH);
         assert!(sidebar.collapsed_value());
+    }
+
+    #[test]
+    fn file_drop_position_hits_the_same_sidebar_zone_as_folder_import() {
+        let bounds = LogicalRect::new(0.0, 36.0, 312.0, 864.0);
+        let point = DesktopProgram::file_drop_point(Some((120.0, 400.0))).expect("drop point");
+        assert!(sidebar_folder_drop_hit(bounds, point));
+        assert!(!sidebar_folder_drop_hit(
+            bounds,
+            DesktopProgram::file_drop_point(Some((120.0, 860.0))).expect("footer point"),
+        ));
     }
 
     #[test]

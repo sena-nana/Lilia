@@ -27,8 +27,8 @@ lilia-agent-integration = { workspace = true }
 lilia-storage = { workspace = true }
 minisign-verify = "0.2.5"
 mutsuki-agent-contracts = { workspace = true }
-nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "7f37780257f1ef479af81a6d654e6c2c6034aaa1", features = ["bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "image-viewer", "math", "overlays", "popover", "qr-code", "rich-text", "selects", "settings-components", "surfaces", "syntax-highlighting"] }
-nana-ui-platform = { git = "https://github.com/sena-nana/NanaUI.git", rev = "7f37780257f1ef479af81a6d654e6c2c6034aaa1", package = "nana-ui-platform" }
+nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "33e9453cdcd01be4728e937010a621c1dac39310", features = ["bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "image-viewer", "math", "overlays", "popover", "qr-code", "rich-text", "selects", "settings-components", "surfaces", "syntax-highlighting"] }
+nana-ui-platform = { git = "https://github.com/sena-nana/NanaUI.git", rev = "33e9453cdcd01be4728e937010a621c1dac39310", package = "nana-ui-platform" }
 rfd = "0.17.2"
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
