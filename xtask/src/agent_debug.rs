@@ -12,6 +12,7 @@ use crate::{executable, repo_root, run as run_command, Result, XtaskError};
 
 const READY_TIMEOUT: Duration = Duration::from_secs(30);
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
+const DISCARD_MODEL_ENDPOINT: &str = "http://127.0.0.1:9/v1/chat/completions";
 
 pub struct Session {
     child: Child,
@@ -92,19 +93,32 @@ impl Session {
             .env("LILIA_AGENT_DEBUG_ADDR", "127.0.0.1:0")
             .env("LILIA_AGENT_DEBUG_READY", &ready)
             .env("LILIA_AGENT_DEBUG_SEED", "1")
+            // Seeding requires a model endpoint override. Pointing it at the
+            // discard port means a stray turn fails fast instead of reaching a
+            // real provider.
+            .env("LILIA_AGENT_DEBUG_MODEL_ENDPOINT", DISCARD_MODEL_ENDPOINT)
+            // An inherited stdin would outlive a leaked desktop and wedge the caller's pipeline.
+            .stdin(Stdio::null())
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
         if let Some((_, fixture_id)) = &performance_fixture {
             desktop.env("LILIA_EQUIVALENCE_FIXTURE_ID", fixture_id);
         }
-        let child = desktop.spawn().map_err(|error| {
+        let mut child = desktop.spawn().map_err(|error| {
             XtaskError::io(
                 "desktop_launch_failed",
                 &format!("launch {}", binary.display()),
                 error,
             )
         })?;
-        let address = wait_ready(&ready)?;
+        let address = match wait_ready(&ready) {
+            Ok(address) => address,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(describe_startup_failure(error, &run_dir));
+            }
+        };
         let startup_ms = started.elapsed().as_secs_f64() * 1_000.0;
         Ok(Self {
             child,
@@ -180,19 +194,100 @@ pub fn run() -> Result {
     Ok(())
 }
 
-fn capture_window(pid: u32, output: &Path) -> Result {
-    let escaped = output.display().to_string().replace('\'', "''");
-    let script = format!(
-        "Add-Type -AssemblyName System.Drawing; $p=Get-Process -Id {pid}; if (-not $p.MainWindowHandle) {{ throw 'desktop window not ready' }}; Add-Type @'\nusing System; using System.Runtime.InteropServices; public static class LiliaRect {{ [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr h, out RECT r); public struct RECT {{ public int L,T,R,B; }} }}\n'@; $r=New-Object LiliaRect+RECT; [LiliaRect]::GetWindowRect($p.MainWindowHandle,[ref]$r)|Out-Null; $w=$r.R-$r.L; $h=$r.B-$r.T; if ($w -le 0 -or $h -le 0) {{ throw 'desktop window has invalid bounds' }}; $bmp=New-Object Drawing.Bitmap $w,$h; $g=[Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($r.L,$r.T,0,0,$bmp.Size); $bmp.Save('{escaped}',[Drawing.Imaging.ImageFormat]::Png); $g.Dispose(); $bmp.Dispose()"
-    );
+/// `PrintWindow` asks the window to redraw into our bitmap, so the capture stays
+/// correct while the desktop is occluded and never picks up other applications.
+///
+/// Two Windows details matter. `MainWindowHandle` is unreliable because the
+/// process also owns tool and helper windows, so the largest visible top-level
+/// window wins instead. And the capturing process must opt into per-monitor DPI
+/// awareness, or Windows virtualises `GetClientRect` down to 96dpi and
+/// `PrintWindow` silently crops the physical window to that smaller bitmap.
+const CAPTURE_SCRIPT: &str = r#"
+param([int]$ProcessId, [string]$Output)
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class LiliaCapture {
+    public delegate bool EnumProc(IntPtr handle, IntPtr param);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc callback, IntPtr param);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr handle, out uint pid);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr handle);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr handle, out RECT rect);
+    [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr handle, IntPtr context, uint flags);
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr handle, int command);
+    [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr context);
+    public struct RECT { public int Left, Top, Right, Bottom; }
+    public static IntPtr LargestVisibleWindow(uint target) {
+        IntPtr best = IntPtr.Zero;
+        long bestArea = 0;
+        EnumWindows(delegate(IntPtr handle, IntPtr param) {
+            uint owner;
+            GetWindowThreadProcessId(handle, out owner);
+            if (owner != target || !IsWindowVisible(handle)) { return true; }
+            RECT rect;
+            if (!GetClientRect(handle, out rect)) { return true; }
+            long area = (long)(rect.Right - rect.Left) * (rect.Bottom - rect.Top);
+            if (area > bestArea) { bestArea = area; best = handle; }
+            return true;
+        }, IntPtr.Zero);
+        return best;
+    }
+}
+'@
+# DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+[LiliaCapture]::SetProcessDpiAwarenessContext([IntPtr](-4)) | Out-Null
+$handle = [IntPtr]::Zero
+for ($attempt = 0; $attempt -lt 60; $attempt++) {
+    $handle = [LiliaCapture]::LargestVisibleWindow($ProcessId)
+    if ($handle -ne [IntPtr]::Zero) { break }
+    Start-Sleep -Milliseconds 250
+}
+if ($handle -eq [IntPtr]::Zero) { throw 'desktop window not ready' }
+[LiliaCapture]::ShowWindow($handle, 9) | Out-Null
+Start-Sleep -Milliseconds 700
+$rect = New-Object LiliaCapture+RECT
+[LiliaCapture]::GetClientRect($handle, [ref]$rect) | Out-Null
+$width = $rect.Right - $rect.Left
+$height = $rect.Bottom - $rect.Top
+if ($width -le 0 -or $height -le 0) { throw 'desktop window has invalid bounds' }
+$bitmap = New-Object Drawing.Bitmap $width, $height
+$graphics = [Drawing.Graphics]::FromImage($bitmap)
+$context = $graphics.GetHdc()
+# PW_RENDERFULLCONTENT: required for composited GPU surfaces.
+$printed = [LiliaCapture]::PrintWindow($handle, $context, 2)
+$graphics.ReleaseHdc($context)
+$graphics.Dispose()
+if (-not $printed) { $bitmap.Dispose(); throw 'PrintWindow refused the desktop window' }
+$bitmap.Save($Output, [Drawing.Imaging.ImageFormat]::Png)
+$bitmap.Dispose()
+Write-Output ("captured {0}x{1}" -f $width, $height)
+"#;
+
+pub(crate) fn capture_window(pid: u32, output: &Path) -> Result {
+    // A `-Command` string cannot carry this much inline C#, so the script goes to
+    // a temporary file rather than beside the screenshot the caller asked for.
+    let script = std::env::temp_dir().join("liliacode-capture-window.ps1");
+    fs::write(&script, CAPTURE_SCRIPT).map_err(|error| {
+        XtaskError::io(
+            "agent_debug_capture_script_failed",
+            "write capture script",
+            error,
+        )
+    })?;
     crate::run(
         crate::command("powershell.exe").args([
             "-NoProfile",
             "-NonInteractive",
             "-ExecutionPolicy",
             "Bypass",
-            "-Command",
-            &script,
+            "-File",
+            &script.display().to_string(),
+            "-ProcessId",
+            &pid.to_string(),
+            "-Output",
+            &output.display().to_string(),
         ]),
         "capture native desktop screenshot",
     )?;
@@ -214,6 +309,19 @@ pub(crate) fn require_ok(response: &Value, command: &str) -> Result {
             format!("{command}: {response}"),
         ))
     }
+}
+
+/// A readiness timeout on its own hides the reason the desktop never came up, so
+/// fold whatever the process reported on stderr into the error.
+fn describe_startup_failure(error: XtaskError, run_dir: &Path) -> XtaskError {
+    let Ok(log) = fs::read_to_string(run_dir.join("desktop.stderr.log")) else {
+        return error;
+    };
+    let reason = log.trim();
+    if reason.is_empty() {
+        return error;
+    }
+    XtaskError::blocker(error.code, format!("{}: {reason}", error.message))
 }
 
 fn wait_ready(path: &Path) -> Result<String> {

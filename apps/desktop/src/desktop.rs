@@ -188,7 +188,7 @@ const TIMELINE_DEFAULT_VIEWPORT_EXTENT: f32 = 720.0;
 const TIMELINE_OVERSCAN_EXTENT: f32 = 480.0;
 const TIMELINE_LOAD_EARLIER_EXTENT: f32 = 34.0;
 const TIMELINE_TAIL_TOLERANCE: f32 = 24.0;
-const SIDEBAR_DEFAULT_WIDTH: f32 = 220.0;
+const SIDEBAR_DEFAULT_WIDTH: f32 = 235.0;
 const SIDEBAR_MIN_WIDTH: f32 = 180.0;
 const SIDEBAR_MAX_WIDTH: f32 = 480.0;
 const CHAT_CONTENT_MAX_WIDTH: f32 = 860.0;
@@ -2501,12 +2501,12 @@ impl DesktopProgram {
                     action,
                 }
             }
-            crate::runtime_shell::ShellIntent::SetPermission(value) => {
-                Message::SetComposerPermission(match value.as_str() {
-                    "readonly" => DesktopExecutionPermission::Readonly,
-                    "full" => DesktopExecutionPermission::Full,
-                    _ => DesktopExecutionPermission::Ask,
-                })
+            crate::runtime_shell::ShellIntent::CyclePermission => Message::CyclePermission,
+            crate::runtime_shell::ShellIntent::CycleWorktree => {
+                Message::CycleDraftWorktree(HostedWindowId::PRIMARY)
+            }
+            crate::runtime_shell::ShellIntent::PickWorktree => {
+                Message::PickDraftWorktree(HostedWindowId::PRIMARY)
             }
             crate::runtime_shell::ShellIntent::ApplySlash(name) => {
                 match self
@@ -3205,30 +3205,32 @@ impl DesktopProgram {
             }
             return rows;
         }
-        for entry in self
-            .conversation_status_entries
-            .iter()
-            .filter(|entry| runtime_phase_is_processing(&entry.runtime_phase))
-        {
-            rows.push(ShellSidebarRow {
-                id: entry.task_id.as_str().to_owned(),
-                label: if entry.title.trim().is_empty() {
-                    "未命名会话".to_owned()
-                } else {
-                    entry.title.clone()
-                },
-                kind: ShellSidebarKind::Running,
-                selected: self.selected_task.as_ref() == Some(&entry.task_id),
-                ancestor: false,
-                depth: 0,
-                expanded: None,
-                icon: Icon::Nodes,
-                can_stop: true,
-                can_menu: false,
-                can_draft: false,
-            });
-        }
         if self.sidebar_display_mode == NativeSidebarDisplayMode::Unified {
+            // Grouped mode already shows a running session under its project, so
+            // the flat running block only belongs to the unified list.
+            for entry in self
+                .conversation_status_entries
+                .iter()
+                .filter(|entry| runtime_phase_is_processing(&entry.runtime_phase))
+            {
+                rows.push(ShellSidebarRow {
+                    id: entry.task_id.as_str().to_owned(),
+                    label: if entry.title.trim().is_empty() {
+                        "未命名会话".to_owned()
+                    } else {
+                        entry.title.clone()
+                    },
+                    kind: ShellSidebarKind::Running,
+                    selected: self.selected_task.as_ref() == Some(&entry.task_id),
+                    ancestor: false,
+                    depth: 0,
+                    expanded: None,
+                    icon: Icon::Nodes,
+                    can_stop: true,
+                    can_menu: false,
+                    can_draft: false,
+                });
+            }
             let mut tasks = self
                 .task_move_candidates
                 .iter()
@@ -4138,15 +4140,9 @@ impl DesktopProgram {
         } else {
             conversation_empty_headline(location_name, false)
         };
-        let empty_hint = if self.settings_open || self.automations_open {
-            String::new()
-        } else if self.selected_task.is_none() && self.main_conversation_draft.is_none() {
-            "从左侧打开会话，或新建会话。".to_owned()
-        } else if timeline.is_empty() {
-            "还没有消息。".to_owned()
-        } else {
-            String::new()
-        };
+        let draft_worktree = self
+            .draft_worktree_context(HostedWindowId::PRIMARY)
+            .map(|(_, selection)| selection);
         let (provider_badge, _, _) = self.provider_runtime_badge(self.theme_tokens().colors);
         crate::runtime_shell::PrimaryShellSnapshot {
             theme: self.theme,
@@ -4154,7 +4150,6 @@ impl DesktopProgram {
             title_parent,
             title_context,
             heading,
-            empty_hint,
             error: self
                 .error_message
                 .clone()
@@ -4204,6 +4199,8 @@ impl DesktopProgram {
             permission_label: composer_state
                 .map(|composer| permission_label(composer.permission).to_owned())
                 .unwrap_or_else(|| permission_label(DesktopExecutionPermission::Ask).to_owned()),
+            worktree_label: draft_worktree.as_ref().map(draft_worktree_label),
+            worktree_can_pick: matches!(draft_worktree, Some(DraftWorktreeSelection::Existing(_))),
             suggestions: self
                 .conversation_suggestions
                 .visible_item_ids()
@@ -32709,11 +32706,12 @@ fn permission_key(permission: DesktopExecutionPermission) -> &'static str {
     }
 }
 
+/// The composer pairs this with a shield glyph, so the word stands alone.
 fn permission_label(permission: DesktopExecutionPermission) -> &'static str {
     match permission {
-        DesktopExecutionPermission::Ask => "权限：询问",
-        DesktopExecutionPermission::Readonly => "权限：只读",
-        DesktopExecutionPermission::Full => "权限：完全",
+        DesktopExecutionPermission::Ask => "询问",
+        DesktopExecutionPermission::Readonly => "只读",
+        DesktopExecutionPermission::Full => "完全",
     }
 }
 
@@ -34599,11 +34597,11 @@ mod tests {
         let ask = next_permission(full);
 
         assert_eq!(permission_key(readonly), "readonly");
-        assert_eq!(permission_label(readonly), "权限：只读");
+        assert_eq!(permission_label(readonly), "只读");
         assert_eq!(permission_key(full), "full");
-        assert_eq!(permission_label(full), "权限：完全");
+        assert_eq!(permission_label(full), "完全");
         assert_eq!(permission_key(ask), "ask");
-        assert_eq!(permission_label(ask), "权限：询问");
+        assert_eq!(permission_label(ask), "询问");
     }
 
     #[test]

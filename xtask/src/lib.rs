@@ -10,6 +10,7 @@ pub mod installer_smoke;
 pub mod performance;
 pub mod pin;
 pub mod release;
+pub mod screenshot;
 pub mod signing;
 
 pub type Result<T = ()> = std::result::Result<T, XtaskError>;

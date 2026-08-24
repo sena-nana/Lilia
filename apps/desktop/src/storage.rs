@@ -277,7 +277,7 @@ const fn default_true() -> bool {
 }
 
 const fn default_sidebar_width() -> u16 {
-    220
+    235
 }
 
 pub fn is_restorable_window_state(state: &NativeWindowState) -> bool {
@@ -1006,7 +1006,7 @@ mod tests {
             NativeSidebarTreeState {
                 expanded_project_ids: vec!["legacy-project".to_owned()],
                 inbox_expanded: true,
-                sidebar_width: 220,
+                sidebar_width: default_sidebar_width(),
                 sidebar_collapsed: false,
             }
         );

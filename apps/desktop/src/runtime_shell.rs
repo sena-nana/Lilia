@@ -3,29 +3,29 @@ use std::sync::{Arc, Mutex};
 
 use lilia_contracts::TaskId;
 use nana_ui::runtime::{
-    AboutMetadata, AboutSection, ActionMenu, ActionMenuItem, Activate, AlignSpec,
-    AppearanceSection, AppContext, Button, CommandPalette, ConfirmDialog, ConfirmIntent,
-    ConfirmSlots, ContextMenu, ContextMenuEvent, ContextMenuItem, DesktopShell, DocumentId,
-    Dropdown, DropdownOption, EmptyState, Entity, FormField, FrameworkError, GraphCanvas, IconButton,
-    HighlightRequest, ImageViewer, ImageViewerContent, ImageViewerEvent, InteractiveCard, JustifySpec, KeyCaptureLayer, LengthSpec,
-    List, NativeMarkdown, OverlayHost, PaneChrome, PaneChromeAction, PaneChromeActionKind,
-    PopoverToggled, ScrollAxes, ScrollOffset, ScrollView, SettingsBack, SettingsCard, SettingsPage,
-    SettingsRow, SettingsSidebar, SettingsTabSelected, SidebarFooter, SidebarFooterButton, SidebarFrame,
-    SidebarRow, SidebarRowIcon, SidebarRowState, SidebarSection, SidebarSectionState, ListItem,
-    StableNodeId, Switch, TabOption, Tabs, TabsEvent, Text, TextArea, TextChanged, TimeSeriesChart,
+    AboutMetadata, AboutSection, ActionMenu, ActionMenuItem, Activate, AlignSpec, AppContext,
+    AppearanceSection, Button, CommandPalette, ConfirmDialog, ConfirmIntent, ConfirmSlots,
+    ContextMenu, ContextMenuEvent, ContextMenuItem, DesktopShell, DocumentId, EmptyState, Entity,
+    FormField, FrameworkError, GraphCanvas, HighlightRequest, IconButton, IconGlyph, ImageViewer,
+    ImageViewerContent, ImageViewerEvent, InteractiveCard, JustifySpec, KeyCaptureLayer,
+    LengthSpec, List, ListItem, NativeMarkdown, NodeStyle, OverlayHost, PaneChrome,
+    PaneChromeAction, PaneChromeActionKind, PopoverToggled, ScrollAxes, ScrollOffset, ScrollView,
+    SemanticColorRole, SettingsBack, SettingsCard, SettingsPage, SettingsRow, SettingsSidebar,
+    SettingsTabSelected, SidebarFooter, SidebarFooterButton, SidebarFrame, SidebarRow,
+    SidebarRowIcon, SidebarRowState, SidebarSection, SidebarSectionState, StableNodeId, Switch,
+    TabOption, Tabs, TabsEvent, Text, TextAlignSpec, TextArea, TextChanged, TimeSeriesChart,
     ToggleChanged, TreeView, TreeViewEvent, View,
 };
 use nana_ui::{
-    AppearanceEvent, AppearanceSettings, ButtonKind,
-    CommandPaletteEvent, CommandPaletteItem, ControlSize, DropdownEvent, Icon, SettingsModel,
-    SettingsState, SettingsTabId, ThemeMode, UI_METRICS, WindowChrome, WindowChromeAction,
-    WindowChromeEvent, WorkspaceModel,
+    AppearanceEvent, AppearanceSettings, ButtonKind, CommandPaletteEvent, CommandPaletteItem,
+    ControlSize, Icon, SettingsModel, SettingsState, SettingsTabId, ThemeMode, WindowChrome,
+    WindowChromeAction, WindowChromeEvent, WorkspaceModel, UI_METRICS,
 };
 
 use crate::runtime_compat::{HostedUiCommand, HostedWindowId};
 use crate::runtime_layout::{
     composer_interrupt_button, composer_send_button, flatten_composer_textarea, pill_button,
-    reconcile_children, sidebar_icon_button, sidebar_text_button, HostStack,
+    reconcile_children, sidebar_icon_button, HostStack, SIDEBAR_ROW_RADIUS,
 };
 use crate::target_ids;
 
@@ -37,6 +37,9 @@ const PLUS_SLOT_SIZE: f32 = 28.0;
 const COMPOSER_MIN_HEIGHT: f32 = 32.0;
 const COMPOSER_MAX_HEIGHT: f32 = 72.0;
 const CHAT_CONTENT_MAX_WIDTH: f32 = 860.0;
+const WINDOW_CONTROL_SIZE: f32 = 28.0;
+const TITLE_BREADCRUMB_WIDTH: f32 = 440.0;
+const EMPTY_HEADING_FONT_SIZE: f32 = 24.0;
 
 #[derive(Debug, Clone)]
 pub struct ShellTaskRow {
@@ -456,7 +459,6 @@ pub struct PrimaryShellSnapshot {
     pub title_parent: String,
     pub title_context: String,
     pub heading: String,
-    pub empty_hint: String,
     pub error: Option<String>,
     pub settings_open: bool,
     pub sidebar_collapsed: bool,
@@ -483,6 +485,8 @@ pub struct PrimaryShellSnapshot {
     pub plan_mode: bool,
     pub goal_mode: bool,
     pub permission_label: String,
+    pub worktree_label: Option<String>,
+    pub worktree_can_pick: bool,
     pub suggestions: Vec<ShellSuggestionRow>,
     pub suggestions_can_refresh: bool,
     pub command_palette_open: bool,
@@ -577,7 +581,9 @@ pub enum ShellIntent {
     OpenTaskBrowser,
     ToggleComposerPlus,
     ComposerPlus(String),
-    SetPermission(String),
+    CyclePermission,
+    CycleWorktree,
+    PickWorktree,
     ApplySlash(String),
     SelectMention(String),
     ToggleTimelineExpand(String),
@@ -735,9 +741,7 @@ pub struct ShellHandles {
     more_menu: Option<Entity<ContextMenu>>,
     titlebar_menu: Option<Entity<ContextMenu>>,
     sidebar_toggle: Entity<IconButton>,
-    search_button: Entity<IconButton>,
-    inspector_toggle: Entity<IconButton>,
-    more_button: Entity<IconButton>,
+    footer_more: Entity<SidebarFooterButton>,
     form_fields: HashMap<String, Entity<TextArea>>,
     form_wrappers: HashMap<String, Entity<FormField>>,
     form_switches: HashMap<String, Entity<Switch>>,
@@ -762,7 +766,7 @@ pub struct ShellHandles {
     automations_body: Entity<HostStack>,
     automations_footer: Entity<SidebarFooter>,
     sidebar_top: Entity<HostStack>,
-    new_conversation: Entity<Button>,
+    new_conversation: Entity<SidebarRow>,
     search_toggle: Entity<IconButton>,
     search_input: Entity<TextArea>,
     search_close: Entity<IconButton>,
@@ -795,8 +799,8 @@ pub struct ShellHandles {
     project_workspace_row: Entity<SettingsRow>,
     product_actions: HashMap<String, Entity<Button>>,
     provider_rows: HashMap<String, Entity<Button>>,
+    heading_slot: Entity<HostStack>,
     heading: Entity<Text>,
-    empty_hint: Entity<Text>,
     error: Entity<Text>,
     timeline_scroll: Entity<ScrollView>,
     timeline_items: HashMap<String, Entity<HostStack>>,
@@ -810,8 +814,14 @@ pub struct ShellHandles {
     plus_items: HashMap<String, Entity<ActionMenuItem>>,
     plus_slot: Entity<HostStack>,
     plus_menu: Entity<ActionMenu>,
+    attach: Entity<IconButton>,
     permission_slot: Entity<HostStack>,
-    permission: Entity<Dropdown>,
+    permission_icon: Entity<IconGlyph>,
+    permission: Entity<Button>,
+    worktree_slot: Entity<HostStack>,
+    worktree_icon: Entity<IconGlyph>,
+    worktree: Entity<Button>,
+    worktree_pick: Entity<IconButton>,
     pending_panel: Entity<HostStack>,
     pending_title: Entity<Text>,
     pending_prompt: Entity<Text>,
@@ -892,21 +902,26 @@ fn sidebar_toggle_button(collapsed: bool) -> IconButton {
     )
 }
 
-fn inspector_toggle_button(open: bool) -> IconButton {
-    IconButton::new(
-        Icon::Sidebar,
-        if open {
-            "关闭对话侧栏"
-        } else {
-            "打开对话侧栏"
+fn new_conversation_row(leading: StableNodeId) -> SidebarRow {
+    let mut row = SidebarRow::new("新对话").size(ControlSize::Medium).slots(
+        nana_ui::runtime::ListItemSlots {
+            leading: Some(leading),
+            content: None,
+            trailing: None,
         },
-    )
-    .size(ControlSize::Small)
-    .kind(ButtonKind::Text)
+    );
+    row.style = sidebar_row_style();
+    row
 }
 
-fn new_conversation_button() -> Button {
-    sidebar_text_button("新对话")
+fn sidebar_row_style() -> NodeStyle {
+    let mut style = NodeStyle::default();
+    let layout = Arc::make_mut(&mut style.layout);
+    layout.border_radius = Some(SIDEBAR_ROW_RADIUS);
+    // Rows are fixed height; a wrapping title would spill over the row tools.
+    layout.white_space_nowrap = true;
+    layout.text_overflow_ellipsis = true;
+    style
 }
 
 fn sidebar_search_toggle() -> IconButton {
@@ -921,32 +936,56 @@ fn sidebar_add_button() -> IconButton {
     sidebar_icon_button(Icon::Add, "添加项目")
 }
 
+fn empty_heading(value: String) -> Text {
+    let mut text = Text::new(value);
+    let mut style = text.style.clone();
+    style.foreground = Some(SemanticColorRole::Text);
+    let layout = Arc::make_mut(&mut style.layout);
+    layout.font_size = Some(EMPTY_HEADING_FONT_SIZE);
+    layout.font_weight = Some(500);
+    layout.text_align = TextAlignSpec::Center;
+    text.style = style;
+    text
+}
+
 fn breadcrumb_parent(text: &str) -> Text {
-    Text::new(text.to_owned())
+    breadcrumb_text(text, SemanticColorRole::Muted, None)
 }
 
 fn breadcrumb_separator() -> Text {
-    Text::new("›")
+    breadcrumb_text("›", SemanticColorRole::Faint, None)
 }
 
 fn breadcrumb_context(text: &str) -> Text {
-    Text::new(text.to_owned())
+    breadcrumb_text(text, SemanticColorRole::Text, Some(600))
 }
 
-fn window_control(icon: Icon, label: &'static str) -> IconButton {
-    IconButton::new(icon, label)
+fn breadcrumb_text(value: &str, color: SemanticColorRole, weight: Option<u16>) -> Text {
+    let mut text = Text::new(value.to_owned());
+    let mut style = text.style.clone();
+    style.foreground = Some(color);
+    let layout = Arc::make_mut(&mut style.layout);
+    layout.white_space_nowrap = true;
+    layout.text_overflow_ellipsis = true;
+    layout.font_weight = weight;
+    text.style = style;
+    text
 }
 
-fn search_button() -> IconButton {
-    IconButton::new(Icon::Search, "搜索命令")
-        .size(ControlSize::Small)
-        .kind(ButtonKind::Text)
-}
-
-fn more_button() -> IconButton {
-    IconButton::new(Icon::ChevronDown, "更多")
-        .size(ControlSize::Small)
-        .kind(ButtonKind::Text)
+fn window_control(icon: Icon, label: &'static str, kind: ButtonKind) -> IconButton {
+    let mut button = IconButton::new(icon, label)
+        .kind(kind)
+        .size(ControlSize::Small);
+    let layout = Arc::make_mut(&mut button.style.layout);
+    let edge = LengthSpec::Px(WINDOW_CONTROL_SIZE);
+    layout.width = Some(edge);
+    layout.height = Some(edge);
+    layout.min_width = Some(edge);
+    layout.min_height = Some(edge);
+    layout.padding_left = Some(LengthSpec::Px(0.0));
+    layout.padding_right = Some(LengthSpec::Px(0.0));
+    layout.border_radius = Some(UI_METRICS.radius_sm);
+    button
 }
 
 fn extra_button(label: &str, kind: ButtonKind) -> Button {
@@ -988,7 +1027,7 @@ fn row_stop_button() -> Button {
 }
 
 fn row_draft_button() -> Button {
-    Button::new("新对话")
+    Button::new("＋")
         .kind(ButtonKind::Text)
         .size(ControlSize::Small)
 }
@@ -1002,25 +1041,20 @@ fn composer_view(snapshot: &PrimaryShellSnapshot) -> TextArea {
     )
 }
 
-fn permission_dropdown(label: &str) -> Dropdown {
-    let selected = if label.contains("只读") {
-        "readonly"
-    } else if label.contains("完全") {
-        "full"
-    } else {
-        "ask"
-    };
-    Dropdown::single(Some(selected))
-        .size(ControlSize::Small)
-        .options([
-            DropdownOption::new("ask", "询问"),
-            DropdownOption::new("readonly", "只读"),
-            DropdownOption::new("full", "完全"),
-        ])
-}
-
 fn composer_plus_menu(open: bool) -> ActionMenu {
     ActionMenu::new().trigger("+").open(open)
+}
+
+fn composer_attach_button() -> IconButton {
+    IconButton::new(Icon::Paperclip, "添加文件")
+        .kind(ButtonKind::Text)
+        .size(ControlSize::Small)
+}
+
+fn worktree_pick_button() -> IconButton {
+    IconButton::new(Icon::Folder, "选择工作树")
+        .kind(ButtonKind::Text)
+        .size(ControlSize::Small)
 }
 
 fn plus_menu_items(snapshot: &PrimaryShellSnapshot) -> Vec<(String, String)> {
@@ -1196,40 +1230,23 @@ pub fn mount_primary_shell(
     context.append_child(title_center, title_parent)?;
     context.append_child(title_center, title_separator)?;
     context.append_child(title_center, title_context)?;
+    // The reference chrome keeps window controls alone on the trailing edge; the
+    // command palette and inspector already live in the titlebar more menu, which
+    // now hangs off the sidebar footer.
     let title_trailing = context.create_detached_component(document_id, HostStack::row(6.0))?;
-    let search = context.create_detached_component(document_id, search_button())?;
-    bind_activate(
-        context,
-        search,
-        Arc::clone(&sink),
-        ShellIntent::ToggleCommandPalette,
-    )?;
-    let inspector_toggle = context.create_detached_component(
-        document_id,
-        inspector_toggle_button(!snapshot.inspector_title.is_empty()),
-    )?;
-    bind_activate(
-        context,
-        inspector_toggle,
-        Arc::clone(&sink),
-        ShellIntent::ToggleTaskInspector,
-    )?;
-    context.append_child(title_trailing, inspector_toggle)?;
-    let more = context.create_detached_component(document_id, more_button())?;
-    context.append_child(title_trailing, more)?;
-    bind_activate(
-        context,
-        more,
-        Arc::clone(&sink),
-        ShellIntent::ToggleTitlebarMenu,
-    )?;
     if WindowChrome::platform_default().uses_custom_controls() {
-        let minimize = context
-            .create_detached_component(document_id, window_control(Icon::Minimize, "最小化"))?;
-        let maximize = context
-            .create_detached_component(document_id, window_control(Icon::Maximize, "最大化"))?;
-        let close =
-            context.create_detached_component(document_id, window_control(Icon::Close, "关闭"))?;
+        let minimize = context.create_detached_component(
+            document_id,
+            window_control(Icon::Minimize, "最小化", ButtonKind::Text),
+        )?;
+        let maximize = context.create_detached_component(
+            document_id,
+            window_control(Icon::Maximize, "最大化", ButtonKind::Text),
+        )?;
+        let close = context.create_detached_component(
+            document_id,
+            window_control(Icon::Close, "关闭", ButtonKind::Text),
+        )?;
         context.append_child(title_trailing, minimize)?;
         context.append_child(title_trailing, maximize)?;
         context.append_child(title_trailing, close)?;
@@ -1256,8 +1273,13 @@ pub fn mount_primary_shell(
     }
 
     let sidebar_top = context.create_detached_component(document_id, HostStack::bar(6.0))?;
-    let new_conversation =
-        context.create_detached_component(document_id, new_conversation_button())?;
+    let new_conversation_icon = context
+        .create_detached_component(document_id, SidebarRowIcon::new(Icon::MessageSquarePlus))?;
+    let new_conversation = context.create_detached_component(
+        document_id,
+        new_conversation_row(new_conversation_icon.stable_id()),
+    )?;
+    context.append_child(new_conversation, new_conversation_icon)?;
     let search_toggle = context.create_detached_component(document_id, sidebar_search_toggle())?;
     let search_close = context.create_detached_component(document_id, sidebar_search_close())?;
     let search_input = context.create_detached_component(
@@ -1311,22 +1333,17 @@ pub fn mount_primary_shell(
         document_id,
         "会话",
         Some(SESSIONS_EMPTY_TEXT),
-        Some(add_project),
+        None,
     )?;
     let (project_section, _project_header, project_body) = mount_sidebar_section(
         context,
         document_id,
         "项目",
         Some(PROJECTS_EMPTY_TEXT),
-        None,
+        Some(add_project),
     )?;
-    let (inbox_section, inbox_header, inbox_body) = mount_sidebar_section(
-        context,
-        document_id,
-        "收集箱",
-        Some(INBOX_EMPTY_TEXT),
-        None,
-    )?;
+    let (inbox_section, inbox_header, inbox_body) =
+        mount_sidebar_section(context, document_id, "收集箱", Some(INBOX_EMPTY_TEXT), None)?;
     bind_activate(
         context,
         inbox_header,
@@ -1357,6 +1374,15 @@ pub fn mount_primary_shell(
         )?;
         footer_nav.insert(item.id.clone(), button);
     }
+    let more = context
+        .create_detached_component(document_id, SidebarFooterButton::new("更多", Icon::Nodes))?;
+    context.append_child(footer, more)?;
+    bind_activate(
+        context,
+        more,
+        Arc::clone(&sink),
+        ShellIntent::ToggleTitlebarMenu,
+    )?;
     let provider_badge = context.create_detached_component(
         document_id,
         SidebarFooterButton::new(snapshot.provider_badge.clone(), Icon::Appearance),
@@ -1392,18 +1418,20 @@ pub fn mount_primary_shell(
     )?;
     let conversation_body =
         context.create_detached_component(document_id, HostStack::fill_column(12.0))?;
+    let heading_slot = context.create_detached_component(
+        document_id,
+        HostStack::headline_slot(!snapshot.heading.trim().is_empty()),
+    )?;
     let heading =
-        context.create_detached_component(document_id, Text::new(snapshot.heading.clone()))?;
-    let empty_hint =
-        context.create_detached_component(document_id, Text::new(snapshot.empty_hint.clone()))?;
+        context.create_detached_component(document_id, empty_heading(snapshot.heading.clone()))?;
+    context.append_child(heading_slot, heading)?;
     let error = context.create_detached_component(
         document_id,
         Text::new(snapshot.error.clone().unwrap_or_default()),
     )?;
     let timeline_scroll =
         context.create_detached_component(document_id, ScrollView::new(ScrollAxes::Vertical))?;
-    context.append_child(conversation_body, heading)?;
-    context.append_child(conversation_body, empty_hint)?;
+    context.append_child(conversation_body, heading_slot)?;
     context.append_child(conversation_body, error)?;
     context.append_child(conversation_body, timeline_scroll)?;
     let composer_dock =
@@ -1429,23 +1457,58 @@ pub fn mount_primary_shell(
         let sink = Arc::clone(&sink);
         move |_, _: &PopoverToggled, _| emit(&sink, ShellIntent::ToggleComposerPlus)
     })?;
+    let attach = context.create_detached_component(document_id, composer_attach_button())?;
+    bind_activate(
+        context,
+        attach,
+        Arc::clone(&sink),
+        ShellIntent::ComposerPlus("add-file".to_owned()),
+    )?;
     let permission_slot =
-        context.create_detached_component(document_id, HostStack::leading_row(0.0))?;
+        context.create_detached_component(document_id, HostStack::leading_row(4.0))?;
+    let permission_icon =
+        context.create_detached_component(document_id, IconGlyph::new(Icon::ShieldCheck))?;
     let permission = context.create_detached_component(
         document_id,
-        permission_dropdown(&snapshot.permission_label),
+        pill_button(&snapshot.permission_label, ButtonKind::Text),
     )?;
-    context.on(permission, {
-        let sink = Arc::clone(&sink);
-        move |_, event: &DropdownEvent<Arc<str>>, _| {
-            if let DropdownEvent::Select(value) = event {
-                emit(&sink, ShellIntent::SetPermission(value.to_string()));
-            }
-        }
-    })?;
+    bind_activate(
+        context,
+        permission,
+        Arc::clone(&sink),
+        ShellIntent::CyclePermission,
+    )?;
+    let worktree_slot =
+        context.create_detached_component(document_id, HostStack::leading_row(4.0))?;
+    let worktree_icon =
+        context.create_detached_component(document_id, IconGlyph::new(Icon::GitBranch))?;
+    let worktree = context.create_detached_component(
+        document_id,
+        pill_button(
+            snapshot.worktree_label.as_deref().unwrap_or_default(),
+            ButtonKind::Text,
+        ),
+    )?;
+    bind_activate(
+        context,
+        worktree,
+        Arc::clone(&sink),
+        ShellIntent::CycleWorktree,
+    )?;
+    let worktree_pick = context.create_detached_component(document_id, worktree_pick_button())?;
+    bind_activate(
+        context,
+        worktree_pick,
+        Arc::clone(&sink),
+        ShellIntent::PickWorktree,
+    )?;
+    context.append_child(worktree_slot, worktree_icon)?;
+    context.append_child(worktree_slot, worktree)?;
     context.append_child(plus_slot, plus_menu)?;
+    context.append_child(permission_slot, permission_icon)?;
     context.append_child(permission_slot, permission)?;
     context.append_child(extras, plus_slot)?;
+    context.append_child(extras, attach)?;
     context.append_child(extras, permission_slot)?;
     let pending_panel = context.create_detached_component(document_id, HostStack::column(8.0))?;
     let pending_title = context.create_detached_component(document_id, Text::new(String::new()))?;
@@ -1919,6 +1982,10 @@ pub fn mount_primary_shell(
         .title(snapshot.title_context.clone())
         .title_leading(title_leading.stable_id())
         .title_center(title_center.stable_id())
+        .title_center_width(TITLE_BREADCRUMB_WIDTH)
+        // The trailing slot already owns bound window controls; the shell's own
+        // strip would only add a second, inert set.
+        .title_window_controls(false)
         .title_trailing(title_trailing.stable_id())
         .navigation(navigation)
         .primary(primary);
@@ -1947,9 +2014,7 @@ pub fn mount_primary_shell(
         more_menu: None,
         titlebar_menu: None,
         sidebar_toggle,
-        search_button: search,
-        inspector_toggle,
-        more_button: more,
+        footer_more: more,
         form_fields: HashMap::new(),
         form_wrappers: HashMap::new(),
         form_switches: HashMap::new(),
@@ -2007,8 +2072,8 @@ pub fn mount_primary_shell(
         project_workspace_row,
         product_actions: HashMap::new(),
         provider_rows: HashMap::new(),
+        heading_slot,
         heading,
-        empty_hint,
         error,
         timeline_scroll,
         timeline_items: HashMap::new(),
@@ -2022,8 +2087,14 @@ pub fn mount_primary_shell(
         plus_items: HashMap::new(),
         plus_slot,
         plus_menu,
+        attach,
         permission_slot,
+        permission_icon,
         permission,
+        worktree_slot,
+        worktree_icon,
+        worktree,
+        worktree_pick,
         pending_panel,
         pending_title,
         pending_prompt,
@@ -2152,14 +2223,9 @@ impl ShellHandles {
         context.update_component(self.sidebar_toggle, |button, _| {
             *button = sidebar_toggle_button(snapshot.sidebar_collapsed);
         })?;
-        context.update_component(self.search_button, |button, _| {
-            *button = search_button();
-        })?;
-        context.update_component(self.more_button, |button, _| {
-            *button = more_button();
-        })?;
-        context.update_component(self.inspector_toggle, |button, _| {
-            *button = inspector_toggle_button(!snapshot.inspector_title.is_empty());
+        context.update_component(self.footer_more, |button, _| {
+            *button =
+                SidebarFooterButton::new("更多", Icon::Nodes).selected(snapshot.titlebar_menu_open);
         })?;
         context.update_component(self.title_parent, |title, _| {
             *title = breadcrumb_parent(&snapshot.title_parent);
@@ -2169,9 +2235,6 @@ impl ShellHandles {
         })?;
         context.update_component(self.title_context, |title, _| {
             *title = breadcrumb_context(&snapshot.title_context);
-        })?;
-        context.update_component(self.new_conversation, |button, _| {
-            *button = new_conversation_button();
         })?;
         context.update_component(self.search_toggle, |button, _| {
             *button = sidebar_search_toggle();
@@ -2188,10 +2251,11 @@ impl ShellHandles {
             *button = SidebarFooterButton::new(snapshot.provider_badge.clone(), Icon::Appearance);
         })?;
         context.update_component(self.heading, |heading, _| {
-            *heading = Text::new(snapshot.heading.clone());
+            *heading = empty_heading(snapshot.heading.clone());
         })?;
-        context.update_component(self.empty_hint, |hint, _| {
-            *hint = Text::new(snapshot.empty_hint.clone());
+        let headline_active = !snapshot.heading.trim().is_empty();
+        context.update_component(self.heading_slot, |slot, _| {
+            *slot = HostStack::headline_slot(headline_active);
         })?;
         context.update_component(self.error, |error, _| {
             *error = Text::new(snapshot.error.clone().unwrap_or_default());
@@ -2375,7 +2439,6 @@ impl ShellHandles {
             vec![self.conversation_section.stable_id()]
         } else if groups.grouped {
             vec![
-                self.conversation_section.stable_id(),
                 self.project_section.stable_id(),
                 self.inbox_section.stable_id(),
             ]
@@ -2571,21 +2634,32 @@ impl ShellHandles {
                 })?;
                 row
             } else {
-                let leading =
-                    context.create_detached_component(document_id, SidebarRowIcon::new(item.icon))?;
+                // Nested session rows read as children of their project through
+                // indentation alone; a glyph there only competes with the label.
+                let leading = if item.depth == 0 {
+                    Some(
+                        context
+                            .create_detached_component(document_id, SidebarRowIcon::new(item.icon))?,
+                    )
+                } else {
+                    None
+                };
                 let mut row_view = SidebarRow::new(item.label.clone())
                     .state(state)
                     .depth(item.depth)
                     .slots(nana_ui::runtime::ListItemSlots {
-                        leading: Some(leading.stable_id()),
+                        leading: leading.map(|leading| leading.stable_id()),
                         content: None,
                         trailing: None,
                     });
+                row_view.style = sidebar_row_style();
                 if let Some(expanded) = item.expanded {
                     row_view = row_view.disclosure(expanded);
                 }
                 let row = context.create_detached_component(document_id, row_view)?;
-                context.append_child(row, leading)?;
+                if let Some(leading) = leading {
+                    context.append_child(row, leading)?;
+                }
                 if let Some(intent) = sidebar_row_intent(item) {
                     bind_activate(context, row, Arc::clone(&self.sink), intent)?;
                 }
@@ -2682,8 +2756,8 @@ impl ShellHandles {
         context.update_component(self.plus_menu, |menu, _| {
             *menu = composer_plus_menu(snapshot.composer_plus_open);
         })?;
-        context.update_component(self.permission, |dropdown, _| {
-            *dropdown = permission_dropdown(&snapshot.permission_label);
+        context.update_component(self.permission, |chip, _| {
+            *chip = pill_button(&snapshot.permission_label, ButtonKind::Text);
         })?;
         let plus_order = if snapshot.composer_plus_open {
             let mut plus_order = Vec::new();
@@ -3817,8 +3891,7 @@ impl ShellHandles {
                 context,
                 self.conversation_body.stable_id(),
                 &[
-                    self.heading.stable_id(),
-                    self.empty_hint.stable_id(),
+                    self.heading_slot.stable_id(),
                     self.error.stable_id(),
                     self.timeline_scroll.stable_id(),
                     button.stable_id(),
@@ -3832,8 +3905,7 @@ impl ShellHandles {
                 context,
                 self.conversation_body.stable_id(),
                 &[
-                    self.heading.stable_id(),
-                    self.empty_hint.stable_id(),
+                    self.heading_slot.stable_id(),
                     self.error.stable_id(),
                     self.timeline_scroll.stable_id(),
                 ],
@@ -3937,7 +4009,27 @@ impl ShellHandles {
                 ShellIntent::SelectMention(item.id.clone()),
             ));
         }
-        let mut order = vec![self.plus_slot.stable_id(), self.permission_slot.stable_id()];
+        let mut order = vec![
+            self.plus_slot.stable_id(),
+            self.attach.stable_id(),
+            self.permission_slot.stable_id(),
+        ];
+        if let Some(label) = snapshot.worktree_label.as_deref() {
+            context.update_component(self.worktree, |button, _| {
+                *button = pill_button(label, ButtonKind::Text);
+            })?;
+            let worktree_children = if snapshot.worktree_can_pick {
+                vec![
+                    self.worktree_icon.stable_id(),
+                    self.worktree.stable_id(),
+                    self.worktree_pick.stable_id(),
+                ]
+            } else {
+                vec![self.worktree_icon.stable_id(), self.worktree.stable_id()]
+            };
+            reconcile_children(context, self.worktree_slot.stable_id(), &worktree_children)?;
+            order.push(self.worktree_slot.stable_id());
+        }
         for (id, label, kind, intent) in desired {
             keep.insert(id.clone());
             let button = if let Some(button) = self.extra_buttons.get(&id).copied() {
@@ -5747,6 +5839,7 @@ fn settings_tab_copy(settings: &SettingsSnapshot) -> (String, String, Option<Str
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime_layout::COMPOSER_CARD_RADIUS;
 
     fn empty_snapshot() -> PrimaryShellSnapshot {
         PrimaryShellSnapshot {
@@ -5755,7 +5848,6 @@ mod tests {
             title_parent: "LiliaCode".to_owned(),
             title_context: "今天想做什么？".to_owned(),
             heading: "今天想做什么？".to_owned(),
-            empty_hint: "从左侧打开会话，或新建会话。".to_owned(),
             error: None,
             settings_open: false,
             sidebar_collapsed: false,
@@ -5781,7 +5873,9 @@ mod tests {
             attachments: Vec::new(),
             plan_mode: false,
             goal_mode: false,
-            permission_label: "权限：询问".to_owned(),
+            permission_label: "询问".to_owned(),
+            worktree_label: None,
+            worktree_can_pick: false,
             suggestions: Vec::new(),
             suggestions_can_refresh: false,
             command_palette_open: false,
@@ -5922,7 +6016,7 @@ mod tests {
         assert_ne!(primary, Some(handles.workspace_page.stable_id()));
 
         let timeline = handles.timeline_scroll.stable_id();
-        let heading = handles.heading.stable_id();
+        let heading = handles.heading_slot.stable_id();
         let body = document
             .context()
             .world()
@@ -5989,7 +6083,7 @@ mod tests {
             .layout;
         assert_eq!(dock_layout.flex_grow, Some(0.0));
         assert_eq!(dock_layout.height, Some(nana_ui::runtime::LengthSpec::Shrink));
-        assert_eq!(dock_layout.border_radius, Some(nana_ui::UI_METRICS.radius_md));
+        assert_eq!(dock_layout.border_radius, Some(COMPOSER_CARD_RADIUS));
         assert_eq!(
             document
                 .context()
@@ -6171,6 +6265,7 @@ mod tests {
             extras,
             vec![
                 handles.plus_slot.stable_id(),
+                handles.attach.stable_id(),
                 handles.permission_slot.stable_id()
             ]
         );
@@ -6190,7 +6285,10 @@ mod tests {
                 .node(handles.permission_slot.stable_id())
                 .map(|node| node.children.clone())
                 .unwrap_or_default(),
-            vec![handles.permission.stable_id()]
+            vec![
+                handles.permission_icon.stable_id(),
+                handles.permission.stable_id()
+            ]
         );
         assert!(handles.plus_items.is_empty());
         let plus_children = document
@@ -6217,8 +6315,7 @@ mod tests {
         assert_eq!(
             body,
             vec![
-                handles.heading.stable_id(),
-                handles.empty_hint.stable_id(),
+                handles.heading_slot.stable_id(),
                 handles.error.stable_id(),
                 handles.timeline_scroll.stable_id(),
             ]
@@ -6240,6 +6337,7 @@ mod tests {
             extras,
             vec![
                 handles.plus_slot.stable_id(),
+                handles.attach.stable_id(),
                 handles.permission_slot.stable_id()
             ]
         );
@@ -6312,7 +6410,7 @@ mod tests {
     }
 
     #[test]
-    fn grouped_sidebar_keeps_session_empty_state() {
+    fn grouped_sidebar_mounts_projects_and_inbox_only() {
         let mut snapshot = snapshot_with_empty_primary_pane();
         snapshot.sidebar_rows = vec![
             ShellSidebarRow {
@@ -6343,11 +6441,6 @@ mod tests {
             },
         ];
         let (document, handles, _primary) = mounted_primary(&snapshot);
-        let session_empty = document
-            .context()
-            .read(handles.conversation_section, |section| section.empty_text.clone())
-            .expect("read session section");
-        assert_eq!(session_empty.as_deref(), Some(SESSIONS_EMPTY_TEXT));
         let project_empty = document
             .context()
             .read(handles.project_section, |section| section.empty_text.clone())
@@ -6367,7 +6460,6 @@ mod tests {
         assert_eq!(
             scroll,
             vec![
-                handles.conversation_section.stable_id(),
                 handles.project_section.stable_id(),
                 handles.inbox_section.stable_id(),
             ]

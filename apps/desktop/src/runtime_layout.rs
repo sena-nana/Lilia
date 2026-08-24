@@ -10,7 +10,9 @@ use nana_ui::{ButtonKind, ControlSize, Icon, UI_METRICS};
 
 const COMPOSER_SEND_SIZE: f32 = 30.0;
 const SIDEBAR_ACTION_SIZE: f32 = 30.0;
-const COMPOSER_CHIP_HEIGHT: f32 = 24.0;
+pub(crate) const COMPOSER_CHIP_HEIGHT: f32 = 28.0;
+pub(crate) const COMPOSER_CARD_RADIUS: f32 = 16.0;
+pub(crate) const SIDEBAR_ROW_RADIUS: f32 = 12.0;
 
 #[derive(Clone)]
 pub(crate) struct HostStack {
@@ -63,7 +65,19 @@ impl HostStack {
             .padding(10.0)
             .surface(SemanticColorRole::Surface)
             .outline(SemanticColorRole::Border, 1.0)
-            .radius(UI_METRICS.radius_md)
+            .radius(COMPOSER_CARD_RADIUS)
+    }
+
+    /// Holds the empty-state headline centered in the leftover pane height, and
+    /// collapses to nothing once a timeline takes over the pane.
+    pub(crate) fn headline_slot(active: bool) -> Self {
+        if active {
+            Self::fill_column(0.0)
+                .align(AlignSpec::Center)
+                .justify(JustifySpec::Center)
+        } else {
+            Self::column(0.0).height(LengthSpec::Px(0.0))
+        }
     }
 
     pub(crate) fn row(gap: f32) -> Self {
@@ -333,7 +347,7 @@ fn round_icon_button(icon: Icon, label: &'static str, kind: ButtonKind) -> IconB
 }
 
 pub(crate) fn composer_send_button(enabled: bool) -> IconButton {
-    round_icon_button(Icon::ArrowRight, "发送", ButtonKind::Primary).disabled(!enabled)
+    round_icon_button(Icon::ArrowUp, "发送", ButtonKind::Primary).disabled(!enabled)
 }
 
 pub(crate) fn composer_interrupt_button(enabled: bool) -> IconButton {
@@ -350,16 +364,6 @@ pub(crate) fn sidebar_icon_button(icon: Icon, label: &'static str) -> IconButton
     layout.min_height = Some(edge);
     layout.width = Some(edge);
     layout.height = Some(edge);
-    layout.border_radius = Some(UI_METRICS.radius_sm);
-    button
-}
-
-pub(crate) fn sidebar_text_button(label: &'static str) -> Button {
-    let mut button = Button::new(label)
-        .kind(ButtonKind::Text)
-        .size(ControlSize::Medium);
-    let layout = Arc::make_mut(&mut button.style.layout);
-    layout.min_height = Some(LengthSpec::Px(SIDEBAR_ACTION_SIZE));
     layout.border_radius = Some(UI_METRICS.radius_sm);
     button
 }

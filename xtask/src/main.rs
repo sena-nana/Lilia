@@ -1,6 +1,6 @@
 use lilia_xtask::{
-    agent_debug, android, boundary, icons, installer_smoke, performance, pin, release, Result,
-    XtaskError,
+    agent_debug, android, boundary, icons, installer_smoke, performance, pin, release, screenshot,
+    Result, XtaskError,
 };
 
 fn main() {
@@ -20,6 +20,7 @@ fn dispatch(arguments: Vec<String>) -> Result {
         "boundary-check" if rest.is_empty() => boundary::check(),
         "pin-check" if rest.is_empty() => pin::check(),
         "agent-debug" if rest.is_empty() => agent_debug::run(),
+        "screenshot" => screenshot::run(rest),
         "performance" if rest.is_empty() => performance::run(),
         "release" if rest.first().map(String::as_str) == Some("windows") => {
             release::windows(&rest[1..])
@@ -71,6 +72,6 @@ fn verify() -> Result {
 fn usage() -> XtaskError {
     XtaskError::failure(
         "usage",
-        "usage: cargo xtask <verify|boundary-check|pin-check|agent-debug|performance|release windows --tag <v...>|installer-smoke --tag <v...> [--path <installer>]|android doctor|android test|android build|android smoke|icons [source]>",
+        "usage: cargo xtask <verify|boundary-check|pin-check|agent-debug|screenshot [--out <png>]|performance|release windows --tag <v...>|installer-smoke --tag <v...> [--path <installer>]|android doctor|android test|android build|android smoke|icons [source]>",
     )
 }
