@@ -36,8 +36,7 @@ use lilia_kernel::{Feature, JobEvent, Journal, Kernel};
 use lilia_service::ServiceAuthority;
 use lilia_storage::Db;
 
-use crate::application::DesktopWorkspaceSession;
-use crate::shell_service::WorkspaceSessionFeature;
+use crate::shell_service::{WorkspaceSessionFeature, WorkspaceSessions};
 
 /// Authorities the desktop process already owns and hands to the features it
 /// mounts. Everything here outlives the kernel.
@@ -53,9 +52,10 @@ pub struct KernelServices {
     pub automation: DesktopAutomationService,
     pub project_tasks: ProjectTaskService,
     pub project_task_events: Arc<ProjectTaskEventFanout>,
-    /// The primary window's session, built during application bootstrap because
-    /// restoring persisted panes has to precede the kernel.
-    pub workspace_session: DesktopWorkspaceSession,
+    /// Every window's session. The primary one is built during application
+    /// bootstrap because restoring persisted panes has to precede the kernel;
+    /// workspace windows add theirs as they open.
+    pub workspace_sessions: Arc<WorkspaceSessions>,
     /// The log the shell already writes to, shared so kernel lifecycle, job and
     /// event records interleave with the mutations recorded before boot.
     pub journal: Journal,
@@ -136,7 +136,7 @@ fn features(services: KernelServices) -> Vec<Arc<dyn Feature>> {
         automation,
         project_tasks,
         project_task_events,
-        workspace_session,
+        workspace_sessions,
         journal: _,
         clone_credentials,
         update,
@@ -179,7 +179,7 @@ fn features(services: KernelServices) -> Vec<Arc<dyn Feature>> {
         Arc::new(GitHubFeature::new(github)),
         Arc::new(ImportFeature::new(imports)),
         Arc::new(SuggestionsFeature::new(suggestions)),
-        Arc::new(WorkspaceSessionFeature::new(workspace_session)),
+        Arc::new(WorkspaceSessionFeature::new(workspace_sessions)),
     ]
 }
 
@@ -201,7 +201,7 @@ mod tests {
         DesktopApplication, DesktopApplicationConfig, DesktopHost, DesktopHostAction,
         DesktopHostContext, DesktopHostError, DesktopHostResult,
     };
-    use crate::shell_service::WorkspaceSessionKey;
+    use crate::shell_service::WorkspaceSessionsKey;
 
     /// Stands in for the shell's own broadcast sink so a test can tell whether
     /// the shell leg still observes mutations written through the kernel.
@@ -397,8 +397,13 @@ mod tests {
             Arc::new(IdlePort),
         )
         .expect("the desktop application opens against the in-memory authority");
+        let workspace_sessions = Arc::new(WorkspaceSessions::new());
+        workspace_sessions.install(
+            nana_ui_platform::WindowId::PRIMARY,
+            application.default_workspace_session(),
+        );
         KernelServices {
-            workspace_session: application.default_workspace_session(),
+            workspace_sessions,
             project_tasks: ProjectTaskService::new(authority.clone(), project_task_events.clone())
                 .with_journal(journal.clone()),
             project_task_events,
@@ -448,20 +453,28 @@ mod tests {
         assert_eq!(mounted, declared);
     }
 
-    /// A module is built from `&Kernel` alone, so the session it renders has to
-    /// be reachable through the registry and has to be the shell's own instance
-    /// rather than a second session over the same rows.
+    /// A module is built from `&Kernel` and its window alone, so the session it
+    /// renders has to be reachable through the registry and has to be the
+    /// shell's own instance rather than a second session over the same rows.
     #[test]
-    fn the_workspace_session_is_resolvable_from_the_registry() {
+    fn a_windows_workspace_session_is_resolvable_from_the_registry() {
         let services = test_services("in-memory:workspace-slot");
-        let expected = services.workspace_session.id().clone();
+        let expected = services
+            .workspace_sessions
+            .get(nana_ui_platform::WindowId::PRIMARY)
+            .expect("the primary session is installed before boot")
+            .id()
+            .clone();
 
         let host = KernelHost::start(services, |_| {}).expect("the composition root boots");
-        let resolved = host
+        let sessions = host
             .kernel()
-            .service::<WorkspaceSessionKey>()
-            .expect("the workspace session slot is filled");
+            .service::<WorkspaceSessionsKey>()
+            .expect("the workspace sessions slot is filled");
 
+        let resolved = sessions
+            .get(nana_ui_platform::WindowId::PRIMARY)
+            .expect("the primary window has a session");
         assert_eq!(resolved.id(), &expected);
     }
 

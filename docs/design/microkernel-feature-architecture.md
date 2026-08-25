@@ -253,14 +253,22 @@ feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate �
 
 上下文只给 `&Kernel`。这不是为了纯粹——一个必须被喂进 projects 列表的模块一定会把它存下来，存下来的那份就是会漂移的那份。所以共享事实先下沉成槽位，模块自己 resolve。
 
-真正卡住域切分的是第三类字段的机制，不是字段数量：`with_workspace_window_project_state` 把 `DesktopProgram` 的 `tasks` / `roadmap` / `memories` / `architecture*` 当成**寄存器**——把某个工作区窗口的编辑态换入，跑一次操作，再换出。所以这些字段不是「一份状态」而是「每窗口一份状态 + 一个共用寄存器」。单独迁 architecture 会撞上这个：换入换出的函数横跨所有域，模块要么把私有 state 暴露出来给它存取（等于废掉契约的私有承诺），要么 `UiModuleHost` 变成每窗口一份、寄存器机制整体删除（更干净，但要 14 个域一起动，不能增量）。这个取舍决定 14 个模块怎么写，选错就要全部重写，所以它先于任何一个域的迁移。
+真正决定模块怎么写的是第三类字段的机制，不是字段数量：`with_workspace_window_project_state` 把 `DesktopProgram` 的 `tasks` / `roadmap` / `memories` / `architecture*` 当成**寄存器**——把某个工作区窗口的编辑态换入，跑一次操作，再换出。所以这些字段不是「一份状态」而是「每窗口一份状态 + 一个共用寄存器」。
+
+选定的方向是取消寄存器：模块按窗口各持一份实例，没有换入换出。落地形状是三件——
+
+- 会话槽位从「一个 session」改成 `lilia.shell.workspace_sessions` 注册表，按 `WindowId` 存取。窗口在 mount 之后才开，而槽位只能 provide 一次，所以槽位里放注册表而不是实例；`WindowId` 直接沿用 NanaUI 的窗口身份，不另造一个枚举。
+- contribution 交的是**工厂**而不是实例：每个工作区窗口要自己的一份，两个窗口编同一个项目不能共享编辑态。`UiModuleRegistry` 持工厂，`host()` 给一个窗口配一套。
+- `UiModuleContext` 带上 `WindowId`，模块 resolve「我这个窗口的」session。这没有违背只给 `&Kernel` 的约束——窗口身份不是事实，是问哪一份事实。
+
+寄存器不会一次消失：它同时管四个域加选择态，四个域都成模块之后剩下的只有 `selected_project` / `inbox_selected` / `selected_task` / `project_surface` 的换入换出，20 多字段的 `ProjectWorkspaceEditorState` 与它的 capture / apply 两个函数才能删。
 
 ### 内核机制的消费者缺口
 
 内核五个机制里 `Jobs` 与 `Journal` 已接满消费者，另外三个的状态要如实记着，否则后来者会以为它们在工作：
 
-- `ServiceRegistry`：13 个 `ServiceKey` 全部 provide。`lilia.shell.workspace_session` 是第一个有产品 `resolve` 的槽位：`DesktopWorkspaceSession` 本来就是 `Arc<Mutex<..>>` 背书的可克隆句柄，持有 projects / tasks / 选择 / 面板布局的唯一写入权，所以它是共享事实下沉成 service 的自然形状，而不需要为此新造一层。`DesktopProgram` 现在从槽位读它而不是私藏句柄——这是 `UiModule` 只拿 `&Kernel` 就能构造的前提。`ProjectTaskService` 的双实例已消除——壳层在 bootstrap 时建实例，`TaskFeature::mount` 把同一实例 provide 进槽位，事件经 `ProjectTaskEventFanout` 同时进 `DesktopEventKind` 与 `EventBus`。方向是壳层给内核而不是内核给壳层，因为壳层先于内核起，持久化在 bootstrap 阶段就要能写。其余槽位的产品消费者仍是壳层直接持句柄，`resolve` 只在装配测试里用；22 个 feature 之间没有任何跨 crate 依赖，所以 `requires()` 全为空是当前依赖图的实情，不是遗漏——`mount_all` 的 Kahn 排序在真实图上就是一层。
-- `ContributionRegistry`：`apps/desktop/src/ui_module.rs` 定义了宿主专有的 `UiModules` 集合，`UiModuleHost::from_kernel` 在 `DesktopProgram::initialize` 里 `take_contributions` 取走，投影汇合点已在 `primary_shell_snapshot` 上线。当前注册数为 0，所以这条管道有结构没有流量；`reduce` 路由要等第一个域迁出时一并接上，那时才知道路由表该按哪些 `FeatureId` 分。
+- `ServiceRegistry`：13 个 `ServiceKey` 全部 provide。`lilia.shell.workspace_sessions` 是第一个有产品 `resolve` 的槽位：`DesktopWorkspaceSession` 本来就是 `Arc<Mutex<..>>` 背书的可克隆句柄，持有 projects / tasks / 选择 / 面板布局的唯一写入权，所以它是共享事实下沉成 service 的自然形状，而不需要为此新造一层。`DesktopProgram` 现在从槽位读它而不是私藏句柄；工作区窗口开关时同步 install / remove，关窗即移除，避免平台回收的窗口号继承上一个窗口的会话。`ProjectTaskService` 的双实例已消除——壳层在 bootstrap 时建实例，`TaskFeature::mount` 把同一实例 provide 进槽位，事件经 `ProjectTaskEventFanout` 同时进 `DesktopEventKind` 与 `EventBus`。方向是壳层给内核而不是内核给壳层，因为壳层先于内核起，持久化在 bootstrap 阶段就要能写。其余槽位的产品消费者仍是壳层直接持句柄，`resolve` 只在装配测试里用；22 个 feature 之间没有任何跨 crate 依赖，所以 `requires()` 全为空是当前依赖图的实情，不是遗漏——`mount_all` 的 Kahn 排序在真实图上就是一层。
+- `ContributionRegistry`：`apps/desktop/src/ui_module.rs` 定义了宿主专有的 `UiModules` 集合，`UiModuleRegistry::from_kernel` 在 `DesktopProgram::initialize` 里 `take_contributions` 取走工厂，主窗口与每个工作区窗口各配一套 `UiModuleHost`，投影汇合点已在 `primary_shell_snapshot` 上线。当前注册数为 0，所以这条管道有结构没有流量；`reduce` 路由要等第一个域迁出时一并接上，那时才知道路由表该按哪些 `FeatureId` 分。
 - `EventBus`：唯一产品订阅是 `kernel_host.rs` 的 `JobEvent`。feature crate 零订阅，UI 仍走 39 变体的 `DesktopEventKind` + `refresh_*`。
 - `Journal`：4096 条环形缓冲。四类 `RecordKind` 都有产品写入点——lifecycle 与 job 由内核写，`Event` 由 `EventBus::publish` 写（`JobEvent` 以 `JOURNALED = false` 退出，避免与 `Jobs` 自己的 job 记录重复），`Mutation` 由 `ProjectTaskService` 在每次写入后写，记的是操作名与幂等键是否命中——事件只说"行动了"，说不出这次是新写还是重放。`apps/desktop/src/journal_export.rs` 是 `JournalSink` 的产品实现：`LILIA_JOURNAL_PATH` 指向文件时，记录经专用线程逐条落盘（UI 线程与 job worker 上不做文件系统调用），`cargo xtask agent-debug` 把它设为 `journal.jsonl` 并校验序号单调与 feature 挂载记录齐全。
 

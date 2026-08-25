@@ -16,22 +16,36 @@ use std::collections::HashMap;
 use lilia_kernel::{Contribution, FeatureId, Kernel};
 
 use crate::runtime_shell::PrimaryShellSnapshot;
+use nana_ui_platform::WindowId;
 
-/// What the shell owes a module: the kernel, and nothing else.
+/// What the shell owes a module: the kernel, and which window it serves.
 ///
 /// Everything a domain needs to read is a service slot, so widening this struct
-/// is the signal that a fact has no owner yet.
+/// is the signal that a fact has no owner yet. The window is here rather than
+/// baked into the module because a domain's shared facts are per-window: the
+/// selection and pane layout a module renders belong to its own window's
+/// session, not to a global one.
 pub struct UiModuleContext<'a> {
     kernel: &'a Kernel,
+    window: WindowId,
 }
 
 impl<'a> UiModuleContext<'a> {
-    pub fn new(kernel: &'a Kernel) -> Self {
-        Self { kernel }
+    pub fn new(kernel: &'a Kernel, window: WindowId) -> Self {
+        Self { kernel, window }
     }
 
     pub fn kernel(&self) -> &Kernel {
         self.kernel
+    }
+
+    pub fn window(&self) -> WindowId {
+        self.window
+    }
+
+    /// This window's workspace session, or `None` once its window has closed.
+    pub fn workspace(&self) -> Option<crate::application::DesktopWorkspaceSession> {
+        crate::shell_service::workspace_sessions(self.kernel).get(self.window)
     }
 }
 
@@ -134,7 +148,12 @@ where
     }
 }
 
-/// The collection features append their UI modules to during mount.
+/// Builds one module instance. Contributed instead of an instance because every
+/// workspace window needs its own: a module's state is its window's editor
+/// state, and two windows editing the same project must not share it.
+pub type UiModuleFactory = Box<dyn Fn() -> Box<dyn ErasedUiModule + Send> + Send + Sync>;
+
+/// The collection features append their UI module factories to during mount.
 ///
 /// Declared by the shell rather than the kernel because a module is host
 /// vocabulary: the kernel stores the items and preserves mount order without
@@ -142,12 +161,48 @@ where
 pub enum UiModules {}
 
 impl Contribution for UiModules {
-    /// `Send` because a module is built on the mounting thread and then moved to
-    /// the UI thread, where it stays. It is never shared across threads, which
-    /// is why this is not `Sync`.
-    type Item = Box<dyn ErasedUiModule + Send>;
+    type Item = UiModuleFactory;
 
     const NAME: &'static str = "lilia.shell.ui_modules";
+}
+
+/// The factories drained from the kernel once, used to furnish each window.
+///
+/// Held by the shell for the process lifetime because workspace windows open
+/// long after mount, and contributions can only be taken once.
+#[derive(Default)]
+pub struct UiModuleRegistry {
+    factories: Vec<(FeatureId, UiModuleFactory)>,
+}
+
+impl UiModuleRegistry {
+    /// Takes every factory contributed during mount, in mount order.
+    pub fn from_kernel(kernel: &Kernel) -> Self {
+        Self {
+            factories: kernel.take_contributions::<UiModules>(),
+        }
+    }
+
+    /// Builds a fresh set of modules for one window.
+    pub fn host(&self) -> Result<UiModuleHost, String> {
+        let mut host = UiModuleHost::new();
+        for (contributor, factory) in &self.factories {
+            let module = factory();
+            if &module.feature() != contributor {
+                return Err(format!(
+                    "{} contributed a UI module claiming {}",
+                    contributor.as_str(),
+                    module.feature().as_str()
+                ));
+            }
+            host.register(module)?;
+        }
+        Ok(host)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.factories.is_empty()
+    }
 }
 
 /// The modules a shell window hosts, indexed for routing.
@@ -206,24 +261,6 @@ impl UiModuleHost {
         }
     }
 
-    /// Takes every module contributed during mount, in mount order.
-    ///
-    /// Draining rather than borrowing is what lets a module be `!Sync`: the host
-    /// owns it outright for the rest of the process.
-    pub fn from_kernel(kernel: &Kernel) -> Result<Self, String> {
-        let mut host = Self::new();
-        for (contributor, module) in kernel.take_contributions::<UiModules>() {
-            if module.feature() != contributor {
-                return Err(format!(
-                    "{} contributed a UI module claiming {}",
-                    contributor.as_str(),
-                    module.feature().as_str()
-                ));
-            }
-            host.register(module)?;
-        }
-        Ok(host)
-    }
 }
 
 #[cfg(test)]
@@ -267,15 +304,24 @@ mod tests {
         heading: String,
     }
 
+    enum HeaderMessage {
+        Set(String),
+    }
+
     impl UiModule for Header {
-        type Message = ();
+        type Message = HeaderMessage;
 
         fn feature(&self) -> FeatureId {
             FeatureId::new("test.header").expect("the test feature id is not blank")
         }
 
-        fn reduce(&mut self, _message: (), _cx: &UiModuleContext<'_>) -> UiModuleOutcome {
-            UiModuleOutcome::clean()
+        fn reduce(&mut self, message: Self::Message, _cx: &UiModuleContext<'_>) -> UiModuleOutcome {
+            let HeaderMessage::Set(heading) = message;
+            if heading == self.heading {
+                return UiModuleOutcome::clean();
+            }
+            self.heading = heading;
+            UiModuleOutcome::dirty()
         }
 
         fn project(&self, _cx: &UiModuleContext<'_>, into: &mut PrimaryShellSnapshot) {
@@ -293,7 +339,7 @@ mod tests {
     #[test]
     fn a_message_reaches_only_the_module_that_owns_its_domain() {
         let kernel = Kernel::new();
-        let cx = UiModuleContext::new(&kernel);
+        let cx = UiModuleContext::new(&kernel, WindowId::PRIMARY);
         let mut host = UiModuleHost::new();
         host.register(titler("test.titler"))
             .expect("the slot is free");
@@ -321,7 +367,7 @@ mod tests {
     #[test]
     fn an_unclaimed_domain_reports_no_module_so_the_shell_keeps_handling_it() {
         let kernel = Kernel::new();
-        let cx = UiModuleContext::new(&kernel);
+        let cx = UiModuleContext::new(&kernel, WindowId::PRIMARY);
         let mut host = UiModuleHost::new();
         host.register(titler("test.left")).expect("the slot is free");
 
@@ -344,15 +390,17 @@ mod tests {
             &self,
             cx: &mut lilia_kernel::FeatureContext<'_>,
         ) -> Result<(), lilia_kernel::KernelError> {
-            cx.contribute::<UiModules>(Box::new(Header {
-                heading: "from the feature".to_owned(),
+            cx.contribute::<UiModules>(Box::new(|| {
+                Box::new(Header {
+                    heading: "from the feature".to_owned(),
+                })
             }));
             Ok(())
         }
     }
 
     #[test]
-    fn a_module_contributed_at_mount_time_reaches_the_host() {
+    fn a_module_contributed_at_mount_time_reaches_every_window() {
         let kernel = Kernel::new();
         kernel
             .mount_all(vec![
@@ -360,12 +408,45 @@ mod tests {
             ])
             .expect("the feature mounts");
 
-        let host = UiModuleHost::from_kernel(&kernel).expect("the contributed module is accepted");
-        assert!(host.hosts(&FeatureId::new("test.header").unwrap()));
+        let registry = UiModuleRegistry::from_kernel(&kernel);
+        let header = FeatureId::new("test.header").unwrap();
+        for window in [WindowId::PRIMARY, WindowId(7)] {
+            let host = registry.host().expect("the contributed module is accepted");
+            assert!(host.hosts(&header));
 
-        let cx = UiModuleContext::new(&kernel);
+            let cx = UiModuleContext::new(&kernel, window);
+            let mut snapshot = crate::runtime_shell::empty_snapshot();
+            host.project(&cx, &mut snapshot);
+            assert_eq!(snapshot.heading, "from the feature");
+        }
+    }
+
+    /// Each window gets its own instance, so editing in one leaves the other
+    /// alone. This is the property that replaces the shell's swap register.
+    #[test]
+    fn windows_do_not_share_a_module_instance() {
+        let kernel = Kernel::new();
+        kernel
+            .mount_all(vec![
+                std::sync::Arc::new(HeaderFeature) as std::sync::Arc<dyn lilia_kernel::Feature>,
+            ])
+            .expect("the feature mounts");
+        let registry = UiModuleRegistry::from_kernel(&kernel);
+
+        let mut first = registry.host().expect("the module is accepted");
+        let second = registry.host().expect("the module is accepted");
+        let header = FeatureId::new("test.header").unwrap();
+        first
+            .reduce(
+                &header,
+                Box::new(HeaderMessage::Set("edited".to_owned())),
+                &UiModuleContext::new(&kernel, WindowId::PRIMARY),
+            )
+            .expect("the header is hosted");
+
+        let cx = UiModuleContext::new(&kernel, WindowId(3));
         let mut snapshot = crate::runtime_shell::empty_snapshot();
-        host.project(&cx, &mut snapshot);
+        second.project(&cx, &mut snapshot);
         assert_eq!(snapshot.heading, "from the feature");
     }
 
@@ -380,7 +461,7 @@ mod tests {
     #[test]
     fn each_module_folds_its_own_slice_without_erasing_the_others() {
         let kernel = Kernel::new();
-        let cx = UiModuleContext::new(&kernel);
+        let cx = UiModuleContext::new(&kernel, WindowId::PRIMARY);
         let mut host = UiModuleHost::new();
         host.register(Box::new(Titler {
             feature: "test.titler",

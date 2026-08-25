@@ -1816,10 +1816,21 @@ pub struct DesktopProgram {
     project_clone_detail: Option<String>,
     active_project_clone_job: Option<JobId>,
     kernel: crate::kernel_host::KernelHost,
-    /// Domains that have moved out of this struct. Empty until the first one
-    /// does; the assembly points above and in `update` are already live so a
-    /// migration adds a module instead of editing the shell.
+    /// Domains that have moved out of this struct, for the primary window.
+    /// Empty until the first one does; the assembly point in
+    /// `primary_shell_snapshot` is already live so a migration adds a module
+    /// instead of editing the shell.
     ui_modules: crate::ui_module::UiModuleHost,
+    /// The same domains for each workspace window. Separate instances rather
+    /// than one set the shell swaps state into: two windows editing the same
+    /// project must not share an editor.
+    ui_module_hosts: HashMap<HostedWindowId, crate::ui_module::UiModuleHost>,
+    /// Builds a fresh module set per window. Workspace windows open long after
+    /// mount, and contributions can only be drained once.
+    ui_module_registry: crate::ui_module::UiModuleRegistry,
+    /// Every window's session, so a module resolves its own instead of the shell
+    /// swapping one in around it.
+    workspace_sessions: std::sync::Arc<crate::shell_service::WorkspaceSessions>,
     github_binding: DesktopGitHubBindingStatus,
     github_device_flow: Option<DesktopGitHubDeviceFlowStart>,
     active_github_binding_job: Option<JobId>,
@@ -4019,9 +4030,25 @@ impl DesktopProgram {
         let mut snapshot = self.shell_owned_snapshot();
         // Modules fold their own fields last, so a migrated domain overrides the
         // shell's value for exactly the fields it claims and nothing else.
-        let cx = crate::ui_module::UiModuleContext::new(self.kernel.kernel());
+        let cx = crate::ui_module::UiModuleContext::new(self.kernel.kernel(), WindowId::PRIMARY);
         self.ui_modules.project(&cx, &mut snapshot);
         snapshot
+    }
+
+    /// This window's modules, furnished on first use.
+    ///
+    /// The same registry already built the primary window's set at startup, so a
+    /// failure here would mean a factory answered differently the second time.
+    fn window_ui_modules(
+        &mut self,
+        window_id: HostedWindowId,
+    ) -> &mut crate::ui_module::UiModuleHost {
+        let registry = &self.ui_module_registry;
+        self.ui_module_hosts.entry(window_id).or_insert_with(|| {
+            registry
+                .host()
+                .expect("the UI module registry answers consistently")
+        })
     }
 
     /// The projection for every domain the shell still owns itself.
@@ -27623,6 +27650,7 @@ impl DesktopProgram {
             };
             seen_items.extend(restored_items);
             let window_id = WindowId(persisted.window_id);
+            self.workspace_sessions.install(window_id, workspace.clone());
             self.task_popups.insert(
                 window_id,
                 TaskPopupWindow {
@@ -27725,6 +27753,7 @@ impl DesktopProgram {
             }
         };
         let title = item.title.clone();
+        self.workspace_sessions.install(window_id, workspace.clone());
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -27896,6 +27925,7 @@ impl DesktopProgram {
             .unwrap_or_else(|| "收集箱".to_owned());
         let draft_worktree = self.initial_draft_worktree(project_id.as_ref());
         let composer_editor = TextEditorState::with_text(&composer.content);
+        self.workspace_sessions.install(window_id, workspace.clone());
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -28137,6 +28167,7 @@ impl DesktopProgram {
             })
             .map(|project| project.name.clone())
             .unwrap_or_else(|| "收集箱".to_owned());
+        self.workspace_sessions.install(window_id, workspace.clone());
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -29073,6 +29104,11 @@ impl DesktopProgram {
     }
 
     fn clear_task_popup_ephemeral_state(&mut self, window_id: HostedWindowId) {
+        // Dropped here rather than at each removal site so a window id the
+        // platform later recycles cannot inherit the closed window's session or
+        // modules.
+        self.workspace_sessions.remove(window_id);
+        self.ui_module_hosts.remove(&window_id);
         self.file_drop_hovered_windows.remove(&window_id);
         self.attachment_previews.remove(&window_id);
         self.timeline_text_selections.remove(&window_id);
@@ -30839,7 +30875,11 @@ impl RuntimeProgram for DesktopProgram {
                     automation: application.automation_service(),
                     project_tasks,
                     project_task_events,
-                    workspace_session: application_workspace,
+                    workspace_sessions: {
+                        let sessions = Arc::new(crate::shell_service::WorkspaceSessions::new());
+                        sessions.install(WindowId::PRIMARY, application_workspace);
+                        sessions
+                    },
                     journal: application.journal(),
                     clone_credentials: Arc::new(GitHubCloneCredentials {
                         application: application.clone(),
@@ -30902,12 +30942,17 @@ impl RuntimeProgram for DesktopProgram {
                 },
             )?
         };
-        // The session now lives in the service registry, so the shell reads it
-        // from the same slot a UI module would rather than keeping a private
-        // handle that could outlive an unmount.
-        let application_workspace = crate::shell_service::workspace_session(kernel.kernel());
-        let ui_modules = crate::ui_module::UiModuleHost::from_kernel(kernel.kernel())
-            .map_err(|error| format!("failed to collect UI modules: {error}"))?;
+        // The sessions now live in the service registry, so the shell reads the
+        // primary one from the same slot a UI module would rather than keeping a
+        // private handle that could outlive an unmount.
+        let workspace_sessions = crate::shell_service::workspace_sessions(kernel.kernel());
+        let application_workspace = workspace_sessions
+            .get(WindowId::PRIMARY)
+            .expect("the primary session was installed before the kernel mounted");
+        let ui_module_registry = crate::ui_module::UiModuleRegistry::from_kernel(kernel.kernel());
+        let ui_modules = ui_module_registry
+            .host()
+            .map_err(|error| format!("failed to build the primary window's UI modules: {error}"))?;
         application
             .install_title_update_scheduler(Arc::new(QueuedTitleScheduler {
                 messages: Arc::clone(&message_sender),
@@ -31111,6 +31156,9 @@ impl RuntimeProgram for DesktopProgram {
             project_clone_detail: None,
             active_project_clone_job: None,
             ui_modules,
+            ui_module_hosts: HashMap::new(),
+            ui_module_registry,
+            workspace_sessions,
             kernel,
             github_binding,
             github_device_flow: None,
