@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(debug_assertions)]
-use std::{sync::mpsc, time::Instant};
+use std::sync::mpsc;
 
 use crate::iab_panel::HostedBrowserId;
 use crate::runtime_compat::{
@@ -1809,7 +1809,6 @@ pub struct DesktopProgram {
     project_archive_confirmation: Option<ProjectArchiveConfirmation>,
     project_clone_repository: String,
     project_clone_parent: String,
-    project_clone_busy: bool,
     project_clone_outcome: ProjectCloneOutcome,
     project_clone_phase: Option<String>,
     project_clone_percent: Option<u8>,
@@ -1819,11 +1818,9 @@ pub struct DesktopProgram {
     kernel: crate::kernel_host::KernelHost,
     github_binding: DesktopGitHubBindingStatus,
     github_device_flow: Option<DesktopGitHubDeviceFlowStart>,
-    github_binding_busy: bool,
     active_github_binding_job: Option<JobId>,
     github_repositories: Vec<DesktopGitHubRepoSummary>,
     github_repositories_next_page: Option<u32>,
-    github_repositories_busy: bool,
     /// The paging job and whether its page appends to the list or replaces it.
     /// The flag is shell state, not part of the request GitHub sees.
     active_github_repository_job: Option<(JobId, bool)>,
@@ -1870,8 +1867,9 @@ pub struct DesktopProgram {
     todo_draft: String,
     editing_todo: Option<String>,
     goal_draft: String,
-    worktree_busy: bool,
-    active_worktree_job: Option<JobId>,
+    /// The task the in-flight worktree operation belongs to. Its slot is
+    /// per-task, so the surface it blocks is the one showing that task.
+    active_worktree_job: Option<(JobId, TaskId)>,
     worktree_confirmation: Option<WorktreeDangerAction>,
     pending_initial_worktrees: BTreeMap<TaskId, DesktopInitialWorktreeSelection>,
     interaction_drafts: BTreeMap<String, String>,
@@ -1948,7 +1946,6 @@ pub struct DesktopProgram {
     coding_search: Option<DesktopWorkspaceCodeSearchResult>,
     coding_search_all_projects: bool,
     coding_notice: Option<String>,
-    coding_busy: bool,
     coding_exchange: Arc<CodingExchange>,
     active_coding_job: Option<(JobId, u64)>,
     active_coding_search_job: Option<JobId>,
@@ -1966,7 +1963,6 @@ pub struct DesktopProgram {
     provider_ai_settings: ProviderAiSettingsState,
     assistant_ai_new_model_id: String,
     assistant_ai_new_model_label: String,
-    assistant_ai_probe_busy: bool,
     /// Draft endpoint configurations parked for a probe job to claim. The API
     /// key in one is unsaved, so it stays here rather than in the payload.
     /// The prepared import step a job ticket names. It holds an application
@@ -1987,14 +1983,12 @@ pub struct DesktopProgram {
     agent_interaction_error: Option<String>,
     selected_provider: Option<String>,
     provider_secret: String,
-    provider_busy: bool,
     provider_secrets: Arc<StagedProviderSecret>,
     active_provider_job: Option<JobId>,
     provider_error: Option<String>,
     quota_usage: Option<QuotaUsageStats>,
     quota_days: i64,
     quota_backend: String,
-    quota_busy: bool,
     active_quota_job: Option<JobId>,
     quota_error: Option<String>,
     extensions: Option<DesktopExtensionsSnapshot>,
@@ -2013,14 +2007,12 @@ pub struct DesktopProgram {
     mcp_credential_drafts: BTreeMap<String, String>,
     mcp_prompt_argument_drafts: BTreeMap<String, String>,
     mcp_content_preview: Option<McpContentPreview>,
-    extensions_busy: bool,
     extensions_activation_pending: bool,
     extensions_exchange: Arc<ExtensionsExchange>,
     active_extensions_job: Option<ExtensionsJob>,
     extensions_error: Option<String>,
     remote: Option<RemoteControlStatus>,
     remote_pc_name: String,
-    remote_busy: bool,
     active_remote_job: Option<JobId>,
     remote_error: Option<String>,
     shell: NativeShellIntegration,
@@ -2031,7 +2023,6 @@ pub struct DesktopProgram {
     dismissed_update_versions: BTreeSet<String>,
     update_failure_dismissed: bool,
     update_configured: bool,
-    update_busy: bool,
     active_update_job: Option<JobId>,
     update_error: Option<String>,
     exit_requested: bool,
@@ -2098,6 +2089,62 @@ fn sidebar_navigation_selected(
 impl DesktopProgram {
     fn message_from_shell_intent(intent: crate::runtime_shell::ShellIntent) -> Message {
         Message::Chrome(ChromeMessage::FromShell(intent))
+    }
+
+    // A surface is busy exactly while its job is in flight. Mirroring that into a
+    // `bool` gave every lane two sources of truth that had to be cleared in
+    // lockstep from every terminal, cancel and reset path; each miss left a
+    // surface disabled with no job behind it.
+
+    fn project_clone_busy(&self) -> bool {
+        self.active_project_clone_job.is_some()
+    }
+
+    fn github_binding_busy(&self) -> bool {
+        self.active_github_binding_job.is_some()
+    }
+
+    fn github_repositories_busy(&self) -> bool {
+        self.active_github_repository_job.is_some()
+    }
+
+    fn assistant_ai_probe_busy(&self) -> bool {
+        self.active_assistant_probe_job.is_some()
+    }
+
+    fn provider_busy(&self) -> bool {
+        self.active_provider_job.is_some()
+    }
+
+    fn quota_busy(&self) -> bool {
+        self.active_quota_job.is_some()
+    }
+
+    fn extensions_busy(&self) -> bool {
+        self.active_extensions_job.is_some()
+    }
+
+    fn remote_busy(&self) -> bool {
+        self.active_remote_job.is_some()
+    }
+
+    fn update_busy(&self) -> bool {
+        self.active_update_job.is_some()
+    }
+
+    /// The refresh and the search share one gate: a search must not start while
+    /// the workspace snapshot it reads is being rebuilt.
+    fn coding_busy(&self) -> bool {
+        self.active_coding_job.is_some() || self.active_coding_search_job.is_some()
+    }
+
+    /// A worktree job runs in the slot of one task, so the surface is busy only
+    /// while the selected task's own operation is in flight. Switching tasks
+    /// releases the surface without cancelling the job that is still running.
+    fn worktree_busy(&self) -> bool {
+        self.active_worktree_job
+            .as_ref()
+            .is_some_and(|(_, task_id)| self.selected_task.as_ref() == Some(task_id))
     }
 
     fn apply_shell_intent(
@@ -2206,7 +2253,7 @@ impl DesktopProgram {
             }
             crate::runtime_shell::ShellIntent::SidebarMenuAction(id) => {
                 let Some((_, action)) = self
-                    .sidebar_menu_debug_targets()
+                    .sidebar_menu_actions()
                     .into_iter()
                     .find(|(target, _)| target == &id)
                 else {
@@ -3206,6 +3253,7 @@ impl DesktopProgram {
                 can_draft: false,
             });
         }
+        let task_groups = self.sidebar_task_groups();
         for pinned in [true, false] {
             for project in self
                 .projects
@@ -3231,7 +3279,7 @@ impl DesktopProgram {
                 if !expanded {
                     continue;
                 }
-                let tasks = self.sidebar_project_tasks(Some(&project.id));
+                let tasks = sidebar_grouped_tasks(&task_groups, Some(&project.id));
                 let visible = self.sidebar_visible_project_tasks(&project.id, &tasks);
                 for (task, depth) in visible {
                     rows.push(ShellSidebarRow {
@@ -3297,7 +3345,7 @@ impl DesktopProgram {
             can_draft: false,
         });
         if self.sidebar_inbox_expanded() {
-            let tasks = self.sidebar_project_tasks(None);
+            let tasks = sidebar_grouped_tasks(&task_groups, None);
             let visible = self.sidebar_visible_tasks(&tasks, self.sidebar_inbox_revealed);
             for (task, depth) in visible {
                 rows.push(ShellSidebarRow {
@@ -3855,7 +3903,7 @@ impl DesktopProgram {
             } else {
                 "当前项目".to_owned()
             },
-            busy: self.coding_busy,
+            busy: self.coding_busy(),
             git: self
                 .coding_git
                 .as_ref()
@@ -3954,7 +4002,7 @@ impl DesktopProgram {
     }
 
     fn shell_sidebar_menu_items(&self) -> Vec<crate::runtime_shell::ShellMenuItem> {
-        self.sidebar_menu_debug_targets()
+        self.sidebar_menu_actions()
             .into_iter()
             .map(|(id, action)| crate::runtime_shell::ShellMenuItem {
                 id,
@@ -4043,6 +4091,7 @@ impl DesktopProgram {
             .draft_worktree_context(HostedWindowId::PRIMARY)
             .map(|(_, selection)| selection);
         let (provider_badge, _, _) = self.provider_runtime_badge(self.theme_tokens().colors);
+        let project_page = self.shell_project_page();
         crate::runtime_shell::PrimaryShellSnapshot {
             theme: self.theme,
             title: PRODUCT_NAME.to_owned(),
@@ -4117,7 +4166,11 @@ impl DesktopProgram {
             command_palette_open: self.command_picker.is_open(),
             command_palette_query: self.command_picker.query().to_owned(),
             command_palette_selected: self.command_picker.selected(),
-            command_palette_items: self.command_palette_items(),
+            command_palette_items: if self.command_picker.is_open() {
+                self.command_palette_items()
+            } else {
+                Vec::new()
+            },
             settings: self.settings_shell_snapshot(),
             document: self.active_document_shell_snapshot(),
             files: self.project_files_shell_snapshot(),
@@ -4145,22 +4198,33 @@ impl DesktopProgram {
                     })
                 }),
             automations_open: self.automations_open,
-            automations: self
-                .automations
-                .iter()
-                .map(|workflow| crate::runtime_shell::ShellAutomationRow {
-                    selected: self.selected_automation.as_deref() == Some(workflow.id.as_str()),
-                    id: workflow.id.clone(),
-                    label: if workflow.name.trim().is_empty() {
-                        "未命名自动化".to_owned()
-                    } else {
-                        workflow.name.clone()
-                    },
-                })
-                .collect(),
-            automation_graph: self.automation_graph.clone(),
+            automations: if self.automations_open {
+                self.automations
+                    .iter()
+                    .map(|workflow| crate::runtime_shell::ShellAutomationRow {
+                        selected: self.selected_automation.as_deref() == Some(workflow.id.as_str()),
+                        id: workflow.id.clone(),
+                        label: if workflow.name.trim().is_empty() {
+                            "未命名自动化".to_owned()
+                        } else {
+                            workflow.name.clone()
+                        },
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            automation_graph: if self.automations_open {
+                self.automation_graph.clone()
+            } else {
+                nana_ui::GraphModel::default()
+            },
             automation_viewport: self.automation_viewport,
-            automation_selection: self.automation_selection.clone(),
+            automation_selection: if self.automations_open {
+                self.automation_selection.clone()
+            } else {
+                None
+            },
             panes: {
                 let mut panes = Vec::new();
                 for pane_id in self.panel_layout.pane_ids() {
@@ -4222,57 +4286,80 @@ impl DesktopProgram {
                 .as_ref()
                 .is_some_and(|session| session.timeline_has_more_before),
             composer_plus_open: self.composer_action_menu_window == Some(HostedWindowId::PRIMARY),
-            project_page: self.shell_project_page(),
-            project_page_title: self.shell_project_page_title(),
-            project_page_body: self.shell_project_page_body(),
-            project_cards: self
-                .projects
-                .iter()
-                .map(|project| crate::runtime_shell::ShellProjectCard {
-                    id: project.id.as_str().to_owned(),
-                    title: project.name.clone(),
-                    subtitle: project
-                        .workspace_path
-                        .clone()
-                        .unwrap_or_else(|| "未设置工作区".to_owned()),
-                })
-                .collect(),
-            roadmap_cards: self
-                .roadmap
-                .milestones
-                .iter()
-                .map(|milestone| crate::runtime_shell::ShellRoadmapCard {
-                    id: milestone.id.clone(),
-                    title: milestone.title.clone(),
-                    status: milestone_status_label(milestone.status).to_owned(),
-                    date: milestone
-                        .due_date
-                        .map(|due| due.to_string())
-                        .unwrap_or_else(|| "无截止日期".to_owned()),
-                })
-                .collect(),
-            architecture_records: self
-                .architecture_history
-                .iter()
-                .map(|record| crate::runtime_shell::ShellArchitectureRecord {
-                    id: record
-                        .event
-                        .id
-                        .clone()
-                        .unwrap_or_else(|| record.event.created_at.unwrap_or_default().to_string()),
-                    title: record
-                        .event
-                        .changes
-                        .iter()
-                        .map(architecture_change_label)
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                    status: architecture_status_label(record.event.status).to_owned(),
-                })
-                .collect(),
-            architecture_graph: self.architecture_graph.clone(),
+            project_page,
+            project_page_title: if project_page.is_some() {
+                self.shell_project_page_title()
+            } else {
+                String::new()
+            },
+            project_page_body: if project_page.is_some() {
+                self.shell_project_page_body()
+            } else {
+                String::new()
+            },
+            project_cards: if project_page == Some(crate::runtime_shell::ShellProjectPage::Overview) {
+                self.projects
+                    .iter()
+                    .map(|project| crate::runtime_shell::ShellProjectCard {
+                        id: project.id.as_str().to_owned(),
+                        title: project.name.clone(),
+                        subtitle: project
+                            .workspace_path
+                            .clone()
+                            .unwrap_or_else(|| "未设置工作区".to_owned()),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            roadmap_cards: if project_page == Some(crate::runtime_shell::ShellProjectPage::Roadmap) {
+                self.roadmap
+                    .milestones
+                    .iter()
+                    .map(|milestone| crate::runtime_shell::ShellRoadmapCard {
+                        id: milestone.id.clone(),
+                        title: milestone.title.clone(),
+                        status: milestone_status_label(milestone.status).to_owned(),
+                        date: milestone
+                            .due_date
+                            .map(|due| due.to_string())
+                            .unwrap_or_else(|| "无截止日期".to_owned()),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            architecture_records: if project_page == Some(crate::runtime_shell::ShellProjectPage::Architecture) {
+                self.architecture_history
+                    .iter()
+                    .map(|record| crate::runtime_shell::ShellArchitectureRecord {
+                        id: record.event.id.clone().unwrap_or_else(|| {
+                            record.event.created_at.unwrap_or_default().to_string()
+                        }),
+                        title: record
+                            .event
+                            .changes
+                            .iter()
+                            .map(architecture_change_label)
+                            .collect::<Vec<_>>()
+                            .join(" · "),
+                        status: architecture_status_label(record.event.status).to_owned(),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            architecture_graph: if project_page == Some(crate::runtime_shell::ShellProjectPage::Architecture) {
+                self.architecture_graph.clone()
+            } else {
+                nana_ui::GraphModel::default()
+            },
             architecture_viewport: self.architecture_viewport,
-            architecture_selection: self.architecture_selection.clone(),
+            architecture_selection: if project_page == Some(crate::runtime_shell::ShellProjectPage::Architecture) {
+                self.architecture_selection.clone()
+            } else {
+                None
+            },
             inspector_kind: if self.inspector_region_is_visible() {
                 match self.inspector_surface {
                     InspectorSurface::CodingTools => "coding".to_owned(),
@@ -4291,7 +4378,72 @@ impl DesktopProgram {
         }
     }
 
+    /// 设置页关闭时只投影项目页仍要读的少量字段。其余集合与格式化字符串留空，
+    /// 由 `sync_settings_content` 在页面打开时补齐。
     fn settings_shell_snapshot(&self) -> crate::runtime_shell::SettingsSnapshot {
+        if !self.settings_open {
+            return crate::runtime_shell::SettingsSnapshot {
+                project_name: self.project_name_edit.clone(),
+                project_workspace: self.project_workspace_edit.clone(),
+                project_error: self.project_settings_error.clone(),
+                ..self.settings_shell_shape()
+            };
+        }
+        self.settings_shell_detail()
+    }
+
+    /// 设置页的骨架：只带 NanaUI 渲染结构必需的 model / state / appearance。
+    fn settings_shell_shape(&self) -> crate::runtime_shell::SettingsSnapshot {
+        crate::runtime_shell::SettingsSnapshot {
+            model: self.settings_model.clone(),
+            state: self.settings_state.clone(),
+            appearance: self.appearance,
+            material_status: String::new(),
+            project_name: String::new(),
+            project_workspace: String::new(),
+            project_error: None,
+            providers: Vec::new(),
+            provider_status: String::new(),
+            agent_actions: Vec::new(),
+            quota_status: String::new(),
+            extensions_status: String::new(),
+            remote_status: String::new(),
+            remote_host_enabled: false,
+            remote_keep_awake: false,
+            desktop_status: String::new(),
+            data_status: String::new(),
+            data_can_import: false,
+            provider_secret: String::new(),
+            provider_model: String::new(),
+            provider_openai_endpoint: String::new(),
+            provider_anthropic_endpoint: String::new(),
+            can_save_credential: false,
+            credentials: Vec::new(),
+            custom_agents: Vec::new(),
+            custom_agent_editor_open: false,
+            custom_agent_name: String::new(),
+            custom_agent_description: String::new(),
+            custom_agent_instruction: String::new(),
+            quota_days_label: String::new(),
+            quota_backend_label: String::new(),
+            quota_values: Vec::new(),
+            skills: Vec::new(),
+            skill_id: String::new(),
+            skill_description: String::new(),
+            can_create_skill: false,
+            mcp_servers: Vec::new(),
+            mcp_editor: None,
+            github_state: String::new(),
+            github_login: String::new(),
+            github_busy: false,
+            github_can_bind: false,
+            shortcut: String::new(),
+            shortcut_capturing: false,
+            shortcut_registered: false,
+        }
+    }
+
+    fn settings_shell_detail(&self) -> crate::runtime_shell::SettingsSnapshot {
         let auto = &self.agent_interaction_settings.auto_turn_decision;
         crate::runtime_shell::SettingsSnapshot {
             model: self.settings_model.clone(),
@@ -4432,7 +4584,7 @@ impl DesktopProgram {
             provider_model: self.provider_model.clone(),
             provider_openai_endpoint: self.provider_openai_endpoint.clone(),
             provider_anthropic_endpoint: self.provider_anthropic_endpoint.clone(),
-            can_save_credential: !self.provider_busy && !self.provider_secret.trim().is_empty(),
+            can_save_credential: !self.provider_busy() && !self.provider_secret.trim().is_empty(),
             credentials: self
                 .provider
                 .credentials
@@ -4503,7 +4655,7 @@ impl DesktopProgram {
                 .unwrap_or_default(),
             skill_id: self.skill_id_input.clone(),
             skill_description: self.skill_description_input.clone(),
-            can_create_skill: !self.extensions_busy && !self.skill_id_input.trim().is_empty(),
+            can_create_skill: !self.extensions_busy() && !self.skill_id_input.trim().is_empty(),
             mcp_servers: self
                 .extensions
                 .as_ref()
@@ -4535,8 +4687,8 @@ impl DesktopProgram {
                 .as_ref()
                 .map(|binding| binding.login.clone())
                 .unwrap_or_default(),
-            github_busy: self.github_binding_busy,
-            github_can_bind: !self.github_binding_busy
+            github_busy: self.github_binding_busy(),
+            github_can_bind: !self.github_binding_busy()
                 && self.github_binding.state == "unbound"
                 && self.github_binding.client_id_configured,
             shortcut: self.shell_shortcut_edit.clone(),
@@ -5504,8 +5656,8 @@ impl DesktopProgram {
         targets
     }
 
-    #[cfg(debug_assertions)]
-    fn sidebar_menu_debug_targets(&self) -> Vec<(String, SidebarMenuAction)> {
+    /// 侧栏上下文菜单的动作模型。这不是调试设施：可见菜单项与意图分派都读它。
+    fn sidebar_menu_actions(&self) -> Vec<(String, SidebarMenuAction)> {
         let Some(menu) = self.sidebar_menu.as_ref() else {
             return Vec::new();
         };
@@ -5636,7 +5788,7 @@ impl DesktopProgram {
 
     fn open_project_clone(&mut self) {
         self.project_surface = ProjectSurface::Clone;
-        if !self.project_clone_busy {
+        if !self.project_clone_busy() {
             self.project_action_error = None;
         }
         self.refresh_github_binding_status();
@@ -5645,7 +5797,7 @@ impl DesktopProgram {
 
     fn close_project_clone(&mut self) {
         self.project_surface = ProjectSurface::Tasks;
-        if !self.project_clone_busy {
+        if !self.project_clone_busy() {
             self.project_action_error = None;
         }
     }
@@ -5656,7 +5808,7 @@ impl DesktopProgram {
                 let bound = status.state == "bound";
                 self.github_binding = status;
                 self.github_error = None;
-                if bound && self.github_repositories.is_empty() && !self.github_repositories_busy {
+                if bound && self.github_repositories.is_empty() && !self.github_repositories_busy() {
                     self.load_github_repositories(false);
                 }
             }
@@ -5667,10 +5819,9 @@ impl DesktopProgram {
     }
 
     fn start_github_binding(&mut self) {
-        if self.github_binding_busy || !self.github_binding.client_id_configured {
+        if self.github_binding_busy() || !self.github_binding.client_id_configured {
             return;
         }
-        self.github_binding_busy = true;
         self.github_device_flow = None;
         self.github_error = None;
         let request = JobRequest::new(lilia_feature_github::BIND_PROTOCOL, Value::Null)
@@ -5679,7 +5830,6 @@ impl DesktopProgram {
             Ok(handle) => self.active_github_binding_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode GitHub binding job: {error}");
-                self.github_binding_busy = false;
                 self.github_error = Some("无法启动 GitHub 绑定任务。".to_owned());
             }
         }
@@ -5698,7 +5848,6 @@ impl DesktopProgram {
             }
             JobState::Completed { output } => {
                 self.active_github_binding_job = None;
-                self.github_binding_busy = false;
                 self.github_device_flow = None;
                 match serde_json::from_value::<DesktopGitHubDeviceFlowPollResult>(output) {
                     Ok(result) => self.apply_github_device_flow_result(result),
@@ -5709,7 +5858,6 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_github_binding_job = None;
-                self.github_binding_busy = false;
                 self.github_device_flow = None;
                 self.github_error = Some(message);
             }
@@ -5717,7 +5865,6 @@ impl DesktopProgram {
             // account and reset the surface.
             _ => {
                 self.active_github_binding_job = None;
-                self.github_binding_busy = false;
                 self.github_device_flow = None;
             }
         }
@@ -5751,7 +5898,6 @@ impl DesktopProgram {
         } else {
             self.github_error = None;
         }
-        self.github_binding_busy = false;
         self.github_device_flow = None;
         self.github_binding = DesktopGitHubBindingStatus {
             state: "unbound".to_owned(),
@@ -5793,7 +5939,7 @@ impl DesktopProgram {
     }
 
     fn unbind_github(&mut self) {
-        if self.github_binding_busy {
+        if self.github_binding_busy() {
             return;
         }
         match self.application.unbind_github() {
@@ -5810,7 +5956,7 @@ impl DesktopProgram {
     }
 
     fn load_github_repositories(&mut self, append: bool) {
-        if self.github_binding.state != "bound" || self.github_repositories_busy {
+        if self.github_binding.state != "bound" || self.github_repositories_busy() {
             return;
         }
         let page = if append {
@@ -5821,7 +5967,6 @@ impl DesktopProgram {
         } else {
             1
         };
-        self.github_repositories_busy = true;
         self.github_error = None;
         let request = JobRequest::new(
             lilia_feature_github::REPOSITORIES_PROTOCOL,
@@ -5833,7 +5978,6 @@ impl DesktopProgram {
             Ok(handle) => self.active_github_repository_job = Some((handle.id(), append)),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode GitHub repositories job: {error}");
-                self.github_repositories_busy = false;
                 self.github_error = Some("无法启动 GitHub 仓库读取任务。".to_owned());
             }
         }
@@ -5849,12 +5993,10 @@ impl DesktopProgram {
             JobState::Failed { message } => Err(message),
             _ => {
                 self.active_github_repository_job = None;
-                self.github_repositories_busy = false;
                 return;
             }
         };
         self.active_github_repository_job = None;
-        self.github_repositories_busy = false;
         match result {
             Ok(page) => {
                 if !append {
@@ -5992,7 +6134,7 @@ impl DesktopProgram {
     }
 
     fn pick_project_clone_parent(&mut self) {
-        if self.project_clone_busy {
+        if self.project_clone_busy() {
             return;
         }
         let project_settings_visible =
@@ -6043,7 +6185,7 @@ impl DesktopProgram {
     }
 
     fn start_project_clone(&mut self) {
-        if self.project_clone_busy
+        if self.project_clone_busy()
             || self.project_clone_repository.trim().is_empty()
             || self.project_clone_parent.trim().is_empty()
         {
@@ -6081,7 +6223,6 @@ impl DesktopProgram {
             }
         };
 
-        self.project_clone_busy = true;
         self.project_clone_outcome = ProjectCloneOutcome::Running;
         self.project_clone_phase = Some("preparing".to_owned());
         self.project_clone_percent = None;
@@ -6102,7 +6243,6 @@ impl DesktopProgram {
     }
 
     fn fail_project_clone(&mut self, message: String) {
-        self.project_clone_busy = false;
         self.project_clone_outcome = ProjectCloneOutcome::Failed;
         self.project_clone_phase = Some("failed".to_owned());
         self.project_clone_detail = None;
@@ -6114,7 +6254,7 @@ impl DesktopProgram {
         let Some(job_id) = self.active_project_clone_job else {
             return;
         };
-        if !self.project_clone_busy {
+        if !self.project_clone_busy() {
             return;
         }
         self.kernel.kernel().jobs().cancel(job_id);
@@ -6155,7 +6295,10 @@ impl DesktopProgram {
                 self.apply_quota_job(event.state)
             }
             lilia_feature_worktree::OPERATE_PROTOCOL
-                if self.active_worktree_job == Some(event.job_id) =>
+                if self
+                    .active_worktree_job
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == event.job_id) =>
             {
                 self.apply_worktree_job(event.state)
             }
@@ -6244,7 +6387,6 @@ impl DesktopProgram {
             }
             JobState::Completed { output } => {
                 self.active_project_clone_job = None;
-                self.project_clone_busy = false;
                 match serde_json::from_value::<CloneResult>(output) {
                     Ok(cloned) => self.adopt_cloned_repository(cloned),
                     Err(error) => {
@@ -6259,7 +6401,6 @@ impl DesktopProgram {
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_project_clone_job = None;
-                self.project_clone_busy = false;
                 self.project_clone_outcome = ProjectCloneOutcome::Cancelled;
                 self.project_clone_phase = Some("cancelled".to_owned());
                 self.project_clone_percent = None;
@@ -8693,7 +8834,7 @@ impl DesktopProgram {
     }
 
     fn refresh_coding_tools(&mut self) {
-        if self.coding_busy {
+        if self.coding_busy() {
             return;
         }
         let ticket = self.coding_exchange.park(CodingRefreshCommand {
@@ -8708,7 +8849,6 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_coding::refresh_slot());
 
-        self.coding_busy = true;
         self.coding_error = None;
         self.coding_notice = None;
         match self.kernel.kernel().jobs().submit(request) {
@@ -8716,7 +8856,6 @@ impl DesktopProgram {
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode coding refresh job: {error}");
                 self.coding_exchange.discard(ticket);
-                self.coding_busy = false;
                 self.coding_error = Some("无法启动工作区工具刷新。".to_owned());
             }
         }
@@ -8730,7 +8869,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => {}
             JobState::Completed { .. } => {
                 self.active_coding_job = None;
-                self.coding_busy = false;
                 match self.coding_exchange.take(ticket) {
                     Some(result) => self.apply_coding_tools_refresh(result),
                     None => self.coding_error = Some("工作区工具刷新没有返回结果。".to_owned()),
@@ -8738,13 +8876,11 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_coding_job = None;
-                self.coding_busy = false;
                 self.coding_exchange.discard(ticket);
                 self.coding_error = Some(message);
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_coding_job = None;
-                self.coding_busy = false;
                 self.coding_exchange.discard(ticket);
             }
         }
@@ -8802,7 +8938,7 @@ impl DesktopProgram {
     }
 
     fn search_coding_tools(&mut self) {
-        if self.coding_busy || self.coding_query.trim().is_empty() {
+        if self.coding_busy() || self.coding_query.trim().is_empty() {
             return;
         }
         let scope = if self.coding_search_all_projects {
@@ -8832,7 +8968,6 @@ impl DesktopProgram {
             }
         };
 
-        self.coding_busy = true;
         self.coding_error = None;
         self.coding_notice = None;
         match self.kernel.kernel().jobs().submit(
@@ -8842,7 +8977,6 @@ impl DesktopProgram {
             Ok(handle) => self.active_coding_search_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the Native code search job: {error}");
-                self.coding_busy = false;
                 self.coding_error = Some("无法启动代码搜索。".to_owned());
             }
         }
@@ -8853,7 +8987,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => return,
             JobState::Cancelled | JobState::Superseded => {
                 self.active_coding_search_job = None;
-                self.coding_busy = false;
                 return;
             }
             JobState::Failed { message } => Err(message),
@@ -8861,7 +8994,6 @@ impl DesktopProgram {
                 .map_err(|error| format!("code search result is unreadable: {error}")),
         };
         self.active_coding_search_job = None;
-        self.coding_busy = false;
         self.finish_coding_search(result);
     }
 
@@ -8977,7 +9109,7 @@ impl DesktopProgram {
     }
 
     fn run_project_task(&mut self, task_id: String) {
-        if self.coding_busy {
+        if self.coding_busy() {
             return;
         }
         let Some(project_id) = self.selected_project.clone() else {
@@ -10260,7 +10392,6 @@ impl DesktopProgram {
             self.todo_draft.clear();
             self.editing_todo = None;
             self.goal_draft.clear();
-            self.worktree_busy = false;
             self.worktree_confirmation = None;
             self.interaction_drafts.clear();
             self.ask_user_drafts.clear();
@@ -11124,7 +11255,7 @@ impl DesktopProgram {
                 self.coding_notice = None;
             },
             CodingMessage::CycleCodingGitDiffScope => {
-                if !self.coding_busy {
+                if !self.coding_busy() {
                     self.coding_git_diff_scope = match self.coding_git_diff_scope {
                         DesktopGitDiffScope::WorkingTree => DesktopGitDiffScope::Staged,
                         DesktopGitDiffScope::Staged => DesktopGitDiffScope::WorkingTree,
@@ -12557,7 +12688,7 @@ impl DesktopProgram {
                 }
             },
             ProviderMessage::SecretChanged(value) => {
-                if !self.provider_busy {
+                if !self.provider_busy() {
                     self.provider_secret = value;
                     self.provider_error = None;
                 }
@@ -12594,41 +12725,41 @@ impl DesktopProgram {
                 self.reset_provider_runtime_settings()
             },
             ProviderMessage::AssistantBaseUrlChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.provider_ai_settings.assistant_base_url = value;
                     self.provider_error = None;
                     self.assistant_ai_probe_notice = None;
                 }
             },
             ProviderMessage::AssistantModelChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.provider_ai_settings.assistant_model = value;
                     self.provider_error = None;
                     self.assistant_ai_probe_notice = None;
                 }
             },
             ProviderMessage::AssistantSecretChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.provider_ai_settings.assistant_secret = value;
                     self.provider_error = None;
                     self.assistant_ai_probe_notice = None;
                 }
             },
             ProviderMessage::AssistantNewModelIdChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.assistant_ai_new_model_id = value;
                     self.assistant_ai_probe_notice = None;
                 }
             },
             ProviderMessage::AssistantNewModelLabelChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.assistant_ai_new_model_label = value;
                     self.assistant_ai_probe_notice = None;
                 }
             },
             ProviderMessage::AddAssistantModel => {
-                if !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                if !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                     && self.provider_ai_settings.add_assistant_model(
                         &self.assistant_ai_new_model_id,
                         &self.assistant_ai_new_model_label,
@@ -12640,7 +12771,7 @@ impl DesktopProgram {
                 }
             },
             ProviderMessage::RenameAssistantModel { model_id, value } => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.provider_ai_settings
                         .rename_assistant_model(&model_id, value);
                     self.assistant_ai_probe_notice = None;
@@ -12717,13 +12848,13 @@ impl DesktopProgram {
         match message {
             QuotaMessage::Refresh => self.refresh_quota(),
             QuotaMessage::CycleDays => {
-                if !self.quota_busy {
+                if !self.quota_busy() {
                     self.quota_days = next_quota_days(self.quota_days);
                     self.refresh_quota();
                 }
             },
             QuotaMessage::CycleBackend => {
-                if !self.quota_busy {
+                if !self.quota_busy() {
                     self.quota_backend = next_quota_backend(&self.quota_backend).to_owned();
                     self.refresh_quota();
                 }
@@ -12736,13 +12867,13 @@ impl DesktopProgram {
         match message {
             ExtensionsMessage::Refresh => self.refresh_extensions(),
             ExtensionsMessage::SkillIdChanged(value) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.skill_id_input = value;
                     self.extensions_error = None;
                 }
             },
             ExtensionsMessage::SkillDescriptionChanged(value) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.skill_description_input = value;
                     self.extensions_error = None;
                 }
@@ -12752,7 +12883,7 @@ impl DesktopProgram {
                 self.toggle_skill(&skill_id)
             },
             ExtensionsMessage::RequestDeleteSkill(skill_id) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.skill_delete_confirmation = Some(skill_id);
                     self.extensions_error = None;
                 }
@@ -12761,12 +12892,12 @@ impl DesktopProgram {
                 self.confirm_delete_skill()
             },
             ExtensionsMessage::CancelDeleteSkill => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.skill_delete_confirmation = None;
                 }
             },
             ExtensionsMessage::PluginSourceChanged(value) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.plugin_source_input = value;
                     self.extensions_error = None;
                 }
@@ -12779,7 +12910,7 @@ impl DesktopProgram {
                 self.toggle_plugin(&plugin_id)
             },
             ExtensionsMessage::RequestDeletePlugin(plugin_id) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.plugin_delete_confirmation = Some(plugin_id);
                     self.extensions_error = None;
                 }
@@ -12788,12 +12919,12 @@ impl DesktopProgram {
                 self.confirm_delete_plugin()
             },
             ExtensionsMessage::CancelDeletePlugin => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.plugin_delete_confirmation = None;
                 }
             },
             ExtensionsMessage::HookDraftChanged { source_id, value } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.hook_drafts.insert(source_id, value);
                     self.extensions_error = None;
                 }
@@ -12820,7 +12951,7 @@ impl DesktopProgram {
                 self.toggle_hook_source(&source_id)
             },
             ExtensionsMessage::RequestDeleteHookSource(source_id) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.hook_delete_confirmation = Some(source_id);
                     self.extensions_error = None;
                 }
@@ -12829,7 +12960,7 @@ impl DesktopProgram {
                 self.confirm_delete_hook_source()
             },
             ExtensionsMessage::CancelDeleteHookSource => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.hook_delete_confirmation = None;
                 }
             },
@@ -12837,7 +12968,7 @@ impl DesktopProgram {
                 self.activate_registered_mcp()
             },
             ExtensionsMessage::NewMcpServer => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_editor = Some(McpEditorState::default());
                     self.mcp_delete_confirmation = None;
                     self.extensions_error = None;
@@ -12847,16 +12978,18 @@ impl DesktopProgram {
                 self.begin_edit_mcp_server(&server_id)
             },
             ExtensionsMessage::McpServerIdChanged(value) => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if editor.editing_server_id.is_none() && !self.extensions_busy {
+                    if editor.editing_server_id.is_none() && !busy {
                         editor.server_id = value;
                         self.extensions_error = None;
                     }
                 }
             },
             ExtensionsMessage::CycleMcpTransport => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.transport = next_mcp_transport(editor.transport);
                         editor.location.clear();
                         editor.args_json = "[]".to_owned();
@@ -12866,32 +12999,36 @@ impl DesktopProgram {
                 }
             },
             ExtensionsMessage::McpLocationChanged(value) => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.location = value;
                         self.extensions_error = None;
                     }
                 }
             },
             ExtensionsMessage::McpArgsChanged(value) => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.args_json = value;
                         self.extensions_error = None;
                     }
                 }
             },
             ExtensionsMessage::McpCredentialNamesChanged(value) => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.credential_names_json = value;
                         self.extensions_error = None;
                     }
                 }
             },
             ExtensionsMessage::ToggleMcpEditorEnabled => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.enabled = !editor.enabled;
                         self.extensions_error = None;
                     }
@@ -12899,7 +13036,7 @@ impl DesktopProgram {
             },
             ExtensionsMessage::SaveMcpServer => self.save_mcp_server(),
             ExtensionsMessage::CancelMcpEditor => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_editor = None;
                     self.extensions_error = None;
                 }
@@ -12908,7 +13045,7 @@ impl DesktopProgram {
                 self.toggle_mcp_server(&server_id)
             },
             ExtensionsMessage::RequestDeleteMcpServer(server_id) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_delete_confirmation = Some(server_id);
                     self.mcp_editor = None;
                     self.extensions_error = None;
@@ -12918,7 +13055,7 @@ impl DesktopProgram {
                 self.confirm_delete_mcp_server()
             },
             ExtensionsMessage::CancelDeleteMcpServer => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_delete_confirmation = None;
                 }
             },
@@ -12928,7 +13065,7 @@ impl DesktopProgram {
                 name,
                 value,
             } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_credential_drafts
                         .insert(mcp_credential_draft_key(&server_id, kind, &name), value);
                     self.extensions_error = None;
@@ -12939,7 +13076,7 @@ impl DesktopProgram {
                 kind,
                 name,
             } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     let key = mcp_credential_draft_key(&server_id, kind, &name);
                     if let Some(secret) = self.mcp_credential_drafts.remove(&key) {
                         self.start_mcp_registry_operation(McpRegistryOperation::SetCredential {
@@ -12956,7 +13093,7 @@ impl DesktopProgram {
                 kind,
                 name,
             } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_credential_drafts
                         .remove(&mcp_credential_draft_key(&server_id, kind, &name));
                     self.start_mcp_registry_operation(McpRegistryOperation::DeleteCredential {
@@ -12976,7 +13113,7 @@ impl DesktopProgram {
                 namespaced_name,
                 value,
             } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_prompt_argument_drafts
                         .insert(namespaced_name, value);
                     self.extensions_error = None;
@@ -13015,7 +13152,7 @@ impl DesktopProgram {
                 }
             },
             RemoteMessage::PcNameChanged(value) => {
-                if !self.remote_busy {
+                if !self.remote_busy() {
                     self.remote_pc_name = value;
                     self.remote_error = None;
                 }
@@ -14779,13 +14916,12 @@ impl DesktopProgram {
     }
 
     fn start_worktree_operation(&mut self, operation: WorktreeOperation) {
-        if self.worktree_busy || self.composer_is_locked() {
+        if self.worktree_busy() || self.composer_is_locked() {
             return;
         }
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
-        self.worktree_busy = true;
         self.worktree_confirmation = None;
         self.task_action_error = None;
         let request = JobRequest::new(
@@ -14799,9 +14935,8 @@ impl DesktopProgram {
         .in_slot(lilia_feature_worktree::worktree_slot(task_id.as_str()));
 
         match self.kernel.kernel().jobs().submit(request) {
-            Ok(handle) => self.active_worktree_job = Some(handle.id()),
+            Ok(handle) => self.active_worktree_job = Some((handle.id(), task_id)),
             Err(error) => {
-                self.worktree_busy = false;
                 self.task_action_error = Some(format!("无法启动工作树操作：{error}"));
             }
         }
@@ -14817,14 +14952,13 @@ impl DesktopProgram {
         }
         self.active_worktree_job = None;
         if let JobState::Failed { message } = state {
-            self.worktree_busy = false;
             self.worktree_confirmation = None;
             self.task_action_error = Some(message);
         }
     }
 
     fn pick_worktree(&mut self) {
-        if self.worktree_busy || self.composer_is_locked() {
+        if self.worktree_busy() || self.composer_is_locked() {
             return;
         }
         let request = DesktopFileDialogRequest {
@@ -16789,7 +16923,7 @@ impl DesktopProgram {
     }
 
     fn save_assistant_ai_configuration(&mut self) {
-        if self.provider_busy || self.assistant_ai_probe_busy {
+        if self.provider_busy() || self.assistant_ai_probe_busy() {
             return;
         }
         let update = self.provider_ai_settings.assistant_update();
@@ -16813,7 +16947,7 @@ impl DesktopProgram {
     }
 
     fn clear_assistant_ai_secret(&mut self) {
-        if self.provider_busy || self.assistant_ai_probe_busy {
+        if self.provider_busy() || self.assistant_ai_probe_busy() {
             return;
         }
         let update = self.provider_ai_settings.clear_secret_update();
@@ -16867,10 +17001,9 @@ impl DesktopProgram {
         kind: lilia_feature_provider::AssistantProbeKind,
         failure_notice: &str,
     ) {
-        if self.provider_busy || self.assistant_ai_probe_busy {
+        if self.provider_busy() || self.assistant_ai_probe_busy() {
             return;
         }
-        self.assistant_ai_probe_busy = true;
         self.assistant_ai_probe_notice = None;
         let ticket = self.assistant_probes.park(self.assistant_ai_probe_input());
         let request = JobRequest::new(
@@ -16887,7 +17020,6 @@ impl DesktopProgram {
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode assistant probe job: {error}");
                 self.assistant_probes.discard(ticket);
-                self.assistant_ai_probe_busy = false;
                 self.assistant_ai_probe_notice = Some((false, failure_notice.to_owned()));
             }
         }
@@ -16905,20 +17037,17 @@ impl DesktopProgram {
             JobState::Failed { message } => {
                 self.active_assistant_probe_job = None;
                 self.assistant_probes.discard(ticket);
-                self.assistant_ai_probe_busy = false;
                 self.assistant_ai_probe_notice = Some((false, message));
                 return;
             }
             _ => {
                 self.active_assistant_probe_job = None;
                 self.assistant_probes.discard(ticket);
-                self.assistant_ai_probe_busy = false;
                 return;
             }
         };
         self.active_assistant_probe_job = None;
         self.assistant_probes.discard(ticket);
-        self.assistant_ai_probe_busy = false;
         match kind {
             lilia_feature_provider::AssistantProbeKind::Models => {
                 self.apply_assistant_ai_models_result(output)
@@ -17200,7 +17329,7 @@ impl DesktopProgram {
     }
 
     fn save_provider_credential(&mut self) {
-        if self.provider_busy || self.provider_secret.trim().is_empty() {
+        if self.provider_busy() || self.provider_secret.trim().is_empty() {
             return;
         }
         let Some(provider_id) = self.selected_provider.clone() else {
@@ -17458,7 +17587,7 @@ impl DesktopProgram {
     }
 
     fn start_provider_operation(&mut self, request: CredentialRequest) {
-        if self.provider_busy {
+        if self.provider_busy() {
             return;
         }
         let request = JobRequest::new(
@@ -17467,14 +17596,12 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_provider::credential_slot());
 
-        self.provider_busy = true;
         self.provider_error = None;
         match self.kernel.kernel().jobs().submit(request) {
             Ok(handle) => self.active_provider_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode provider job: {error}");
                 self.provider_secrets.discard();
-                self.provider_busy = false;
                 self.provider_error = Some("无法启动凭据操作，请稍后重试。".to_owned());
             }
         }
@@ -17485,17 +17612,14 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => return,
             JobState::Completed { .. } => {
                 self.active_provider_job = None;
-                self.provider_busy = false;
                 self.provider_error = None;
             }
             JobState::Failed { message } => {
                 self.active_provider_job = None;
-                self.provider_busy = false;
                 self.provider_error = Some(message);
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_provider_job = None;
-                self.provider_busy = false;
             }
         }
         self.provider_secrets.discard();
@@ -17503,7 +17627,7 @@ impl DesktopProgram {
     }
 
     fn refresh_quota(&mut self) {
-        if self.quota_busy {
+        if self.quota_busy() {
             return;
         }
         let request = JobRequest::new(
@@ -17516,13 +17640,11 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_usage::quota_slot());
 
-        self.quota_busy = true;
         self.quota_error = None;
         match self.kernel.kernel().jobs().submit(request) {
             Ok(handle) => self.active_quota_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode quota job: {error}");
-                self.quota_busy = false;
                 self.quota_error = Some("无法刷新本地用量，请稍后重试。".to_owned());
             }
         }
@@ -17533,7 +17655,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => {}
             JobState::Completed { output } => {
                 self.active_quota_job = None;
-                self.quota_busy = false;
                 match serde_json::from_value::<QuotaUsageStats>(output) {
                     Ok(stats) => {
                         self.quota_days = stats.days;
@@ -17546,18 +17667,16 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_quota_job = None;
-                self.quota_busy = false;
                 self.quota_error = Some(message);
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_quota_job = None;
-                self.quota_busy = false;
             }
         }
     }
 
     fn create_skill(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let skill_id = self.skill_id_input.trim();
@@ -17580,7 +17699,7 @@ impl DesktopProgram {
     }
 
     fn toggle_skill(&mut self, skill_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some((enabled, revision)) = self.extensions.as_ref().and_then(|snapshot| {
@@ -17600,7 +17719,7 @@ impl DesktopProgram {
     }
 
     fn confirm_delete_skill(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(skill_id) = self.skill_delete_confirmation.clone() else {
@@ -17628,7 +17747,7 @@ impl DesktopProgram {
     /// is single-flight, which is what `extensions_busy` already means to the
     /// surface.
     fn submit_extensions_command(&mut self, command: ExtensionsCommand, failure: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let operation = command.operation();
@@ -17643,7 +17762,6 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_extensions::extensions_slot());
 
-        self.extensions_busy = true;
         self.extensions_error = None;
         match self.kernel.kernel().jobs().submit(request) {
             Ok(handle) => {
@@ -17656,7 +17774,6 @@ impl DesktopProgram {
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode extensions job: {error}");
                 self.extensions_exchange.discard(ticket);
-                self.extensions_busy = false;
                 self.extensions_error = Some(failure.to_owned());
             }
         }
@@ -17671,7 +17788,6 @@ impl DesktopProgram {
         }
 
         self.active_extensions_job = None;
-        self.extensions_busy = false;
         if job.lane.clears_credential_drafts() {
             self.mcp_credential_drafts.clear();
         }
@@ -17731,7 +17847,7 @@ impl DesktopProgram {
     }
 
     fn pick_plugin_directory(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let request = DesktopFileDialogRequest {
@@ -17760,7 +17876,7 @@ impl DesktopProgram {
     }
 
     fn install_plugin(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let source_path = self.plugin_source_input.trim();
@@ -17782,7 +17898,7 @@ impl DesktopProgram {
     }
 
     fn toggle_plugin(&mut self, plugin_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some((enabled, revision)) = self.extensions.as_ref().and_then(|snapshot| {
@@ -17802,7 +17918,7 @@ impl DesktopProgram {
     }
 
     fn confirm_delete_plugin(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(plugin_id) = self.plugin_delete_confirmation.clone() else {
@@ -17846,7 +17962,7 @@ impl DesktopProgram {
         field: HookHandlerDraftField,
         value: String,
     ) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let draft = self
@@ -17864,7 +17980,7 @@ impl DesktopProgram {
     }
 
     fn add_hook_handler_draft(&mut self, source_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let draft = self
@@ -17882,7 +17998,7 @@ impl DesktopProgram {
     }
 
     fn remove_hook_handler_draft(&mut self, source_id: &str, index: usize) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(draft) = self.hook_drafts.get(source_id).cloned() else {
@@ -17968,7 +18084,7 @@ impl DesktopProgram {
     }
 
     fn start_hook_source_operation(&mut self, operation: HookSourceOperation) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let overview_project_cwd = self.selected_project_workspace().map(|(_, root)| root);
@@ -18000,7 +18116,7 @@ impl DesktopProgram {
     }
 
     fn activate_registered_mcp(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             self.extensions_activation_pending = true;
             return;
         }
@@ -18014,7 +18130,7 @@ impl DesktopProgram {
     }
 
     fn start_mcp_content_operation(&mut self, operation: McpContentOperation) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         self.mcp_content_preview = None;
@@ -18025,7 +18141,7 @@ impl DesktopProgram {
     }
 
     fn begin_edit_mcp_server(&mut self, server_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(server) = self.extensions.as_ref().and_then(|snapshot| {
@@ -18067,7 +18183,7 @@ impl DesktopProgram {
     }
 
     fn save_mcp_server(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(editor) = self.mcp_editor.clone() else {
@@ -18123,7 +18239,7 @@ impl DesktopProgram {
     }
 
     fn toggle_mcp_server(&mut self, server_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some((enabled, revision)) = self.extensions.as_ref().and_then(|snapshot| {
@@ -18143,7 +18259,7 @@ impl DesktopProgram {
     }
 
     fn confirm_delete_mcp_server(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(server_id) = self.mcp_delete_confirmation.clone() else {
@@ -18161,7 +18277,7 @@ impl DesktopProgram {
     }
 
     fn start_mcp_registry_operation(&mut self, operation: McpRegistryOperation) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         self.extensions_activation = None;
@@ -18173,7 +18289,7 @@ impl DesktopProgram {
     }
 
     fn start_remote_operation(&mut self, request: RemoteRequest) {
-        if self.remote_busy {
+        if self.remote_busy() {
             return;
         }
         let request = JobRequest::new(
@@ -18182,13 +18298,11 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_remote::remote_slot());
 
-        self.remote_busy = true;
         self.remote_error = None;
         match self.kernel.kernel().jobs().submit(request) {
             Ok(handle) => self.active_remote_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode remote job: {error}");
-                self.remote_busy = false;
                 self.remote_error = Some("无法启动远控操作，请稍后重试。".to_owned());
             }
         }
@@ -18199,7 +18313,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => {}
             JobState::Completed { output } => {
                 self.active_remote_job = None;
-                self.remote_busy = false;
                 match serde_json::from_value::<RemoteControlStatus>(output) {
                     Ok(status) => {
                         self.remote_pc_name = status.pc_name.clone();
@@ -18213,18 +18326,16 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_remote_job = None;
-                self.remote_busy = false;
                 self.remote_error = Some(message);
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_remote_job = None;
-                self.remote_busy = false;
             }
         }
     }
 
     fn start_update_operation(&mut self, operation: UpdateOperation) {
-        if self.update_busy {
+        if self.update_busy() {
             return;
         }
         if matches!(&operation, UpdateOperation::Check) && !self.update_configured {
@@ -18243,13 +18354,11 @@ impl DesktopProgram {
         }
         .in_slot(lilia_feature_update::update_slot());
 
-        self.update_busy = true;
         self.update_error = None;
         match self.kernel.kernel().jobs().submit(request) {
             Ok(handle) => self.active_update_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode update job: {error}");
-                self.update_busy = false;
                 self.update_error = Some("无法启动更新操作，请稍后重试。".to_owned());
             }
         }
@@ -18260,7 +18369,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => {}
             JobState::Completed { .. } => {
                 self.active_update_job = None;
-                self.update_busy = false;
                 self.update_error = None;
                 if let Ok(state) = self.application.update_state() {
                     self.exit_requested = matches!(&state, DesktopUpdateState::Restarting { .. });
@@ -18272,7 +18380,6 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_update_job = None;
-                self.update_busy = false;
                 self.update_state = self.application.update_state().unwrap_or_else(|_| {
                     DesktopUpdateState::Failed {
                         message: message.clone(),
@@ -18282,7 +18389,6 @@ impl DesktopProgram {
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_update_job = None;
-                self.update_busy = false;
             }
         }
     }
@@ -18303,7 +18409,7 @@ impl DesktopProgram {
     }
 
     fn update_prompt_is_busy(&self) -> bool {
-        self.update_busy
+        self.update_busy()
             || matches!(
                 &self.update_state,
                 DesktopUpdateState::Downloading { .. }
@@ -18519,7 +18625,7 @@ impl DesktopProgram {
                     return;
                 } else if self.application_surface_is_visible(ApplicationWorkspaceSurface::Settings)
                     && self.settings_state.active_tab().as_str() == "extensions"
-                    && !self.extensions_busy
+                    && !self.extensions_busy()
                 {
                     let hook_handler_input =
                         self.hook_drafts.iter().find_map(|(source_id, draft)| {
@@ -18678,7 +18784,7 @@ impl DesktopProgram {
                     .filter(|preset_id| {
                         settings_visible
                             && self.settings_state.active_tab().as_str() == "provider"
-                            && !self.provider_busy
+                            && !self.provider_busy()
                             && self.provider_ai_settings.has_preset(preset_id)
                     })
                     .map(str::to_owned);
@@ -18686,7 +18792,7 @@ impl DesktopProgram {
                     .filter(|preset_id| {
                         settings_visible
                             && self.settings_state.active_tab().as_str() == "provider"
-                            && !self.provider_busy
+                            && !self.provider_busy()
                             && self
                                 .provider_ai_settings
                                 .custom_presets()
@@ -18698,8 +18804,8 @@ impl DesktopProgram {
                         .filter(|model_id| {
                             settings_visible
                                 && self.settings_state.active_tab().as_str() == "provider"
-                                && !self.provider_busy
-                                && !self.assistant_ai_probe_busy
+                                && !self.provider_busy()
+                                && !self.assistant_ai_probe_busy()
                                 && self
                                     .provider_ai_settings
                                     .assistant_model_pool()
@@ -18725,7 +18831,7 @@ impl DesktopProgram {
                     && !self.settings_open
                     && !self.automations_open
                     && self.project_surface == ProjectSurface::Clone
-                    && !self.project_clone_busy
+                    && !self.project_clone_busy()
                 {
                     self.update_message(Message::ProjectClone(
                         ProjectCloneMessage::RepositoryChanged(text),
@@ -18735,7 +18841,7 @@ impl DesktopProgram {
                     && !self.settings_open
                     && !self.automations_open
                     && self.project_surface == ProjectSurface::Clone
-                    && !self.project_clone_busy
+                    && !self.project_clone_busy()
                 {
                     self.update_message(Message::ProjectClone(ProjectCloneMessage::ParentChanged(
                         text,
@@ -18841,7 +18947,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::CODING_TOOLS_QUERY
                     && self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy
+                    && !self.coding_busy()
                 {
                     self.coding_query = text;
                     self.coding_error = None;
@@ -18915,14 +19021,14 @@ impl DesktopProgram {
                 } else if target_id == target_ids::PROVIDER_MODEL_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(ProviderMessage::ModelChanged(text)));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::PROVIDER_OPENAI_ENDPOINT_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(ProviderMessage::OpenAiEndpointChanged(
                         text,
@@ -18931,7 +19037,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::PROVIDER_ANTHROPIC_ENDPOINT_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AnthropicEndpointChanged(text),
@@ -18940,8 +19046,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_BASE_URL_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AssistantBaseUrlChanged(text),
@@ -18950,8 +19056,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_MODEL_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(ProviderMessage::AssistantModelChanged(
                         text,
@@ -18960,8 +19066,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_SECRET_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AssistantSecretChanged(text),
@@ -18970,8 +19076,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_NEW_MODEL_ID
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AssistantNewModelIdChanged(text),
@@ -18980,8 +19086,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_NEW_MODEL_LABEL
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AssistantNewModelLabelChanged(text),
@@ -18996,7 +19102,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_TITLE_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(ProviderMessage::TitleModelChanged(
                         text,
@@ -19005,7 +19111,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_SUGGESTION_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::SuggestionModelChanged(text),
@@ -19014,7 +19120,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_PROMPT_ROUTER_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::PromptRouterModelChanged(text),
@@ -19023,7 +19129,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_PROMPT_OPTIMIZE_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::PromptOptimizeModelChanged(text),
@@ -19032,7 +19138,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_AUTO_TURN_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AutoTurnDecisionModelChanged(text),
@@ -19041,7 +19147,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_CUSTOM_PRESET_NAME
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::CustomPresetDraftChanged(text),
@@ -19064,7 +19170,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::PROVIDER_SECRET_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.selected_provider_supports_api_key()
                 {
                     self.provider_secret = text;
@@ -19095,7 +19201,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::REMOTE_PC_NAME
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                 {
                     self.remote_pc_name = text;
                     self.remote_error = None;
@@ -19944,7 +20050,7 @@ impl DesktopProgram {
         }
         if settings_visible && self.settings_state.active_tab().as_str() == "extensions" {
             if target_id == target_ids::EXTENSIONS_SKILL_CREATE
-                && !self.extensions_busy
+                && !self.extensions_busy()
                 && !self.skill_id_input.trim().is_empty()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::CreateSkill));
@@ -19977,13 +20083,13 @@ impl DesktopProgram {
                 }
             }
             if target_id == target_ids::EXTENSIONS_PLUGIN_INSTALL
-                && !self.extensions_busy
+                && !self.extensions_busy()
                 && !self.plugin_source_input.trim().is_empty()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::InstallPlugin));
                 return true;
             }
-            if target_id == target_ids::EXTENSIONS_PLUGIN_PICK && !self.extensions_busy {
+            if target_id == target_ids::EXTENSIONS_PLUGIN_PICK && !self.extensions_busy() {
                 self.update_message(Message::Extensions(ExtensionsMessage::PickPluginDirectory));
                 return true;
             }
@@ -20069,20 +20175,20 @@ impl DesktopProgram {
                     return true;
                 }
             }
-            if target_id == target_ids::EXTENSIONS_MCP_ADD && !self.extensions_busy {
+            if target_id == target_ids::EXTENSIONS_MCP_ADD && !self.extensions_busy() {
                 self.update_message(Message::Extensions(ExtensionsMessage::NewMcpServer));
                 return true;
             }
             if target_id == target_ids::EXTENSIONS_MCP_TRANSPORT
                 && self.mcp_editor.is_some()
-                && !self.extensions_busy
+                && !self.extensions_busy()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::CycleMcpTransport));
                 return true;
             }
             if target_id == target_ids::EXTENSIONS_MCP_ENABLED
                 && self.mcp_editor.is_some()
-                && !self.extensions_busy
+                && !self.extensions_busy()
             {
                 self.update_message(Message::Extensions(
                     ExtensionsMessage::ToggleMcpEditorEnabled,
@@ -20093,14 +20199,14 @@ impl DesktopProgram {
                 && self.mcp_editor.as_ref().is_some_and(|editor| {
                     !editor.server_id.trim().is_empty() && !editor.location.trim().is_empty()
                 })
-                && !self.extensions_busy
+                && !self.extensions_busy()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::SaveMcpServer));
                 return true;
             }
             if target_id == target_ids::EXTENSIONS_MCP_CANCEL
                 && self.mcp_editor.is_some()
-                && !self.extensions_busy
+                && !self.extensions_busy()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::CancelMcpEditor));
                 return true;
@@ -20511,7 +20617,7 @@ impl DesktopProgram {
             return true;
         }
         if let Some((_, action)) = self
-            .sidebar_menu_debug_targets()
+            .sidebar_menu_actions()
             .into_iter()
             .find(|(candidate, _)| candidate == target_id)
         {
@@ -21212,7 +21318,7 @@ impl DesktopProgram {
             }));
             return true;
         }
-        if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy {
+        if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy() {
             if let Some(repository) = self.github_repositories.iter().find(|repository| {
                 target_ids::github_repository(&repository.full_name) == target_id
             }) {
@@ -21231,32 +21337,32 @@ impl DesktopProgram {
                 self.open_project_clone();
             }
             target_ids::PROJECT_CLONE_BACK
-                if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy =>
+                if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy() =>
             {
                 self.close_project_clone();
             }
             target_ids::PROJECT_CLONE_PICK_PARENT
-                if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy =>
+                if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy() =>
             {
                 self.pick_project_clone_parent();
             }
             target_ids::PROJECT_CLONE_START
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.project_clone_busy
+                    && !self.project_clone_busy()
                     && !self.project_clone_repository.trim().is_empty()
                     && !self.project_clone_parent.trim().is_empty() =>
             {
                 self.start_project_clone();
             }
             target_ids::PROJECT_CLONE_CANCEL
-                if self.project_surface == ProjectSurface::Clone && self.project_clone_busy =>
+                if self.project_surface == ProjectSurface::Clone && self.project_clone_busy() =>
             {
                 self.cancel_project_clone();
             }
             target_ids::GITHUB_BIND_START
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.project_clone_busy
-                    && !self.github_binding_busy
+                    && !self.project_clone_busy()
+                    && !self.github_binding_busy()
                     && self.github_binding.state == "unbound"
                     && self.github_binding.client_id_configured =>
             {
@@ -21264,7 +21370,7 @@ impl DesktopProgram {
             }
             target_ids::GITHUB_BIND_CANCEL
                 if self.project_surface == ProjectSurface::Clone
-                    && self.github_binding_busy
+                    && self.github_binding_busy()
                     && self.github_device_flow.is_some() =>
             {
                 self.cancel_github_binding();
@@ -21283,21 +21389,21 @@ impl DesktopProgram {
             }
             target_ids::GITHUB_UNBIND
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.github_binding_busy
+                    && !self.github_binding_busy()
                     && self.github_binding.state == "bound" =>
             {
                 self.unbind_github();
             }
             target_ids::GITHUB_REPOS_REFRESH
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.github_repositories_busy
+                    && !self.github_repositories_busy()
                     && self.github_binding.state == "bound" =>
             {
                 self.load_github_repositories(false);
             }
             target_ids::GITHUB_REPOS_LOAD_MORE
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.github_repositories_busy
+                    && !self.github_repositories_busy()
                     && self.github_repositories_next_page.is_some() =>
             {
                 self.load_github_repositories(true);
@@ -21552,14 +21658,14 @@ impl DesktopProgram {
             target_ids::CODING_TOOLS_REFRESH
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 self.refresh_coding_tools();
             }
             target_ids::CODING_TOOLS_SEARCH
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy
+                    && !self.coding_busy()
                     && !self.coding_query.trim().is_empty()
                     && (self.selected_project_workspace().is_some()
                         || (self.coding_search_all_projects
@@ -21570,21 +21676,21 @@ impl DesktopProgram {
             target_ids::CODING_TOOLS_SEARCH_MODE
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 self.update_message(Message::Coding(CodingMessage::CycleCodingSearchMode));
             }
             target_ids::CODING_TOOLS_SEARCH_SCOPE
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 self.update_message(Message::Coding(CodingMessage::ToggleCodingSearchScope));
             }
             target_ids::CODING_TOOLS_DIFF_SCOPE
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 self.update_message(Message::Coding(CodingMessage::CycleCodingGitDiffScope));
             }
@@ -21626,7 +21732,7 @@ impl DesktopProgram {
                 if target.starts_with(target_ids::CODING_TOOLS_TASK_PREFIX)
                     && self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 let task_id = self.coding_project_tasks.as_ref().and_then(|catalog| {
                     catalog
@@ -21651,7 +21757,7 @@ impl DesktopProgram {
                 if target.starts_with(target_ids::CODING_TOOLS_SEARCH_HIT_PREFIX)
                     && self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 if let Some(hit) = self.coding_search.as_ref().and_then(|result| {
                     result
@@ -22007,7 +22113,7 @@ impl DesktopProgram {
             target_ids::PROVIDER_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.selected_provider_supports_api_key()
                     && !self.provider_secret.trim().is_empty() =>
             {
@@ -22016,7 +22122,7 @@ impl DesktopProgram {
             target_ids::PROVIDER_RUNTIME_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.provider_runtime_settings_dirty() =>
             {
                 self.save_provider_runtime_settings();
@@ -22024,7 +22130,7 @@ impl DesktopProgram {
             target_ids::PROVIDER_RUNTIME_RESET
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && (self.provider_runtime_settings.model.is_some()
                         || self.provider_runtime_settings.openai_endpoint.is_some()
                         || self.provider_runtime_settings.anthropic_endpoint.is_some()) =>
@@ -22034,8 +22140,8 @@ impl DesktopProgram {
             target_ids::ASSISTANT_AI_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                     && self.provider_ai_settings.assistant_dirty() =>
             {
                 self.save_assistant_ai_configuration();
@@ -22043,8 +22149,8 @@ impl DesktopProgram {
             target_ids::ASSISTANT_AI_CLEAR_SECRET
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                     && self.provider_ai_settings.assistant_secret_configured =>
             {
                 self.clear_assistant_ai_secret();
@@ -22052,8 +22158,8 @@ impl DesktopProgram {
             target_ids::ASSISTANT_AI_ADD_MODEL
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                     && !self.assistant_ai_new_model_id.trim().is_empty() =>
             {
                 self.update_message(Message::Provider(ProviderMessage::AddAssistantModel));
@@ -22061,23 +22167,23 @@ impl DesktopProgram {
             target_ids::ASSISTANT_AI_FETCH_MODELS
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy =>
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy() =>
             {
                 self.start_assistant_ai_models_fetch();
             }
             target_ids::ASSISTANT_AI_TEST_CONNECTION
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy =>
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy() =>
             {
                 self.start_assistant_ai_connection_test();
             }
             target_ids::FEATURE_MODEL_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.provider_ai_settings.model_features_dirty() =>
             {
                 self.save_model_feature_settings();
@@ -22085,14 +22191,14 @@ impl DesktopProgram {
             target_ids::FEATURE_CUSTOM_PRESET_ADD
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy =>
+                    && !self.provider_busy() =>
             {
                 self.update_message(Message::Provider(ProviderMessage::AddCustomPreset));
             }
             target_id
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && target_ids::parse_feature_preset_effort(target_id).is_some() =>
             {
                 let preset_id = target_ids::parse_feature_preset_effort(target_id)
@@ -22105,7 +22211,7 @@ impl DesktopProgram {
             target_id
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && target_ids::parse_feature_preset_remove(target_id).is_some() =>
             {
                 let preset_id = target_ids::parse_feature_preset_remove(target_id)
@@ -22122,7 +22228,7 @@ impl DesktopProgram {
             target_ids::CONVERSATION_SUGGESTIONS_ENABLE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && !self.provider_ai_settings.conversation_suggestions_enabled() =>
             {
                 self.set_conversation_suggestions_enabled(true);
@@ -22130,7 +22236,7 @@ impl DesktopProgram {
             target_ids::CONVERSATION_SUGGESTIONS_DISABLE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.provider_ai_settings.conversation_suggestions_enabled() =>
             {
                 self.set_conversation_suggestions_enabled(false);
@@ -22138,42 +22244,42 @@ impl DesktopProgram {
             target_ids::PROVIDER_REFRESH
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy =>
+                    && !self.provider_busy() =>
             {
                 self.refresh_provider();
             }
             target_ids::QUOTA_REFRESH
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "quota"
-                    && !self.quota_busy =>
+                    && !self.quota_busy() =>
             {
                 self.refresh_quota();
             }
             target_ids::QUOTA_DAYS
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "quota"
-                    && !self.quota_busy =>
+                    && !self.quota_busy() =>
             {
                 self.update_message(Message::Quota(QuotaMessage::CycleDays));
             }
             target_ids::QUOTA_BACKEND
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "quota"
-                    && !self.quota_busy =>
+                    && !self.quota_busy() =>
             {
                 self.update_message(Message::Quota(QuotaMessage::CycleBackend));
             }
             target_ids::EXTENSIONS_REFRESH
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "extensions"
-                    && !self.extensions_busy =>
+                    && !self.extensions_busy() =>
             {
                 self.refresh_extensions();
             }
             target_ids::EXTENSIONS_ACTIVATE_MCP
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "extensions"
-                    && !self.extensions_busy
+                    && !self.extensions_busy()
                     && self.extensions.as_ref().is_some_and(|snapshot| {
                         snapshot.mcp_servers.iter().any(|server| server.enabled)
                     }) =>
@@ -22183,14 +22289,14 @@ impl DesktopProgram {
             target_ids::REMOTE_REFRESH
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy =>
+                    && !self.remote_busy() =>
             {
                 self.start_remote_operation(RemoteRequest::Refresh);
             }
             target_ids::REMOTE_HOST_TOGGLE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && self.remote.is_some() =>
             {
                 self.update_message(Message::Remote(RemoteMessage::ToggleHost));
@@ -22198,7 +22304,7 @@ impl DesktopProgram {
             target_ids::REMOTE_PC_NAME_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && !self.remote_pc_name.trim().is_empty() =>
             {
                 self.update_message(Message::Remote(RemoteMessage::SavePcName));
@@ -22206,7 +22312,7 @@ impl DesktopProgram {
             target_ids::REMOTE_KEEP_AWAKE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && self.remote.is_some() =>
             {
                 self.update_message(Message::Remote(RemoteMessage::ToggleKeepAwake));
@@ -22214,7 +22320,7 @@ impl DesktopProgram {
             target_ids::REMOTE_START_PAIRING
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && self.remote.as_ref().is_some_and(|status| {
                         status.host_enabled && status.active_ticket.is_none()
                     }) =>
@@ -22224,7 +22330,7 @@ impl DesktopProgram {
             target_ids::REMOTE_CANCEL_PAIRING
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && self
                         .remote
                         .as_ref()
@@ -22261,7 +22367,7 @@ impl DesktopProgram {
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "desktop"
                     && self.update_configured
-                    && !self.update_busy =>
+                    && !self.update_busy() =>
             {
                 self.update_message(Message::Update(UpdateMessage::Check));
             }
@@ -22283,7 +22389,7 @@ impl DesktopProgram {
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "desktop"
                     && self.update_configured
-                    && !self.update_busy
+                    && !self.update_busy()
                     && matches!(&self.update_state, DesktopUpdateState::Available { .. }) =>
             {
                 self.update_message(Message::Update(UpdateMessage::Install));
@@ -22452,7 +22558,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_CREATE
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22462,7 +22568,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_ATTACH
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22480,7 +22586,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_CLEAR
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22490,7 +22596,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_REQUEST_CLEANUP
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22500,7 +22606,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_REQUEST_MERGE
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22510,7 +22616,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_CONFIRM
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self.worktree_confirmation.is_some() =>
             {
                 self.update_message(Message::Worktree(WorktreeMessage::ConfirmAction));
@@ -22787,7 +22893,7 @@ impl DesktopProgram {
                     return false;
                 } else if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     if let Some(provider_id) = self.provider.providers.iter().find_map(|provider| {
                         (target_ids::provider(&provider.provider_id) == target_id)
@@ -22838,7 +22944,7 @@ impl DesktopProgram {
                     }
                 } else if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                 {
                     if let Some(device_id) = self.remote.as_ref().and_then(|status| {
                         status.trusted_devices.iter().find_map(|device| {
@@ -23594,7 +23700,7 @@ impl DesktopProgram {
                 .iter()
                 .find(|project| Some(&project.id) == self.selected_project.as_ref())
                 .map(|project| project.pinned),
-            project_clone_busy: self.project_clone_busy,
+            project_clone_busy: self.project_clone_busy(),
             project_clone_outcome: project_clone_outcome_key(self.project_clone_outcome),
             project_clone_phase: self.project_clone_phase.clone(),
             project_clone_percent: self.project_clone_percent,
@@ -23608,9 +23714,9 @@ impl DesktopProgram {
                 .binding
                 .as_ref()
                 .map(|binding| binding.login.clone()),
-            github_binding_busy: self.github_binding_busy,
+            github_binding_busy: self.github_binding_busy(),
             github_device_flow_active: self.github_device_flow.is_some(),
-            github_repository_busy: self.github_repositories_busy,
+            github_repository_busy: self.github_repositories_busy(),
             github_repository_count: self.github_repositories.len(),
             github_repository_names: self
                 .github_repositories
@@ -23786,7 +23892,7 @@ impl DesktopProgram {
                 .iab_windows
                 .values()
                 .find_map(|window| window.error().map(str::to_owned)),
-            coding_tools_busy: self.coding_busy,
+            coding_tools_busy: self.coding_busy(),
             coding_tools_shared_identity: self
                 .coding_tools
                 .as_ref()
@@ -23902,7 +24008,7 @@ impl DesktopProgram {
             provider_openai_endpoint: self.provider_runtime_settings.openai_endpoint.clone(),
             provider_anthropic_endpoint: self.provider_runtime_settings.anthropic_endpoint.clone(),
             provider_runtime_dirty: self.provider_runtime_settings_dirty(),
-            provider_busy: self.provider_busy,
+            provider_busy: self.provider_busy(),
             provider_error: self.provider_error.clone(),
             agent_interaction_revision: self.agent_interaction_settings.revision,
             agent_non_interrupt_mode: self.agent_interaction_settings.non_interrupt_mode,
@@ -23959,9 +24065,9 @@ impl DesktopProgram {
                 .as_ref()
                 .and_then(|stats| stats.cost.known_cost_usd)
                 .is_some(),
-            quota_busy: self.quota_busy,
+            quota_busy: self.quota_busy(),
             quota_error: self.quota_error.clone(),
-            extensions_busy: self.extensions_busy,
+            extensions_busy: self.extensions_busy(),
             extensions_shared_identity: self
                 .extensions
                 .as_ref()
@@ -24228,7 +24334,7 @@ impl DesktopProgram {
                 .map(|editor| editor.transport.as_registry().to_owned()),
             extensions_mcp_delete_confirmation: self.mcp_delete_confirmation.clone(),
             extensions_error: self.extensions_error.clone(),
-            remote_busy: self.remote_busy,
+            remote_busy: self.remote_busy(),
             remote_host_enabled: self
                 .remote
                 .as_ref()
@@ -24262,7 +24368,7 @@ impl DesktopProgram {
             shell_error: self.shell_error.clone(),
             update_configured: self.update_configured,
             update_state: update_state_key(&self.update_state),
-            update_busy: self.update_busy,
+            update_busy: self.update_busy(),
             update_error: self.update_error.clone(),
             data_import_busy: self.data_import.busy,
             data_import_has_source: self.data_import.source_home.is_some(),
@@ -24344,7 +24450,7 @@ impl DesktopProgram {
                 .as_ref()
                 .and_then(|session| session.worktree.as_ref())
                 .map(|worktree| worktree.branch_name.clone()),
-            worktree_busy: self.worktree_busy,
+            worktree_busy: self.worktree_busy(),
             worktree_confirmation: self.worktree_confirmation.map(worktree_confirmation_key),
             todo_count: self
                 .task_session
@@ -24762,7 +24868,7 @@ impl DesktopProgram {
                     .map(|(target, ..)| target),
             );
             targets.extend(
-                self.sidebar_menu_debug_targets()
+                self.sidebar_menu_actions()
                     .into_iter()
                     .map(|(target, _)| target),
             );
@@ -25277,7 +25383,7 @@ impl DesktopProgram {
                     target_ids::PROJECT_SETTINGS_SAVE.to_owned(),
                 ]);
             } else if self.settings_state.active_tab().as_str() == "provider" {
-                if !self.provider_busy {
+                if !self.provider_busy() {
                     targets.extend([
                         target_ids::PROVIDER_REFRESH.to_owned(),
                         target_ids::PROVIDER_MODEL_INPUT.to_owned(),
@@ -25291,7 +25397,7 @@ impl DesktopProgram {
                         target_ids::FEATURE_CUSTOM_PRESET_NAME.to_owned(),
                         target_ids::FEATURE_CUSTOM_PRESET_ADD.to_owned(),
                     ]);
-                    if !self.assistant_ai_probe_busy {
+                    if !self.assistant_ai_probe_busy() {
                         targets.extend([
                             target_ids::ASSISTANT_AI_BASE_URL_INPUT.to_owned(),
                             target_ids::ASSISTANT_AI_MODEL_INPUT.to_owned(),
@@ -25329,11 +25435,11 @@ impl DesktopProgram {
                     {
                         targets.push(target_ids::PROVIDER_RUNTIME_RESET.to_owned());
                     }
-                    if !self.assistant_ai_probe_busy && self.provider_ai_settings.assistant_dirty()
+                    if !self.assistant_ai_probe_busy() && self.provider_ai_settings.assistant_dirty()
                     {
                         targets.push(target_ids::ASSISTANT_AI_SAVE.to_owned());
                     }
-                    if !self.assistant_ai_probe_busy
+                    if !self.assistant_ai_probe_busy()
                         && self.provider_ai_settings.assistant_secret_configured
                     {
                         targets.push(target_ids::ASSISTANT_AI_CLEAR_SECRET.to_owned());
@@ -25358,11 +25464,11 @@ impl DesktopProgram {
                 );
                 if self.selected_provider_supports_api_key() {
                     targets.push(target_ids::PROVIDER_SECRET_INPUT.to_owned());
-                    if !self.provider_busy && !self.provider_secret.trim().is_empty() {
+                    if !self.provider_busy() && !self.provider_secret.trim().is_empty() {
                         targets.push(target_ids::PROVIDER_SAVE.to_owned());
                     }
                 }
-                if !self.provider_busy {
+                if !self.provider_busy() {
                     targets.extend(
                         self.provider
                             .credentials
@@ -25411,7 +25517,7 @@ impl DesktopProgram {
                     }
                 }
             } else if self.settings_state.active_tab().as_str() == "quota" {
-                if !self.quota_busy {
+                if !self.quota_busy() {
                     targets.extend([
                         target_ids::QUOTA_REFRESH.to_owned(),
                         target_ids::QUOTA_DAYS.to_owned(),
@@ -25419,7 +25525,7 @@ impl DesktopProgram {
                     ]);
                 }
             } else if self.settings_state.active_tab().as_str() == "extensions" {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     targets.extend([
                         target_ids::EXTENSIONS_REFRESH.to_owned(),
                         target_ids::EXTENSIONS_SKILL_ID.to_owned(),
@@ -25591,7 +25697,7 @@ impl DesktopProgram {
                     }
                 }
             } else if self.settings_state.active_tab().as_str() == "remote" {
-                if !self.remote_busy {
+                if !self.remote_busy() {
                     targets.push(target_ids::REMOTE_REFRESH.to_owned());
                     if let Some(status) = &self.remote {
                         targets.extend([
@@ -25628,7 +25734,7 @@ impl DesktopProgram {
                     target_ids::DESKTOP_SHORTCUT_CLEAR.to_owned(),
                     target_ids::DESKTOP_UPDATE_RELEASES.to_owned(),
                 ]);
-                if self.update_configured && !self.update_busy {
+                if self.update_configured && !self.update_busy() {
                     targets.push(target_ids::DESKTOP_UPDATE_CHECK.to_owned());
                     if matches!(&self.update_state, DesktopUpdateState::Available { .. }) {
                         targets.push(target_ids::DESKTOP_UPDATE_INSTALL.to_owned());
@@ -25823,7 +25929,7 @@ impl DesktopProgram {
                 .map(|project| target_ids::archived_project(project.id.as_str())),
         );
         if self.project_surface == ProjectSurface::Clone {
-            if self.project_clone_busy {
+            if self.project_clone_busy() {
                 targets.push(target_ids::PROJECT_CLONE_CANCEL.to_owned());
             } else {
                 targets.extend([
@@ -25838,13 +25944,13 @@ impl DesktopProgram {
                     targets.push(target_ids::PROJECT_CLONE_START.to_owned());
                 }
                 if self.github_binding.state == "bound" {
-                    if !self.github_binding_busy && !self.github_repositories_busy {
+                    if !self.github_binding_busy() && !self.github_repositories_busy() {
                         targets.extend([
                             target_ids::GITHUB_UNBIND.to_owned(),
                             target_ids::GITHUB_REPOS_REFRESH.to_owned(),
                         ]);
                     }
-                    if !self.github_repositories_busy
+                    if !self.github_repositories_busy()
                         && self.github_repositories_next_page.is_some()
                     {
                         targets.push(target_ids::GITHUB_REPOS_LOAD_MORE.to_owned());
@@ -25871,7 +25977,7 @@ impl DesktopProgram {
                         target_ids::GITHUB_VERIFICATION_OPEN.to_owned(),
                         target_ids::GITHUB_USER_CODE_COPY.to_owned(),
                     ]);
-                } else if !self.github_binding_busy && self.github_binding.client_id_configured {
+                } else if !self.github_binding_busy() && self.github_binding.client_id_configured {
                     targets.push(target_ids::GITHUB_BIND_START.to_owned());
                 }
             }
@@ -26019,7 +26125,7 @@ impl DesktopProgram {
             && self.inspector_region_is_visible()
         {
             targets.push(target_ids::CODING_TOOLS_CLOSE.to_owned());
-            if !self.coding_busy {
+            if !self.coding_busy() {
                 targets.extend([
                     target_ids::CODING_TOOLS_REFRESH.to_owned(),
                     target_ids::CODING_TOOLS_QUERY.to_owned(),
@@ -26343,7 +26449,7 @@ impl DesktopProgram {
                     }
                     if session.worktree.is_some() {
                         targets.push(target_ids::WORKTREE_OPEN.to_owned());
-                        if !self.composer_is_locked() && !self.worktree_busy {
+                        if !self.composer_is_locked() && !self.worktree_busy() {
                             targets.extend([
                                 target_ids::WORKTREE_CLEAR.to_owned(),
                                 target_ids::WORKTREE_REQUEST_CLEANUP.to_owned(),
@@ -26354,7 +26460,7 @@ impl DesktopProgram {
                                 targets.push(target_ids::WORKTREE_CANCEL.to_owned());
                             }
                         }
-                    } else if !self.composer_is_locked() && !self.worktree_busy {
+                    } else if !self.composer_is_locked() && !self.worktree_busy() {
                         targets.push(target_ids::WORKTREE_CREATE.to_owned());
                         targets.push(target_ids::WORKTREE_ATTACH.to_owned());
                     }
@@ -26881,9 +26987,6 @@ impl DesktopProgram {
                 project_id,
                 task_id,
             } => {
-                if task_id.as_ref() == self.selected_task.as_ref() {
-                    self.worktree_busy = false;
-                }
                 let active_location_changed = match project_id.as_ref() {
                     Some(project_id) => self.selected_project.as_ref() == Some(project_id),
                     None => self.inbox_selected,
@@ -26935,7 +27038,6 @@ impl DesktopProgram {
             DesktopEventKind::WorktreeChanged { task_id }
             | DesktopEventKind::WorktreeOperationCompleted { task_id } => {
                 if self.selected_task.as_ref() == Some(&task_id) {
-                    self.worktree_busy = false;
                     self.worktree_confirmation = None;
                     if self
                         .application
@@ -26952,7 +27054,6 @@ impl DesktopProgram {
             }
             DesktopEventKind::WorktreeOperationFailed { task_id, message } => {
                 if self.selected_task.as_ref() == Some(&task_id) {
-                    self.worktree_busy = false;
                     self.worktree_confirmation = None;
                     self.task_action_error = Some(message);
                     self.refresh_task_session();
@@ -30244,16 +30345,19 @@ impl DesktopProgram {
         self.sync_markdown_images();
     }
 
-    fn sidebar_project_tasks<'a>(
-        &'a self,
-        project_id: Option<&ProjectId>,
-    ) -> Vec<(&'a ProductTask, usize)> {
-        let tasks = self
-            .task_move_candidates
-            .iter()
-            .filter(|task| !task.archived && task.project_id.as_ref() == project_id)
-            .collect::<Vec<_>>();
-        ordered_product_task_tree(tasks)
+    /// 侧栏一次分组，避免每个展开的项目都重新全扫任务表。
+    fn sidebar_task_groups(&self) -> HashMap<Option<&ProjectId>, Vec<&ProductTask>> {
+        let mut groups: HashMap<Option<&ProjectId>, Vec<&ProductTask>> = HashMap::new();
+        for task in &self.task_move_candidates {
+            if task.archived {
+                continue;
+            }
+            groups
+                .entry(task.project_id.as_ref())
+                .or_default()
+                .push(task);
+        }
+        groups
     }
 
     fn sidebar_visible_project_tasks<'a>(
@@ -30707,6 +30811,7 @@ impl RuntimeProgram for DesktopProgram {
         let coding_exchange = Arc::new(CodingExchange::default());
         let kernel = {
             let dispatcher = context.clone();
+            let (project_tasks, project_task_events) = application.project_task_services();
             crate::kernel_host::KernelHost::start(
                 crate::kernel_host::KernelServices {
                     authority: application.authority().clone(),
@@ -30718,6 +30823,9 @@ impl RuntimeProgram for DesktopProgram {
                     roadmap: application.roadmap_service(),
                     architecture: application.architecture_service(),
                     automation: application.automation_service(),
+                    project_tasks,
+                    project_task_events,
+                    journal: application.journal(),
                     clone_credentials: Arc::new(GitHubCloneCredentials {
                         application: application.clone(),
                     }),
@@ -30975,7 +31083,6 @@ impl RuntimeProgram for DesktopProgram {
             project_archive_confirmation: None,
             project_clone_repository: String::new(),
             project_clone_parent,
-            project_clone_busy: false,
             project_clone_outcome: ProjectCloneOutcome::Idle,
             project_clone_phase: None,
             project_clone_percent: None,
@@ -30985,11 +31092,9 @@ impl RuntimeProgram for DesktopProgram {
             kernel,
             github_binding,
             github_device_flow: None,
-            github_binding_busy: false,
             active_github_binding_job: None,
             github_repositories: Vec::new(),
             github_repositories_next_page: None,
-            github_repositories_busy: false,
             active_github_repository_job: None,
             selected_github_repository: None,
             github_error,
@@ -31029,7 +31134,6 @@ impl RuntimeProgram for DesktopProgram {
             todo_draft: String::new(),
             editing_todo: None,
             goal_draft: String::new(),
-            worktree_busy: false,
             active_worktree_job: None,
             worktree_confirmation: None,
             pending_initial_worktrees: BTreeMap::new(),
@@ -31107,7 +31211,6 @@ impl RuntimeProgram for DesktopProgram {
             coding_search: None,
             coding_search_all_projects: false,
             coding_notice: None,
-            coding_busy: false,
             coding_exchange,
             active_coding_job: None,
             active_coding_search_job: None,
@@ -31125,7 +31228,6 @@ impl RuntimeProgram for DesktopProgram {
             provider_ai_settings,
             assistant_ai_new_model_id: String::new(),
             assistant_ai_new_model_label: String::new(),
-            assistant_ai_probe_busy: false,
             import_exchange,
             active_import_job: None,
             assistant_probes,
@@ -31142,14 +31244,12 @@ impl RuntimeProgram for DesktopProgram {
             agent_interaction_error: None,
             selected_provider,
             provider_secret: String::new(),
-            provider_busy: false,
             provider_secrets,
             active_provider_job: None,
             provider_error: None,
             quota_usage: None,
             quota_days: 30,
             quota_backend: "all".to_owned(),
-            quota_busy: false,
             active_quota_job: None,
             quota_error: None,
             extensions: None,
@@ -31168,14 +31268,12 @@ impl RuntimeProgram for DesktopProgram {
             mcp_credential_drafts: BTreeMap::new(),
             mcp_prompt_argument_drafts: BTreeMap::new(),
             mcp_content_preview: None,
-            extensions_busy: false,
             extensions_activation_pending: false,
             extensions_exchange,
             active_extensions_job: None,
             extensions_error: None,
             remote,
             remote_pc_name,
-            remote_busy: false,
             active_remote_job: None,
             remote_error,
             shell,
@@ -31186,7 +31284,6 @@ impl RuntimeProgram for DesktopProgram {
             dismissed_update_versions: BTreeSet::new(),
             update_failure_dismissed: false,
             update_configured,
-            update_busy: false,
             active_update_job: None,
             update_error: None,
             exit_requested: false,
@@ -32319,6 +32416,16 @@ fn ordered_task_tree_indices(tasks: &[DesktopWorkspaceTask]) -> Vec<(usize, usiz
         .map(|task| task.parent_id.clone())
         .collect::<Vec<_>>();
     ordered_tree_indices(&ids, &parent_ids)
+}
+
+fn sidebar_grouped_tasks<'a>(
+    groups: &HashMap<Option<&'a ProjectId>, Vec<&'a ProductTask>>,
+    project_id: Option<&'a ProjectId>,
+) -> Vec<(&'a ProductTask, usize)> {
+    groups
+        .get(&project_id)
+        .map(|tasks| ordered_product_task_tree(tasks.clone()))
+        .unwrap_or_default()
 }
 
 fn ordered_product_task_tree(mut tasks: Vec<&ProductTask>) -> Vec<(&ProductTask, usize)> {

@@ -14,11 +14,11 @@ use lilia_contracts::ProductError;
 use lilia_kernel::{
     Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef,
 };
-use lilia_service::{ServiceAuthority, ServiceAuthorityError};
+use lilia_service::ServiceAuthorityError;
 
 pub use events::{
-    KernelProjectTaskEvents, ProjectTaskEvents, ProjectsChanged, SilentProjectTaskEvents,
-    TasksChanged,
+    KernelProjectTaskEvents, ProjectTaskEventFanout, ProjectTaskEvents, ProjectsChanged,
+    SilentProjectTaskEvents, TasksChanged,
 };
 pub use query::{DesktopTaskScope, ProjectQuery, TaskQuery};
 pub use service::{
@@ -49,13 +49,21 @@ impl ServiceKey for ProjectTaskServiceKey {
     const NAME: &'static str = "lilia.project.tasks";
 }
 
+/// Publishes the host-owned [`ProjectTaskService`] into the service registry and
+/// adds the kernel event leg to its fanout.
+///
+/// The service is constructed by the host rather than here because the host
+/// bootstraps its persistence before the kernel starts; building a second
+/// instance at mount time would give the two halves separate event sinks over
+/// the same rows.
 pub struct TaskFeature {
-    authority: ServiceAuthority,
+    service: ProjectTaskService,
+    events: Arc<ProjectTaskEventFanout>,
 }
 
 impl TaskFeature {
-    pub fn new(authority: ServiceAuthority) -> Self {
-        Self { authority }
+    pub fn new(service: ProjectTaskService, events: Arc<ProjectTaskEventFanout>) -> Self {
+        Self { service, events }
     }
 }
 
@@ -69,10 +77,8 @@ impl Feature for TaskFeature {
     }
 
     fn mount(&self, cx: &mut FeatureContext<'_>) -> Result<(), KernelError> {
-        let events = Arc::new(KernelProjectTaskEvents::new(cx.events().clone()));
-        cx.provide::<ProjectTaskServiceKey>(ProjectTaskService::new(
-            self.authority.clone(),
-            events,
-        ))
+        self.events
+            .install(Arc::new(KernelProjectTaskEvents::new(cx.events().clone())));
+        cx.provide::<ProjectTaskServiceKey>(self.service.clone())
     }
 }

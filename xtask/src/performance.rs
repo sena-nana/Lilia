@@ -134,7 +134,8 @@ pub fn run() -> Result {
             &session,
             serde_json::json!({
                 "command": "resize-panel-frame",
-                "extent": if index % 2 == 0 { 368.0 } else { 352.0 }
+                // 调试协议的字段一律是字符串，数字会在边界解析处被拒。
+                "extent": if index % 2 == 0 { "368" } else { "352" }
             }),
         )?;
         resize.push(duration_ms(&response, "panel resize-frame")?);

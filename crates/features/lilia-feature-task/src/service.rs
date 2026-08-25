@@ -18,6 +18,7 @@ use lilia_contracts::{
     ProductTaskArchiveInput, ProductTaskArchiveOutcome, ProductTaskMoveInput, ProductTaskPriority,
     ProductTaskReorderEntry, ProductTaskStatus, Project, ProjectArchiveState, ProjectId, TaskId,
 };
+use lilia_kernel::{Journal, RecordKind};
 use lilia_service::ServiceAuthority;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -154,15 +155,41 @@ impl std::fmt::Display for DesktopTaskRunBlock {
 pub struct ProjectTaskService {
     authority: ServiceAuthority,
     events: Arc<dyn ProjectTaskEvents>,
+    journal: Option<Journal>,
 }
 
 impl ProjectTaskService {
     pub fn new(authority: ServiceAuthority, events: Arc<dyn ProjectTaskEvents>) -> Self {
-        Self { authority, events }
+        Self {
+            authority,
+            events,
+            journal: None,
+        }
+    }
+
+    /// Records each write in the kernel journal. The host installs it at boot;
+    /// tests that only assert on stored facts leave it off.
+    pub fn with_journal(mut self, journal: Journal) -> Self {
+        self.journal = Some(journal);
+        self
     }
 
     pub fn authority(&self) -> &ServiceAuthority {
         &self.authority
+    }
+
+    /// Names the operation and whether the idempotency key had already applied
+    /// it. The event that follows reports only that rows moved, so without this
+    /// a replayed write is indistinguishable from a fresh one.
+    fn record(&self, operation: &str, subject: Option<String>, duplicate: bool) {
+        if let Some(journal) = &self.journal {
+            journal.append(
+                RecordKind::Mutation,
+                operation,
+                subject,
+                serde_json::json!({ "duplicate": duplicate }),
+            );
+        }
     }
 
     pub fn query_projects(&self, query: ProjectQuery) -> Result<Vec<Project>, TaskError> {
@@ -259,6 +286,11 @@ impl ProjectTaskService {
             "desktop_create_project",
         )?;
         let project = project_entity(result.value)?;
+        self.record(
+            "project.created",
+            Some(project.id.as_str().to_owned()),
+            result.duplicate,
+        );
         if !result.duplicate {
             self.events.projects_changed();
         }
@@ -300,6 +332,11 @@ impl ProjectTaskService {
             "desktop_update_project",
         )?;
         let project = project_entity(result.value)?;
+        self.record(
+            "project.updated",
+            Some(project.id.as_str().to_owned()),
+            result.duplicate,
+        );
         if !result.duplicate {
             self.events.projects_changed();
         }
@@ -356,6 +393,11 @@ impl ProjectTaskService {
             .authority()
             .client()?
             .remove_project(&meta, project_id, now_millis())?;
+        self.record(
+            "project.removed",
+            Some(project_id.as_str().to_owned()),
+            result.duplicate,
+        );
         if !result.duplicate {
             self.events.projects_changed();
             self.events.tasks_changed(Some(project_id.clone()), None);
@@ -448,6 +490,11 @@ impl ProjectTaskService {
                 archived_at: now_millis(),
             },
         )?;
+        self.record(
+            "project.conversations_archived",
+            Some(project_id.as_str().to_owned()),
+            result.duplicate,
+        );
         if !result.duplicate {
             self.events.tasks_changed(Some(project_id.clone()), None);
         }
@@ -530,9 +577,11 @@ impl ProjectTaskService {
                 .collect::<Vec<_>>()
                 .join(",")
         );
-        self.authority
+        let result = self
+            .authority
             .client()?
             .reorder_projects(&create_meta(&key)?, &entries)?;
+        self.record("project.reordered", None, result.duplicate);
         self.query_projects(ProjectQuery::default())
     }
 
@@ -573,6 +622,11 @@ impl ProjectTaskService {
         )?;
         let task = task_entity(result.value)?;
         self.ensure_task_conversation(&task, &input.title)?;
+        self.record(
+            "task.created",
+            Some(task.id.as_str().to_owned()),
+            result.duplicate,
+        );
         if !result.duplicate {
             self.events.tasks_changed(task.project_id.clone(), Some(task.id.clone()));
         }
@@ -617,6 +671,11 @@ impl ProjectTaskService {
             "desktop_update_task",
         )?;
         let task = task_entity(result.value)?;
+        self.record(
+            "task.updated",
+            Some(task.id.as_str().to_owned()),
+            result.duplicate,
+        );
         if !result.duplicate {
             self.events.tasks_changed(task.project_id.clone(), Some(task.id.clone()));
         }
@@ -692,6 +751,15 @@ impl ProjectTaskService {
                 updated_at: now_millis(),
             },
         )?;
+        self.record(
+            if archived {
+                "task.archived"
+            } else {
+                "task.restored"
+            },
+            Some(result.value.task.id.as_str().to_owned()),
+            result.duplicate,
+        );
         if !result.duplicate {
             self.events.tasks_changed(result.value.task.project_id.clone(), Some(result.value.task.id.clone()));
         }
@@ -712,6 +780,11 @@ impl ProjectTaskService {
             depends_on,
             ExpectedRevision::new(current.revision.get())?,
         )?;
+        self.record(
+            "task.dependencies_updated",
+            Some(task.id.as_str().to_owned()),
+            false,
+        );
         self.events.tasks_changed(task.project_id.clone(), Some(task.id.clone()));
         Ok(task)
     }
@@ -792,6 +865,11 @@ impl ProjectTaskService {
             .authority()
             .client()?
             .reorder_tasks(&create_meta(&key)?, &entries)?;
+        self.record(
+            "task.reordered",
+            project_id.as_ref().map(|id| id.as_str().to_owned()),
+            result.duplicate,
+        );
         if !result.duplicate {
             self.events.tasks_changed(project_id.clone(), None);
         }
@@ -843,6 +921,11 @@ impl ProjectTaskService {
         )?;
         let moved = result.value.task;
         let source_project_id = current.project_id.clone();
+        self.record(
+            "task.moved",
+            Some(moved.id.as_str().to_owned()),
+            result.duplicate,
+        );
         if !result.duplicate {
             self.events.tasks_changed(source_project_id.clone(), Some(moved.id.clone()));
             if moved.project_id != source_project_id {

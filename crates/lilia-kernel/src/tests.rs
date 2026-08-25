@@ -181,6 +181,14 @@ struct Renamed {
 
 impl Event for Renamed {
     const NAME: &'static str = "test.renamed";
+
+    fn subject(&self) -> Option<String> {
+        Some(self.name.clone())
+    }
+
+    fn detail(&self) -> serde_json::Value {
+        json!({ "name": self.name })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -358,6 +366,64 @@ fn journal_sink_observes_every_appended_record() {
     journal.append(RecordKind::Event, "topic", Some("subject".into()), json!({}));
 
     assert_eq!(writes.load(Ordering::Relaxed), 1);
+}
+
+/// The journal is the only place a reader can reconstruct why a fact changed, so
+/// a topic that fans out without leaving a record breaks post-mortem causality.
+#[test]
+fn a_published_event_is_recorded_with_its_subject_and_detail() {
+    let journal = Journal::new();
+    let bus = EventBus::with_journal(journal.clone());
+
+    bus.publish(Renamed {
+        name: "alpha".to_owned(),
+    });
+    bus.publish(Removed);
+
+    let records = journal.records_after(0, 10);
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| (record.kind, record.topic.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (RecordKind::Event, "test.renamed"),
+            (RecordKind::Event, "test.removed")
+        ]
+    );
+    assert_eq!(records[0].subject.as_deref(), Some("alpha"));
+    assert_eq!(records[0].payload, json!({ "name": "alpha" }));
+    assert_eq!(records[1].subject, None);
+}
+
+/// `Jobs` writes its own record before publishing, so a second record per
+/// transition would double every job line in the log.
+#[test]
+fn a_job_transition_leaves_exactly_one_record() {
+    let journal = Journal::new();
+    let jobs = Jobs::with_poll_interval(
+        EventBus::with_journal(journal.clone()),
+        journal.clone(),
+        Duration::from_millis(2),
+    );
+    jobs.install_runtime(Arc::new(FakeTaskRuntime::default()));
+
+    jobs.submit(JobRequest {
+        protocol: "test.protocol".to_owned(),
+        payload: json!({}),
+        slot: None,
+        idempotency_key: Some("once".to_owned()),
+    })
+    .expect("the job is accepted");
+
+    let records = journal.records_after(0, 10);
+    assert_eq!(
+        records
+            .iter()
+            .map(|record| (record.kind, record.topic.as_str()))
+            .collect::<Vec<_>>(),
+        [(RecordKind::Job, "job.pending")]
+    );
 }
 
 #[derive(Default)]

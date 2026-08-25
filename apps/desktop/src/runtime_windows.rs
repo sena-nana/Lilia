@@ -66,6 +66,7 @@ pub struct TaskPopupHandles {
     error: Entity<Text>,
     timeline_scroll: Entity<ScrollView>,
     timeline_items: HashMap<String, Entity<NativeMarkdown>>,
+    timeline_sources: HashMap<String, u64>,
     composer: Entity<TextArea>,
     send: Entity<IconButton>,
     interrupt: Entity<IconButton>,
@@ -375,6 +376,7 @@ pub fn mount_task_popup(
         error,
         timeline_scroll,
         timeline_items: HashMap::new(),
+        timeline_sources: HashMap::new(),
         composer,
         send,
         interrupt,
@@ -425,11 +427,15 @@ impl TaskPopupHandles {
         let mut order = Vec::new();
         for item in &snapshot.timeline {
             keep.insert(item.id.clone());
+            let source = crate::runtime_shell::content_hash(&item.markdown);
             let entity = if let Some(entity) = self.timeline_items.get(&item.id).copied() {
-                context.update_component(entity, |markdown, _| {
-                    *markdown = NativeMarkdown::parse(&item.markdown);
-                })?;
-                context.assemble_markdown(entity)?;
+                if self.timeline_sources.get(&item.id) != Some(&source) {
+                    context.update_component(entity, |markdown, _| {
+                        *markdown = NativeMarkdown::parse(&item.markdown);
+                    })?;
+                    context.assemble_markdown(entity)?;
+                    self.timeline_sources.insert(item.id.clone(), source);
+                }
                 entity
             } else {
                 let entity = context.create_detached_component(
@@ -438,6 +444,7 @@ impl TaskPopupHandles {
                 )?;
                 context.assemble_markdown(entity)?;
                 self.timeline_items.insert(item.id.clone(), entity);
+                self.timeline_sources.insert(item.id.clone(), source);
                 entity
             };
             order.push(entity.stable_id());
@@ -452,6 +459,7 @@ impl TaskPopupHandles {
             if let Some(entity) = self.timeline_items.remove(&key) {
                 let _ = context.remove_view(entity);
             }
+            self.timeline_sources.remove(&key);
         }
         reconcile_children(context, self.timeline_scroll.stable_id(), &order)
     }

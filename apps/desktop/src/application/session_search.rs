@@ -1,12 +1,14 @@
 //! Session title search shared by desktop consumers.
 //!
 //! Substring hits rank first, followed by character
-//! bigram TF-IDF + cosine similarity for near matches. Corpus is always rebuilt
-//! from Product Core task facts — never from UI caches.
+//! bigram TF-IDF + cosine similarity for near matches. Corpus is derived from
+//! Product Core task facts — never from UI caches.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 
-use lilia_contracts::TaskId;
+use lilia_contracts::{ProductTask, Project, ProjectId, TaskId};
 use serde::{Deserialize, Serialize};
 
 use crate::application::{DesktopApplication, DesktopApplicationError, ProjectQuery, TaskQuery};
@@ -47,6 +49,28 @@ struct SessionDoc {
     vector: HashMap<String, f64>,
 }
 
+/// 语料的 bigram 与 IDF 只依赖任务事实。指纹相同就复用，避免每次搜索都重建。
+/// 用指纹而不是事件失效：漏一次订阅会让搜索结果长期陈旧，指纹不会。
+pub(crate) struct SessionSearchCorpus {
+    fingerprint: u64,
+    docs: Vec<SessionDoc>,
+    idf: HashMap<String, f64>,
+}
+
+fn corpus_fingerprint(projects: &[Project], tasks: &[ProductTask]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for project in projects {
+        project.id.as_str().hash(&mut hasher);
+        project.name.hash(&mut hasher);
+    }
+    for task in tasks {
+        task.id.as_str().hash(&mut hasher);
+        task.title.hash(&mut hasher);
+        task.project_id.as_ref().map(ProjectId::as_str).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 impl DesktopApplication {
     pub fn search_sessions(
         &self,
@@ -57,12 +81,12 @@ impl DesktopApplication {
         if query.is_empty() {
             return Ok(Vec::new());
         }
-        let docs = self.session_search_corpus()?;
+        let corpus = self.session_search_corpus()?;
         let mut merged = BTreeMap::new();
-        for result in search_text(query, &docs) {
+        for result in search_text(query, &corpus.docs) {
             merged.insert(result.route.clone(), result);
         }
-        for result in search_vector(query, &docs) {
+        for result in search_vector(query, &corpus.docs, &corpus.idf) {
             merged
                 .entry(result.route.clone())
                 .and_modify(|existing| {
@@ -88,14 +112,28 @@ impl DesktopApplication {
         Ok(results)
     }
 
-    fn session_search_corpus(&self) -> Result<Vec<SessionDoc>, DesktopApplicationError> {
-        let project_names = self
-            .query_projects(ProjectQuery::default())?
+    fn session_search_corpus(
+        &self,
+    ) -> Result<Arc<SessionSearchCorpus>, DesktopApplicationError> {
+        let projects = self.query_projects(ProjectQuery::default())?;
+        let tasks = self.query_tasks(TaskQuery::default())?;
+        let fingerprint = corpus_fingerprint(&projects, &tasks);
+        if let Some(cached) = self
+            .inner
+            .session_search_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .filter(|cached| cached.fingerprint == fingerprint)
+        {
+            return Ok(Arc::clone(cached));
+        }
+        let project_names = projects
             .into_iter()
             .map(|project| (project.id, project.name))
             .collect::<BTreeMap<_, _>>();
         let mut docs = Vec::new();
-        for task in self.query_tasks(TaskQuery::default())? {
+        for task in tasks {
             let project_name = task
                 .project_id
                 .as_ref()
@@ -126,7 +164,17 @@ impl DesktopApplication {
         for doc in &mut docs {
             doc.vector = tfidf_vec(&doc.title_tokens, &idf);
         }
-        Ok(docs)
+        let corpus = Arc::new(SessionSearchCorpus {
+            fingerprint,
+            docs,
+            idf,
+        });
+        *self
+            .inner
+            .session_search_cache
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(Arc::clone(&corpus));
+        Ok(corpus)
     }
 }
 
@@ -145,9 +193,12 @@ fn search_text(query: &str, docs: &[SessionDoc]) -> Vec<DesktopSessionSearchResu
     out
 }
 
-fn search_vector(query: &str, docs: &[SessionDoc]) -> Vec<DesktopSessionSearchResult> {
-    let idf = build_idf(docs);
-    let query_vec = tfidf_vec(&bigrams(query), &idf);
+fn search_vector(
+    query: &str,
+    docs: &[SessionDoc],
+    idf: &HashMap<String, f64>,
+) -> Vec<DesktopSessionSearchResult> {
+    let query_vec = tfidf_vec(&bigrams(query), idf);
     if query_vec.is_empty() {
         return Vec::new();
     }
