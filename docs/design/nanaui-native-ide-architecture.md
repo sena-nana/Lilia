@@ -4,21 +4,22 @@
 
 ## 分层
 
+结构约束见 [microkernel-feature-architecture.md](microkernel-feature-architecture.md)；本文只约束 IDE 能力本身的职责边界。
+
 ```mermaid
 flowchart TD
-  UI["NanaUI / WGPU desktop"] --> App["DesktopApplication"]
-  App --> Product["Product services"]
-  App --> Agent["Agent integration"]
-  App --> Workspace["Workspace services"]
-  Product --> Storage["Shared product storage"]
-  Agent --> Runtime["Mutsuki AgentKit"]
-  Workspace --> FS["Filesystem / Git / LSP"]
+  UI["NanaUI / WGPU: LiliaShell(RuntimeProgram)"] --> Kernel["lilia-kernel"]
+  Kernel --> Features["feature-* (project / task / composer / workspace / agent-session / ...)"]
+  Features --> Storage["lilia-storage: 单一 Db"]
+  Features --> Agent["lilia-agent: Mutsuki AgentKit"]
+  Features --> FS["Filesystem / Git / LSP"]
+  Kernel --> Jobs["Jobs → Mutsuki TaskPool"]
 ```
 
 - NanaUI/WGPU 负责窗口、布局、输入与渲染，不持有产品事实。
-- `DesktopApplication` 是所有桌面工作流的类型化入口，协调查询、mutation、事件和长任务。
-- Product、Agent 与 Workspace service 分别持有领域规则；UI 不直接访问 SQLite、provider 或 Git 子进程。
-- `DesktopEvent` 只通知事实已变化，消费者收到事件后重新读取权威 snapshot。
+- 内核只提供 `ServiceRegistry` / `EventBus` / `Journal` / `Jobs` / 可逆挂载，不认识产品词汇。
+- 每个领域是一个 Feature：持有自己的规则，通过类型化 service 槽位对外暴露，UI 不直接访问 SQLite、provider 或 Git 子进程。
+- 事件只通知事实已变化，消费者据此精确重读权威 snapshot；UI 不镜像应用状态。
 
 ## 数据权威
 
@@ -26,9 +27,13 @@ flowchart TD
 
 legacy `db/lilia.db` 不得被打开、写入或双写。旧数据只能通过显式 plan/execute 导入，在隔离与校验完成后原子提交；失败或取消保持目标 home 不变，不自动删除源数据。
 
+`product.db` 在进程内只有一个连接：`ServiceAuthority` 的 `SqliteProductStore` 建立 schema 并持有 `lilia_storage::Db`，其余领域通过同一句柄加入，不得另开 writer。
+
 所有 mutation 使用稳定 ID 与 expected revision。磁盘写入、外部进程和 provider handshake 在全局锁外准备，提交前重检 revision，持久化成功后才发布事件。
 
 ## 任务、会话与 Composer
+
+回合权威归 Mutsuki AgentKit，LiliaCode 不保留第二套 turn 状态机；逐项对照与保留项见 [agent-authority-gap.md](agent-authority-gap.md)。
 
 - Task 与 session binding 属于 Product authority；窗口只保存选择、面板和草稿等表现状态。
 - 新会话提升为任务、fork、重挂载和 worktree 切换通过应用服务事务完成。
@@ -40,7 +45,7 @@ legacy `db/lilia.db` 不得被打开、写入或双写。旧数据只能通过�
 
 路径解析、ignore 规则、symlink 边界、文本解码、revision 与 Git 操作属于 Workspace service。文件选择与编辑写入必须拒绝 `..` 逃逸和超出项目根的 symlink，并通过 expected revision 防止静默覆盖。
 
-长操作返回 operation handle，提供有序进度、取消和 terminal outcome。文件树、搜索、Git clone、索引和 LSP 不阻塞 UI 线程；窗口关闭时必须取消或安全移交仍在运行的操作。
+长操作一律通过内核 `Jobs` 提交，落到 Mutsuki `TaskPool`：`JobHandle` 提供有序进度、取消和 terminal outcome，`JobSlot` 负责单飞与 supersede。文件树、搜索、Git clone、索引和 LSP 不阻塞 UI 线程；窗口关闭时必须取消或安全移交仍在运行的操作。UI 层不得出现 `thread::spawn`，也不再用 `*_operation_sequence` 字段丢弃过期结果。
 
 编辑器、LSP、诊断、Git diff 和调试器通过明确端口接入，不把协议细节塞进 NanaUI widget。可复用编辑、Dock 或窗口能力属于 NanaUI；项目、任务和 Agent 语义属于 LiliaCode。
 
