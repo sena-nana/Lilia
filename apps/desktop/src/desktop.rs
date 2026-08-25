@@ -1768,7 +1768,6 @@ enum WorkspaceSplitMessage {
 }
 
 pub struct DesktopProgram {
-    application: DesktopApplication,
     application_workspace: DesktopWorkspaceSession,
     data_import_target_identity: String,
     data_import: NativeDataImportState,
@@ -3937,7 +3936,7 @@ impl DesktopProgram {
     }
 
     fn shell_nav_items(&self) -> Vec<crate::runtime_shell::ShellNavItem> {
-        self.application
+        self.kernel.session()
             .sidebar_navigation_contributions()
             .into_iter()
             .map(|contribution| crate::runtime_shell::ShellNavItem {
@@ -5026,7 +5025,7 @@ impl DesktopProgram {
     }
 
     fn refresh_project_dashboard(&mut self) {
-        match self.application.project_dashboard_summaries() {
+        match self.kernel.session().project_dashboard_summaries() {
             Ok(summaries) => {
                 self.project_dashboard = summaries;
                 self.project_dashboard_error = None;
@@ -5050,7 +5049,7 @@ impl DesktopProgram {
             + 1;
         let input = DesktopProjectCreate::new(format!("新项目 {index}"));
         let project_id = input.id.clone();
-        match self.application.create_project(input) {
+        match self.kernel.session().create_project(input) {
             Ok(_) => {
                 self.error_message = None;
                 self.refresh_projects();
@@ -5070,7 +5069,7 @@ impl DesktopProgram {
             multiple: false,
         };
         let path = match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => paths.into_iter().next(),
@@ -5114,7 +5113,7 @@ impl DesktopProgram {
         let mut input = DesktopProjectCreate::new(name);
         input.workspace_path = Some(normalized);
         let project_id = input.id.clone();
-        match self.application.create_project(input) {
+        match self.kernel.session().create_project(input) {
             Ok(_) => {
                 self.error_message = None;
                 self.refresh_projects();
@@ -5533,7 +5532,7 @@ impl DesktopProgram {
                     SidebarMenuAction::ArchiveTask,
                 ];
                 if self
-                    .application
+                    .kernel.session()
                     .task_worktree(task_id)
                     .is_ok_and(|worktree| worktree.is_some())
                 {
@@ -5589,7 +5588,7 @@ impl DesktopProgram {
             self.error_message = Some("置顶与普通对话不能跨分组排序。".to_owned());
             return;
         }
-        match self.application.move_task(
+        match self.kernel.session().move_task(
             &task_id,
             DesktopTaskMove {
                 target_project_id: target_project_id.clone(),
@@ -5621,7 +5620,7 @@ impl DesktopProgram {
                         .unwrap_or(ordered.len());
                     ordered.insert(insert_at, task_id.clone());
                     if let Err(error) = self
-                        .application
+                        .kernel.session()
                         .reorder_tasks(target_project_id.clone(), &ordered)
                     {
                         self.error_message = Some(format!("对话已移动，但无法调整顺序：{error}"));
@@ -5651,7 +5650,7 @@ impl DesktopProgram {
     }
 
     fn refresh_github_binding_status(&mut self) {
-        match self.application.github_binding_status() {
+        match self.kernel.session().github_binding_status() {
             Ok(status) => {
                 let bound = status.state == "bound";
                 self.github_binding = status;
@@ -5675,7 +5674,7 @@ impl DesktopProgram {
         self.github_error = None;
         let request = JobRequest::new(lilia_feature_github::BIND_PROTOCOL, Value::Null)
             .in_slot(lilia_feature_github::bind_slot());
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_github_binding_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode GitHub binding job: {error}");
@@ -5744,9 +5743,9 @@ impl DesktopProgram {
 
     fn cancel_github_binding(&mut self) {
         if let Some(job_id) = self.active_github_binding_job.take() {
-            self.kernel.kernel().jobs().cancel(job_id);
+            self.kernel.jobs().cancel(job_id);
         }
-        if let Err(error) = self.application.unbind_github() {
+        if let Err(error) = self.kernel.session().unbind_github() {
             self.github_error = Some(github_error_message(&error));
         } else {
             self.github_error = None;
@@ -5769,7 +5768,7 @@ impl DesktopProgram {
             return;
         };
         if let Err(error) = self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::OpenExternal(
                 flow.verification_uri.clone(),
             ))
@@ -5783,7 +5782,7 @@ impl DesktopProgram {
             return;
         };
         if let Err(error) = self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::WriteClipboardText(
                 flow.user_code.clone(),
             ))
@@ -5796,7 +5795,7 @@ impl DesktopProgram {
         if self.github_binding_busy {
             return;
         }
-        match self.application.unbind_github() {
+        match self.kernel.session().unbind_github() {
             Ok(()) => {
                 self.github_binding = unbound_github_status();
                 self.github_device_flow = None;
@@ -5829,7 +5828,7 @@ impl DesktopProgram {
                 .expect("a github repositories request is representable as JSON"),
         )
         .in_slot(lilia_feature_github::repositories_slot());
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_github_repository_job = Some((handle.id(), append)),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode GitHub repositories job: {error}");
@@ -5874,7 +5873,7 @@ impl DesktopProgram {
             }
             Err(error) => {
                 self.github_error = Some(error);
-                if let Ok(status) = self.application.github_binding_status() {
+                if let Ok(status) = self.kernel.session().github_binding_status() {
                     if status.state != "bound" {
                         self.github_repositories.clear();
                         self.github_repositories_next_page = None;
@@ -5887,7 +5886,7 @@ impl DesktopProgram {
     }
 
     fn persist_project_clone_parent(&mut self) {
-        let Ok(current) = self.application.project_settings() else {
+        let Ok(current) = self.kernel.session().project_settings() else {
             return;
         };
         let next = DesktopProjectSettings {
@@ -5895,7 +5894,7 @@ impl DesktopProgram {
                 .then(|| self.project_clone_parent.trim().to_owned()),
             worktree: current.worktree,
         };
-        match self.application.save_project_settings(next) {
+        match self.kernel.session().save_project_settings(next) {
             Ok(saved) => {
                 self.project_settings.clone_parent_dir = saved.clone_parent_dir;
                 self.project_settings_error = None;
@@ -5908,7 +5907,7 @@ impl DesktopProgram {
     }
 
     fn refresh_project_settings(&mut self) {
-        match self.application.project_settings() {
+        match self.kernel.session().project_settings() {
             Ok(settings) => {
                 self.project_clone_parent = settings.clone_parent_dir.clone().unwrap_or_default();
                 self.project_worktree_instructions
@@ -5928,7 +5927,7 @@ impl DesktopProgram {
         settings.clone_parent_dir = (!self.project_clone_parent.trim().is_empty())
             .then(|| self.project_clone_parent.trim().to_owned());
         settings.worktree.auto_instructions = self.project_worktree_instructions.text();
-        match self.application.save_project_settings(settings) {
+        match self.kernel.session().save_project_settings(settings) {
             Ok(saved) => {
                 self.project_clone_parent = saved.clone_parent_dir.clone().unwrap_or_default();
                 self.project_worktree_instructions
@@ -5971,7 +5970,7 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -6008,7 +6007,7 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -6053,7 +6052,7 @@ impl DesktopProgram {
             == Some(self.project_clone_repository.trim());
         let repository = if use_github_binding {
             match self
-                .application
+                .kernel.session()
                 .github_clone_repository(self.project_clone_repository.trim())
             {
                 Ok(repository) => repository,
@@ -6089,7 +6088,7 @@ impl DesktopProgram {
         self.project_clone_detail = Some("正在准备克隆…".to_owned());
         self.project_action_error = None;
 
-        match self.kernel.kernel().jobs().submit(
+        match self.kernel.jobs().submit(
             JobRequest::new(lilia_feature_project::CLONE_PROTOCOL, payload)
                 .in_slot(lilia_feature_project::clone_slot()),
         ) {
@@ -6117,7 +6116,7 @@ impl DesktopProgram {
         if !self.project_clone_busy {
             return;
         }
-        self.kernel.kernel().jobs().cancel(job_id);
+        self.kernel.jobs().cancel(job_id);
         self.project_clone_phase = Some("cancelling".to_owned());
         self.project_clone_detail = Some("正在停止 Git 并清理本次克隆目录…".to_owned());
     }
@@ -6275,7 +6274,7 @@ impl DesktopProgram {
         let mut input = DesktopProjectCreate::new(cloned.suggested_name);
         input.workspace_path = Some(cloned.workspace_path.to_string_lossy().into_owned());
         let project_id = input.id.clone();
-        match self.application.create_project(input) {
+        match self.kernel.session().create_project(input) {
             Ok(_) => {
                 self.project_clone_repository.clear();
                 self.selected_github_repository = None;
@@ -6312,7 +6311,7 @@ impl DesktopProgram {
         } else {
             DesktopOptionalTextUpdate::Set(self.project_workspace_edit.clone())
         };
-        match self.application.update_project(
+        match self.kernel.session().update_project(
             &project_id,
             DesktopProjectPatch {
                 name: Some(self.project_name_edit.clone()),
@@ -6343,7 +6342,7 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -6371,7 +6370,7 @@ impl DesktopProgram {
         else {
             return;
         };
-        match self.application.update_project(
+        match self.kernel.session().update_project(
             &project.id,
             DesktopProjectPatch {
                 pinned: Some(!project.pinned),
@@ -6408,7 +6407,7 @@ impl DesktopProgram {
         let Some(ordered_ids) = self.reordered_selected_project_ids(offset) else {
             return;
         };
-        match self.application.reorder_projects(&ordered_ids) {
+        match self.kernel.session().reorder_projects(&ordered_ids) {
             Ok(_) => {
                 self.project_action_error = None;
                 self.refresh_projects();
@@ -6442,7 +6441,7 @@ impl DesktopProgram {
         else {
             return;
         };
-        match self.application.reorder_projects(&ordered_ids) {
+        match self.kernel.session().reorder_projects(&ordered_ids) {
             Ok(_) => {
                 self.project_action_error = None;
                 self.refresh_projects();
@@ -6457,7 +6456,7 @@ impl DesktopProgram {
         let Some(project_id) = self.selected_project.clone() else {
             return;
         };
-        match self.application.project_removal_preview(&project_id) {
+        match self.kernel.session().project_removal_preview(&project_id) {
             Ok(preview) => {
                 self.project_removal = Some(preview);
                 self.project_action_error = None;
@@ -6472,7 +6471,7 @@ impl DesktopProgram {
         let Some(preview) = self.project_removal.take() else {
             return;
         };
-        match self.application.remove_project(&preview.project_id) {
+        match self.kernel.session().remove_project(&preview.project_id) {
             Ok(_) => {
                 self.project_action_error = None;
                 self.refresh_projects();
@@ -6488,7 +6487,7 @@ impl DesktopProgram {
         let Some(project_id) = self.selected_project.clone() else {
             return;
         };
-        let project = match self.application.get_project(&project_id) {
+        let project = match self.kernel.session().get_project(&project_id) {
             Ok(project) => project,
             Err(error) => {
                 self.project_action_error = Some(format!("无法读取项目：{error}"));
@@ -6496,7 +6495,7 @@ impl DesktopProgram {
             }
         };
         let active_task_count = match self
-            .application
+            .kernel.session()
             .query_tasks(TaskQuery::for_project(project_id.clone()))
         {
             Ok(tasks) => tasks.len(),
@@ -6521,7 +6520,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .archive_project_conversations(&confirmation.project_id)
         {
             Ok(_) => {
@@ -6556,7 +6555,7 @@ impl DesktopProgram {
     }
 
     fn restore_project(&mut self, project_id: ProjectId) {
-        match self.application.update_project(
+        match self.kernel.session().update_project(
             &project_id,
             DesktopProjectPatch {
                 archived: Some(false),
@@ -6585,7 +6584,7 @@ impl DesktopProgram {
         }
         let input = DesktopTaskCreate::new(project_id, title);
         let task_id = input.id.clone();
-        match self.application.create_task(input) {
+        match self.kernel.session().create_task(input) {
             Ok(_) => {
                 self.new_task_title.clear();
                 self.refresh_tasks();
@@ -6651,7 +6650,7 @@ impl DesktopProgram {
             return;
         };
         let initial_directory = self
-            .application
+            .kernel.session()
             .project_context(&project_id)
             .ok()
             .map(|context| context.active_root().to_path_buf());
@@ -6664,7 +6663,7 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -6719,7 +6718,7 @@ impl DesktopProgram {
         if !self.pending_initial_worktrees.contains_key(&task_id) {
             return;
         }
-        match self.application.retry_initial_worktree(&task_id) {
+        match self.kernel.session().retry_initial_worktree(&task_id) {
             Ok(true) => {
                 self.pending_initial_worktrees.remove(&task_id);
                 self.clear_task_window_error(window_id);
@@ -6754,7 +6753,7 @@ impl DesktopProgram {
         };
         if let Some(project_id) = &project_id {
             let valid = self
-                .application
+                .kernel.session()
                 .get_project(project_id)
                 .is_ok_and(|project| project.archive == ProjectArchiveState::Active);
             if !valid {
@@ -6796,7 +6795,7 @@ impl DesktopProgram {
     fn select_main_conversation_draft_project(&mut self, project_id: Option<ProjectId>) {
         if let Some(project_id) = &project_id {
             let valid = self
-                .application
+                .kernel.session()
                 .get_project(project_id)
                 .is_ok_and(|project| project.archive == ProjectArchiveState::Active);
             if !valid {
@@ -6839,7 +6838,7 @@ impl DesktopProgram {
             .draft_worktree_intent(&worktree)
             .expect("incomplete existing worktree selections are rejected above");
         if let Err(error) = self
-            .application
+            .kernel.session()
             .set_initial_worktree_intent(&input.id, worktree_intent.as_ref())
         {
             eprintln!("failed to persist Native main draft worktree intent: {error}");
@@ -6849,11 +6848,11 @@ impl DesktopProgram {
             return false;
         }
         let reserved_task_id = input.id.clone();
-        let task = match self.application.materialize_task_draft(input, composer) {
+        let task = match self.kernel.session().materialize_task_draft(input, composer) {
             Ok(task) => task,
             Err(error) => {
                 if let Err(clear_error) = self
-                    .application
+                    .kernel.session()
                     .set_initial_worktree_intent(&reserved_task_id, None)
                 {
                     eprintln!(
@@ -6868,7 +6867,7 @@ impl DesktopProgram {
             }
         };
         let worktree_result = worktree_intent.as_ref().map_or(Ok(false), |_| {
-            self.application.retry_initial_worktree(&task.id)
+            self.kernel.session().retry_initial_worktree(&task.id)
         });
         self.main_conversation_draft = None;
         self.refresh_tasks();
@@ -6903,7 +6902,7 @@ impl DesktopProgram {
             self.task_action_error = Some("请先重试准备所选工作树，再发送第一条消息。".to_owned());
             return;
         }
-        match self.application.update_task(&task_id, patch) {
+        match self.kernel.session().update_task(&task_id, patch) {
             Ok(_) => {
                 self.error_message = None;
                 self.refresh_tasks();
@@ -6926,7 +6925,7 @@ impl DesktopProgram {
         self.tasks
             .iter()
             .filter(|task| &task.id != selected)
-            .filter_map(|task| self.application.get_task(&task.id).ok())
+            .filter_map(|task| self.kernel.session().get_task(&task.id).ok())
             .collect()
     }
 
@@ -6958,7 +6957,7 @@ impl DesktopProgram {
         };
         let target_id = target.id;
         let mut dependencies = self
-            .application
+            .kernel.session()
             .get_task(&task_id)
             .map(|task| task.depends_on)
             .unwrap_or_default();
@@ -6968,7 +6967,7 @@ impl DesktopProgram {
             dependencies.push(target_id);
         }
         match self
-            .application
+            .kernel.session()
             .update_task_dependencies(&task_id, dependencies)
         {
             Ok(_) => {
@@ -7052,7 +7051,7 @@ impl DesktopProgram {
         let Some(ordered_ids) = self.reordered_selected_task_ids(offset) else {
             return;
         };
-        match self.application.reorder_tasks(project_id, &ordered_ids) {
+        match self.kernel.session().reorder_tasks(project_id, &ordered_ids) {
             Ok(_) => {
                 self.task_action_error = None;
                 self.refresh_tasks();
@@ -7090,7 +7089,7 @@ impl DesktopProgram {
         let Some(ordered_ids) = self.reordered_task_ids(&task_id, before_task_id.as_ref()) else {
             return;
         };
-        match self.application.reorder_tasks(project_id, &ordered_ids) {
+        match self.kernel.session().reorder_tasks(project_id, &ordered_ids) {
             Ok(_) => {
                 self.task_action_error = None;
                 self.refresh_tasks();
@@ -7181,7 +7180,7 @@ impl DesktopProgram {
             self.task_action_error = Some("没有可用的任务移动目标。".to_owned());
             return;
         };
-        match self.application.move_task(
+        match self.kernel.session().move_task(
             &task_id,
             DesktopTaskMove {
                 target_project_id: project_id,
@@ -7261,7 +7260,7 @@ impl DesktopProgram {
             TaskMoveTarget::Project(project_id) => Some(project_id),
             TaskMoveTarget::Inbox => None,
         };
-        match self.application.move_task(
+        match self.kernel.session().move_task(
             &task_id,
             DesktopTaskMove {
                 target_project_id,
@@ -7381,7 +7380,7 @@ impl DesktopProgram {
         } else {
             return;
         };
-        match self.application.move_task(
+        match self.kernel.session().move_task(
             &task_id,
             DesktopTaskMove {
                 target_project_id,
@@ -7404,7 +7403,7 @@ impl DesktopProgram {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
-        let cleanup_on_archive = match self.application.project_settings() {
+        let cleanup_on_archive = match self.kernel.session().project_settings() {
             Ok(settings) => settings.worktree.cleanup_on_archive,
             Err(error) => {
                 self.task_action_error = Some(format!("无法读取归档设置：{error}"));
@@ -7412,7 +7411,7 @@ impl DesktopProgram {
             }
         };
         if cleanup_on_archive {
-            match self.application.task_worktree(&task_id) {
+            match self.kernel.session().task_worktree(&task_id) {
                 Ok(Some(_)) => {
                     self.start_worktree_operation(WorktreeOperation::CleanupAndArchive);
                     return;
@@ -7424,7 +7423,7 @@ impl DesktopProgram {
                 }
             }
         }
-        match self.application.set_task_archived(&task_id, true) {
+        match self.kernel.session().set_task_archived(&task_id, true) {
             Ok(_) => {
                 self.execute_workspace_command(DesktopCommand::BackToTaskList);
                 self.refresh_tasks();
@@ -7434,7 +7433,7 @@ impl DesktopProgram {
     }
 
     fn restore_task(&mut self, task_id: TaskId) {
-        match self.application.set_task_archived(&task_id, false) {
+        match self.kernel.session().set_task_archived(&task_id, false) {
             Ok(_) => self.refresh_tasks(),
             Err(error) => self.error_message = Some(format!("无法恢复任务：{error}")),
         }
@@ -7459,7 +7458,7 @@ impl DesktopProgram {
             return;
         };
         let item = match self
-            .application
+            .kernel.session()
             .project_workspace_item(&project_id, surface)
         {
             Ok(item) => item,
@@ -7537,9 +7536,9 @@ impl DesktopProgram {
             return;
         }
         let view = self.project_files_view_state(&project_id);
-        match self.application.project_files_snapshot(&project_id, view) {
+        match self.kernel.session().project_files_snapshot(&project_id, view) {
             Ok(snapshot) => {
-                let _ = self.application.ensure_project_files_watcher(&project_id);
+                let _ = self.kernel.session().ensure_project_files_watcher(&project_id);
                 self.project_files_error = None;
                 self.project_files = Some(snapshot);
             }
@@ -7568,7 +7567,7 @@ impl DesktopProgram {
         if let Some(snapshot) = self.project_files.as_mut() {
             snapshot.view = view.clone();
         }
-        match self.application.project_files_snapshot(&project_id, view) {
+        match self.kernel.session().project_files_snapshot(&project_id, view) {
             Ok(snapshot) => {
                 self.project_files_error = None;
                 self.project_files = Some(snapshot);
@@ -7585,14 +7584,14 @@ impl DesktopProgram {
         view.selected_path = Some(relative_path.clone());
         self.persist_project_files_view(&project_id, &view);
         match self
-            .application
+            .kernel.session()
             .open_project_document_workspace_item(&project_id, &relative_path)
         {
             Ok((document, item)) => {
                 let document_id = document.id;
                 self.opened_project_document = Some(document.clone());
                 self.project_files_error = None;
-                if let Ok(snapshot) = self.application.project_files_snapshot(&project_id, view) {
+                if let Ok(snapshot) = self.kernel.session().project_files_snapshot(&project_id, view) {
                     self.project_files = Some(snapshot);
                 }
                 self.ensure_document_editor_state(&item, &document);
@@ -7686,7 +7685,7 @@ impl DesktopProgram {
                 .push(HostedWindowCommand::Focus(window_id));
             return;
         }
-        let item = match self.application.application_workspace_item(surface) {
+        let item = match self.kernel.session().application_workspace_item(surface) {
             Ok(item) => item,
             Err(error) => {
                 self.error_message = Some(format!("无法打开应用视图：{error}"));
@@ -7845,7 +7844,7 @@ impl DesktopProgram {
             self.selected_milestone = None;
             return;
         };
-        match self.application.project_roadmap(&project_id) {
+        match self.kernel.session().project_roadmap(&project_id) {
             Ok(roadmap) => {
                 self.roadmap = roadmap;
                 if !self.roadmap.milestones.iter().any(|milestone| {
@@ -7901,7 +7900,7 @@ impl DesktopProgram {
         let Some(project_id) = self.selected_project.clone() else {
             return;
         };
-        match self.application.create_milestone(&project_id, "新里程碑") {
+        match self.kernel.session().create_milestone(&project_id, "新里程碑") {
             Ok(milestone) => {
                 self.refresh_roadmap();
                 self.select_milestone(milestone.id);
@@ -7931,7 +7930,7 @@ impl DesktopProgram {
             due_date,
         };
         match self
-            .application
+            .kernel.session()
             .update_milestone(&project_id, &milestone_id, patch)
         {
             Ok(_) => self.refresh_roadmap(),
@@ -7960,7 +7959,7 @@ impl DesktopProgram {
             ..MilestoneUpdatePatch::default()
         };
         match self
-            .application
+            .kernel.session()
             .update_milestone(&project_id, &milestone_id, patch)
         {
             Ok(_) => self.refresh_roadmap(),
@@ -7994,7 +7993,7 @@ impl DesktopProgram {
             .map(|milestone| milestone.id.clone())
             .collect::<Vec<_>>();
         ids.swap(index, target as usize);
-        match self.application.reorder_milestones(&project_id, ids) {
+        match self.kernel.session().reorder_milestones(&project_id, ids) {
             Ok(_) => self.refresh_roadmap(),
             Err(error) => self.roadmap_error = Some(format!("无法调整里程碑顺序：{error}")),
         }
@@ -8008,7 +8007,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .delete_milestone(&project_id, &milestone_id)
         {
             Ok(_) => {
@@ -8036,7 +8035,7 @@ impl DesktopProgram {
         if !task_ids.remove(&task_id) {
             task_ids.insert(task_id);
         }
-        match self.application.set_milestone_tasks(
+        match self.kernel.session().set_milestone_tasks(
             &project_id,
             &milestone_id,
             task_ids.into_iter().collect(),
@@ -8052,7 +8051,7 @@ impl DesktopProgram {
             self.selected_memory = None;
             return;
         };
-        match self.application.list_memories(Some(&project_id)) {
+        match self.kernel.session().list_memories(Some(&project_id)) {
             Ok(memories) => {
                 self.memories = memories;
                 if !self
@@ -8125,7 +8124,7 @@ impl DesktopProgram {
             source_task_id: None,
             expected_updated_at: self.memory_updated_at,
         };
-        match self.application.save_memory(input) {
+        match self.kernel.session().save_memory(input) {
             Ok(memory) => {
                 self.selected_memory = Some(memory.id);
                 self.refresh_memories();
@@ -8146,7 +8145,7 @@ impl DesktopProgram {
         let enabled = !memory.enabled;
         let expected_updated_at = Some(memory.updated_at);
         match self
-            .application
+            .kernel.session()
             .set_memory_enabled(&memory_id, enabled, expected_updated_at)
         {
             Ok(_) => self.refresh_memories(),
@@ -8159,7 +8158,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .delete_memory(&memory_id, self.memory_updated_at)
         {
             Ok(_) => {
@@ -8172,7 +8171,7 @@ impl DesktopProgram {
 
     fn update_memory_settings(&mut self, settings: MemorySettings) {
         let cooldown_changed = settings.cooldown_turns != self.memory_settings.cooldown_turns;
-        match self.application.save_memory_settings(settings) {
+        match self.kernel.session().save_memory_settings(settings) {
             Ok(settings) => {
                 if cooldown_changed {
                     self.memory_cooldown_input = settings.cooldown_turns.to_string();
@@ -8200,7 +8199,7 @@ impl DesktopProgram {
             self.memory_injection = None;
             return;
         };
-        match self.application.memory_injection_state(&task_id) {
+        match self.kernel.session().memory_injection_state(&task_id) {
             Ok(state) => self.memory_injection = Some(state),
             Err(error) => {
                 self.task_action_error = Some(format!("无法读取 Memory 注入状态：{error}"))
@@ -8214,7 +8213,7 @@ impl DesktopProgram {
         else {
             return;
         };
-        match self.application.set_task_memory_enabled(
+        match self.kernel.session().set_task_memory_enabled(
             &task_id,
             !state.enabled,
             Some(state.updated_at),
@@ -8237,7 +8236,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .reset_task_memory_cooldown(&task_id, Some(state.updated_at))
         {
             Ok(state) => {
@@ -8395,7 +8394,7 @@ impl DesktopProgram {
                 .push(HostedWindowCommand::Focus(window_id));
             return;
         }
-        let task = match self.application.get_task(&task_id) {
+        let task = match self.kernel.session().get_task(&task_id) {
             Ok(task) => task,
             Err(error) => {
                 eprintln!("failed to open Native IAB window: {error}");
@@ -8486,7 +8485,7 @@ impl DesktopProgram {
             return;
         };
         let attachment_path = input.screenshot_path.clone();
-        match self.application.submit_iab_snapshot(input) {
+        match self.kernel.session().submit_iab_snapshot(input) {
             Ok(submission) => {
                 if let Some(window) = self.iab_windows.get_mut(&window_id) {
                     window.complete_submission(&submission);
@@ -8523,10 +8522,10 @@ impl DesktopProgram {
             return;
         };
         match (
-            self.application.project_architecture(&project_id),
-            self.application
+            self.kernel.session().project_architecture(&project_id),
+            self.kernel.session()
                 .project_architecture_changes(&project_id, 40),
-            self.application
+            self.kernel.session()
                 .project_architecture_quarantine(&project_id),
         ) {
             (Ok(graph), Ok(history), Ok(quarantine)) => {
@@ -8560,7 +8559,7 @@ impl DesktopProgram {
             self.architecture_error = Some("当前项目没有可记录回滚来源的任务。".to_owned());
             return;
         };
-        match self.application.rollback_project_architecture(
+        match self.kernel.session().rollback_project_architecture(
             &project_id,
             &task_id,
             ArchitectureBackend::NativeAgentkit,
@@ -8711,7 +8710,7 @@ impl DesktopProgram {
         self.coding_busy = true;
         self.coding_error = None;
         self.coding_notice = None;
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_coding_job = Some((handle.id(), ticket)),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode coding refresh job: {error}");
@@ -8835,7 +8834,7 @@ impl DesktopProgram {
         self.coding_busy = true;
         self.coding_error = None;
         self.coding_notice = None;
-        match self.kernel.kernel().jobs().submit(
+        match self.kernel.jobs().submit(
             JobRequest::new(lilia_feature_coding::SEARCH_PROTOCOL, payload)
                 .in_slot(lilia_feature_coding::search_slot()),
         ) {
@@ -8919,7 +8918,7 @@ impl DesktopProgram {
                 DesktopHostAction::OpenCodeEditor(PathBuf::from(&root))
             }
         };
-        match self.application.execute_host(action) {
+        match self.kernel.session().execute_host(action) {
             Ok(DesktopHostResult::Completed) => {
                 self.coding_error = None;
                 self.coding_notice = Some(
@@ -8943,10 +8942,10 @@ impl DesktopProgram {
     }
 
     fn open_native_terminal(&mut self, scope: DesktopTerminalScope) {
-        match self.application.launch_terminal(
+        match self.kernel.session().launch_terminal(
             crate::application::DesktopTerminalLaunch::shell(scope),
         ) {
-            Ok(snapshot) => match self.application.terminal_workspace_item(&snapshot) {
+            Ok(snapshot) => match self.kernel.session().terminal_workspace_item(&snapshot) {
                 Ok(item) => {
                     self.terminal_inputs.entry(snapshot.id.clone()).or_default();
                     self.terminal_scrollback.insert(snapshot.id.clone(), 0);
@@ -8984,8 +8983,8 @@ impl DesktopProgram {
             self.coding_error = Some("请先选择项目。".to_owned());
             return;
         };
-        match self.application.launch_project_task(&project_id, &task_id) {
-            Ok(launch) => match self.application.terminal_workspace_item(&launch.terminal) {
+        match self.kernel.session().launch_project_task(&project_id, &task_id) {
+            Ok(launch) => match self.kernel.session().terminal_workspace_item(&launch.terminal) {
                 Ok(item) => {
                     let session_id = launch.terminal.id.clone();
                     self.terminal_inputs.entry(session_id.clone()).or_default();
@@ -9038,7 +9037,7 @@ impl DesktopProgram {
             .get(session_id)
             .copied()
             .unwrap_or_default();
-        match self.application.terminal_snapshot(session_id, scrollback) {
+        match self.kernel.session().terminal_snapshot(session_id, scrollback) {
             Ok(snapshot) => {
                 self.terminal_scrollback
                     .insert(session_id.clone(), snapshot.scrollback_position);
@@ -9065,7 +9064,7 @@ impl DesktopProgram {
                     .unwrap_or_default();
                 let mut bytes = input.into_bytes();
                 bytes.push(b'\r');
-                match self.application.write_terminal(&session_id, &bytes) {
+                match self.kernel.session().write_terminal(&session_id, &bytes) {
                     Ok(()) => {
                         self.terminal_inputs
                             .insert(session_id.clone(), String::new());
@@ -9077,14 +9076,14 @@ impl DesktopProgram {
             }
             TerminalViewMessage::Interrupt(session_id) => {
                 self.terminal_notices.remove(&session_id);
-                match self.application.write_terminal(&session_id, &[0x03]) {
+                match self.kernel.session().write_terminal(&session_id, &[0x03]) {
                     Ok(()) => self.refresh_terminal(&session_id),
                     Err(error) => self.error_message = Some(format!("无法中断终端任务：{error}")),
                 }
             }
             TerminalViewMessage::Eof(session_id) => {
                 self.terminal_notices.remove(&session_id);
-                match self.application.write_terminal(&session_id, &[0x04]) {
+                match self.kernel.session().write_terminal(&session_id, &[0x04]) {
                     Ok(()) => self.refresh_terminal(&session_id),
                     Err(error) => self.error_message = Some(format!("无法结束终端输入：{error}")),
                 }
@@ -9101,7 +9100,7 @@ impl DesktopProgram {
                     return;
                 }
                 match self
-                    .application
+                    .kernel.session()
                     .execute_host(DesktopHostAction::WriteClipboardText(output))
                 {
                     Ok(DesktopHostResult::Completed) => {
@@ -9118,7 +9117,7 @@ impl DesktopProgram {
                 }
             }
             TerminalViewMessage::Resize(session_id, rows, columns) => {
-                match self.application.resize_terminal(&session_id, rows, columns) {
+                match self.kernel.session().resize_terminal(&session_id, rows, columns) {
                     Ok(snapshot) => {
                         self.terminal_snapshots.insert(session_id, snapshot);
                     }
@@ -9133,7 +9132,7 @@ impl DesktopProgram {
                 self.refresh_terminal(&session_id);
             }
             TerminalViewMessage::Terminate(session_id) => {
-                match self.application.terminate_terminal(&session_id) {
+                match self.kernel.session().terminate_terminal(&session_id) {
                     Ok(()) => self.refresh_terminal(&session_id),
                     Err(error) => self.error_message = Some(format!("无法终止终端：{error}")),
                 }
@@ -9151,7 +9150,7 @@ impl DesktopProgram {
             self.error_message = Some("终端会话已不可用。".to_owned());
             return;
         };
-        match self.application.terminal_workspace_item(&snapshot) {
+        match self.kernel.session().terminal_workspace_item(&snapshot) {
             Ok(item) => self.reveal_workspace_item(item),
             Err(error) => self.error_message = Some(format!("无法恢复终端标签：{error}")),
         }
@@ -9205,7 +9204,7 @@ impl DesktopProgram {
                 .map(|task_id| task_id.as_str().to_owned()),
             expected_updated_at: None,
         };
-        match self.application.save_memory(input) {
+        match self.kernel.session().save_memory(input) {
             Ok(memory) => {
                 self.coding_error = None;
                 self.coding_notice = Some(format!("已写入项目 Memory：{}", memory.title));
@@ -9219,7 +9218,7 @@ impl DesktopProgram {
     }
 
     fn refresh_automations(&mut self) {
-        match self.application.list_automation_workflows() {
+        match self.kernel.session().list_automation_workflows() {
             Ok(workflows) => {
                 let previous_selection = self.selected_automation.clone();
                 self.automations = workflows;
@@ -9267,7 +9266,7 @@ impl DesktopProgram {
             self.automation_human_response.clear();
             return;
         };
-        match self.application.list_automation_runs(Some(workflow_id)) {
+        match self.kernel.session().list_automation_runs(Some(workflow_id)) {
             Ok(runs) => {
                 self.automation_runs = runs;
                 if !self
@@ -9303,7 +9302,7 @@ impl DesktopProgram {
             self.automation_run_detail = None;
             return;
         };
-        match self.application.automation_run_detail(run_id) {
+        match self.kernel.session().automation_run_detail(run_id) {
             Ok(detail) => self.automation_run_detail = detail,
             Err(error) => {
                 self.automation_run_detail = None;
@@ -9340,7 +9339,7 @@ impl DesktopProgram {
             created_at: now,
         };
         match self
-            .application
+            .kernel.session()
             .begin_automation_run(AutomationBeginRunInput {
                 workflow_id,
                 trigger: signal,
@@ -9350,7 +9349,7 @@ impl DesktopProgram {
                 self.selected_automation_run = Some(run_id.clone());
                 self.automation_run_detail = Some(detail);
                 self.automation_human_response.clear();
-                match self.application.execute_automation_run(&run_id) {
+                match self.kernel.session().execute_automation_run(&run_id) {
                     Ok(result) => {
                         self.automation_run_detail = Some(result.detail);
                         self.automation_error = None;
@@ -9376,7 +9375,7 @@ impl DesktopProgram {
         };
         let run_id = detail.run.id.clone();
         let response = self.automation_human_response.trim().to_owned();
-        match self.application.resume_automation_run(
+        match self.kernel.session().resume_automation_run(
             &run_id,
             AutomationResumeRunInput {
                 node_id: Some(node_id),
@@ -9409,7 +9408,7 @@ impl DesktopProgram {
             return;
         }
         let run_id = detail.run.id.clone();
-        match self.application.cancel_automation_run(&run_id) {
+        match self.kernel.session().cancel_automation_run(&run_id) {
             Ok(detail) => {
                 self.automation_run_detail = Some(detail);
                 self.automation_human_response.clear();
@@ -9436,7 +9435,7 @@ impl DesktopProgram {
             }],
             edges: Vec::new(),
         };
-        match self.application.save_automation_draft(input) {
+        match self.kernel.session().save_automation_draft(input) {
             Ok(workflow) => {
                 self.refresh_automations();
                 self.select_automation(workflow.id);
@@ -9757,7 +9756,7 @@ impl DesktopProgram {
         let Some(workflow_id) = self.selected_automation.clone() else {
             return;
         };
-        match self.application.publish_automation(&workflow_id) {
+        match self.kernel.session().publish_automation(&workflow_id) {
             Ok(_) => self.refresh_automations(),
             Err(error) => {
                 self.automation_error = Some(format!("无法发布自动化：{error}"));
@@ -9772,7 +9771,7 @@ impl DesktopProgram {
         let workflow_id = workflow.id.clone();
         let enabled = !workflow.enabled;
         match self
-            .application
+            .kernel.session()
             .set_automation_enabled(&workflow_id, enabled)
         {
             Ok(_) => self.refresh_automations(),
@@ -9786,7 +9785,7 @@ impl DesktopProgram {
         let Some(workflow_id) = self.selected_automation.clone() else {
             return;
         };
-        match self.application.delete_automation(&workflow_id) {
+        match self.kernel.session().delete_automation(&workflow_id) {
             Ok(()) => {
                 self.selected_automation = None;
                 self.refresh_automations();
@@ -9965,7 +9964,7 @@ impl DesktopProgram {
             nodes: workflow.draft.nodes,
             edges: workflow.draft.edges,
         };
-        match self.application.save_automation_draft(input) {
+        match self.kernel.session().save_automation_draft(input) {
             Ok(updated) => {
                 if let Some(workflow) = self
                     .automations
@@ -10184,12 +10183,12 @@ impl DesktopProgram {
             project_selection_changed || inbox_selection_changed || task_selection_changed;
         self.projects = snapshot.projects;
         self.tasks = snapshot.tasks;
-        match self.application.query_tasks(TaskQuery::default()) {
+        match self.kernel.session().query_tasks(TaskQuery::default()) {
             Ok(tasks) => {
                 self.pending_initial_worktrees = tasks
                     .iter()
                     .filter_map(|task| {
-                        self.application
+                        self.kernel.session()
                             .initial_worktree_intent(&task.id)
                             .ok()
                             .flatten()
@@ -10353,10 +10352,10 @@ impl DesktopProgram {
             let snapshot = match self
                 .document_editors
                 .get(&item.id)
-                .and_then(|state| self.application.document_snapshot(state.document_id).ok())
+                .and_then(|state| self.kernel.session().document_snapshot(state.document_id).ok())
             {
                 Some(snapshot) => snapshot,
-                None => match self.application.open_document_at_path(&path) {
+                None => match self.kernel.session().open_document_at_path(&path) {
                     Ok((snapshot, _)) => snapshot,
                     Err(error) => {
                         eprintln!("failed to sync Native document editor: {error}");
@@ -10376,7 +10375,7 @@ impl DesktopProgram {
     }
 
     fn sync_document_editor_views(&mut self, document_id: crate::application::DocumentId) {
-        let Ok(snapshot) = self.application.document_snapshot(document_id) else {
+        let Ok(snapshot) = self.kernel.session().document_snapshot(document_id) else {
             return;
         };
         for state in self
@@ -10410,7 +10409,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_document::diagnostics_slot(document_id));
 
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => {
                 self.active_diagnostics_jobs
                     .insert(handle.id(), document_id);
@@ -10458,7 +10457,7 @@ impl DesktopProgram {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 eprintln!("failed to refresh Native document diagnostics: {error}");
-                match self.application.document_diagnostics(document_id) {
+                match self.kernel.session().document_diagnostics(document_id) {
                     Ok(snapshot) => snapshot,
                     Err(snapshot_error) => {
                         eprintln!(
@@ -10517,7 +10516,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_document::definition_slot(item_id.as_str()));
 
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => {
                 self.active_definition_jobs
                     .insert(handle.id(), (item_id.clone(), window_id));
@@ -10651,7 +10650,7 @@ impl DesktopProgram {
         project_id: ProjectId,
         target: DesktopDocumentDefinitionTarget,
     ) {
-        let snapshot = match self.application.document_snapshot(target.document_id) {
+        let snapshot = match self.kernel.session().document_snapshot(target.document_id) {
             Ok(snapshot) => snapshot,
             Err(error) => {
                 eprintln!("failed to open Native definition document: {error}");
@@ -10659,7 +10658,7 @@ impl DesktopProgram {
                 return;
             }
         };
-        let item = match self.application.document_workspace_item(target.document_id) {
+        let item = match self.kernel.session().document_workspace_item(target.document_id) {
             Ok(item) => item,
             Err(error) => {
                 eprintln!("failed to create Native definition item: {error}");
@@ -10756,7 +10755,7 @@ impl DesktopProgram {
         }
         let text = state.editor.text();
         match self
-            .application
+            .kernel.session()
             .replace_document_text(document_id, expected, text)
         {
             Ok(revision) => {
@@ -10778,7 +10777,7 @@ impl DesktopProgram {
                 }
             }
             Err(error) => {
-                if let Ok(snapshot) = self.application.document_snapshot(document_id) {
+                if let Ok(snapshot) = self.kernel.session().document_snapshot(document_id) {
                     if let Some(state) = self.document_editors.get_mut(&item_id) {
                         state.sync_from_snapshot(&snapshot);
                         state.conflict_message =
@@ -10811,7 +10810,7 @@ impl DesktopProgram {
         };
         let document_id = state.document_id;
         let expected = state.revision;
-        match self.application.save_document(document_id, expected) {
+        match self.kernel.session().save_document(document_id, expected) {
             Ok(snapshot) => {
                 self.sync_document_editor_views(document_id);
                 if let Some(state) = self.document_editors.get_mut(&item_id) {
@@ -10835,7 +10834,7 @@ impl DesktopProgram {
             return;
         };
         let document_id = state.document_id;
-        match self.application.discard_document_changes(document_id) {
+        match self.kernel.session().discard_document_changes(document_id) {
             Ok(snapshot) => {
                 self.sync_document_editor_views(document_id);
                 if let Some(state) = self.document_editors.get_mut(&item_id) {
@@ -10855,7 +10854,7 @@ impl DesktopProgram {
 
     fn refresh_archived_records(&mut self) {
         self.archived_projects = self
-            .application
+            .kernel.session()
             .query_projects(ProjectQuery {
                 include_archived: true,
             })
@@ -10874,7 +10873,7 @@ impl DesktopProgram {
                 .map(|project_id| TaskQuery::for_project(project_id).including_archived())
         };
         self.archived_tasks = task_query
-            .and_then(|query| self.application.query_tasks(query).ok())
+            .and_then(|query| self.kernel.session().query_tasks(query).ok())
             .unwrap_or_default()
             .into_iter()
             .filter(|task| task.archived)
@@ -11718,7 +11717,7 @@ impl DesktopProgram {
             },
             TimelineMessage::OpenMarkdownLink(uri) => {
                 match self
-                    .application
+                    .kernel.session()
                     .execute_host(DesktopHostAction::OpenExternal(uri))
                 {
                     Ok(DesktopHostResult::Completed) => self.task_action_error = None,
@@ -11732,7 +11731,7 @@ impl DesktopProgram {
             TimelineMessage::CopyTimelineMarkdown { event_id, text } => {
                 let byte_count = text.len();
                 match self
-                    .application
+                    .kernel.session()
                     .execute_host(DesktopHostAction::WriteClipboardText(text))
                 {
                     Ok(DesktopHostResult::Completed) => {
@@ -11920,7 +11919,7 @@ impl DesktopProgram {
                 self.shell_shortcut_capturing = false;
                 match self
                     .shell
-                    .set_shortcut(&self.application, Some(self.shell_shortcut_edit.clone()))
+                    .set_shortcut(self.kernel.session(), Some(self.shell_shortcut_edit.clone()))
                 {
                     Ok(shortcut) => {
                         self.shell_shortcut_edit = shortcut.unwrap_or_default();
@@ -11931,7 +11930,7 @@ impl DesktopProgram {
             },
             SettingsMessage::ClearShellShortcut => {
                 self.shell_shortcut_capturing = false;
-                match self.shell.set_shortcut(&self.application, None) {
+                match self.shell.set_shortcut(self.kernel.session(), None) {
                     Ok(_) => {
                         self.shell_shortcut_edit.clear();
                         self.shell_error = None;
@@ -12348,7 +12347,7 @@ impl DesktopProgram {
                 self.select_task(task_id.clone());
                 if self.selected_task.as_ref() == Some(&task_id)
                     && self
-                        .application
+                        .kernel.session()
                         .task_worktree(&task_id)
                         .is_ok_and(|worktree| worktree.is_some())
                 {
@@ -13046,7 +13045,7 @@ impl DesktopProgram {
                     .map(|ticket| ticket.pairing_uri.clone());
                 if let Some(pairing_uri) = pairing_uri {
                     match self
-                        .application
+                        .kernel.session()
                         .execute_host(DesktopHostAction::WriteClipboardText(pairing_uri))
                     {
                         Ok(DesktopHostResult::Completed) => self.remote_error = None,
@@ -13090,7 +13089,7 @@ impl DesktopProgram {
             UpdateMessage::PromptDialogInteraction => {},
             UpdateMessage::OpenReleases => {
                 match self
-                    .application
+                    .kernel.session()
                     .execute_host(DesktopHostAction::OpenExternal(
                         crate::updater::RELEASES_URL.to_owned(),
                     )) {
@@ -13110,7 +13109,7 @@ impl DesktopProgram {
     fn select_task(&mut self, task_id: TaskId) {
         self.clear_timeline_text_selection(HostedWindowId::PRIMARY);
         let pane_id = self.panel_layout.active_pane().clone();
-        let canonical_item = self.application.task_workspace_item(&task_id);
+        let canonical_item = self.kernel.session().task_workspace_item(&task_id);
         let item = match canonical_item.and_then(|item| {
             if self.task_popups.values().any(|popup| {
                 popup.workspace.snapshot().is_ok_and(|snapshot| {
@@ -13126,7 +13125,7 @@ impl DesktopProgram {
                     task_id.as_str()
                 ))
                 .expect("UUID-backed task view ids are valid");
-                self.application
+                self.kernel.session()
                     .task_workspace_item_view(&task_id, instance_id)
             } else {
                 Ok(item)
@@ -13365,7 +13364,7 @@ impl DesktopProgram {
             self.document_editors.remove(&item.id);
         }
         for document_id in documents_to_close {
-            if let Err(error) = self.application.close_document(document_id, false) {
+            if let Err(error) = self.kernel.session().close_document(document_id, false) {
                 eprintln!("failed to release Native document after closing its last view: {error}");
             }
         }
@@ -13406,7 +13405,7 @@ impl DesktopProgram {
             self.clear_composer_suggestions();
             return;
         };
-        match self.application.composer_state(task_id) {
+        match self.kernel.session().composer_state(task_id) {
             Ok(composer) => {
                 sync_hosted_textarea(&self.composer_editor, &composer.content);
                 self.composer = Some(composer);
@@ -13478,7 +13477,7 @@ impl DesktopProgram {
             })
         };
         let enabled = self
-            .application
+            .kernel.session()
             .conversation_suggestion_settings()
             .map(|settings| settings.enabled)
             .unwrap_or(false);
@@ -13530,7 +13529,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_suggestions::generate_slot(window_id.0));
 
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => {
                 self.active_suggestion_jobs
                     .insert(handle.id(), (window_id, task_id.clone()));
@@ -13560,7 +13559,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_agent_session::title_slot(task_id.as_str()));
 
-        if let Err(error) = self.kernel.kernel().jobs().submit(request) {
+        if let Err(error) = self.kernel.jobs().submit(request) {
             eprintln!("failed to submit the LiliaCode task title job: {error}");
         }
     }
@@ -13576,7 +13575,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_agent_session::turn_slot(task_id.as_str()));
 
-        if let Err(error) = self.kernel.kernel().jobs().submit(request) {
+        if let Err(error) = self.kernel.jobs().submit(request) {
             eprintln!("failed to submit the LiliaCode agent turn job: {error}");
         }
     }
@@ -13592,7 +13591,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_agent_session::turn_slot(task_id.as_str()));
 
-        if let Err(error) = self.kernel.kernel().jobs().submit(request) {
+        if let Err(error) = self.kernel.jobs().submit(request) {
             eprintln!("failed to submit the LiliaCode agent approval job: {error}");
         }
     }
@@ -13609,7 +13608,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_agent_session::turn_slot(task_id.as_str()));
 
-        if let Err(error) = self.kernel.kernel().jobs().submit(request) {
+        if let Err(error) = self.kernel.jobs().submit(request) {
             eprintln!("failed to submit the LiliaCode agent interaction job: {error}");
         }
     }
@@ -13750,13 +13749,13 @@ impl DesktopProgram {
 
         let project_cwd = if transient {
             project_id.and_then(|project_id| {
-                self.application
+                self.kernel.session()
                     .project_context(&project_id)
                     .ok()
                     .map(|context| context.active_root().to_string_lossy().into_owned())
             })
         } else {
-            self.application
+            self.kernel.session()
                 .task_workspace_path(&task_id)
                 .ok()
                 .flatten()
@@ -13781,7 +13780,7 @@ impl DesktopProgram {
         };
         let request = JobRequest::new(lilia_feature_composer::OPTIMIZE_PROMPT_PROTOCOL, payload)
             .in_slot(lilia_feature_composer::optimize_prompt_slot(window_id.0));
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => {
                 self.active_prompt_optimizations.insert(
                     window_id,
@@ -14254,10 +14253,10 @@ impl DesktopProgram {
             return;
         };
         let commands = if transient {
-            self.application
+            self.kernel.session()
                 .search_project_slash_commands(project_id.as_ref(), &query, 8)
         } else {
-            self.application
+            self.kernel.session()
                 .search_task_slash_commands(&task_id, &query, 8)
         };
         match commands {
@@ -14493,10 +14492,10 @@ impl DesktopProgram {
             return;
         };
         let references = if transient {
-            self.application
+            self.kernel.session()
                 .search_conversation_references_from(&task_id, &query, 8)
         } else {
-            self.application
+            self.kernel.session()
                 .search_conversation_references(&task_id, &query, 8)
         };
         match references {
@@ -14529,7 +14528,7 @@ impl DesktopProgram {
                             .and_then(|composer| composer_context_query(&composer.content)),
                     )
                     .and_then(|(task_id, query)| {
-                        self.application
+                        self.kernel.session()
                             .get_task(&task_id)
                             .ok()
                             .and_then(|task| task.project_id)
@@ -14542,11 +14541,11 @@ impl DesktopProgram {
         };
         let attachments = task_id.map_or_else(
             || {
-                self.application
+                self.kernel.session()
                     .search_project_context_attachments(&project_id, &query, 8)
             },
             |task_id| {
-                self.application
+                self.kernel.session()
                     .search_task_context_attachments(&task_id, &query, 8)
             },
         );
@@ -14616,7 +14615,7 @@ impl DesktopProgram {
             return;
         }
         let result = if let Some(todo_id) = self.editing_todo.clone() {
-            self.application
+            self.kernel.session()
                 .update_task_todo(
                     &todo_id,
                     DesktopTodoUpdate {
@@ -14626,7 +14625,7 @@ impl DesktopProgram {
                 )
                 .map(|todo| todo.is_some())
         } else {
-            self.application
+            self.kernel.session()
                 .create_task_todo(DesktopTodoCreate {
                     task_id,
                     text: text.to_owned(),
@@ -14669,7 +14668,7 @@ impl DesktopProgram {
     }
 
     fn update_todo(&mut self, todo_id: &str, update: DesktopTodoUpdate) {
-        match self.application.update_task_todo(todo_id, update) {
+        match self.kernel.session().update_task_todo(todo_id, update) {
             Ok(Some(_)) => {
                 self.task_action_error = None;
                 self.refresh_task_session();
@@ -14683,7 +14682,7 @@ impl DesktopProgram {
     }
 
     fn delete_todo(&mut self, todo_id: &str) {
-        match self.application.delete_task_todo(todo_id) {
+        match self.kernel.session().delete_task_todo(todo_id) {
             Ok(true) => {
                 if self.editing_todo.as_deref() == Some(todo_id) {
                     self.todo_draft.clear();
@@ -14707,7 +14706,7 @@ impl DesktopProgram {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
-        match self.application.dispatch_task_guide(&task_id, todo_id) {
+        match self.kernel.session().dispatch_task_guide(&task_id, todo_id) {
             Ok(Some(dispatched)) => {
                 let state = match dispatched.turn.kind {
                     DesktopTurnDispatchKind::Started => DesktopTurnState::Starting,
@@ -14738,7 +14737,7 @@ impl DesktopProgram {
         if objective.is_empty() {
             return;
         }
-        match self.application.set_task_goal(&task_id, objective, None) {
+        match self.kernel.session().set_task_goal(&task_id, objective, None) {
             Ok(_) => {
                 self.goal_draft.clear();
                 self.task_action_error = None;
@@ -14752,7 +14751,7 @@ impl DesktopProgram {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
-        match self.application.refresh_task_goal(&task_id) {
+        match self.kernel.session().refresh_task_goal(&task_id) {
             Ok(_) => {
                 self.task_action_error = None;
                 self.refresh_task_session();
@@ -14765,7 +14764,7 @@ impl DesktopProgram {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
-        match self.application.clear_task_goal(&task_id) {
+        match self.kernel.session().clear_task_goal(&task_id) {
             Ok(true) => {
                 self.goal_draft.clear();
                 self.task_action_error = None;
@@ -14798,7 +14797,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_worktree::worktree_slot(task_id.as_str()));
 
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_worktree_job = Some(handle.id()),
             Err(error) => {
                 self.worktree_busy = false;
@@ -14836,7 +14835,7 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -14861,7 +14860,7 @@ impl DesktopProgram {
             return;
         };
         if let Err(error) = self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::OpenPath(path))
         {
             self.task_action_error = Some(error.to_string());
@@ -14886,7 +14885,7 @@ impl DesktopProgram {
         let Some(task_id) = self.selected_task.as_ref() else {
             return false;
         };
-        match self.application.execute_composer_command(task_id, command) {
+        match self.kernel.session().execute_composer_command(task_id, command) {
             Ok(composer) => {
                 sync_hosted_textarea(&self.composer_editor, &composer.content);
                 self.composer = Some(composer);
@@ -14929,9 +14928,9 @@ impl DesktopProgram {
             .filter(|pending| pending.task_id == task_id)
             .map(|pending| pending.anchor.clone());
         let submission = session_branch.map_or_else(
-            || self.application.submit_composer(&task_id),
+            || self.kernel.session().submit_composer(&task_id),
             |branch| {
-                self.application
+                self.kernel.session()
                     .submit_composer_with_session_branch(&task_id, branch)
             },
         );
@@ -15021,7 +15020,7 @@ impl DesktopProgram {
             source_summary: source.source_summary,
             instructions: None,
         });
-        match self.application.start_task_turn(request) {
+        match self.kernel.session().start_task_turn(request) {
             Ok(dispatch) => {
                 let state = match dispatch.kind {
                     DesktopTurnDispatchKind::Started => DesktopTurnState::Starting,
@@ -15077,7 +15076,7 @@ impl DesktopProgram {
         };
 
         match self
-            .application
+            .kernel.session()
             .retry_task_timeline_event(&task_id, event_id)
         {
             Ok(dispatch) => {
@@ -15168,7 +15167,7 @@ impl DesktopProgram {
         };
         let mut request = DesktopTurnRequest::new(task_id, "");
         request.workflow = Some(LiliaAgentWorkflow::LiliaCompact);
-        match self.application.start_task_turn(request) {
+        match self.kernel.session().start_task_turn(request) {
             Ok(dispatch) => {
                 self.turn_state = Some((
                     dispatch.turn_id,
@@ -15213,7 +15212,7 @@ impl DesktopProgram {
             multiple: true,
         };
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -15358,7 +15357,7 @@ impl DesktopProgram {
 
     fn capture_clipboard_text_paste(&self) -> Result<Option<ClipboardTextPaste>, String> {
         let value = match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::ReadClipboardText)
         {
             Ok(DesktopHostResult::ClipboardText(Some(value))) if value.is_empty() => {
@@ -15380,7 +15379,7 @@ impl DesktopProgram {
         if !clipboard_text_should_be_attachment(&value) {
             return Ok(Some(ClipboardTextPaste::Inline(value)));
         }
-        self.application
+        self.kernel.session()
             .cache_clipboard_text_attachment(&value)
             .map(ClipboardTextPaste::Attachment)
             .map(Some)
@@ -15421,7 +15420,7 @@ impl DesktopProgram {
         if self.composer_input_is_locked() {
             return;
         }
-        match self.application.capture_clipboard_image_attachment() {
+        match self.kernel.session().capture_clipboard_image_attachment() {
             Ok(Some(attachment)) => {
                 self.add_composer_attachments(vec![attachment]);
             }
@@ -15445,7 +15444,7 @@ impl DesktopProgram {
         if !self.window_accepts_attachment_drop(window_id) {
             return;
         }
-        match self.application.capture_clipboard_file_attachments() {
+        match self.kernel.session().capture_clipboard_file_attachments() {
             Ok(attachments) if attachments.is_empty() => {
                 self.set_attachment_error(window_id, "剪贴板中没有文件。".to_owned());
             }
@@ -15477,7 +15476,7 @@ impl DesktopProgram {
             return;
         };
         if let Err(error) = self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::OpenPath(path))
         {
             self.set_attachment_error(window_id, error.to_string());
@@ -15524,7 +15523,7 @@ impl DesktopProgram {
                 .map(PathBuf::from);
         }
         let task_id = self.selected_task.as_ref()?;
-        self.application
+        self.kernel.session()
             .task_workspace_path(task_id)
             .ok()
             .flatten()
@@ -15535,7 +15534,7 @@ impl DesktopProgram {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
-        match self.application.interrupt_task_turn(&task_id) {
+        match self.kernel.session().interrupt_task_turn(&task_id) {
             Ok(result) => {
                 self.task_action_error = None;
                 if let Some((turn_id, _)) = &mut self.turn_state {
@@ -15553,7 +15552,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .respond_task_approval(&task_id, &request_id, approved)
         {
             Ok(response) => {
@@ -15583,7 +15582,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .respond_title_update_review(&task_id, &request_id, accepted)
         {
             Ok(_) => {
@@ -15617,7 +15616,7 @@ impl DesktopProgram {
             return;
         }
         match self
-            .application
+            .kernel.session()
             .respond_task_interaction(&task_id, &request_id, accepted, response)
         {
             Ok(result) => {
@@ -15727,7 +15726,7 @@ impl DesktopProgram {
                 ("确认 Todo 面板自动刷新", DesktopTodoPriority::Normal),
                 ("验证手动 Todo 可继续编辑", DesktopTodoPriority::Low),
             ] {
-                if let Err(error) = self.application.create_task_todo(DesktopTodoCreate {
+                if let Err(error) = self.kernel.session().create_task_todo(DesktopTodoCreate {
                     task_id: task_id.clone(),
                     text: text.to_owned(),
                     priority,
@@ -15851,7 +15850,7 @@ impl DesktopProgram {
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
-        match self.application.respond_task_architecture_interaction(
+        match self.kernel.session().respond_task_architecture_interaction(
             &task_id,
             &request_id,
             decision,
@@ -16036,7 +16035,7 @@ impl DesktopProgram {
         };
         let byte_count = selection.text.len();
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::WriteClipboardText(selection.text))
         {
             Ok(DesktopHostResult::Completed) => {
@@ -16096,7 +16095,7 @@ impl DesktopProgram {
         let Some(source_task_id) = source_task_id else {
             return;
         };
-        let project_id = match self.application.get_task(&source_task_id) {
+        let project_id = match self.kernel.session().get_task(&source_task_id) {
             Ok(task) if !task.archived => task.project_id,
             Ok(_) => {
                 self.set_task_window_error(window_id, "已归档对话无法继续提问。".to_owned());
@@ -16164,14 +16163,14 @@ impl DesktopProgram {
             .and_then(|session| session.timeline.last())
             .cloned();
         let restored_runtime = self
-            .application
+            .kernel.session()
             .restore_task_runtime_from_projection(&task_id);
         if let Err(error) = &restored_runtime {
             eprintln!("failed to restore LiliaCode task runtime: {error}");
             self.task_action_error = Some("无法恢复等待中的任务，请重试。".to_owned());
         }
         match self
-            .application
+            .kernel.session()
             .task_session_snapshot_page(&task_id, TIMELINE_PAGE_SIZE)
         {
             Ok(snapshot) => {
@@ -16234,7 +16233,7 @@ impl DesktopProgram {
             } else if !matches!(state, DesktopTurnState::Queued { .. }) {
                 self.task_action_error = None;
             }
-            let runtime = self.application.task_runtime_snapshot(&task_id);
+            let runtime = self.kernel.session().task_runtime_snapshot(&task_id);
             if runtime.turn_id.as_deref() == Some(turn_id.as_str()) || runtime.turn_id.is_none() {
                 self.turn_state = Some((turn_id.clone(), state.clone()));
             }
@@ -16262,7 +16261,7 @@ impl DesktopProgram {
         if !selected && !pane_needs_update && popup_ids.is_empty() {
             return true;
         }
-        let Ok(snapshot) = self.application.task_session_snapshot(task_id) else {
+        let Ok(snapshot) = self.kernel.session().task_session_snapshot(task_id) else {
             return false;
         };
         let after = self
@@ -16424,7 +16423,7 @@ impl DesktopProgram {
             }
             let previous = self.pane_task_sessions.get(&task_id);
             if let Ok(snapshot) = self
-                .application
+                .kernel.session()
                 .task_session_snapshot_page(&task_id, TIMELINE_PAGE_SIZE)
             {
                 let session = TaskSessionView::refresh_preserving_history(snapshot, previous);
@@ -16449,19 +16448,19 @@ impl DesktopProgram {
         for (item_id, project_id, surface) in requests {
             let preview = match surface {
                 ProjectWorkspaceSurface::Roadmap => self
-                    .application
+                    .kernel.session()
                     .project_roadmap(&project_id)
                     .map(ProjectWorkspacePreview::Roadmap),
                 ProjectWorkspaceSurface::Memory => self
-                    .application
+                    .kernel.session()
                     .list_memories(Some(&project_id))
                     .map(ProjectWorkspacePreview::Memory),
                 ProjectWorkspaceSurface::Architecture => self
-                    .application
+                    .kernel.session()
                     .project_architecture(&project_id)
                     .map(ProjectWorkspacePreview::Architecture),
                 ProjectWorkspaceSurface::Files => self
-                    .application
+                    .kernel.session()
                     .project_files_snapshot(&project_id, ProjectFilesViewState::default())
                     .map(|snapshot| ProjectWorkspacePreview::Files {
                         entry_count: snapshot.entries.len(),
@@ -16492,7 +16491,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .task_timeline_page(&task_id, Some(&before), TIMELINE_PAGE_SIZE)
         {
             Ok(page) => {
@@ -16673,7 +16672,7 @@ impl DesktopProgram {
 
     fn refresh_provider(&mut self) {
         let runtime_settings_dirty = self.provider_runtime_settings_dirty();
-        self.provider = self.application.provider_snapshot();
+        self.provider = self.kernel.session().provider_snapshot();
         let selected_is_available = self.selected_provider.as_ref().is_some_and(|selected| {
             self.provider
                 .providers
@@ -16684,7 +16683,7 @@ impl DesktopProgram {
             self.selected_provider = preferred_provider_id(&self.provider);
         }
         if !runtime_settings_dirty {
-            match self.application.provider_runtime_settings() {
+            match self.kernel.session().provider_runtime_settings() {
                 Ok(settings) => self.sync_provider_runtime_settings(settings),
                 Err(error) => {
                     eprintln!("failed to refresh Native provider runtime settings: {error}");
@@ -16717,7 +16716,7 @@ impl DesktopProgram {
             anthropic_endpoint: Some(self.provider_anthropic_endpoint.clone()),
             model: Some(self.provider_model.clone()),
         };
-        match self.application.save_provider_runtime_settings(update) {
+        match self.kernel.session().save_provider_runtime_settings(update) {
             Ok(settings) => {
                 self.sync_provider_runtime_settings(settings);
                 self.provider_error = None;
@@ -16731,7 +16730,7 @@ impl DesktopProgram {
 
     fn reset_provider_runtime_settings(&mut self) {
         match self
-            .application
+            .kernel.session()
             .save_provider_runtime_settings(DesktopAgentRuntimeSettingsUpdate {
                 expected_revision: self.provider_runtime_settings.revision,
                 openai_endpoint: None,
@@ -16752,8 +16751,8 @@ impl DesktopProgram {
     fn refresh_provider_ai_settings(&mut self) {
         if !self.provider_ai_settings.assistant_dirty() {
             match (
-                self.application.assistant_ai_settings(),
-                self.application.assistant_ai_secret_configured(),
+                self.kernel.session().assistant_ai_settings(),
+                self.kernel.session().assistant_ai_secret_configured(),
             ) {
                 (Ok(settings), Ok(secret_configured)) => self
                     .provider_ai_settings
@@ -16769,7 +16768,7 @@ impl DesktopProgram {
             }
         }
         if !self.provider_ai_settings.model_features_dirty() {
-            match self.application.model_feature_settings() {
+            match self.kernel.session().model_feature_settings() {
                 Ok(settings) => self.provider_ai_settings.sync_model_features(settings),
                 Err(error) => {
                     eprintln!("failed to refresh Native feature model settings: {error}");
@@ -16777,7 +16776,7 @@ impl DesktopProgram {
                 }
             }
         }
-        match self.application.conversation_suggestion_settings() {
+        match self.kernel.session().conversation_suggestion_settings() {
             Ok(settings) => self
                 .provider_ai_settings
                 .sync_conversation_suggestions(settings),
@@ -16793,8 +16792,8 @@ impl DesktopProgram {
             return;
         }
         let update = self.provider_ai_settings.assistant_update();
-        match self.application.save_assistant_ai_configuration(update) {
-            Ok(settings) => match self.application.assistant_ai_secret_configured() {
+        match self.kernel.session().save_assistant_ai_configuration(update) {
+            Ok(settings) => match self.kernel.session().assistant_ai_secret_configured() {
                 Ok(secret_configured) => {
                     self.provider_ai_settings
                         .sync_assistant(settings, secret_configured);
@@ -16817,7 +16816,7 @@ impl DesktopProgram {
             return;
         }
         let update = self.provider_ai_settings.clear_secret_update();
-        match self.application.save_assistant_ai_configuration(update) {
+        match self.kernel.session().save_assistant_ai_configuration(update) {
             Ok(settings) => {
                 self.provider_ai_settings.sync_assistant(settings, false);
                 self.provider_error = None;
@@ -16882,7 +16881,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_provider::assistant_probe_slot());
 
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_assistant_probe_job = Some((handle.id(), ticket, kind)),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode assistant probe job: {error}");
@@ -16970,7 +16969,7 @@ impl DesktopProgram {
 
     fn save_model_feature_settings(&mut self) {
         let update = self.provider_ai_settings.model_features_update();
-        match self.application.save_model_feature_settings(update) {
+        match self.kernel.session().save_model_feature_settings(update) {
             Ok(settings) => {
                 self.provider_ai_settings.sync_model_features(settings);
                 self.provider_error = None;
@@ -16987,7 +16986,7 @@ impl DesktopProgram {
             .provider_ai_settings
             .conversation_suggestion_update(enabled);
         match self
-            .application
+            .kernel.session()
             .save_conversation_suggestion_settings(update)
         {
             Ok(settings) => {
@@ -17004,8 +17003,8 @@ impl DesktopProgram {
 
     fn refresh_agent_interaction(&mut self) {
         match (
-            self.application.agent_interaction_settings(),
-            self.application.custom_subagent_catalog(),
+            self.kernel.session().agent_interaction_settings(),
+            self.kernel.session().custom_subagent_catalog(),
         ) {
             (Ok(settings), Ok(catalog)) => {
                 self.agent_interaction_settings = settings;
@@ -17063,7 +17062,7 @@ impl DesktopProgram {
                     !update.auto_turn_decision.allow_session_fork
             }
         }
-        match self.application.save_agent_interaction_settings(update) {
+        match self.kernel.session().save_agent_interaction_settings(update) {
             Ok(settings) => {
                 self.agent_interaction_settings = settings;
                 self.custom_agents.revision = self.agent_interaction_settings.revision;
@@ -17127,7 +17126,7 @@ impl DesktopProgram {
                 })
                 .is_none_or(|agent| agent.enabled),
         };
-        match self.application.upsert_custom_subagent(input) {
+        match self.kernel.session().upsert_custom_subagent(input) {
             Ok(_) => {
                 self.clear_custom_agent_editor();
                 self.refresh_agent_interaction();
@@ -17151,7 +17150,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .upsert_custom_subagent(DesktopCustomSubagentUpsert {
                 expected_revision: self.custom_agents.revision,
                 id: Some(agent.id),
@@ -17170,7 +17169,7 @@ impl DesktopProgram {
 
     fn delete_custom_agent(&mut self, agent_id: &str) {
         match self
-            .application
+            .kernel.session()
             .delete_custom_subagent(self.custom_agents.revision, agent_id)
         {
             Ok(catalog) => {
@@ -17229,7 +17228,7 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -17366,7 +17365,7 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_import::import_slot());
 
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => {
                 self.active_import_job = Some((handle.id(), ticket));
                 self.data_import.begin(handle.id());
@@ -17469,7 +17468,7 @@ impl DesktopProgram {
 
         self.provider_busy = true;
         self.provider_error = None;
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_provider_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode provider job: {error}");
@@ -17518,7 +17517,7 @@ impl DesktopProgram {
 
         self.quota_busy = true;
         self.quota_error = None;
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_quota_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode quota job: {error}");
@@ -17645,7 +17644,7 @@ impl DesktopProgram {
 
         self.extensions_busy = true;
         self.extensions_error = None;
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => {
                 self.active_extensions_job = Some(ExtensionsJob {
                     id: handle.id(),
@@ -17743,7 +17742,7 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -18184,7 +18183,7 @@ impl DesktopProgram {
 
         self.remote_busy = true;
         self.remote_error = None;
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_remote_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode remote job: {error}");
@@ -18245,7 +18244,7 @@ impl DesktopProgram {
 
         self.update_busy = true;
         self.update_error = None;
-        match self.kernel.kernel().jobs().submit(request) {
+        match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_update_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode update job: {error}");
@@ -18262,7 +18261,7 @@ impl DesktopProgram {
                 self.active_update_job = None;
                 self.update_busy = false;
                 self.update_error = None;
-                if let Ok(state) = self.application.update_state() {
+                if let Ok(state) = self.kernel.session().update_state() {
                     self.exit_requested = matches!(&state, DesktopUpdateState::Restarting { .. });
                     self.update_state = state;
                 }
@@ -18273,7 +18272,7 @@ impl DesktopProgram {
             JobState::Failed { message } => {
                 self.active_update_job = None;
                 self.update_busy = false;
-                self.update_state = self.application.update_state().unwrap_or_else(|_| {
+                self.update_state = self.kernel.session().update_state().unwrap_or_else(|_| {
                     DesktopUpdateState::Failed {
                         message: message.clone(),
                     }
@@ -18331,7 +18330,7 @@ impl DesktopProgram {
                         Some(&self.debug_observation()),
                     )
                 } else {
-                    match self.application.debug_equivalence_snapshot(&fixture_id) {
+                    match self.kernel.session().debug_equivalence_snapshot(&fixture_id) {
                         Ok(snapshot) => snapshot_response("equivalence-snapshot", &snapshot),
                         Err(error) => failure_response(
                             "equivalence-snapshot",
@@ -18347,7 +18346,7 @@ impl DesktopProgram {
                 success_response("mark", &self.debug_observation())
             }
             DebugCommand::CorruptQueuedTurn { turn_id } => {
-                match self.application.corrupt_queued_turn_for_debug(&turn_id) {
+                match self.kernel.session().corrupt_queued_turn_for_debug(&turn_id) {
                     Ok(true) => success_response("corrupt-queued-turn", &self.debug_observation()),
                     Ok(false) => failure_response(
                         "corrupt-queued-turn",
@@ -18367,7 +18366,7 @@ impl DesktopProgram {
                 match TaskId::new(task_id)
                     .map_err(|error| error.to_string())
                     .and_then(|task_id| {
-                        self.application
+                        self.kernel.session()
                             .seed_interrupted_tool_for_debug(&task_id, &turn_id)
                             .map_err(|error| error.to_string())
                     }) {
@@ -18382,7 +18381,7 @@ impl DesktopProgram {
             }
             DebugCommand::HoldDatabaseWriter { duration_ms } => {
                 match self
-                    .application
+                    .kernel.session()
                     .hold_domain_database_writer_for_debug(duration_ms)
                 {
                     Ok(()) => success_response("hold-database-writer", &self.debug_observation()),
@@ -20568,7 +20567,7 @@ impl DesktopProgram {
             return true;
         }
         if let Some(contribution) = self
-            .application
+            .kernel.session()
             .sidebar_navigation_contributions()
             .into_iter()
             .find(|contribution| contribution.id == target_id)
@@ -23261,18 +23260,18 @@ impl DesktopProgram {
         let runtime = self
             .selected_task
             .as_ref()
-            .map(|task_id| self.application.task_runtime_snapshot(task_id));
+            .map(|task_id| self.kernel.session().task_runtime_snapshot(task_id));
         let durable_turns = self
             .selected_task
             .as_ref()
             .and_then(|task_id| {
-                self.application
+                self.kernel.session()
                     .task_turn_queue_debug_snapshot(task_id)
                     .ok()
             })
             .unwrap_or_default();
         let quarantined_turns = self
-            .application
+            .kernel.session()
             .turn_queue_quarantine_debug_snapshot()
             .unwrap_or_default();
         let active_durable_turn = runtime
@@ -23572,7 +23571,7 @@ impl DesktopProgram {
             archived_project_count: self.archived_projects.len(),
             task_count: self.tasks.len(),
             visible_task_count: {
-                let session_hits = session_search_hit_ids(&self.application, &self.task_search);
+                let session_hits = session_search_hit_ids(self.kernel.session(), &self.task_search);
                 self.tasks
                     .iter()
                     .filter(|task| task_matches_search(task, &self.task_search, &session_hits))
@@ -24712,7 +24711,7 @@ impl DesktopProgram {
                 target_ids::SIDEBAR_FOOTER_PROVIDER.to_owned(),
             ]);
             targets.extend(
-                self.application
+                self.kernel.session()
                     .sidebar_navigation_contributions()
                     .into_iter()
                     .map(|contribution| contribution.id),
@@ -24740,7 +24739,7 @@ impl DesktopProgram {
                     target_ids::sidebar_task_archive(task.id.as_str()),
                 ]);
                 if self
-                    .application
+                    .kernel.session()
                     .task_worktree(&task.id)
                     .is_ok_and(|worktree| worktree.is_some())
                 {
@@ -26717,7 +26716,7 @@ impl DesktopProgram {
             && (self.selected_project.is_some() || self.inbox_selected)
         {
             targets.push(target_ids::TASKS_LIST.to_owned());
-            let session_hits = session_search_hit_ids(&self.application, &self.task_search);
+            let session_hits = session_search_hit_ids(self.kernel.session(), &self.task_search);
             targets.extend(
                 self.tasks
                     .iter()
@@ -26873,7 +26872,7 @@ impl DesktopProgram {
                 if self.conversation_status_open {
                     self.refresh_conversation_status();
                 }
-                if let Err(error) = self.shell.refresh_tray(&self.application) {
+                if let Err(error) = self.shell.refresh_tray(self.kernel.session()) {
                     self.shell_error = Some(error);
                 }
             }
@@ -26900,7 +26899,7 @@ impl DesktopProgram {
                 if self.conversation_status_open {
                     self.refresh_conversation_status();
                 }
-                if let Err(error) = self.shell.refresh_tray(&self.application) {
+                if let Err(error) = self.shell.refresh_tray(self.kernel.session()) {
                     self.shell_error = Some(error);
                 }
             }
@@ -26938,7 +26937,7 @@ impl DesktopProgram {
                     self.worktree_busy = false;
                     self.worktree_confirmation = None;
                     if self
-                        .application
+                        .kernel.session()
                         .get_task(&task_id)
                         .is_ok_and(|task| task.archived)
                     {
@@ -27087,7 +27086,7 @@ impl DesktopProgram {
                     self.error_message = Some("无法打开指定项目。".to_owned());
                 }
             }
-            DesktopNavigationTarget::Task(task_id) => match self.application.get_task(&task_id) {
+            DesktopNavigationTarget::Task(task_id) => match self.kernel.session().get_task(&task_id) {
                 Ok(task) => {
                     let Some(project_id) = task.project_id else {
                         self.error_message = Some("该任务没有所属项目。".to_owned());
@@ -27134,12 +27133,12 @@ impl DesktopProgram {
             .iter()
             .map(|project| (project.id.clone(), project.name.clone()))
             .collect::<BTreeMap<_, _>>();
-        match self.application.query_tasks(TaskQuery::default()) {
+        match self.kernel.session().query_tasks(TaskQuery::default()) {
             Ok(tasks) => {
                 let mut entries = tasks
                     .into_iter()
                     .map(|task| {
-                        let runtime = self.application.task_runtime_snapshot(&task.id);
+                        let runtime = self.kernel.session().task_runtime_snapshot(&task.id);
                         ConversationStatusEntry {
                             task_id: task.id,
                             title: task.title,
@@ -27187,7 +27186,7 @@ impl DesktopProgram {
         if !self.sidebar_stopping_tasks.insert(task_id.clone()) {
             return;
         }
-        match self.application.interrupt_task_turn(&task_id) {
+        match self.kernel.session().interrupt_task_turn(&task_id) {
             Ok(_) => {
                 self.conversation_status_error = None;
                 self.refresh_conversation_status();
@@ -27258,7 +27257,7 @@ impl DesktopProgram {
         };
         let task_id = item.task_id().ok().flatten();
         let project_name = if let Some(task_id) = &task_id {
-            let task = self.application.get_task(task_id).ok()?;
+            let task = self.kernel.session().get_task(task_id).ok()?;
             if task.archived {
                 return None;
             }
@@ -27480,7 +27479,7 @@ impl DesktopProgram {
                 Ok(session_id) => session_id,
                 Err(_) => continue,
             };
-            let workspace = self.application.create_workspace_session(session_id);
+            let workspace = self.kernel.session().create_workspace_session(session_id);
             let restored = match workspace.restore(&persisted.workspace) {
                 Ok(outcome) => outcome.workspace,
                 Err(error) => {
@@ -27588,7 +27587,7 @@ impl DesktopProgram {
         let workspace =
             match DesktopWorkspaceSessionId::new(format!("lilia.workspace-window.{}", window_id.0))
             {
-                Ok(id) => self.application.create_workspace_session(id),
+                Ok(id) => self.kernel.session().create_workspace_session(id),
                 Err(error) => {
                     eprintln!("failed to create Native workspace window session: {error}");
                     self.error_message = Some("无法准备新窗口，请重试。".to_owned());
@@ -27667,7 +27666,7 @@ impl DesktopProgram {
     }
 
     fn open_child_question_popup(&mut self, source_window: HostedWindowId, parent_task_id: TaskId) {
-        let parent = match self.application.get_task(&parent_task_id) {
+        let parent = match self.kernel.session().get_task(&parent_task_id) {
             Ok(parent) if !parent.archived => parent,
             Ok(_) => {
                 self.set_child_question_error(source_window, "已归档对话无法创建子对话。");
@@ -27719,13 +27718,13 @@ impl DesktopProgram {
     }
 
     fn preferred_popup_project(&self) -> Option<ProjectId> {
-        self.application
+        self.kernel.session()
             .popup_last_project_id()
             .ok()
             .flatten()
             .and_then(|project_id| ProjectId::new(project_id).ok())
             .filter(|project_id| {
-                self.application
+                self.kernel.session()
                     .get_project(project_id)
                     .is_ok_and(|project| project.archive == ProjectArchiveState::Active)
             })
@@ -27739,14 +27738,14 @@ impl DesktopProgram {
     ) -> Result<HostedWindowId, String> {
         if let Some(project_id) = &project_id {
             let project = self
-                .application
+                .kernel.session()
                 .get_project(project_id)
                 .map_err(|error| error.to_string())?;
             if project.archive != ProjectArchiveState::Active {
                 return Err("project is archived".to_owned());
             }
             if let Err(error) = self
-                .application
+                .kernel.session()
                 .remember_popup_last_project(project_id.as_str())
             {
                 eprintln!("failed to remember Native popup draft project: {error}");
@@ -27766,7 +27765,7 @@ impl DesktopProgram {
             window_id.0
         ))
         .map_err(|error| error.to_string())?;
-        let workspace = self.application.create_workspace_session(workspace_id);
+        let workspace = self.kernel.session().create_workspace_session(workspace_id);
         workspace
             .execute(DesktopCommand::RefreshWorkspace)
             .map_err(|error| error.to_string())?;
@@ -27832,7 +27831,7 @@ impl DesktopProgram {
     ) {
         if let Some(project_id) = &project_id {
             let valid = self
-                .application
+                .kernel.session()
                 .get_project(project_id)
                 .is_ok_and(|project| project.archive == ProjectArchiveState::Active);
             if !valid {
@@ -27868,7 +27867,7 @@ impl DesktopProgram {
         popup.conversation_suggestions.clear();
         if let Some(project_id) = project_id {
             if let Err(error) = self
-                .application
+                .kernel.session()
                 .remember_popup_last_project(project_id.as_str())
             {
                 eprintln!("failed to remember Native popup draft project: {error}");
@@ -27901,7 +27900,7 @@ impl DesktopProgram {
                 .push(HostedWindowCommand::Focus(existing));
             return;
         }
-        let task = match self.application.get_task(&task_id) {
+        let task = match self.kernel.session().get_task(&task_id) {
             Ok(task) if !task.archived => task,
             Ok(_) => {
                 self.task_action_error = Some("已归档任务无法在新窗口打开。".to_owned());
@@ -27915,7 +27914,7 @@ impl DesktopProgram {
         };
         if let Some(project_id) = task.project_id.as_ref() {
             if let Err(error) = self
-                .application
+                .kernel.session()
                 .remember_popup_last_project(project_id.as_str())
             {
                 eprintln!("failed to remember Native popup project: {error}");
@@ -27928,7 +27927,7 @@ impl DesktopProgram {
             task_id.as_str(),
             window_id.0
         )) {
-            Ok(id) => self.application.create_workspace_session(id),
+            Ok(id) => self.kernel.session().create_workspace_session(id),
             Err(error) => {
                 eprintln!("failed to create Native task popup workspace: {error}");
                 self.task_action_error = Some("无法准备任务窗口，请重试。".to_owned());
@@ -27992,7 +27991,7 @@ impl DesktopProgram {
             ))
             .expect("task popup view ids are valid");
             let item = match self
-                .application
+                .kernel.session()
                 .task_workspace_item_view(&task_id, item_id.clone())
             {
                 Ok(item) => item,
@@ -28125,7 +28124,7 @@ impl DesktopProgram {
         let mut session_error = false;
         for task_id in task_ids {
             match self
-                .application
+                .kernel.session()
                 .task_session_snapshot_page(&task_id, TIMELINE_PAGE_SIZE)
             {
                 Ok(snapshot) => {
@@ -28172,9 +28171,9 @@ impl DesktopProgram {
             self.sync_markdown_images();
             return;
         };
-        let task = self.application.get_task(&task_id);
+        let task = self.kernel.session().get_task(&task_id);
         let runtime = self
-            .application
+            .kernel.session()
             .restore_task_runtime_from_projection(&task_id);
         let session = task_sessions.get(&task_id).cloned();
         let timeline_follow_extent = session.as_ref().and_then(|session| {
@@ -28183,7 +28182,7 @@ impl DesktopProgram {
                     || previous_timeline_tail.as_ref() != session.timeline.last()))
             .then(|| timeline_content_extent(session, true))
         });
-        let composer = self.application.composer_state(&task_id);
+        let composer = self.kernel.session().composer_state(&task_id);
         let Some(popup) = self.task_popups.get_mut(&window_id) else {
             return;
         };
@@ -28336,7 +28335,7 @@ impl DesktopProgram {
     ) -> Option<ProjectWorkspaceEditorState> {
         let (project_id, surface) = item.project_surface().ok().flatten()?;
         let tasks = self
-            .application
+            .kernel.session()
             .query_tasks(TaskQuery::for_project(project_id.clone()))
             .unwrap_or_default()
             .into_iter()
@@ -28362,7 +28361,7 @@ impl DesktopProgram {
             .and_then(|state| state.get("selectedMemoryId"))
             .and_then(Value::as_str)
             .map(str::to_owned);
-        let (roadmap, roadmap_error) = match self.application.project_roadmap(&project_id) {
+        let (roadmap, roadmap_error) = match self.kernel.session().project_roadmap(&project_id) {
             Ok(roadmap) => (roadmap, None),
             Err(error) => (
                 ProjectRoadmap::default(),
@@ -28383,7 +28382,7 @@ impl DesktopProgram {
             .and_then(|item| item.due_date)
             .map(format_civil_date)
             .unwrap_or_default();
-        let (memories, memory_error) = match self.application.list_memories(Some(&project_id)) {
+        let (memories, memory_error) = match self.kernel.session().list_memories(Some(&project_id)) {
             Ok(memories) => (memories, None),
             Err(error) => (Vec::new(), Some(format!("无法读取 Memory：{error}"))),
         };
@@ -28405,10 +28404,10 @@ impl DesktopProgram {
             architecture_quarantine_count,
             mut architecture_error,
         ) = match (
-            self.application.project_architecture(&project_id),
-            self.application
+            self.kernel.session().project_architecture(&project_id),
+            self.kernel.session()
                 .project_architecture_changes(&project_id, 40),
-            self.application
+            self.kernel.session()
                 .project_architecture_quarantine(&project_id),
         ) {
             (Ok(graph), Ok(history), Ok(quarantine)) => (graph, history, quarantine.len(), None),
@@ -28718,10 +28717,10 @@ impl DesktopProgram {
             return;
         };
         let commands = if transient {
-            self.application
+            self.kernel.session()
                 .search_project_slash_commands(project_id.as_ref(), &query, 8)
         } else {
-            self.application
+            self.kernel.session()
                 .search_task_slash_commands(&task_id, &query, 8)
         };
         if let Some(popup) = self.task_popups.get_mut(&window_id) {
@@ -28759,10 +28758,10 @@ impl DesktopProgram {
             return;
         };
         let references = if transient {
-            self.application
+            self.kernel.session()
                 .search_conversation_references_from(&task_id, &query, 8)
         } else {
-            self.application
+            self.kernel.session()
                 .search_conversation_references(&task_id, &query, 8)
         };
         if let Some(popup) = self.task_popups.get_mut(&window_id) {
@@ -28789,7 +28788,7 @@ impl DesktopProgram {
                     Some((None, draft.project_id.clone()?, query))
                 } else {
                     let task_id = popup.active_task_id.clone()?;
-                    let project_id = self.application.get_task(&task_id).ok()?.project_id?;
+                    let project_id = self.kernel.session().get_task(&task_id).ok()?.project_id?;
                     Some((Some(task_id), project_id, query))
                 }
             })
@@ -28801,11 +28800,11 @@ impl DesktopProgram {
         };
         let attachments = task_id.map_or_else(
             || {
-                self.application
+                self.kernel.session()
                     .search_project_context_attachments(&project_id, &query, 8)
             },
             |task_id| {
-                self.application
+                self.kernel.session()
                     .search_task_context_attachments(&task_id, &query, 8)
             },
         );
@@ -28903,7 +28902,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .task_timeline_page(&task_id, Some(&before), TIMELINE_PAGE_SIZE)
         {
             Ok(page) => {
@@ -29031,7 +29030,7 @@ impl DesktopProgram {
                 let project_id = popup
                     .active_task_id
                     .as_ref()
-                    .and_then(|task_id| self.application.get_task(task_id).ok())
+                    .and_then(|task_id| self.kernel.session().get_task(task_id).ok())
                     .and_then(|task| task.project_id);
                 let item_count = popup.workspace.snapshot().ok()?.workspace_items.len();
                 Some((project_id, item_count))
@@ -29464,7 +29463,7 @@ impl DesktopProgram {
         else {
             return false;
         };
-        match self.application.execute_composer_command(&task_id, command) {
+        match self.kernel.session().execute_composer_command(&task_id, command) {
             Ok(composer) => {
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
                     sync_hosted_textarea(&popup.composer_editor, &composer.content);
@@ -29515,7 +29514,7 @@ impl DesktopProgram {
             ),
             initial_directory: task_id
                 .as_ref()
-                .and_then(|task_id| self.application.task_workspace_path(task_id).ok().flatten())
+                .and_then(|task_id| self.kernel.session().task_workspace_path(task_id).ok().flatten())
                 .or_else(|| {
                     project_id.and_then(|project_id| {
                         self.projects
@@ -29530,7 +29529,7 @@ impl DesktopProgram {
             multiple: true,
         };
         match self
-            .application
+            .kernel.session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -29610,7 +29609,7 @@ impl DesktopProgram {
         if !self.window_accepts_attachment_drop(window_id) {
             return;
         }
-        match self.application.capture_clipboard_image_attachment() {
+        match self.kernel.session().capture_clipboard_image_attachment() {
             Ok(Some(attachment)) => {
                 self.add_task_popup_attachments(window_id, vec![attachment]);
             }
@@ -29666,9 +29665,9 @@ impl DesktopProgram {
             .filter(|pending| pending.task_id == task_id)
             .map(|pending| pending.anchor.clone());
         let submission = session_branch.map_or_else(
-            || self.application.submit_composer(&task_id),
+            || self.kernel.session().submit_composer(&task_id),
             |branch| {
-                self.application
+                self.kernel.session()
                     .submit_composer_with_session_branch(&task_id, branch)
             },
         );
@@ -29742,7 +29741,7 @@ impl DesktopProgram {
             .draft_worktree_intent(&draft_worktree)
             .expect("incomplete existing worktree selections are rejected above");
         if let Err(error) = self
-            .application
+            .kernel.session()
             .set_initial_worktree_intent(&input.id, worktree_intent.as_ref())
         {
             eprintln!("failed to persist Native popup draft worktree intent: {error}");
@@ -29752,11 +29751,11 @@ impl DesktopProgram {
             return false;
         }
         let reserved_task_id = input.id.clone();
-        let task = match self.application.materialize_task_draft(input, composer) {
+        let task = match self.kernel.session().materialize_task_draft(input, composer) {
             Ok(task) => task,
             Err(error) => {
                 if let Err(clear_error) = self
-                    .application
+                    .kernel.session()
                     .set_initial_worktree_intent(&reserved_task_id, None)
                 {
                     eprintln!(
@@ -29773,7 +29772,7 @@ impl DesktopProgram {
         let worktree_error = worktree_intent
             .as_ref()
             .map_or(Ok(false), |_| {
-                self.application.retry_initial_worktree(&task.id)
+                self.kernel.session().retry_initial_worktree(&task.id)
             })
             .err()
             .map(|error| {
@@ -29796,7 +29795,7 @@ impl DesktopProgram {
         ))
         .expect("task popup view ids are valid");
         let item = match self
-            .application
+            .kernel.session()
             .task_workspace_item_view(&task.id, item_id.clone())
         {
             Ok(item) => item,
@@ -29872,7 +29871,7 @@ impl DesktopProgram {
         };
         let mut request = DesktopTurnRequest::new(task_id, "");
         request.workflow = Some(LiliaAgentWorkflow::LiliaCompact);
-        match self.application.start_task_turn(request) {
+        match self.kernel.session().start_task_turn(request) {
             Ok(dispatch) => {
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
                     popup.turn_state = Some((
@@ -29904,7 +29903,7 @@ impl DesktopProgram {
         else {
             return;
         };
-        match self.application.interrupt_task_turn(&task_id) {
+        match self.kernel.session().interrupt_task_turn(&task_id) {
             Ok(_) => {
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
                     popup.error = None;
@@ -29933,7 +29932,7 @@ impl DesktopProgram {
             return;
         };
         match self
-            .application
+            .kernel.session()
             .respond_task_approval(&task_id, &request_id, approved)
         {
             Ok(response) => {
@@ -29979,7 +29978,7 @@ impl DesktopProgram {
             return;
         }
         match self
-            .application
+            .kernel.session()
             .respond_task_interaction(&task_id, &request_id, accepted, response)
         {
             Ok(result) => {
@@ -30025,7 +30024,7 @@ impl DesktopProgram {
         else {
             return;
         };
-        match self.application.respond_task_architecture_interaction(
+        match self.kernel.session().respond_task_architecture_interaction(
             &task_id,
             &request_id,
             decision,
@@ -30284,7 +30283,7 @@ impl DesktopProgram {
         if query.is_empty() {
             return Vec::new();
         }
-        let session_hits = session_search_hit_ids(&self.application, &query);
+        let session_hits = session_search_hit_ids(self.kernel.session(), &query);
         let mut targets = Vec::new();
         for project in self.projects.iter().filter(|project| {
             project.name.to_ascii_lowercase().contains(&query)
@@ -30705,7 +30704,7 @@ impl RuntimeProgram for DesktopProgram {
         let assistant_probes = Arc::new(AssistantProbeExchange::default());
         let import_exchange = Arc::new(ImportExchange::default());
         let coding_exchange = Arc::new(CodingExchange::default());
-        let kernel = {
+        let mut kernel = {
             let dispatcher = context.clone();
             crate::kernel_host::KernelHost::start(
                 crate::kernel_host::KernelServices {
@@ -30779,6 +30778,7 @@ impl RuntimeProgram for DesktopProgram {
                 },
             )?
         };
+        kernel.attach_session(application.clone());
         application
             .install_title_update_scheduler(Arc::new(QueuedTitleScheduler {
                 messages: Arc::clone(&message_sender),
@@ -30934,7 +30934,6 @@ impl RuntimeProgram for DesktopProgram {
         let project_worktree_instructions =
             TextEditorState::with_text(&project_settings.worktree.auto_instructions);
         let mut program = Self {
-            application,
             application_workspace,
             data_import_target_identity,
             data_import,
