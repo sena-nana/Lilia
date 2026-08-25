@@ -6,7 +6,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use fs2::FileExt;
-use lilia_desktop_application::{
+use crate::application::{
     DesktopDatabaseKind, DesktopImportItemKind, DesktopImportReport, DesktopImportReportItemStatus,
     DesktopImportReportStatus,
 };
@@ -577,11 +577,11 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
-    use lilia_desktop_application::{
+    use crate::application::{
         CredentialImportDecision, DesktopDataImportService, DesktopImportExecutionOptions,
         DesktopImportReportItem, DesktopProjectCreate,
     };
-    use lilia_desktop_application::{DesktopApplication, DesktopApplicationConfig};
+    use crate::application::{DesktopApplication, DesktopApplicationConfig};
 
     use crate::host::NativeDesktopHost;
 

@@ -3,7 +3,7 @@ use lilia_contracts::{
     AgentSessionRef, ExpectedRevision, ProductEntity, ProjectId, ProjectionEventId, TaskId,
     TimelineProjectionCommand, TimelineProjectionEvent,
 };
-use lilia_desktop_application::{
+use crate::application::{
     ArchitectureBackend, ArchitecturePermission, DesktopApplication, ProjectArchitectureApplyInput,
     ProjectArchitectureChange, ProjectArchitectureEdge, ProjectArchitectureNode,
     RemoteEndpointAddress, RemotePairDeviceInput,
@@ -136,7 +136,7 @@ pub fn prepare(application: &DesktopApplication) -> Result<(), String> {
                         node: node(
                             "desktop-application",
                             "DesktopApplication",
-                            "crates/lilia-desktop-application",
+                            "apps/desktop",
                         ),
                     },
                     ProjectArchitectureChange::UpsertEdge {

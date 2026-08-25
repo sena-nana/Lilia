@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use lilia_desktop_application::{
+use crate::application::{
     DesktopWorkspaceSessionState, MemorySettings, MemorySettingsStore, MemoryStoreError,
 };
 use nana_ui::{AppearanceSettings, ThemeMode};
@@ -79,7 +79,10 @@ pub struct NativeWindowState {
 }
 
 impl NativeWindowState {
-    pub fn apply_to_settings(self, mut settings: nana_ui::RuntimeWindowSettings) -> nana_ui::RuntimeWindowSettings {
+    pub fn apply_to_settings(
+        self,
+        mut settings: nana_ui::RuntimeWindowSettings,
+    ) -> nana_ui::RuntimeWindowSettings {
         settings.initial_position = Some((f64::from(self.x), f64::from(self.y)));
         settings.initial_size = (f64::from(self.width), f64::from(self.height));
         settings.maximized = self.maximized;

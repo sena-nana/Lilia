@@ -1,5 +1,5 @@
 use lilia_contracts::TaskId;
-use lilia_desktop_application::DesktopSuggestionItem;
+use crate::application::DesktopSuggestionItem;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ConversationSuggestionState {
@@ -97,7 +97,7 @@ impl ConversationSuggestionState {
 
 #[cfg(test)]
 mod tests {
-    use lilia_desktop_application::DesktopSuggestionItemSource;
+    use crate::application::DesktopSuggestionItemSource;
 
     use super::*;
 

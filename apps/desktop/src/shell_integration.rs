@@ -6,11 +6,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 use lilia_contracts::ProductTask;
 use lilia_contracts::TaskId;
-use lilia_desktop_application::DesktopApplication;
+use crate::application::DesktopApplication;
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
-use lilia_desktop_application::{DesktopPopupWindowSettings, TaskQuery};
+use crate::application::{DesktopPopupWindowSettings, TaskQuery};
 
-use crate::desktop::Message;
+use crate::desktop::{ChromeMessage, Message};
 
 #[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 const TRAY_ID: &str = "liliacode";
@@ -324,7 +324,7 @@ fn install_event_handlers(message_sender: MessageSender, registered_hotkey_id: A
                 None
             };
             if let Some(command) = command {
-                let _ = menu_sender(Message::Shell(command));
+                let _ = menu_sender(Message::Chrome(ChromeMessage::Shell(command)));
             }
         },
     ));
@@ -347,7 +347,7 @@ fn install_event_handlers(message_sender: MessageSender, registered_hotkey_id: A
                     .spawn(move || {
                         std::thread::sleep(SINGLE_CLICK_DELAY);
                         if click_sequence.load(Ordering::SeqCst) == sequence {
-                            let _ = sender(Message::Shell(ShellCommand::OpenNewConversation));
+                            let _ = sender(Message::Chrome(ChromeMessage::Shell(ShellCommand::OpenNewConversation)));
                         }
                     });
             }
@@ -357,7 +357,7 @@ fn install_event_handlers(message_sender: MessageSender, registered_hotkey_id: A
                 ..
             } if id.as_ref() == TRAY_ID => {
                 tray_click_sequence.fetch_add(1, Ordering::SeqCst);
-                let _ = tray_sender(Message::Shell(ShellCommand::FocusMainWindow));
+                let _ = tray_sender(Message::Chrome(ChromeMessage::Shell(ShellCommand::FocusMainWindow)));
             }
             _ => {}
         }
@@ -370,7 +370,7 @@ fn install_event_handlers(message_sender: MessageSender, registered_hotkey_id: A
                 event.id,
                 event.state == global_hotkey::HotKeyState::Pressed,
             ) {
-                let _ = message_sender(Message::Shell(ShellCommand::OpenNewConversation));
+                let _ = message_sender(Message::Chrome(ChromeMessage::Shell(ShellCommand::OpenNewConversation)));
             }
         },
     ));

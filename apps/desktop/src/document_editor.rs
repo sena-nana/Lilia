@@ -3,13 +3,13 @@
 //! View state owns selection/scroll/focus presentation only. Buffer text and
 //! dirty/conflict facts come from the shared application DocumentStore.
 
+use crate::text_editor_state::{TextEditorCursor, TextEditorPosition, TextEditorState};
 use lilia_contracts::ProjectId;
-use lilia_desktop_application::{
+use crate::application::{
     BufferRevision, DesktopDocumentDefinitionTarget, DesktopDocumentDiagnosticsSnapshot,
     DesktopDocumentDiagnosticsState, Diagnostic, DocumentId, DocumentSnapshot, WorkspaceItem,
     DOCUMENT_WORKSPACE_ITEM_KIND,
 };
-use crate::text_editor_state::{TextEditorCursor, TextEditorPosition, TextEditorState};
 
 pub fn select_document_editor_range(
     state: &DocumentEditorViewState,
@@ -219,7 +219,7 @@ pub fn is_document_editor_item(item: &WorkspaceItem) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use lilia_desktop_application::{
+    use crate::application::{
         BufferId, BufferRevision, BufferSnapshot, DocumentId, DocumentSnapshot,
     };
 

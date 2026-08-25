@@ -7,7 +7,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
-use lilia_desktop_application::{
+use crate::application::{
     DesktopHostContext, DesktopHostError, DesktopHostResult, DesktopUpdateAction,
     DesktopUpdateResult,
 };

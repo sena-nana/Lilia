@@ -19,8 +19,16 @@ base64 = "0.22.1"
 fs2 = "0.4.3"
 libloading = "0.9.0"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
+ignore = "0.4.26"
+notify = "6.1.1"
+thiserror = { workspace = true }
+tempfile = { workspace = true }
+portable-pty = { workspace = true }
+vt100 = { workspace = true }
+mutsuki-runtime-contracts = { workspace = true }
+mutsuki-runtime-host = { workspace = true }
+mutsuki-runtime-sdk = { workspace = true }
 lilia-contracts = { workspace = true }
-lilia-desktop-application = { workspace = true }
 lilia-feature-agent-session = { workspace = true }
 lilia-feature-composer = { workspace = true }
 lilia-feature-architecture = { workspace = true }
@@ -52,8 +60,8 @@ minisign-verify = "0.2.5"
 mutsuki-agent-contracts = { workspace = true }
 nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "bdc537d7fd31b1c29a3611ad7b023e1b891a7534", features = ["bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "image-viewer", "math", "overlays", "popover", "qr-code", "rich-text", "selects", "settings-components", "surfaces", "syntax-highlighting"] }
 nana-ui-platform = { git = "https://github.com/sena-nana/NanaUI.git", rev = "bdc537d7fd31b1c29a3611ad7b023e1b891a7534", package = "nana-ui-platform" }
-reqwest = { workspace = true }
-rusqlite = { workspace = true }
+reqwest = { workspace = true, features = ["form", "query"] }
+rusqlite = { workspace = true, features = ["backup"] }
 semver = "1.0.28"
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -81,8 +89,10 @@ windows = { version = "0.62.2", features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Graphics_Imaging",
+  "Win32_Security",
   "Win32_System_Com",
   "Win32_System_Diagnostics_ToolHelp",
+  "Win32_System_JobObjects",
   "Win32_System_LibraryLoader",
   "Win32_System_Power",
   "Win32_System_ProcessStatus",
@@ -91,3 +101,6 @@ windows = { version = "0.62.2", features = [
   "Win32_UI_Shell",
   "Win32_UI_WindowsAndMessaging",
 ] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

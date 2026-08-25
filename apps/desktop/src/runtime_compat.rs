@@ -1,6 +1,4 @@
-use nana_ui::{
-    RuntimeProgramContext, RuntimeProgramUpdate, WindowChromeAction,
-};
+use nana_ui::{RuntimeProgramContext, RuntimeProgramUpdate, WindowChromeAction};
 use nana_ui_platform::{WindowCommand, WindowEvent, WindowGeometry, WindowId, WindowSettings};
 
 pub type HostedProgramContext<M> = RuntimeProgramContext<M>;
@@ -89,7 +87,13 @@ pub fn window_event_id(event: &WindowEvent) -> WindowId {
     }
 }
 
-pub fn tool_window_settings(title: impl Into<String>, width: f64, height: f64, min_width: f64, min_height: f64) -> WindowSettings {
+pub fn tool_window_settings(
+    title: impl Into<String>,
+    width: f64,
+    height: f64,
+    min_width: f64,
+    min_height: f64,
+) -> WindowSettings {
     let mut settings = WindowSettings::new(title)
         .initial_size(width, height)
         .minimum_size(min_width, min_height);
@@ -98,7 +102,9 @@ pub fn tool_window_settings(title: impl Into<String>, width: f64, height: f64, m
     settings
 }
 
-pub fn startup_document(status: &str) -> Result<nana_ui::runtime::RuntimeDocument, nana_ui::runtime::FrameworkError> {
+pub fn startup_document(
+    status: &str,
+) -> Result<nana_ui::runtime::RuntimeDocument, nana_ui::runtime::FrameworkError> {
     let document_id = nana_ui::runtime::DocumentId::new(1).expect("startup document id");
     let mut document = nana_ui::runtime::RuntimeDocument::new(document_id);
     let title = document
@@ -135,9 +141,6 @@ mod tests {
             }),
             id
         );
-        assert_eq!(
-            window_event_id(&WindowEvent::FileHoverCancelled { id }),
-            id
-        );
+        assert_eq!(window_event_id(&WindowEvent::FileHoverCancelled { id }), id);
     }
 }

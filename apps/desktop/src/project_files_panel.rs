@@ -1,13 +1,10 @@
-use lilia_desktop_application::{ProjectFileEntry, ProjectFileKind, ProjectFilesSnapshot};
+use crate::application::{ProjectFileEntry, ProjectFileKind, ProjectFilesSnapshot};
 use nana_ui::runtime::TreeView;
 use nana_ui::{Icon, TreeNode};
 
 use crate::target_ids;
 
-pub fn project_files_tree(
-    snapshot: &ProjectFilesSnapshot,
-    selected: Option<&str>,
-) -> TreeView {
+pub fn project_files_tree(snapshot: &ProjectFilesSnapshot, selected: Option<&str>) -> TreeView {
     TreeView::new(
         snapshot
             .entries
@@ -16,7 +13,10 @@ pub fn project_files_tree(
     )
 }
 
-fn project_file_runtime_node(entry: &ProjectFileEntry, selected: Option<&str>) -> TreeNode<std::sync::Arc<str>> {
+fn project_file_runtime_node(
+    entry: &ProjectFileEntry,
+    selected: Option<&str>,
+) -> TreeNode<std::sync::Arc<str>> {
     let id = std::sync::Arc::<str>::from(entry.relative_path.as_str());
     let node = match entry.kind {
         ProjectFileKind::Directory => TreeNode::branch(

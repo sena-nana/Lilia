@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lilia_desktop_application::{
+use crate::application::{
     CredentialImportDecision, DesktopApplicationConfig, DesktopDataImportService,
     DesktopImportExecutionOptions, DesktopImportPlan, DesktopImportReport,
     DesktopImportReportStatus,
@@ -272,7 +272,7 @@ fn report_result(report: DesktopImportReport) -> Result<CliResult, String> {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use lilia_desktop_application::{DesktopImportItemKind, DesktopImportReportItemStatus};
+    use crate::application::{DesktopImportItemKind, DesktopImportReportItemStatus};
 
     use super::*;
 

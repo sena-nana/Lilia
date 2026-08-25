@@ -1,5 +1,7 @@
 #![recursion_limit = "256"]
 
+pub mod application;
+
 #[cfg(debug_assertions)]
 mod agent_debug;
 mod ask_user;
@@ -12,9 +14,9 @@ mod debug_timeline;
 mod desktop;
 mod document_editor;
 mod host;
-mod kernel_host;
 mod iab_panel;
 mod iab_window;
+mod kernel_host;
 mod markdown_images;
 mod pending_import;
 mod project_files_panel;
@@ -23,6 +25,7 @@ mod runtime_compat;
 mod runtime_layout;
 mod runtime_shell;
 mod runtime_windows;
+mod shell;
 mod shell_integration;
 mod single_instance;
 mod startup_window;
@@ -34,7 +37,7 @@ mod text_editor_state;
 mod updater;
 mod windows_identity;
 
-use desktop::{LiliaDesktopProgram, PRODUCT_NAME};
+use desktop::{LiliaShell, PRODUCT_NAME};
 use nana_ui::{run_runtime, RuntimeWindowSettings};
 
 #[no_mangle]
@@ -90,7 +93,7 @@ fn run_application() -> i32 {
             return 2;
         }
     };
-    let request = lilia_desktop_application::DesktopCliRequest {
+    let request = crate::application::DesktopCliRequest {
         request_id: uuid::Uuid::new_v4().to_string(),
         arguments: launch_arguments
             .into_iter()
@@ -135,7 +138,7 @@ fn run_application() -> i32 {
         settings = state.apply_to_settings(settings);
     }
 
-    match run_runtime::<LiliaDesktopProgram>(settings) {
+    match run_runtime::<LiliaShell>(settings) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("{PRODUCT_NAME} failed: {error}");

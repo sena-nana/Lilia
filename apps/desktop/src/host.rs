@@ -1,4 +1,4 @@
-use lilia_desktop_application::{
+use crate::application::{
     DesktopClipboardImage, DesktopCredentialAction, DesktopCredentialImportEntry,
     DesktopFileDialogRequest, DesktopHost, DesktopHostAction, DesktopHostContext, DesktopHostError,
     DesktopHostResult, DesktopSecret, DesktopUpdateAction,
@@ -157,7 +157,7 @@ fn import_confirmed_credentials(
         ));
     }
 
-    let mut result = lilia_desktop_application::HostCredentialImportResult {
+    let mut result = crate::application::HostCredentialImportResult {
         imported: 0,
         skipped: 0,
         failed: 0,
@@ -247,7 +247,7 @@ fn host_error(error: PlatformError) -> DesktopHostError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lilia_desktop_application::DesktopUpdateAction;
+    use crate::application::DesktopUpdateAction;
 
     #[cfg(windows)]
     #[test]
@@ -295,7 +295,7 @@ mod tests {
         assert_eq!(
             result,
             DesktopHostResult::CredentialImport(
-                lilia_desktop_application::HostCredentialImportResult {
+                crate::application::HostCredentialImportResult {
                     imported: 1,
                     skipped: 1,
                     failed: 2,

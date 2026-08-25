@@ -557,7 +557,10 @@ pub enum ShellIntent {
     CloseAutomations,
     ConfirmDestructive,
     CancelDestructive,
-    SelectPaneTab { pane_id: String, item_id: Option<String> },
+    SelectPaneTab {
+        pane_id: String,
+        item_id: Option<String>,
+    },
     ReorderPaneTab {
         pane_id: String,
         item_id: String,
@@ -604,20 +607,67 @@ pub enum ShellIntent {
     RefreshArchitecture,
     RollbackArchitecture,
     ArchitectureGraph(nana_ui::GraphCanvasEvent),
-    RespondApproval { request_id: String, approved: bool },
-    RespondTitle { request_id: String, accepted: bool },
-    RespondArchitecture { request_id: String, approved: bool },
-    RespondPlan { request_id: String, action: String },
-    RespondToolConsent { request_id: String, approved: bool },
-    ToolConsentDraftChanged { request_id: String, command: String, message: String },
-    AskUserPending { request_id: String, action: String, value: String },
-    PendingDraftChanged { request_id: String, value: String },
-    SelectPendingOption { request_id: String, option_id: String },
-    RespondMcp { request_id: String, action: String },
-    McpFieldChanged { request_id: String, field_key: String, value: String },
-    McpRawJsonChanged { request_id: String, value: String },
-    McpToggleOption { request_id: String, field_key: String, value: String, multi: bool },
-    McpToggleBoolean { request_id: String, field_key: String },
+    RespondApproval {
+        request_id: String,
+        approved: bool,
+    },
+    RespondTitle {
+        request_id: String,
+        accepted: bool,
+    },
+    RespondArchitecture {
+        request_id: String,
+        approved: bool,
+    },
+    RespondPlan {
+        request_id: String,
+        action: String,
+    },
+    RespondToolConsent {
+        request_id: String,
+        approved: bool,
+    },
+    ToolConsentDraftChanged {
+        request_id: String,
+        command: String,
+        message: String,
+    },
+    AskUserPending {
+        request_id: String,
+        action: String,
+        value: String,
+    },
+    PendingDraftChanged {
+        request_id: String,
+        value: String,
+    },
+    SelectPendingOption {
+        request_id: String,
+        option_id: String,
+    },
+    RespondMcp {
+        request_id: String,
+        action: String,
+    },
+    McpFieldChanged {
+        request_id: String,
+        field_key: String,
+        value: String,
+    },
+    McpRawJsonChanged {
+        request_id: String,
+        value: String,
+    },
+    McpToggleOption {
+        request_id: String,
+        field_key: String,
+        value: String,
+        multi: bool,
+    },
+    McpToggleBoolean {
+        request_id: String,
+        field_key: String,
+    },
     OpenMarkdownLink(String),
     CloneRepositoryChanged(String),
     PickCloneParent,
@@ -669,7 +719,10 @@ pub enum ShellIntent {
     RefreshProjectFiles,
     ProviderSecretChanged(String),
     SaveProviderCredential,
-    RevokeProviderCredential { credential_id: String, revision: u64 },
+    RevokeProviderCredential {
+        credential_id: String,
+        revision: u64,
+    },
     ProviderModelChanged(String),
     ProviderOpenAiEndpointChanged(String),
     ProviderAnthropicEndpointChanged(String),
@@ -1037,7 +1090,11 @@ fn composer_view(snapshot: &PrimaryShellSnapshot) -> TextArea {
         TextArea::new(snapshot.composer.clone())
             .placeholder(snapshot.composer_placeholder.clone())
             .disabled(snapshot.composer_disabled)
-            .height(snapshot.composer_height.clamp(COMPOSER_MIN_HEIGHT, COMPOSER_MAX_HEIGHT)),
+            .height(
+                snapshot
+                    .composer_height
+                    .clamp(COMPOSER_MIN_HEIGHT, COMPOSER_MAX_HEIGHT),
+            ),
     )
 }
 
@@ -1218,15 +1275,11 @@ pub fn mount_primary_shell(
     )?;
 
     let title_center = context.create_detached_component(document_id, HostStack::bar(6.0))?;
-    let title_parent = context.create_detached_component(
-        document_id,
-        breadcrumb_parent(&snapshot.title_parent),
-    )?;
+    let title_parent = context
+        .create_detached_component(document_id, breadcrumb_parent(&snapshot.title_parent))?;
     let title_separator = context.create_detached_component(document_id, breadcrumb_separator())?;
-    let title_context = context.create_detached_component(
-        document_id,
-        breadcrumb_context(&snapshot.title_context),
-    )?;
+    let title_context = context
+        .create_detached_component(document_id, breadcrumb_context(&snapshot.title_context))?;
     context.append_child(title_center, title_parent)?;
     context.append_child(title_center, title_separator)?;
     context.append_child(title_center, title_context)?;
@@ -1449,10 +1502,8 @@ pub fn mount_primary_shell(
         document_id,
         HostStack::trigger_slot(PLUS_SLOT_SIZE, PLUS_SLOT_SIZE),
     )?;
-    let plus_menu = context.create_detached_component(
-        document_id,
-        composer_plus_menu(snapshot.composer_plus_open),
-    )?;
+    let plus_menu = context
+        .create_detached_component(document_id, composer_plus_menu(snapshot.composer_plus_open))?;
     context.on(plus_menu, {
         let sink = Arc::clone(&sink);
         move |_, _: &PopoverToggled, _| emit(&sink, ShellIntent::ToggleComposerPlus)
@@ -1512,11 +1563,10 @@ pub fn mount_primary_shell(
     context.append_child(extras, permission_slot)?;
     let pending_panel = context.create_detached_component(document_id, HostStack::column(8.0))?;
     let pending_title = context.create_detached_component(document_id, Text::new(String::new()))?;
-    let pending_prompt = context.create_detached_component(document_id, Text::new(String::new()))?;
-    let pending_draft = context.create_detached_component(
-        document_id,
-        TextArea::new(String::new()).height(48.0),
-    )?;
+    let pending_prompt =
+        context.create_detached_component(document_id, Text::new(String::new()))?;
+    let pending_draft = context
+        .create_detached_component(document_id, TextArea::new(String::new()).height(48.0))?;
     let pending_request = Arc::new(Mutex::new(String::new()));
     let pending_tool_command_value = Arc::new(Mutex::new(String::new()));
     let pending_tool_message_value = Arc::new(Mutex::new(String::new()));
@@ -1537,10 +1587,8 @@ pub fn mount_primary_shell(
             );
         }
     })?;
-    let pending_tool_command = context.create_detached_component(
-        document_id,
-        TextArea::new(String::new()).height(48.0),
-    )?;
+    let pending_tool_command = context
+        .create_detached_component(document_id, TextArea::new(String::new()).height(48.0))?;
     context.on(pending_tool_command, {
         let sink = Arc::clone(&sink);
         let pending_request = Arc::clone(&pending_request);
@@ -1568,10 +1616,8 @@ pub fn mount_primary_shell(
             );
         }
     })?;
-    let pending_tool_message = context.create_detached_component(
-        document_id,
-        TextArea::new(String::new()).height(48.0),
-    )?;
+    let pending_tool_message = context
+        .create_detached_component(document_id, TextArea::new(String::new()).height(48.0))?;
     context.on(pending_tool_message, {
         let sink = Arc::clone(&sink);
         let pending_request = Arc::clone(&pending_request);
@@ -1602,11 +1648,14 @@ pub fn mount_primary_shell(
     context.append_child(pending_panel, pending_title)?;
     context.append_child(pending_panel, pending_prompt)?;
     let actions = context.create_detached_component(document_id, HostStack::row(6.0))?;
-    let send = context.create_detached_component(document_id, composer_send_button(snapshot.can_send))?;
+    let send =
+        context.create_detached_component(document_id, composer_send_button(snapshot.can_send))?;
     bind_activate(context, send, Arc::clone(&sink), ShellIntent::SubmitTurn)?;
     context.append_child(actions, send)?;
-    let composer_toolbar =
-        context.create_detached_component(document_id, HostStack::bar(8.0).justify(JustifySpec::SpaceBetween))?;
+    let composer_toolbar = context.create_detached_component(
+        document_id,
+        HostStack::bar(8.0).justify(JustifySpec::SpaceBetween),
+    )?;
     context.append_child(composer_toolbar, extras)?;
     context.append_child(composer_toolbar, actions)?;
     context.append_child(composer_dock, pending_panel)?;
@@ -1618,7 +1667,10 @@ pub fn mount_primary_shell(
 
     let settings_sidebar = context.create_detached_component(
         document_id,
-        SettingsSidebar::new(snapshot.settings.model.clone(), snapshot.settings.state.clone()),
+        SettingsSidebar::new(
+            snapshot.settings.model.clone(),
+            snapshot.settings.state.clone(),
+        ),
     )?;
     context.on(settings_sidebar, {
         let sink = Arc::clone(&sink);
@@ -1649,7 +1701,8 @@ pub fn mount_primary_shell(
         .create_detached_component(document_id, HostStack::fill_column(10.0).padding(4.0))?;
     let settings_card =
         context.create_detached_component(document_id, SettingsCard::new(String::new()))?;
-    let product_heading = context.create_detached_component(document_id, Text::new(String::new()))?;
+    let product_heading =
+        context.create_detached_component(document_id, Text::new(String::new()))?;
     let product_body = context.create_detached_component(document_id, Text::new(String::new()))?;
     let product_error = context.create_detached_component(document_id, Text::new(String::new()))?;
     let shortcut_capture =
@@ -1687,8 +1740,11 @@ pub fn mount_primary_shell(
     context.append_child(product_settings, settings_card)?;
     let settings_page = context.create_detached_component(
         document_id,
-        SettingsPage::new(snapshot.settings.model.clone(), snapshot.settings.state.clone())
-            .content(appearance.stable_id()),
+        SettingsPage::new(
+            snapshot.settings.model.clone(),
+            snapshot.settings.state.clone(),
+        )
+        .content(appearance.stable_id()),
     )?;
 
     let workspace_page =
@@ -1706,14 +1762,10 @@ pub fn mount_primary_shell(
     context.on(pane_tabs, move |_, event: &TabsEvent, _| {
         emit(&pane_sink, workspace_tabs_intent(event));
     })?;
-    let pane_split_h = context.create_detached_component(
-        document_id,
-        extra_button("左右分栏", ButtonKind::Text),
-    )?;
-    let pane_split_v = context.create_detached_component(
-        document_id,
-        extra_button("上下分栏", ButtonKind::Text),
-    )?;
+    let pane_split_h = context
+        .create_detached_component(document_id, extra_button("左右分栏", ButtonKind::Text))?;
+    let pane_split_v = context
+        .create_detached_component(document_id, extra_button("上下分栏", ButtonKind::Text))?;
     bind_activate(
         context,
         pane_split_h,
@@ -1726,14 +1778,10 @@ pub fn mount_primary_shell(
         Arc::clone(&sink),
         ShellIntent::SplitWorkspaceVertical,
     )?;
-    let pane_move_window = context.create_detached_component(
-        document_id,
-        extra_button("移至新窗口", ButtonKind::Text),
-    )?;
-    let pane_move_next = context.create_detached_component(
-        document_id,
-        extra_button("移至下一窗格", ButtonKind::Text),
-    )?;
+    let pane_move_window = context
+        .create_detached_component(document_id, extra_button("移至新窗口", ButtonKind::Text))?;
+    let pane_move_next = context
+        .create_detached_component(document_id, extra_button("移至下一窗格", ButtonKind::Text))?;
     bind_activate(
         context,
         pane_move_window,
@@ -1746,8 +1794,7 @@ pub fn mount_primary_shell(
         Arc::clone(&sink),
         ShellIntent::MovePaneToNext,
     )?;
-    let pane_body =
-        context.create_detached_component(document_id, HostStack::fill_column(0.0))?;
+    let pane_body = context.create_detached_component(document_id, HostStack::fill_column(0.0))?;
     let pane_chrome = context.create_detached_component(
         document_id,
         PaneChrome::new()
@@ -1775,9 +1822,10 @@ pub fn mount_primary_shell(
         .create_detached_component(document_id, HostStack::fill_column(12.0).padding(16.0))?;
     let workspace_heading =
         context.create_detached_component(document_id, Text::new(String::new()))?;
-    let workspace_status = context.create_detached_component(document_id, Text::new(String::new()))?;
-    let workspace_editor =
-        context.create_detached_component(document_id, fill_workspace_editor(String::new(), None))?;
+    let workspace_status =
+        context.create_detached_component(document_id, Text::new(String::new()))?;
+    let workspace_editor = context
+        .create_detached_component(document_id, fill_workspace_editor(String::new(), None))?;
     let workspace_editor_sink = Arc::clone(&sink);
     context.on(workspace_editor, move |_, event: &TextChanged, _| {
         emit(
@@ -1788,20 +1836,19 @@ pub fn mount_primary_shell(
     let workspace_tree =
         context.create_detached_component(document_id, TreeView::new(Vec::new()))?;
     let tree_sink = Arc::clone(&sink);
-    context.on(workspace_tree, move |_, event: &TreeViewEvent<Arc<str>>, _| {
-        match event {
+    context.on(
+        workspace_tree,
+        move |_, event: &TreeViewEvent<Arc<str>>, _| match event {
             TreeViewEvent::Toggle(path) => {
                 emit(&tree_sink, ShellIntent::ToggleProjectFile(path.to_string()));
             }
             TreeViewEvent::Select(path) => {
                 emit(&tree_sink, ShellIntent::OpenProjectFile(path.to_string()));
             }
-        }
-    })?;
-    let workspace_input = context.create_detached_component(
-        document_id,
-        TextArea::new(String::new()).height(72.0),
+        },
     )?;
+    let workspace_input = context
+        .create_detached_component(document_id, TextArea::new(String::new()).height(72.0))?;
     let workspace_input_sink = Arc::clone(&sink);
     context.on(workspace_input, move |_, event: &TextChanged, _| {
         emit(
@@ -1809,8 +1856,7 @@ pub fn mount_primary_shell(
             ShellIntent::TerminalInput(event.value.clone()),
         );
     })?;
-    let workspace_actions =
-        context.create_detached_component(document_id, HostStack::row(8.0))?;
+    let workspace_actions = context.create_detached_component(document_id, HostStack::row(8.0))?;
     context.append_child(workspace_content, workspace_heading)?;
     context.append_child(workspace_content, workspace_status)?;
     context.append_child(workspace_content, workspace_tree)?;
@@ -1821,29 +1867,42 @@ pub fn mount_primary_shell(
 
     let inspector = context
         .create_detached_component(document_id, HostStack::fill_column(8.0).padding(12.0))?;
-    let inspector_heading =
-        context.create_detached_component(document_id, Text::new(snapshot.inspector_title.clone()))?;
-    let inspector_body =
-        context.create_detached_component(document_id, Text::new(snapshot.inspector_body.clone()))?;
+    let inspector_heading = context
+        .create_detached_component(document_id, Text::new(snapshot.inspector_title.clone()))?;
+    let inspector_body = context
+        .create_detached_component(document_id, Text::new(snapshot.inspector_body.clone()))?;
     context.append_child(inspector, inspector_heading)?;
     context.append_child(inspector, inspector_body)?;
-    let inspector_todos =
-        context.create_detached_component(document_id, HostStack::column(4.0))?;
+    let inspector_todos = context.create_detached_component(document_id, HostStack::column(4.0))?;
     context.append_child(inspector, inspector_todos)?;
     let iab_url = context.create_detached_component(
         document_id,
-        TextArea::new(snapshot.iab_url.clone()).placeholder("地址").height(36.0),
+        TextArea::new(snapshot.iab_url.clone())
+            .placeholder("地址")
+            .height(36.0),
     )?;
     context.on(iab_url, {
         let sink = Arc::clone(&sink);
-        move |_, event: &TextChanged, _| emit(&sink, ShellIntent::IabUrlChanged(event.value.clone()))
+        move |_, event: &TextChanged, _| {
+            emit(&sink, ShellIntent::IabUrlChanged(event.value.clone()))
+        }
     })?;
-    let iab_navigate =
-        context.create_detached_component(document_id, extra_button("打开", ButtonKind::Primary))?;
-    let iab_open =
-        context.create_detached_component(document_id, extra_button("新窗口", ButtonKind::Subtle))?;
-    bind_activate(context, iab_navigate, Arc::clone(&sink), ShellIntent::IabNavigate)?;
-    bind_activate(context, iab_open, Arc::clone(&sink), ShellIntent::IabOpenWindow)?;
+    let iab_navigate = context
+        .create_detached_component(document_id, extra_button("打开", ButtonKind::Primary))?;
+    let iab_open = context
+        .create_detached_component(document_id, extra_button("新窗口", ButtonKind::Subtle))?;
+    bind_activate(
+        context,
+        iab_navigate,
+        Arc::clone(&sink),
+        ShellIntent::IabNavigate,
+    )?;
+    bind_activate(
+        context,
+        iab_open,
+        Arc::clone(&sink),
+        ShellIntent::IabOpenWindow,
+    )?;
     context.append_child(inspector, iab_url)?;
     context.append_child(inspector, iab_navigate)?;
     context.append_child(inspector, iab_open)?;
@@ -1853,7 +1912,9 @@ pub fn mount_primary_shell(
         context.create_detached_component(document_id, HostStack::fill_column(8.0))?;
     let coding_query = context.create_detached_component(
         document_id,
-        TextArea::new(String::new()).placeholder("搜索工作区").height(36.0),
+        TextArea::new(String::new())
+            .placeholder("搜索工作区")
+            .height(36.0),
     )?;
     context.on(coding_query, {
         let sink = Arc::clone(&sink);
@@ -1864,8 +1925,8 @@ pub fn mount_primary_shell(
     context.append_child(coding_panel, coding_query)?;
     context.append_child(inspector, coding_panel)?;
 
-    let automations_page =
-        context.create_detached_component(document_id, HostStack::fill_column(10.0).padding(16.0))?;
+    let automations_page = context
+        .create_detached_component(document_id, HostStack::fill_column(10.0).padding(16.0))?;
     let automation_list =
         context.create_detached_component(document_id, HostStack::leading_row(8.0))?;
     let automation_actions =
@@ -1906,13 +1967,14 @@ pub fn mount_primary_shell(
         document_id,
         SidebarSection::new("自动化").count(snapshot.automations.len()),
     )?;
-    let automations_footer = context.create_detached_component(document_id, SidebarFooter::new())?;
+    let automations_footer =
+        context.create_detached_component(document_id, SidebarFooter::new())?;
     let automations_refresh = context.create_detached_component(
         document_id,
         SidebarFooterButton::new("刷新", Icon::Workspace),
     )?;
-    let automations_new =
-        context.create_detached_component(document_id, SidebarFooterButton::new("新建", Icon::Add))?;
+    let automations_new = context
+        .create_detached_component(document_id, SidebarFooterButton::new("新建", Icon::Add))?;
     bind_activate(
         context,
         automations_refresh,
@@ -1939,10 +2001,12 @@ pub fn mount_primary_shell(
     context.append_child(automations_sidebar, automations_section)?;
     context.append_child(automations_sidebar, automations_footer)?;
 
-    let project_page =
-        context.create_detached_component(document_id, HostStack::fill_column(12.0).padding(16.0))?;
-    let project_page_title = context.create_detached_component(document_id, Text::new(String::new()))?;
-    let project_page_body = context.create_detached_component(document_id, Text::new(String::new()))?;
+    let project_page = context
+        .create_detached_component(document_id, HostStack::fill_column(12.0).padding(16.0))?;
+    let project_page_title =
+        context.create_detached_component(document_id, Text::new(String::new()))?;
+    let project_page_body =
+        context.create_detached_component(document_id, Text::new(String::new()))?;
     let architecture_canvas = context.create_detached_component(
         document_id,
         GraphCanvas::new("architecture", snapshot.architecture_graph.clone())
@@ -2244,7 +2308,9 @@ impl ShellHandles {
         })?;
         context.update_component(self.search_input, |editor, _| {
             if editor.state.value != snapshot.sidebar_search_query {
-                editor.state.replace_value(snapshot.sidebar_search_query.clone());
+                editor
+                    .state
+                    .replace_value(snapshot.sidebar_search_query.clone());
             }
         })?;
         context.update_component(self.provider_badge, |button, _| {
@@ -2375,10 +2441,7 @@ impl ShellHandles {
                     y,
                 } if target_window == window_id => {
                     if target.contains("timeline") {
-                        let _ = context.scroll_by(
-                            self.timeline_scroll,
-                            ScrollOffset { x, y },
-                        )?;
+                        let _ = context.scroll_by(self.timeline_scroll, ScrollOffset { x, y })?;
                     }
                 }
                 _ => {}
@@ -2459,10 +2522,7 @@ impl ShellHandles {
             .map(|node| node.document)
             .ok_or(FrameworkError::MissingView(self.sidebar_top.stable_id()))?;
         let top = if snapshot.sidebar_search_open {
-            vec![
-                self.search_input.stable_id(),
-                self.search_close.stable_id(),
-            ]
+            vec![self.search_input.stable_id(), self.search_close.stable_id()]
         } else {
             vec![
                 self.new_conversation.stable_id(),
@@ -2636,14 +2696,15 @@ impl ShellHandles {
             } else {
                 // Nested session rows read as children of their project through
                 // indentation alone; a glyph there only competes with the label.
-                let leading = if item.depth == 0 {
-                    Some(
-                        context
-                            .create_detached_component(document_id, SidebarRowIcon::new(item.icon))?,
-                    )
-                } else {
-                    None
-                };
+                let leading =
+                    if item.depth == 0 {
+                        Some(context.create_detached_component(
+                            document_id,
+                            SidebarRowIcon::new(item.icon),
+                        )?)
+                    } else {
+                        None
+                    };
                 let mut row_view = SidebarRow::new(item.label.clone())
                     .state(state)
                     .depth(item.depth)
@@ -2679,18 +2740,10 @@ impl ShellHandles {
         groups: &SidebarRowGroups,
     ) -> Result<(), FrameworkError> {
         let mut keep = HashSet::new();
-        let session_order = self.sync_sidebar_row_group(
-            context,
-            document_id,
-            &groups.sessions,
-            &mut keep,
-        )?;
-        let project_order = self.sync_sidebar_row_group(
-            context,
-            document_id,
-            &groups.projects,
-            &mut keep,
-        )?;
+        let session_order =
+            self.sync_sidebar_row_group(context, document_id, &groups.sessions, &mut keep)?;
+        let project_order =
+            self.sync_sidebar_row_group(context, document_id, &groups.projects, &mut keep)?;
         let inbox_order =
             self.sync_sidebar_row_group(context, document_id, &groups.inbox, &mut keep)?;
         let stale: Vec<_> = self
@@ -2723,8 +2776,8 @@ impl ShellHandles {
                 })?;
                 interrupt
             } else {
-                let interrupt =
-                    context.create_detached_component(document_id, composer_interrupt_button(true))?;
+                let interrupt = context
+                    .create_detached_component(document_id, composer_interrupt_button(true))?;
                 bind_activate(
                     context,
                     interrupt,
@@ -2818,10 +2871,7 @@ impl ShellHandles {
         reconcile_children(
             context,
             self.composer_toolbar.stable_id(),
-            &[
-                self.extras.stable_id(),
-                self.composer_actions.stable_id(),
-            ],
+            &[self.extras.stable_id(), self.composer_actions.stable_id()],
         )
     }
 
@@ -2957,7 +3007,11 @@ impl ShellHandles {
                                 context,
                                 document_id,
                                 &id,
-                                if field.enabled { "已开启" } else { "已关闭" },
+                                if field.enabled {
+                                    "已开启"
+                                } else {
+                                    "已关闭"
+                                },
                                 if field.enabled {
                                     ButtonKind::Primary
                                 } else {
@@ -3034,7 +3088,11 @@ impl ShellHandles {
                     context,
                     document_id,
                     &id,
-                    if ask.other_selected { "✓ 其他" } else { "其他" },
+                    if ask.other_selected {
+                        "✓ 其他"
+                    } else {
+                        "其他"
+                    },
                     if ask.other_selected {
                         ButtonKind::Primary
                     } else {
@@ -3435,11 +3493,7 @@ impl ShellHandles {
         let mut keep = HashSet::new();
         let mut order = vec![self.coding_query.stable_id()];
         for (id, label, intent) in [
-            (
-                "coding-search",
-                "搜索",
-                ShellIntent::SearchCoding,
-            ),
+            ("coding-search", "搜索", ShellIntent::SearchCoding),
             (
                 "coding-refresh",
                 if coding.busy { "处理中" } else { "刷新" },
@@ -3550,8 +3604,8 @@ impl ShellHandles {
             })?;
             Ok(button)
         } else {
-            let button =
-                context.create_detached_component(document_id, extra_button(label, ButtonKind::Subtle))?;
+            let button = context
+                .create_detached_component(document_id, extra_button(label, ButtonKind::Subtle))?;
             bind_activate(context, button, Arc::clone(&self.sink), intent)?;
             self.coding_rows.insert(id.to_owned(), button);
             Ok(button)
@@ -3721,7 +3775,8 @@ impl ShellHandles {
                 }
             }
         }
-        let cards: Vec<(String, String, String, Option<ShellIntent>)> = match snapshot.project_page {
+        let cards: Vec<(String, String, String, Option<ShellIntent>)> = match snapshot.project_page
+        {
             Some(ShellProjectPage::Overview) => snapshot
                 .project_cards
                 .iter()
@@ -3765,9 +3820,12 @@ impl ShellHandles {
             let card = if let Some(card) = self.project_cards.get(&id).copied() {
                 card
             } else {
-                let card = context.create_detached_component(document_id, InteractiveCard::new())?;
-                let heading = context.create_detached_component(document_id, Text::new(title.clone()))?;
-                let body = context.create_detached_component(document_id, Text::new(subtitle.clone()))?;
+                let card =
+                    context.create_detached_component(document_id, InteractiveCard::new())?;
+                let heading =
+                    context.create_detached_component(document_id, Text::new(title.clone()))?;
+                let body =
+                    context.create_detached_component(document_id, Text::new(subtitle.clone()))?;
                 context.append_child(card, heading)?;
                 context.append_child(card, body)?;
                 if let Some(intent) = intent {
@@ -3953,8 +4011,8 @@ impl ShellHandles {
             })?;
             Ok(button)
         } else {
-            let button =
-                context.create_detached_component(document_id, extra_button(label, ButtonKind::Subtle))?;
+            let button = context
+                .create_detached_component(document_id, extra_button(label, ButtonKind::Subtle))?;
             bind_activate(context, button, Arc::clone(&self.sink), intent)?;
             self.timeline_actions.insert(id.to_owned(), button);
             Ok(button)
@@ -4050,9 +4108,7 @@ impl ShellHandles {
             .extra_buttons
             .keys()
             .filter(|key| {
-                !keep.contains(*key)
-                    && !key.starts_with("pending-")
-                    && !key.starts_with("project-")
+                !keep.contains(*key) && !key.starts_with("pending-") && !key.starts_with("project-")
             })
             .cloned()
             .collect();
@@ -4093,7 +4149,9 @@ impl ShellHandles {
         })?;
         context.update_component(self.project_name, |editor, _| {
             if editor.state.value != snapshot.settings.project_name {
-                editor.state.replace_value(snapshot.settings.project_name.clone());
+                editor
+                    .state
+                    .replace_value(snapshot.settings.project_name.clone());
             }
             editor.disabled = !show_project;
         })?;
@@ -4194,9 +4252,7 @@ impl ShellHandles {
             .chain(self.form_fields.keys())
             .chain(self.form_switches.keys())
             .filter(|key| {
-                !keep.contains(*key)
-                    && !key.starts_with("project-")
-                    && !key.starts_with("pending-")
+                !keep.contains(*key) && !key.starts_with("project-") && !key.starts_with("pending-")
             })
             .cloned()
             .collect();
@@ -4630,7 +4686,8 @@ impl ShellHandles {
         document_id: DocumentId,
         snapshot: &PrimaryShellSnapshot,
     ) -> Result<(), FrameworkError> {
-        let (title, status, editor, disabled, language) = if let Some(document) = &snapshot.document {
+        let (title, status, editor, disabled, language) = if let Some(document) = &snapshot.document
+        {
             (
                 document.title.clone(),
                 document.status.clone(),
@@ -4849,8 +4906,7 @@ impl ShellHandles {
                 .filter(|action| {
                     matches!(
                         action.kind,
-                        PaneChromeActionKind::SplitHorizontal
-                            | PaneChromeActionKind::SplitVertical
+                        PaneChromeActionKind::SplitHorizontal | PaneChromeActionKind::SplitVertical
                     )
                 })
                 .cloned()
@@ -4987,20 +5043,16 @@ impl ShellHandles {
             ),
         ] {
             keep.insert(id.to_owned());
-            let button = self.upsert_chrome_button(
-                context,
-                document_id,
-                id,
-                label,
-                kind,
-                intent,
-            )?;
+            let button =
+                self.upsert_chrome_button(context, document_id, id, label, kind, intent)?;
             actions.push(button.stable_id());
         }
         reconcile_children(context, self.automation_actions.stable_id(), &actions)
     }
 
-    fn titlebar_more_items(snapshot: &PrimaryShellSnapshot) -> Vec<(&'static str, String, ShellIntent)> {
+    fn titlebar_more_items(
+        snapshot: &PrimaryShellSnapshot,
+    ) -> Vec<(&'static str, String, ShellIntent)> {
         let mut items = vec![
             (
                 "more-palette",
@@ -5193,8 +5245,7 @@ impl ShellHandles {
             return Ok(());
         } else if let Some(palette) = self.palette.take() {
             let _ = context.remove_view(palette);
-            self.focus_targets
-                .remove(target_ids::COMMAND_PALETTE_INPUT);
+            self.focus_targets.remove(target_ids::COMMAND_PALETTE_INPUT);
         }
 
         let mut overlays = Vec::new();
@@ -5387,20 +5438,19 @@ struct SidebarRowGroups {
 }
 
 fn sidebar_row_is_section_chrome(row: &ShellSidebarRow) -> bool {
-    matches!(
-        row.kind,
-        ShellSidebarKind::Header | ShellSidebarKind::Inbox
-    ) || matches!(
-        row.id.as_str(),
-        "sessions-empty" | "projects-empty" | "inbox-empty"
-    )
+    matches!(row.kind, ShellSidebarKind::Header | ShellSidebarKind::Inbox)
+        || matches!(
+            row.id.as_str(),
+            "sessions-empty" | "projects-empty" | "inbox-empty"
+        )
 }
 
 fn partition_sidebar_rows(snapshot: &PrimaryShellSnapshot) -> SidebarRowGroups {
     let grouped = !snapshot.sidebar_search_open
-        && snapshot.sidebar_rows.iter().any(|row| {
-            row.kind == ShellSidebarKind::Inbox || row.id == "projects-header"
-        });
+        && snapshot
+            .sidebar_rows
+            .iter()
+            .any(|row| row.kind == ShellSidebarKind::Inbox || row.id == "projects-header");
     let inbox_expanded = snapshot
         .sidebar_rows
         .iter()
@@ -5483,8 +5533,7 @@ fn mount_sidebar_section(
     title: &str,
     empty: Option<&str>,
     tool: Option<Entity<IconButton>>,
-) -> Result<(Entity<SidebarSection>, Entity<ListItem>, Entity<List>), FrameworkError>
-{
+) -> Result<(Entity<SidebarSection>, Entity<ListItem>, Entity<List>), FrameworkError> {
     let mut spec = SidebarSection::new(title);
     if let Some(empty) = empty {
         spec = spec.empty_text(empty);
@@ -5520,7 +5569,9 @@ fn sidebar_row_intent(row: &ShellSidebarRow) -> Option<ShellIntent> {
             TaskId::new(&row.id).ok().map(ShellIntent::SelectTask)
         }
         ShellSidebarKind::Inbox => Some(ShellIntent::ToggleSidebarInbox),
-        ShellSidebarKind::Reveal if row.id == "inbox-reveal" => Some(ShellIntent::RevealSidebarInbox),
+        ShellSidebarKind::Reveal if row.id == "inbox-reveal" => {
+            Some(ShellIntent::RevealSidebarInbox)
+        }
         ShellSidebarKind::Reveal => Some(ShellIntent::RevealSidebarProject(
             row.id.strip_prefix("reveal-").unwrap_or(&row.id).to_owned(),
         )),
@@ -5535,7 +5586,9 @@ struct SettingsAction {
     intent: ShellIntent,
 }
 
-fn settings_tab_copy(settings: &SettingsSnapshot) -> (String, String, Option<String>, bool, Vec<SettingsAction>) {
+fn settings_tab_copy(
+    settings: &SettingsSnapshot,
+) -> (String, String, Option<String>, bool, Vec<SettingsAction>) {
     match settings.state.active_tab().as_str() {
         "project" => (
             "项目".to_owned(),
@@ -5592,45 +5645,39 @@ fn settings_tab_copy(settings: &SettingsSnapshot) -> (String, String, Option<Str
                 actions
             },
         ),
-        "agent" => (
-            "Agent".to_owned(),
-            String::new(),
-            None,
-            false,
-            {
-                let mut actions: Vec<_> = settings
-                    .agent_actions
-                    .iter()
-                    .map(|action| SettingsAction {
-                        id: action.id.clone(),
-                        label: action.label.clone(),
-                        primary: false,
-                        intent: ShellIntent::ToggleAgent(action.id.clone()),
-                    })
-                    .collect();
+        "agent" => ("Agent".to_owned(), String::new(), None, false, {
+            let mut actions: Vec<_> = settings
+                .agent_actions
+                .iter()
+                .map(|action| SettingsAction {
+                    id: action.id.clone(),
+                    label: action.label.clone(),
+                    primary: false,
+                    intent: ShellIntent::ToggleAgent(action.id.clone()),
+                })
+                .collect();
+            actions.push(SettingsAction {
+                id: "new-agent".into(),
+                label: "新建 Agent".into(),
+                primary: true,
+                intent: ShellIntent::NewCustomAgent,
+            });
+            if settings.custom_agent_editor_open {
                 actions.push(SettingsAction {
-                    id: "new-agent".into(),
-                    label: "新建 Agent".into(),
+                    id: "save-agent".into(),
+                    label: "保存 Agent".into(),
                     primary: true,
-                    intent: ShellIntent::NewCustomAgent,
+                    intent: ShellIntent::SaveCustomAgent,
                 });
-                if settings.custom_agent_editor_open {
-                    actions.push(SettingsAction {
-                        id: "save-agent".into(),
-                        label: "保存 Agent".into(),
-                        primary: true,
-                        intent: ShellIntent::SaveCustomAgent,
-                    });
-                    actions.push(SettingsAction {
-                        id: "cancel-agent".into(),
-                        label: "取消编辑".into(),
-                        primary: false,
-                        intent: ShellIntent::CancelCustomAgentEdit,
-                    });
-                }
-                actions
-            },
-        ),
+                actions.push(SettingsAction {
+                    id: "cancel-agent".into(),
+                    label: "取消编辑".into(),
+                    primary: false,
+                    intent: ShellIntent::CancelCustomAgentEdit,
+                });
+            }
+            actions
+        }),
         "quota" => (
             "用量与额度".to_owned(),
             settings.quota_status.clone(),
@@ -5729,7 +5776,10 @@ fn settings_tab_copy(settings: &SettingsSnapshot) -> (String, String, Option<Str
                 let github = if settings.github_login.is_empty() {
                     format!("GitHub：{}", settings.github_state)
                 } else {
-                    format!("GitHub：{} · {}", settings.github_state, settings.github_login)
+                    format!(
+                        "GitHub：{} · {}",
+                        settings.github_state, settings.github_login
+                    )
                 };
                 let shortcut = if settings.shortcut_capturing {
                     "快捷键：正在录制，按下组合键".to_owned()
@@ -5826,13 +5876,7 @@ fn settings_tab_copy(settings: &SettingsSnapshot) -> (String, String, Option<Str
             .filter(|action| action.id != "execute-import" || settings.data_can_import)
             .collect(),
         ),
-        _ => (
-            String::new(),
-            String::new(),
-            None,
-            false,
-            Vec::new(),
-        ),
+        _ => (String::new(), String::new(), None, false, Vec::new()),
     }
 }
 
@@ -5892,22 +5936,22 @@ mod tests {
                 SettingsSnapshot {
                     model,
                     state,
-                appearance: AppearanceSettings::default(),
-                material_status: String::new(),
-                project_name: String::new(),
-                project_workspace: String::new(),
-                project_error: None,
-                providers: Vec::new(),
-                provider_status: String::new(),
-                agent_actions: Vec::new(),
-                quota_status: String::new(),
-                extensions_status: String::new(),
-                remote_status: String::new(),
-                remote_host_enabled: false,
-                remote_keep_awake: false,
-                desktop_status: String::new(),
-                data_status: String::new(),
-                data_can_import: false,
+                    appearance: AppearanceSettings::default(),
+                    material_status: String::new(),
+                    project_name: String::new(),
+                    project_workspace: String::new(),
+                    project_error: None,
+                    providers: Vec::new(),
+                    provider_status: String::new(),
+                    agent_actions: Vec::new(),
+                    quota_status: String::new(),
+                    extensions_status: String::new(),
+                    remote_status: String::new(),
+                    remote_host_enabled: false,
+                    remote_keep_awake: false,
+                    desktop_status: String::new(),
+                    data_status: String::new(),
+                    data_can_import: false,
                     provider_secret: String::new(),
                     provider_model: String::new(),
                     provider_openai_endpoint: String::new(),
@@ -5989,12 +6033,14 @@ mod tests {
 
     fn mounted_primary(
         snapshot: &PrimaryShellSnapshot,
-    ) -> (nana_ui::runtime::RuntimeDocument, ShellHandles, Option<StableNodeId>) {
+    ) -> (
+        nana_ui::runtime::RuntimeDocument,
+        ShellHandles,
+        Option<StableNodeId>,
+    ) {
         let (mut document, mut handles) =
             mount_primary_shell(snapshot, Arc::new(|_| {})).expect("mount shell");
-        handles
-            .sync(&mut document, snapshot)
-            .expect("sync shell");
+        handles.sync(&mut document, snapshot).expect("sync shell");
         let primary = document
             .context_mut()
             .read(handles.shell, |shell| shell.primary)
@@ -6082,7 +6128,10 @@ mod tests {
             .expect("composer dock style")
             .layout;
         assert_eq!(dock_layout.flex_grow, Some(0.0));
-        assert_eq!(dock_layout.height, Some(nana_ui::runtime::LengthSpec::Shrink));
+        assert_eq!(
+            dock_layout.height,
+            Some(nana_ui::runtime::LengthSpec::Shrink)
+        );
         assert_eq!(dock_layout.border_radius, Some(COMPOSER_CARD_RADIUS));
         assert_eq!(
             document
@@ -6249,7 +6298,10 @@ mod tests {
             .expect("conversation column style")
             .layout
             .max_width;
-        assert_eq!(width, Some(nana_ui::runtime::LengthSpec::Px(CHAT_CONTENT_MAX_WIDTH)));
+        assert_eq!(
+            width,
+            Some(nana_ui::runtime::LengthSpec::Px(CHAT_CONTENT_MAX_WIDTH))
+        );
     }
 
     #[test]
@@ -6350,7 +6402,10 @@ mod tests {
         assert_eq!(plus_children.len(), plus_menu_items(&snapshot).len());
         assert_eq!(
             plus_children.first().copied(),
-            handles.plus_items.get("add-file").map(|item| item.stable_id())
+            handles
+                .plus_items
+                .get("add-file")
+                .map(|item| item.stable_id())
         );
     }
 
@@ -6363,7 +6418,10 @@ mod tests {
             .node(handles.sidebar_top.stable_id())
             .map(|node| node.children.clone())
             .unwrap_or_default();
-        assert_eq!(children.first().copied(), Some(handles.new_conversation.stable_id()));
+        assert_eq!(
+            children.first().copied(),
+            Some(handles.new_conversation.stable_id())
+        );
     }
 
     #[test]
@@ -6371,7 +6429,9 @@ mod tests {
         let (document, handles, _primary) = mounted_primary(&snapshot_with_empty_primary_pane());
         let empty_text = document
             .context()
-            .read(handles.conversation_section, |section| section.empty_text.clone())
+            .read(handles.conversation_section, |section| {
+                section.empty_text.clone()
+            })
             .expect("read session section");
         assert_eq!(empty_text.as_deref(), Some(SESSIONS_EMPTY_TEXT));
         let children = document
@@ -6443,7 +6503,9 @@ mod tests {
         let (document, handles, _primary) = mounted_primary(&snapshot);
         let project_empty = document
             .context()
-            .read(handles.project_section, |section| section.empty_text.clone())
+            .read(handles.project_section, |section| {
+                section.empty_text.clone()
+            })
             .expect("read project section");
         assert_eq!(project_empty.as_deref(), Some(PROJECTS_EMPTY_TEXT));
         let inbox_empty = document
@@ -6568,11 +6630,8 @@ mod tests {
     fn remote_settings_use_switches() {
         let mut snapshot = snapshot_with_empty_primary_pane();
         snapshot.settings_open = true;
-        let model = SettingsModel::new(
-            "remote",
-            [nana_ui::SettingsTab::new("remote", "远程控制")],
-        )
-        .expect("settings model");
+        let model = SettingsModel::new("remote", [nana_ui::SettingsTab::new("remote", "远程控制")])
+            .expect("settings model");
         snapshot.settings.state = SettingsState::new(&model);
         snapshot.settings.model = model;
         snapshot.settings.remote_host_enabled = true;

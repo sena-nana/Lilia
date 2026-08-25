@@ -9,7 +9,9 @@ use nana_ui::runtime::{
 use nana_ui::{ButtonKind, ControlSize, ThemeMode, WindowChrome};
 use nana_ui_platform::WindowId;
 
-use crate::runtime_layout::{composer_interrupt_button, composer_send_button, reconcile_children, HostStack};
+use crate::runtime_layout::{
+    composer_interrupt_button, composer_send_button, reconcile_children, HostStack,
+};
 use crate::runtime_shell::{bind_activate, emit, ShellIntent, ShellTimelineRow};
 
 const CONVERSATION_STATUS_DOCUMENT: u64 = 10_001;
@@ -92,14 +94,18 @@ pub fn mount_conversation_status(
     let pin = context.create_detached_component(
         document_id,
         action_button(
-            if snapshot.pinned { "取消置顶" } else { "置顶" },
+            if snapshot.pinned {
+                "取消置顶"
+            } else {
+                "置顶"
+            },
             ButtonKind::Subtle,
         ),
     )?;
-    let new_chat =
-        context.create_detached_component(document_id, action_button("新会话", ButtonKind::Primary))?;
-    let close =
-        context.create_detached_component(document_id, action_button("关闭", ButtonKind::Subtle))?;
+    let new_chat = context
+        .create_detached_component(document_id, action_button("新会话", ButtonKind::Primary))?;
+    let close = context
+        .create_detached_component(document_id, action_button("关闭", ButtonKind::Subtle))?;
     bind_activate(
         context,
         pin,
@@ -122,7 +128,8 @@ pub fn mount_conversation_status(
     context.append_child(actions, new_chat)?;
     context.append_child(actions, close)?;
 
-    let page = context.create_detached_component(document_id, HostStack::fill_column(10.0).padding(16.0))?;
+    let page = context
+        .create_detached_component(document_id, HostStack::fill_column(10.0).padding(16.0))?;
     context.append_child(page, title)?;
     context.append_child(page, error)?;
     context.append_child(page, list)?;
@@ -183,7 +190,11 @@ impl ConversationStatusHandles {
         })?;
         context.update_component(self.pin, |button, _| {
             *button = action_button(
-                if snapshot.pinned { "取消置顶" } else { "置顶" },
+                if snapshot.pinned {
+                    "取消置顶"
+                } else {
+                    "置顶"
+                },
                 ButtonKind::Subtle,
             );
         })?;
@@ -210,11 +221,14 @@ impl ConversationStatusHandles {
             let row = if let Some(row) = self.rows.get(&key).copied() {
                 row
             } else {
-                let row = context
-                    .create_detached_component(document_id, HostStack::fill_column(4.0))?;
-                let text = context.create_detached_component(document_id, Text::new(label.clone()))?;
-                let open = context
-                    .create_detached_component(document_id, action_button("打开", ButtonKind::Subtle))?;
+                let row =
+                    context.create_detached_component(document_id, HostStack::fill_column(4.0))?;
+                let text =
+                    context.create_detached_component(document_id, Text::new(label.clone()))?;
+                let open = context.create_detached_component(
+                    document_id,
+                    action_button("打开", ButtonKind::Subtle),
+                )?;
                 bind_activate(
                     context,
                     open,
@@ -245,9 +259,10 @@ impl ConversationStatusHandles {
                 .map(|node| node.children.clone())
                 .unwrap_or_default();
             if let Some(first) = children.first() {
-                let _ = context.update_component(Entity::<Text>::from_stable_id(*first), |text, _| {
-                    *text = Text::new(label);
-                });
+                let _ =
+                    context.update_component(Entity::<Text>::from_stable_id(*first), |text, _| {
+                        *text = Text::new(label);
+                    });
             }
             order.push(row.stable_id());
         }
@@ -270,21 +285,20 @@ pub fn mount_task_popup(
     snapshot: &TaskPopupSnapshot,
     sink: IntentSink,
 ) -> Result<(nana_ui::runtime::RuntimeDocument, TaskPopupHandles), FrameworkError> {
-    let document_id = DocumentId::new(10_000u64.saturating_add(snapshot.window_id.0))
-        .expect("popup document");
+    let document_id =
+        DocumentId::new(10_000u64.saturating_add(snapshot.window_id.0)).expect("popup document");
     let mut document = nana_ui::runtime::RuntimeDocument::new(document_id);
     let context = document.context_mut();
     let _ = context.set_theme(snapshot.theme);
 
-    let heading = context.create_detached_component(document_id, Text::new(snapshot.heading.clone()))?;
+    let heading =
+        context.create_detached_component(document_id, Text::new(snapshot.heading.clone()))?;
     let error = context.create_detached_component(
         document_id,
         Text::new(snapshot.error.clone().unwrap_or_default()),
     )?;
-    let timeline_scroll = context.create_detached_component(
-        document_id,
-        ScrollView::new(ScrollAxes::Vertical),
-    )?;
+    let timeline_scroll =
+        context.create_detached_component(document_id, ScrollView::new(ScrollAxes::Vertical))?;
     let composer = context.create_detached_component(
         document_id,
         TextArea::new(snapshot.composer.clone()).height(96.0),
@@ -300,16 +314,14 @@ pub fn mount_task_popup(
             },
         );
     })?;
-    let send = context.create_detached_component(
-        document_id,
-        composer_send_button(snapshot.can_send),
-    )?;
+    let send =
+        context.create_detached_component(document_id, composer_send_button(snapshot.can_send))?;
     let interrupt = context.create_detached_component(
         document_id,
         composer_interrupt_button(snapshot.can_interrupt),
     )?;
-    let close =
-        context.create_detached_component(document_id, action_button("关闭窗口", ButtonKind::Subtle))?;
+    let close = context
+        .create_detached_component(document_id, action_button("关闭窗口", ButtonKind::Subtle))?;
     bind_activate(
         context,
         send,
@@ -338,14 +350,16 @@ pub fn mount_task_popup(
     context.append_child(actions, send)?;
     context.append_child(actions, interrupt)?;
     context.append_child(actions, close)?;
-    let page = context.create_detached_component(document_id, HostStack::fill_column(10.0).padding(16.0))?;
+    let page = context
+        .create_detached_component(document_id, HostStack::fill_column(10.0).padding(16.0))?;
     context.append_child(page, heading)?;
     context.append_child(page, error)?;
     context.append_child(page, timeline_scroll)?;
     context.append_child(page, composer)?;
     context.append_child(page, actions)?;
 
-    let title = context.create_detached_component(document_id, Text::new(snapshot.title.clone()))?;
+    let title =
+        context.create_detached_component(document_id, Text::new(snapshot.title.clone()))?;
     let shell = context.create_component(
         document_id,
         DesktopShell::from_model(nana_ui::WorkspaceModel::new())

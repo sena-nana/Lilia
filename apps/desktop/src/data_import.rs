@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use lilia_desktop_application::{
+use crate::application::{
     DesktopDatabaseKind, DesktopImportItemKind, DesktopImportPlan, DesktopImportPlanItemStatus,
     DesktopImportPlanStatus, DesktopImportReport, DesktopImportReportItemStatus,
     DesktopImportReportStatus,
@@ -194,7 +194,7 @@ pub fn report_item_status_label(status: &DesktopImportReportItemStatus) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lilia_desktop_application::{
+    use crate::application::{
         DesktopCredentialImportEntry, DesktopImportPlanItem, DesktopImportReportItem,
         DesktopImportReportStatus, DesktopLegacyConfigurationImport,
     };

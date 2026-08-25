@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lilia_contracts::TaskId;
-use lilia_desktop_application::{
+use crate::application::{
     DesktopIabSnapshotInput, DesktopIabSubmission, DesktopTurnDispatchKind,
 };
 use uuid::Uuid;

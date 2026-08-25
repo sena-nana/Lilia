@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use lilia_agent::LiliaJobRuntime;
-use lilia_feature_agent_session::{AgentSessionFeature, TitlePort};
+use lilia_feature_agent_session::{AgentSessionFeature, TitlePort, TurnPort};
 use lilia_feature_architecture::{ArchitectureFeature, DesktopArchitectureService};
 use lilia_feature_automation::{AutomationFeature, DesktopAutomationService};
 use lilia_feature_coding::{CodeSearchPort, CodingFeature, CodingRefreshPort};
@@ -18,12 +18,12 @@ use lilia_feature_document::{
 };
 use lilia_feature_extensions::{ExtensionsFeature, ExtensionsPort};
 use lilia_feature_github::{GitHubFeature, GitHubPort};
-use lilia_feature_import::{ImportFeature, ImportPort};
 use lilia_feature_hooks::HooksFeature;
-use lilia_feature_provider::{AssistantProbePort, CredentialPort, ProviderFeature};
-use lilia_feature_remote::{RemoteFeature, RemotePort};
+use lilia_feature_import::{ImportFeature, ImportPort};
 use lilia_feature_memory::{DesktopMemoryService, MemoryFeature};
 use lilia_feature_project::{CloneCredentials, ProjectFeature};
+use lilia_feature_provider::{AssistantProbePort, CredentialPort, ProviderFeature};
+use lilia_feature_remote::{RemoteFeature, RemotePort};
 use lilia_feature_roadmap::{DesktopRoadmapService, RoadmapFeature};
 use lilia_feature_suggestions::{SuggestionPort, SuggestionsFeature};
 use lilia_feature_task::TaskFeature;
@@ -64,6 +64,7 @@ pub struct KernelServices {
     pub assistant_probes: Arc<dyn AssistantProbePort>,
     pub imports: Arc<dyn ImportPort>,
     pub titles: Arc<dyn TitlePort>,
+    pub turns: Arc<dyn TurnPort>,
 }
 
 /// Kernel plus its mounted features, owned by the shell for the process
@@ -137,6 +138,7 @@ fn features(services: KernelServices) -> Vec<Arc<dyn Feature>> {
         assistant_probes,
         imports,
         titles,
+        turns,
     } = services;
     vec![
         Arc::new(ProjectFeature::new(clone_credentials)),
@@ -144,7 +146,7 @@ fn features(services: KernelServices) -> Vec<Arc<dyn Feature>> {
         Arc::new(CodingFeature::new(code_search, coding_refresh)),
         Arc::new(TaskFeature::new(authority.clone())),
         Arc::new(ComposerFeature::new(db.clone(), prompt_optimize)),
-        Arc::new(AgentSessionFeature::new(db.clone(), titles)),
+        Arc::new(AgentSessionFeature::new(db.clone(), titles, turns)),
         Arc::new(WorktreeFeature::new(db, worktrees)),
         Arc::new(TimelineFeature::new(authority)),
         Arc::new(TerminalFeature::new(terminals)),
@@ -260,18 +262,33 @@ mod tests {
     }
 
     impl WorktreePort for IdlePort {
-        fn operate(
-            &self,
-            _request: lilia_feature_worktree::WorktreeRequest,
-        ) -> Result<(), String> {
+        fn operate(&self, _request: lilia_feature_worktree::WorktreeRequest) -> Result<(), String> {
             Err("idle".to_owned())
         }
     }
 
     impl TitlePort for IdlePort {
-        fn title(
+        fn title(&self, _request: lilia_feature_agent_session::TitleRequest) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl TurnPort for IdlePort {
+        fn run_turn(
             &self,
-            _request: lilia_feature_agent_session::TitleRequest,
+            _request: lilia_feature_agent_session::TurnJobRequest,
+        ) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+        fn run_approval(
+            &self,
+            _request: lilia_feature_agent_session::ApprovalJobRequest,
+        ) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+        fn run_interaction(
+            &self,
+            _request: lilia_feature_agent_session::InteractionJobRequest,
         ) -> Result<(), String> {
             Err("idle".to_owned())
         }
@@ -344,7 +361,8 @@ mod tests {
             worktrees: port.clone(),
             assistant_probes: port.clone(),
             imports: port.clone(),
-            titles: port,
+            titles: port.clone(),
+            turns: port,
         }
     }
 
@@ -387,7 +405,11 @@ mod tests {
             .collect();
 
         let unique: BTreeSet<_> = declared.iter().cloned().collect();
-        assert_eq!(unique.len(), declared.len(), "a job protocol is declared twice");
+        assert_eq!(
+            unique.len(),
+            declared.len(),
+            "a job protocol is declared twice"
+        );
 
         for expected in [
             lilia_feature_project::CLONE_PROTOCOL,
@@ -409,6 +431,10 @@ mod tests {
             lilia_feature_provider::ASSISTANT_PROBE_PROTOCOL,
             lilia_feature_import::PLAN_PROTOCOL,
             lilia_feature_import::EXECUTE_PROTOCOL,
+            lilia_feature_agent_session::TITLE_PROTOCOL,
+            lilia_feature_agent_session::TURN_PROTOCOL,
+            lilia_feature_agent_session::APPROVAL_PROTOCOL,
+            lilia_feature_agent_session::INTERACTION_PROTOCOL,
         ] {
             assert!(
                 unique.contains(expected),

@@ -7,7 +7,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use fs2::FileExt;
-use lilia_desktop_application::{DesktopCliRequest, DesktopCliResult};
+use crate::application::{DesktopCliRequest, DesktopCliResult};
 use serde::{Deserialize, Serialize};
 
 const PROTOCOL: &str = "liliacode-single-instance";

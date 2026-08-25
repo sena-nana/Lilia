@@ -2,7 +2,7 @@ use lilia_contracts::{
     PendingProjectionStatus, TimelineProjectionCursor, TimelineProjectionEvent,
     TimelineProjectionPage,
 };
-use lilia_desktop_application::{
+use crate::application::{
     timeline_retry_context, ChatAttachment, ChatContextUsage, DesktopGoalSnapshot,
     DesktopTaskRunBlock, DesktopTaskSessionSnapshot, DesktopTaskTodo, DesktopTaskWorktree,
     TITLE_UPDATE_ACTION_KIND,
@@ -223,6 +223,22 @@ impl TaskSessionView {
             .and_then(|id| self.timeline.iter().position(|event| event.id == id))
             .map(|index| self.timeline_layout.extent(0..index))
             .unwrap_or_default()
+    }
+
+    /// Merges events newer than the current tail and refreshes pending / todos
+    /// / artifacts from the latest snapshot. Loaded earlier history stays put.
+    pub(crate) fn apply_projection_delta(
+        &mut self,
+        mut snapshot: DesktopTaskSessionSnapshot,
+    ) -> bool {
+        let after = self.timeline.last().map(|event| event.sequence).unwrap_or(0);
+        snapshot
+            .timeline
+            .retain(|event| event.sequence > after);
+        let previous_tail = self.timeline.last().map(|event| event.id.clone());
+        let previous = self.clone();
+        *self = Self::refresh_preserving_history(snapshot, Some(&previous));
+        self.timeline.last().map(|event| event.id.as_str()) != previous_tail.as_deref()
     }
 
     fn from_facts(
@@ -457,7 +473,7 @@ fn timeline_attachments(payload: &Value) -> Vec<ChatAttachment> {
 #[cfg(test)]
 mod tests {
     use lilia_contracts::{AgentSessionRef, ProjectionEventId, TaskId, TimelineProjectionEvent};
-    use lilia_desktop_application::ChatAttachmentKind;
+    use crate::application::ChatAttachmentKind;
     use serde_json::json;
 
     use super::*;
@@ -736,6 +752,65 @@ mod tests {
             anchor_delta,
             state.timeline_layout.extent(0..2),
             "only newly prepended events contribute to the anchor"
+        );
+    }
+
+    #[test]
+    fn newer_events_append_without_replacing_loaded_history() {
+        let mut state = TaskSessionView::from_facts(
+            "Paged task".to_owned(),
+            vec![
+                task_timeline_item(projection_event(3)),
+                task_timeline_item(projection_event(4)),
+            ],
+            0,
+            0,
+            Vec::new(),
+            Vec::new(),
+        );
+        state.timeline_has_more_before = true;
+        state.timeline_before_cursor = Some(TimelineProjectionCursor {
+            sequence: 3,
+            event_id: "session-page:3".to_owned(),
+        });
+
+        let tail_changed = state.apply_projection_delta(DesktopTaskSessionSnapshot {
+            task: lilia_contracts::ProductTask::new(
+                TaskId::new("task-page").unwrap(),
+                None,
+                "Paged task",
+            )
+            .expect("paged task title is not blank"),
+            run_block: None,
+            goal: None,
+            context_usage: None,
+            timeline: vec![
+                projection_event(4),
+                projection_event(5),
+                projection_event(6),
+            ],
+            timeline_before_cursor: None,
+            timeline_has_more_before: false,
+            artifacts: Vec::new(),
+            todos: Vec::new(),
+            task_todos: Vec::new(),
+            worktree: None,
+            pending: Vec::new(),
+        });
+
+        assert!(tail_changed);
+        assert_eq!(
+            state
+                .timeline
+                .iter()
+                .map(|event| event.sequence)
+                .collect::<Vec<_>>(),
+            vec![3, 4, 5, 6]
+        );
+        assert!(state.timeline_has_more_before);
+        assert_eq!(
+            state.timeline_before_cursor.as_ref().map(|cursor| cursor.sequence),
+            Some(3)
         );
     }
 

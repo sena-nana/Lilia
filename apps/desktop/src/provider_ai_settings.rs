@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use lilia_contracts::auto_model_for_provider_family_tier;
-use lilia_desktop_application::{
+use crate::application::{
     normalize_model_pool, DesktopApplication, DesktopAssistantAiConfigurationUpdate,
     DesktopAssistantAiModelPoolItem, DesktopAssistantAiSecretUpdate, DesktopAssistantAiSettings,
     DesktopAssistantAiSettingsUpdate, DesktopConversationSuggestionSettings,
@@ -417,7 +417,7 @@ fn normalized_owned(value: String) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use lilia_desktop_application::{DesktopModelFeatureChatSettings, DesktopModelPresetGroup};
+    use crate::application::{DesktopModelFeatureChatSettings, DesktopModelPresetGroup};
 
     use super::*;
 
@@ -522,7 +522,7 @@ mod tests {
             DesktopModelFeatureSettings::default(),
             DesktopConversationSuggestionSettings {
                 enabled: true,
-                source: lilia_desktop_application::DesktopConversationSuggestionSource::Provider,
+                source: crate::application::DesktopConversationSuggestionSource::Provider,
             },
             false,
         );
@@ -532,7 +532,7 @@ mod tests {
         assert!(!update.enabled);
         assert_eq!(
             update.source,
-            lilia_desktop_application::DesktopConversationSuggestionSource::Provider
+            crate::application::DesktopConversationSuggestionSource::Provider
         );
     }
 
@@ -540,13 +540,13 @@ mod tests {
     fn composer_model_options_merge_configured_and_contract_defaults_without_duplicates() {
         let mut assistant = DesktopAssistantAiSettings::default();
         assistant.model_pool = vec![
-            lilia_desktop_application::DesktopAssistantAiModelPoolItem {
+            crate::application::DesktopAssistantAiModelPoolItem {
                 id: "pool-model".to_owned(),
                 label: "Pool".to_owned(),
                 source: "remote".to_owned(),
                 backend: "native-agentkit".to_owned(),
             },
-            lilia_desktop_application::DesktopAssistantAiModelPoolItem {
+            crate::application::DesktopAssistantAiModelPoolItem {
                 id: "runtime-model".to_owned(),
                 label: "Duplicate".to_owned(),
                 source: "remote".to_owned(),

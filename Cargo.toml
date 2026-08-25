@@ -9,7 +9,6 @@ members = [
     "crates/lilia-storage",
     "crates/lilia-agent",
     "crates/lilia-service",
-    "crates/lilia-desktop-application",
     "crates/features/lilia-feature-agent-session",
     "crates/features/lilia-feature-architecture",
     "crates/features/lilia-feature-automation",
@@ -59,7 +58,6 @@ lilia-client = { path = "crates/lilia-client" }
 lilia-storage = { path = "crates/lilia-storage" }
 lilia-agent = { path = "crates/lilia-agent" }
 lilia-service = { path = "crates/lilia-service" }
-lilia-desktop-application = { path = "crates/lilia-desktop-application" }
 lilia-feature-agent-session = { path = "crates/features/lilia-feature-agent-session" }
 lilia-feature-architecture = { path = "crates/features/lilia-feature-architecture" }
 lilia-feature-automation = { path = "crates/features/lilia-feature-automation" }

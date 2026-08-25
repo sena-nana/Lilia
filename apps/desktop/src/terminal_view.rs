@@ -1,4 +1,4 @@
-use lilia_desktop_application::{
+use crate::application::{
     DesktopTerminalScope, DesktopTerminalSessionId, DesktopTerminalSnapshot,
 };
 
@@ -20,7 +20,7 @@ pub fn terminal_plain_text(snapshot: &DesktopTerminalSnapshot) -> String {
     terminal_rows_plain_text(&snapshot.screen)
 }
 
-fn terminal_rows_plain_text(rows: &[lilia_desktop_application::DesktopTerminalRow]) -> String {
+fn terminal_rows_plain_text(rows: &[crate::application::DesktopTerminalRow]) -> String {
     rows.iter()
         .map(|row| row.text.trim_end())
         .collect::<Vec<_>>()
@@ -31,7 +31,7 @@ fn terminal_rows_plain_text(rows: &[lilia_desktop_application::DesktopTerminalRo
 
 #[cfg(test)]
 mod tests {
-    use lilia_desktop_application::DesktopTerminalRow;
+    use crate::application::DesktopTerminalRow;
 
     use super::terminal_rows_plain_text;
 
