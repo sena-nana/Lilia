@@ -28,6 +28,7 @@ mod runtime_shell;
 mod runtime_windows;
 mod shell;
 mod shell_integration;
+mod shell_service;
 mod single_instance;
 mod startup_window;
 mod storage;
@@ -35,6 +36,7 @@ pub mod target_ids;
 mod task_session;
 mod terminal_view;
 mod text_editor_state;
+mod ui_module;
 mod updater;
 mod windows_identity;
 

@@ -5972,13 +5972,15 @@ fn settings_tab_copy(
     }
 }
 
+/// A projection with every field at rest.
+///
+/// Lives outside the test module because the UI module tests assert on which
+/// fields a module writes, and that only means something against a baseline
+/// where nothing is set. Not a `Default` impl: `SettingsModel` is a NanaUI type
+/// and giving it a default is not this crate's call.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runtime_layout::COMPOSER_CARD_RADIUS;
-
-    fn empty_snapshot() -> PrimaryShellSnapshot {
-        PrimaryShellSnapshot {
+pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
+    PrimaryShellSnapshot {
             theme: ThemeMode::Light,
             title: "LiliaCode".to_owned(),
             title_parent: "LiliaCode".to_owned(),
@@ -6109,9 +6111,14 @@ mod tests {
             automation_graph: nana_ui::GraphModel::empty(),
             automation_viewport: nana_ui::GraphViewport::default(),
             automation_selection: None,
-            panes: Vec::new(),
-        }
+        panes: Vec::new(),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime_layout::COMPOSER_CARD_RADIUS;
 
     fn snapshot_with_empty_primary_pane() -> PrimaryShellSnapshot {
         let mut snapshot = empty_snapshot();

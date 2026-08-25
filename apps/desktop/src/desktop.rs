@@ -1816,6 +1816,10 @@ pub struct DesktopProgram {
     project_clone_detail: Option<String>,
     active_project_clone_job: Option<JobId>,
     kernel: crate::kernel_host::KernelHost,
+    /// Domains that have moved out of this struct. Empty until the first one
+    /// does; the assembly points above and in `update` are already live so a
+    /// migration adds a module instead of editing the shell.
+    ui_modules: crate::ui_module::UiModuleHost,
     github_binding: DesktopGitHubBindingStatus,
     github_device_flow: Option<DesktopGitHubDeviceFlowStart>,
     active_github_binding_job: Option<JobId>,
@@ -4012,6 +4016,16 @@ impl DesktopProgram {
     }
 
     fn primary_shell_snapshot(&self) -> crate::runtime_shell::PrimaryShellSnapshot {
+        let mut snapshot = self.shell_owned_snapshot();
+        // Modules fold their own fields last, so a migrated domain overrides the
+        // shell's value for exactly the fields it claims and nothing else.
+        let cx = crate::ui_module::UiModuleContext::new(self.kernel.kernel());
+        self.ui_modules.project(&cx, &mut snapshot);
+        snapshot
+    }
+
+    /// The projection for every domain the shell still owns itself.
+    fn shell_owned_snapshot(&self) -> crate::runtime_shell::PrimaryShellSnapshot {
         let selected = self.selected_task.as_ref();
         let tasks = self
             .tasks
@@ -30825,6 +30839,7 @@ impl RuntimeProgram for DesktopProgram {
                     automation: application.automation_service(),
                     project_tasks,
                     project_task_events,
+                    workspace_session: application_workspace,
                     journal: application.journal(),
                     clone_credentials: Arc::new(GitHubCloneCredentials {
                         application: application.clone(),
@@ -30887,6 +30902,12 @@ impl RuntimeProgram for DesktopProgram {
                 },
             )?
         };
+        // The session now lives in the service registry, so the shell reads it
+        // from the same slot a UI module would rather than keeping a private
+        // handle that could outlive an unmount.
+        let application_workspace = crate::shell_service::workspace_session(kernel.kernel());
+        let ui_modules = crate::ui_module::UiModuleHost::from_kernel(kernel.kernel())
+            .map_err(|error| format!("failed to collect UI modules: {error}"))?;
         application
             .install_title_update_scheduler(Arc::new(QueuedTitleScheduler {
                 messages: Arc::clone(&message_sender),
@@ -31089,6 +31110,7 @@ impl RuntimeProgram for DesktopProgram {
             project_clone_target: None,
             project_clone_detail: None,
             active_project_clone_job: None,
+            ui_modules,
             kernel,
             github_binding,
             github_device_flow: None,

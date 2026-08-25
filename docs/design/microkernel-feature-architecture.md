@@ -236,7 +236,7 @@ feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate �
 长操作已经收口，域**类型**已经下沉。回合权威与壳层入口已经落地。剩下三件：
 
 - `ActiveTurnPhase` 七态已删。`DesktopAgentRuntime` 只做队列协调；`turn_claim_epoch` + `claim_token` 仍在，直到 AgentKit 有 `SessionVersion` ack 替代。壳层经 `QueuedTurnExecutor` 把 `lilia.agent/turn@1` / `approval@1` / `interaction@1` 交给内核。对照与取舍见 `docs/design/agent-authority-gap.md`。
-- 入口已改名 `LiliaShell`，`Message` 已按域拆成 17 个子枚举。但**这只是把变体搬了位置**：变体总数仍约 430，`update_message` 与全部 `apply_*` 仍在 `apps/desktop/src/desktop.rs` 的同一个 28,000 行 `impl DesktopProgram` 里。「UI 侧对齐 NanaUI」一节描述的 `UiModule` 契约尚未存在。
+- 入口已改名 `LiliaShell`，`Message` 已按域拆成 17 个子枚举。但**这只是把变体搬了位置**：变体总数仍约 430，`update_message` 与全部 `apply_*` 仍在 `apps/desktop/src/desktop.rs` 的同一个 28,000 行 `impl DesktopProgram` 里。`UiModule` 契约已落地在 `apps/desktop/src/ui_module.rs`，但尚无域迁入。
 - `crates/lilia-desktop-application` 已从 workspace 移除，实现暂收在 `apps/desktop/src/application`。其中 `agent.rs`、`import.rs`、`remote.rs`、`workspace.rs`、`extensions.rs`、`todo.rs` 仍是实现本体而非转发壳。
 
 ### `DesktopProgram` 的字段分三类，只有一类能在拆分前处理
@@ -247,12 +247,20 @@ feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate �
 - **渲染缓存**：`projects` / `tasks` / `task_move_candidates` 只有 `apply_workspace_snapshot` 一个写入点，是带显式失效的缓存，不是失控镜像。改成 snapshot 里直读 service 等于把 37 处访问变成 37 次 SQLite 查询，落在渲染路径上——与「不可见的面不投影」同一条约束冲突。它们该做的是收归到模块私有，不是删掉。
 - **按窗口换入换出的编辑态**：`tasks` / `roadmap` / `memories` / `architecture*` 还被 `apply_project_workspace_editor_state` 整片存取——`DesktopProgram` 当成了每个工作区窗口的暂存板。这类字段在「每个模块拥有自己的 state」存在之前无法拆，所以它们必须排在 `UiModule` 契约之后，不是之前。
 
+### `UiModule` 契约的形状与它卡住的地方
+
+契约取的是「模块把自己那几个字段折进窗口投影」，不是「模块返回自己的投影」：`project(&self, cx, into: &mut PrimaryShellSnapshot)`。这样 `runtime_shell.rs` 六千行 reconcile 不用动，14 个域可以一个一个迁，没迁的域继续由壳层写同一个快照。注册顺序即折叠顺序，两个模块抢同一字段会表现为后者覆盖前者，所以字段归属冲突是可见的而不是静默的。
+
+上下文只给 `&Kernel`。这不是为了纯粹——一个必须被喂进 projects 列表的模块一定会把它存下来，存下来的那份就是会漂移的那份。所以共享事实先下沉成槽位，模块自己 resolve。
+
+真正卡住域切分的是第三类字段的机制，不是字段数量：`with_workspace_window_project_state` 把 `DesktopProgram` 的 `tasks` / `roadmap` / `memories` / `architecture*` 当成**寄存器**——把某个工作区窗口的编辑态换入，跑一次操作，再换出。所以这些字段不是「一份状态」而是「每窗口一份状态 + 一个共用寄存器」。单独迁 architecture 会撞上这个：换入换出的函数横跨所有域，模块要么把私有 state 暴露出来给它存取（等于废掉契约的私有承诺），要么 `UiModuleHost` 变成每窗口一份、寄存器机制整体删除（更干净，但要 14 个域一起动，不能增量）。这个取舍决定 14 个模块怎么写，选错就要全部重写，所以它先于任何一个域的迁移。
+
 ### 内核机制的消费者缺口
 
 内核五个机制里 `Jobs` 与 `Journal` 已接满消费者，另外三个的状态要如实记着，否则后来者会以为它们在工作：
 
-- `ServiceRegistry`：12 个 `ServiceKey` 全部 provide。`ProjectTaskService` 的双实例已消除——壳层在 bootstrap 时建实例，`TaskFeature::mount` 把同一实例 provide 进槽位，事件经 `ProjectTaskEventFanout` 同时进 `DesktopEventKind` 与 `EventBus`。方向是壳层给内核而不是内核给壳层，因为壳层先于内核起，持久化在 bootstrap 阶段就要能写。其余槽位的产品消费者仍是壳层直接持句柄，`resolve` 只在装配测试里用；22 个 feature 之间没有任何跨 crate 依赖，所以 `requires()` 全为空是当前依赖图的实情，不是遗漏——`mount_all` 的 Kahn 排序在真实图上就是一层。
-- `ContributionRegistry`：产品路径零调用点，只有内核单测在用。它是 `UiModule` 贡献的载体，而 `UiModule` 契约还不存在，所以只能和 UI 拆分一起接上；先建空管道等于加一层没有流量的间接。
+- `ServiceRegistry`：13 个 `ServiceKey` 全部 provide。`lilia.shell.workspace_session` 是第一个有产品 `resolve` 的槽位：`DesktopWorkspaceSession` 本来就是 `Arc<Mutex<..>>` 背书的可克隆句柄，持有 projects / tasks / 选择 / 面板布局的唯一写入权，所以它是共享事实下沉成 service 的自然形状，而不需要为此新造一层。`DesktopProgram` 现在从槽位读它而不是私藏句柄——这是 `UiModule` 只拿 `&Kernel` 就能构造的前提。`ProjectTaskService` 的双实例已消除——壳层在 bootstrap 时建实例，`TaskFeature::mount` 把同一实例 provide 进槽位，事件经 `ProjectTaskEventFanout` 同时进 `DesktopEventKind` 与 `EventBus`。方向是壳层给内核而不是内核给壳层，因为壳层先于内核起，持久化在 bootstrap 阶段就要能写。其余槽位的产品消费者仍是壳层直接持句柄，`resolve` 只在装配测试里用；22 个 feature 之间没有任何跨 crate 依赖，所以 `requires()` 全为空是当前依赖图的实情，不是遗漏——`mount_all` 的 Kahn 排序在真实图上就是一层。
+- `ContributionRegistry`：`apps/desktop/src/ui_module.rs` 定义了宿主专有的 `UiModules` 集合，`UiModuleHost::from_kernel` 在 `DesktopProgram::initialize` 里 `take_contributions` 取走，投影汇合点已在 `primary_shell_snapshot` 上线。当前注册数为 0，所以这条管道有结构没有流量；`reduce` 路由要等第一个域迁出时一并接上，那时才知道路由表该按哪些 `FeatureId` 分。
 - `EventBus`：唯一产品订阅是 `kernel_host.rs` 的 `JobEvent`。feature crate 零订阅，UI 仍走 39 变体的 `DesktopEventKind` + `refresh_*`。
 - `Journal`：4096 条环形缓冲。四类 `RecordKind` 都有产品写入点——lifecycle 与 job 由内核写，`Event` 由 `EventBus::publish` 写（`JobEvent` 以 `JOURNALED = false` 退出，避免与 `Jobs` 自己的 job 记录重复），`Mutation` 由 `ProjectTaskService` 在每次写入后写，记的是操作名与幂等键是否命中——事件只说"行动了"，说不出这次是新写还是重放。`apps/desktop/src/journal_export.rs` 是 `JournalSink` 的产品实现：`LILIA_JOURNAL_PATH` 指向文件时，记录经专用线程逐条落盘（UI 线程与 job worker 上不做文件系统调用），`cargo xtask agent-debug` 把它设为 `journal.jsonl` 并校验序号单调与 feature 挂载记录齐全。
 
