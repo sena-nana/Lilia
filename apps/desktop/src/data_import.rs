@@ -5,6 +5,7 @@ use lilia_desktop_application::{
     DesktopImportPlanStatus, DesktopImportReport, DesktopImportReportItemStatus,
     DesktopImportReportStatus,
 };
+use lilia_kernel::JobId;
 use sha2::{Digest, Sha256};
 
 pub const LEGACY_INSTANCE_IDENTITY: &str = "liliacode.native-preview";
@@ -34,25 +35,32 @@ pub struct NativeDataImportState {
     pub restart_required: bool,
     pub busy: bool,
     pub error: Option<String>,
-    operation_sequence: u64,
-    active_operation: Option<u64>,
+    active_job: Option<JobId>,
 }
 
 impl NativeDataImportState {
-    pub fn begin_plan(&mut self, source_home: PathBuf) -> u64 {
+    /// Clears the previous plan before the host starts preparing a new one.
+    /// Preparation can fail before a job exists, which is why it is separate
+    /// from [`Self::begin`].
+    pub fn reset_for_plan(&mut self, source_home: PathBuf) {
         self.source_home = Some(source_home);
         self.plan = None;
         self.report = None;
         self.credentials_confirmed = false;
-        self.begin_operation()
+    }
+
+    pub fn begin(&mut self, job_id: JobId) {
+        self.active_job = Some(job_id);
+        self.busy = true;
+        self.error = None;
     }
 
     pub fn finish_plan(
         &mut self,
-        operation_id: u64,
+        job_id: JobId,
         result: Result<DesktopImportPlan, String>,
     ) -> bool {
-        if self.active_operation != Some(operation_id) {
+        if self.active_job != Some(job_id) {
             return false;
         }
         self.finish_operation();
@@ -69,12 +77,8 @@ impl NativeDataImportState {
         true
     }
 
-    pub fn begin_execute(&mut self) -> Option<u64> {
-        self.can_execute().then(|| self.begin_operation())
-    }
-
-    pub fn finish_execute(&mut self, operation_id: u64, report: DesktopImportReport) -> bool {
-        if self.active_operation != Some(operation_id) {
+    pub fn finish_execute(&mut self, job_id: JobId, report: DesktopImportReport) -> bool {
+        if self.active_job != Some(job_id) {
             return false;
         }
         self.finish_operation();
@@ -91,11 +95,10 @@ impl NativeDataImportState {
         self.error = Some(message.into());
     }
 
-    pub fn fail_to_start(&mut self, operation_id: u64, message: impl Into<String>) {
-        if self.active_operation == Some(operation_id) {
-            self.finish_operation();
-            self.error = Some(message.into());
-        }
+    /// Reports a step that failed before or instead of producing a result.
+    pub fn fail(&mut self, message: impl Into<String>) {
+        self.finish_operation();
+        self.error = Some(message.into());
     }
 
     pub fn toggle_credentials(&mut self) {
@@ -125,16 +128,8 @@ impl NativeDataImportState {
             .is_some_and(|plan| !plan.credential_entries.is_empty())
     }
 
-    fn begin_operation(&mut self) -> u64 {
-        self.operation_sequence = self.operation_sequence.saturating_add(1);
-        self.active_operation = Some(self.operation_sequence);
-        self.busy = true;
-        self.error = None;
-        self.operation_sequence
-    }
-
     fn finish_operation(&mut self) {
-        self.active_operation = None;
+        self.active_job = None;
         self.busy = false;
     }
 }
@@ -248,8 +243,12 @@ mod tests {
     #[test]
     fn stale_operation_results_cannot_replace_the_current_plan() {
         let mut state = NativeDataImportState::default();
-        let first = state.begin_plan(PathBuf::from("first"));
-        let second = state.begin_plan(PathBuf::from("second"));
+        let first = JobId::new(1);
+        let second = JobId::new(2);
+        state.reset_for_plan(PathBuf::from("first"));
+        state.begin(first);
+        state.reset_for_plan(PathBuf::from("second"));
+        state.begin(second);
 
         assert!(!state.finish_plan(first, Ok(plan(DesktopImportPlanStatus::Ready, &[]))));
         assert!(state.finish_plan(second, Ok(plan(DesktopImportPlanStatus::Ready, &[]))));
@@ -260,7 +259,9 @@ mod tests {
     #[test]
     fn credentials_require_a_manifest_and_a_separate_toggle() {
         let mut state = NativeDataImportState::default();
-        let operation = state.begin_plan(PathBuf::from("source"));
+        let operation = JobId::new(1);
+        state.reset_for_plan(PathBuf::from("source"));
+        state.begin(operation);
         state.finish_plan(
             operation,
             Ok(plan(DesktopImportPlanStatus::Ready, &["agentkit.provider"])),
@@ -274,12 +275,16 @@ mod tests {
     #[test]
     fn completed_report_prevents_accidental_repeat_until_reset() {
         let mut state = NativeDataImportState::default();
-        let plan_operation = state.begin_plan(PathBuf::from("source"));
+        let plan_operation = JobId::new(1);
+        state.reset_for_plan(PathBuf::from("source"));
+        state.begin(plan_operation);
         state.finish_plan(
             plan_operation,
             Ok(plan(DesktopImportPlanStatus::Ready, &[])),
         );
-        let execute_operation = state.begin_execute().unwrap();
+        assert!(state.can_execute());
+        let execute_operation = JobId::new(2);
+        state.begin(execute_operation);
         assert!(state.finish_execute(execute_operation, report()));
         assert!(!state.can_execute());
 
@@ -291,7 +296,9 @@ mod tests {
     #[test]
     fn blocked_plan_never_exposes_execute() {
         let mut state = NativeDataImportState::default();
-        let operation = state.begin_plan(PathBuf::from("source"));
+        let operation = JobId::new(1);
+        state.reset_for_plan(PathBuf::from("source"));
+        state.begin(operation);
         state.finish_plan(operation, Ok(plan(DesktopImportPlanStatus::Blocked, &[])));
         assert!(!state.can_execute());
     }

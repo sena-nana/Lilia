@@ -15,21 +15,43 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-arboard = "3.6.1"
 base64 = "0.22.1"
 fs2 = "0.4.3"
 libloading = "0.9.0"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "gif", "jpeg", "png", "webp"] }
-keyring = "4.1.2"
 lilia-contracts = { workspace = true }
 lilia-desktop-application = { workspace = true }
-lilia-agent-integration = { workspace = true }
+lilia-feature-agent-session = { workspace = true }
+lilia-feature-composer = { workspace = true }
+lilia-feature-architecture = { workspace = true }
+lilia-feature-automation = { workspace = true }
+lilia-feature-memory = { workspace = true }
+lilia-feature-project = { workspace = true }
+lilia-feature-roadmap = { workspace = true }
+lilia-feature-task = { workspace = true }
+lilia-feature-terminal = { workspace = true }
+lilia-feature-timeline = { workspace = true }
+lilia-feature-coding = { workspace = true }
+lilia-feature-document = { workspace = true }
+lilia-feature-extensions = { workspace = true }
+lilia-feature-github = { workspace = true }
+lilia-feature-import = { workspace = true }
+lilia-feature-hooks = { workspace = true }
+lilia-feature-provider = { workspace = true }
+lilia-feature-suggestions = { workspace = true }
+lilia-feature-remote = { workspace = true }
+lilia-feature-update = { workspace = true }
+lilia-feature-usage = { workspace = true }
+lilia-feature-worktree = { workspace = true }
+lilia-service = { workspace = true }
+lilia-kernel = { workspace = true }
+lilia-agent = { workspace = true }
+lilia-platform = { workspace = true }
 lilia-storage = { workspace = true }
 minisign-verify = "0.2.5"
 mutsuki-agent-contracts = { workspace = true }
 nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "bdc537d7fd31b1c29a3611ad7b023e1b891a7534", features = ["bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "image-viewer", "math", "overlays", "popover", "qr-code", "rich-text", "selects", "settings-components", "surfaces", "syntax-highlighting"] }
 nana-ui-platform = { git = "https://github.com/sena-nana/NanaUI.git", rev = "bdc537d7fd31b1c29a3611ad7b023e1b891a7534", package = "nana-ui-platform" }
-rfd = "0.17.2"
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
 semver = "1.0.28"

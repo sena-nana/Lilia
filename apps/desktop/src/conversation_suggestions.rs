@@ -9,7 +9,7 @@ pub(crate) struct ConversationSuggestionState {
     loading: bool,
     enabled: bool,
     initialized: bool,
-    active_operation: Option<u64>,
+    active_job: Option<lilia_kernel::JobId>,
     error: bool,
 }
 
@@ -24,7 +24,12 @@ impl ConversationSuggestionState {
         self.initialized = true;
     }
 
-    pub(crate) fn begin(&mut self, task_id: TaskId, project_id: String, operation_id: u64) {
+    pub(crate) fn begin(
+        &mut self,
+        task_id: TaskId,
+        project_id: String,
+        job_id: lilia_kernel::JobId,
+    ) {
         if self.task_id.as_ref() != Some(&task_id)
             || self.project_id.as_deref() != Some(&project_id)
         {
@@ -35,21 +40,21 @@ impl ConversationSuggestionState {
         self.loading = true;
         self.enabled = true;
         self.initialized = true;
-        self.active_operation = Some(operation_id);
+        self.active_job = Some(job_id);
         self.error = false;
     }
 
     pub(crate) fn finish(
         &mut self,
         task_id: &TaskId,
-        operation_id: u64,
+        job_id: lilia_kernel::JobId,
         result: Result<Vec<DesktopSuggestionItem>, String>,
     ) -> bool {
-        if self.task_id.as_ref() != Some(task_id) || self.active_operation != Some(operation_id) {
+        if self.task_id.as_ref() != Some(task_id) || self.active_job != Some(job_id) {
             return false;
         }
         self.loading = false;
-        self.active_operation = None;
+        self.active_job = None;
         match result {
             Ok(items) => {
                 self.items = items;
@@ -117,13 +122,19 @@ mod tests {
         let first_task = TaskId::new("first").unwrap();
         let active_task = TaskId::new("active").unwrap();
         let mut state = ConversationSuggestionState::default();
-        state.begin(first_task.clone(), "project".to_owned(), 1);
-        state.begin(active_task.clone(), "project".to_owned(), 2);
+        let first_job = lilia_kernel::JobId::new(1);
+        let active_job = lilia_kernel::JobId::new(2);
+        state.begin(first_task.clone(), "project".to_owned(), first_job);
+        state.begin(active_task.clone(), "project".to_owned(), active_job);
 
-        assert!(!state.finish(&first_task, 1, Ok(vec![suggestion("stale", "不要写入")])));
+        assert!(!state.finish(
+            &first_task,
+            first_job,
+            Ok(vec![suggestion("stale", "不要写入")])
+        ));
         assert!(state.finish(
             &active_task,
-            2,
+            active_job,
             Ok(vec![suggestion("current", "继续当前任务")])
         ));
 

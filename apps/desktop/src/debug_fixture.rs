@@ -1,4 +1,4 @@
-use lilia_agent_integration::ProductCredentialLoginInput;
+use lilia_agent::ProductCredentialLoginInput;
 use lilia_contracts::{
     AgentSessionRef, ExpectedRevision, ProductEntity, ProjectId, ProjectionEventId, TaskId,
     TimelineProjectionCommand, TimelineProjectionEvent,

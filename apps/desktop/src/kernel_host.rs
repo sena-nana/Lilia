@@ -1,0 +1,419 @@
+//! Composition root for the micro-kernel inside the desktop process.
+//!
+//! Assembles the feature list, binds every declared job protocol to the Mutsuki
+//! task pool, mounts the features, and forwards kernel job transitions into the
+//! shell as ordinary messages. Features never see the shell and the shell never
+//! spawns a worker thread.
+
+use std::sync::Arc;
+
+use lilia_agent::LiliaJobRuntime;
+use lilia_feature_agent_session::{AgentSessionFeature, TitlePort};
+use lilia_feature_architecture::{ArchitectureFeature, DesktopArchitectureService};
+use lilia_feature_automation::{AutomationFeature, DesktopAutomationService};
+use lilia_feature_coding::{CodeSearchPort, CodingFeature, CodingRefreshPort};
+use lilia_feature_composer::{ComposerFeature, PromptOptimizePort};
+use lilia_feature_document::{
+    DocumentFeature, LanguagePort, SharedDocumentStore, SharedLanguageRegistry,
+};
+use lilia_feature_extensions::{ExtensionsFeature, ExtensionsPort};
+use lilia_feature_github::{GitHubFeature, GitHubPort};
+use lilia_feature_import::{ImportFeature, ImportPort};
+use lilia_feature_hooks::HooksFeature;
+use lilia_feature_provider::{AssistantProbePort, CredentialPort, ProviderFeature};
+use lilia_feature_remote::{RemoteFeature, RemotePort};
+use lilia_feature_memory::{DesktopMemoryService, MemoryFeature};
+use lilia_feature_project::{CloneCredentials, ProjectFeature};
+use lilia_feature_roadmap::{DesktopRoadmapService, RoadmapFeature};
+use lilia_feature_suggestions::{SuggestionPort, SuggestionsFeature};
+use lilia_feature_task::TaskFeature;
+use lilia_feature_terminal::{DesktopTerminalService, TerminalFeature};
+use lilia_feature_timeline::TimelineFeature;
+use lilia_feature_update::{UpdateFeature, UpdatePort};
+use lilia_feature_usage::{UsageFeature, UsagePort};
+use lilia_feature_worktree::{WorktreeFeature, WorktreePort};
+use lilia_kernel::{Feature, JobEvent, Kernel};
+use lilia_service::ServiceAuthority;
+use lilia_storage::Db;
+
+/// Authorities the desktop process already owns and hands to the features it
+/// mounts. Everything here outlives the kernel.
+pub struct KernelServices {
+    pub authority: ServiceAuthority,
+    pub db: Db,
+    pub terminals: Arc<DesktopTerminalService>,
+    pub documents: SharedDocumentStore,
+    pub languages: SharedLanguageRegistry,
+    pub memory: DesktopMemoryService,
+    pub roadmap: DesktopRoadmapService,
+    pub architecture: DesktopArchitectureService,
+    pub automation: DesktopAutomationService,
+    pub clone_credentials: Arc<dyn CloneCredentials>,
+    pub update: Arc<dyn UpdatePort>,
+    pub prompt_optimize: Arc<dyn PromptOptimizePort>,
+    pub code_search: Arc<dyn CodeSearchPort>,
+    pub coding_refresh: Arc<dyn CodingRefreshPort>,
+    pub extensions: Arc<dyn ExtensionsPort>,
+    pub remote: Arc<dyn RemotePort>,
+    pub credentials: Arc<dyn CredentialPort>,
+    pub usage: Arc<dyn UsagePort>,
+    pub github: Arc<dyn GitHubPort>,
+    pub language: Arc<dyn LanguagePort>,
+    pub suggestions: Arc<dyn SuggestionPort>,
+    pub worktrees: Arc<dyn WorktreePort>,
+    pub assistant_probes: Arc<dyn AssistantProbePort>,
+    pub imports: Arc<dyn ImportPort>,
+    pub titles: Arc<dyn TitlePort>,
+}
+
+/// Kernel plus its mounted features, owned by the shell for the process
+/// lifetime. Dropping it shuts the job facade down.
+pub struct KernelHost {
+    kernel: Kernel,
+}
+
+impl KernelHost {
+    /// Builds the kernel, installs the task runtime and mounts every feature.
+    ///
+    /// `on_job` runs on the job worker thread, so it must only hand the event
+    /// to the shell's message queue.
+    pub fn start<F>(services: KernelServices, on_job: F) -> Result<Self, String>
+    where
+        F: Fn(JobEvent) + Send + Sync + 'static,
+    {
+        let features = features(services);
+        let runtime = LiliaJobRuntime::builder()
+            .protocols(features.iter().flat_map(|feature| feature.protocols()))
+            .map_err(|error| format!("failed to bind job protocols: {error}"))?
+            .build()
+            .map_err(|error| format!("failed to start the job runtime: {error}"))?;
+
+        let kernel = Kernel::new();
+        kernel.jobs().install_runtime(Arc::new(runtime));
+        kernel
+            .events()
+            .on::<JobEvent, _>(None, move |event| on_job(event.clone()));
+        kernel
+            .mount_all(features)
+            .map_err(|error| format!("failed to mount features: {error}"))?;
+        Ok(Self { kernel })
+    }
+
+    pub fn kernel(&self) -> &Kernel {
+        &self.kernel
+    }
+}
+
+impl Drop for KernelHost {
+    fn drop(&mut self) {
+        self.kernel.shutdown();
+    }
+}
+
+fn features(services: KernelServices) -> Vec<Arc<dyn Feature>> {
+    let KernelServices {
+        authority,
+        db,
+        terminals,
+        documents,
+        languages,
+        memory,
+        roadmap,
+        architecture,
+        automation,
+        clone_credentials,
+        update,
+        prompt_optimize,
+        code_search,
+        coding_refresh,
+        extensions,
+        remote,
+        credentials,
+        usage,
+        github,
+        language,
+        suggestions,
+        worktrees,
+        assistant_probes,
+        imports,
+        titles,
+    } = services;
+    vec![
+        Arc::new(ProjectFeature::new(clone_credentials)),
+        Arc::new(UpdateFeature::new(update)),
+        Arc::new(CodingFeature::new(code_search, coding_refresh)),
+        Arc::new(TaskFeature::new(authority.clone())),
+        Arc::new(ComposerFeature::new(db.clone(), prompt_optimize)),
+        Arc::new(AgentSessionFeature::new(db.clone(), titles)),
+        Arc::new(WorktreeFeature::new(db, worktrees)),
+        Arc::new(TimelineFeature::new(authority)),
+        Arc::new(TerminalFeature::new(terminals)),
+        Arc::new(DocumentFeature::new(documents, languages, language)),
+        Arc::new(MemoryFeature::new(memory)),
+        Arc::new(RoadmapFeature::new(roadmap)),
+        Arc::new(ArchitectureFeature::new(architecture)),
+        Arc::new(AutomationFeature::new(automation)),
+        Arc::new(ExtensionsFeature::new(extensions)),
+        Arc::new(RemoteFeature::new(remote)),
+        Arc::new(HooksFeature),
+        Arc::new(ProviderFeature::new(credentials, assistant_probes)),
+        Arc::new(UsageFeature::new(usage)),
+        Arc::new(GitHubFeature::new(github)),
+        Arc::new(ImportFeature::new(imports)),
+        Arc::new(SuggestionsFeature::new(suggestions)),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use lilia_feature_automation::SilentAutomationEvents;
+    use lilia_feature_coding::{SearchRequest, WorkspaceCodeSearchResult};
+    use lilia_feature_composer::{PromptOptimizeInput, PromptOptimizeResult};
+    use lilia_feature_project::NoCloneCredentials;
+    use lilia_feature_remote::RemoteRequest;
+    use lilia_feature_usage::{QuotaUsageStats, QuotaUsageStatsInput};
+    use serde_json::Value;
+
+    use super::*;
+
+    /// Answers every port the composition root needs. The boot path never calls
+    /// them, so refusing is enough to prove the wiring holds without a real
+    /// desktop application behind it.
+    struct IdlePort;
+
+    impl UpdatePort for IdlePort {
+        fn check(&self, _channel: &str) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+        fn install(&self, _version: &str) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl PromptOptimizePort for IdlePort {
+        fn optimize(&self, _input: PromptOptimizeInput) -> Result<PromptOptimizeResult, String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl CodeSearchPort for IdlePort {
+        fn search(&self, _request: SearchRequest) -> Result<WorkspaceCodeSearchResult, String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl CodingRefreshPort for IdlePort {
+        fn refresh(&self, _ticket: u64) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl ExtensionsPort for IdlePort {
+        fn run(&self, _ticket: u64) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl RemotePort for IdlePort {
+        fn operate(&self, _request: RemoteRequest) -> Result<Value, String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl CredentialPort for IdlePort {
+        fn save_api_key(&self, _provider_id: &str) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+        fn revoke(&self, _credential_id: &str, _revision: u64) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+        fn refresh(&self, _provider_id: Option<&str>) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl UsagePort for IdlePort {
+        fn quota(&self, _input: QuotaUsageStatsInput) -> Result<QuotaUsageStats, String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl ImportPort for IdlePort {
+        fn plan(&self, _ticket: u64) -> Result<Value, String> {
+            Err("idle".to_owned())
+        }
+        fn execute(&self, _ticket: u64) -> Result<Value, String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl AssistantProbePort for IdlePort {
+        fn probe(
+            &self,
+            _ticket: u64,
+            _kind: lilia_feature_provider::AssistantProbeKind,
+        ) -> Result<Value, String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl WorktreePort for IdlePort {
+        fn operate(
+            &self,
+            _request: lilia_feature_worktree::WorktreeRequest,
+        ) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl TitlePort for IdlePort {
+        fn title(
+            &self,
+            _request: lilia_feature_agent_session::TitleRequest,
+        ) -> Result<(), String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl SuggestionPort for IdlePort {
+        fn generate(
+            &self,
+            _request: lilia_feature_suggestions::GenerateRequest,
+        ) -> Result<Value, String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl LanguagePort for IdlePort {
+        fn diagnostics(
+            &self,
+            _request: lilia_feature_document::DiagnosticsRequest,
+        ) -> Result<Value, String> {
+            Err("idle".to_owned())
+        }
+        fn definitions(
+            &self,
+            _request: lilia_feature_document::DefinitionRequest,
+        ) -> Result<Value, String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    impl GitHubPort for IdlePort {
+        fn bind(&self, _context: &lilia_kernel::JobContext) -> Result<Value, String> {
+            Err("idle".to_owned())
+        }
+        fn repositories(&self, _page: u32) -> Result<Value, String> {
+            Err("idle".to_owned())
+        }
+    }
+
+    /// The authority takes an exclusive writer lease on its storage key, so
+    /// every set of services needs its own key to stay independent of the other
+    /// tests running beside it.
+    fn test_services(storage_key: &str) -> KernelServices {
+        let db = Db::in_memory().expect("an in-memory database opens");
+        let port = Arc::new(IdlePort);
+        KernelServices {
+            authority: ServiceAuthority::bootstrap_in_memory_named(storage_key, "lilia-service")
+                .expect("the authority bootstraps"),
+            db: db.clone(),
+            terminals: Arc::new(DesktopTerminalService::default()),
+            documents: SharedDocumentStore::default(),
+            languages: SharedLanguageRegistry::default(),
+            memory: DesktopMemoryService::in_memory().expect("the memory service opens"),
+            roadmap: DesktopRoadmapService::from_db(db.clone()).expect("the roadmap opens"),
+            architecture: DesktopArchitectureService::from_db(db.clone())
+                .expect("the architecture opens"),
+            automation: DesktopAutomationService::from_db(db, Arc::new(SilentAutomationEvents))
+                .expect("the automation service opens"),
+            clone_credentials: Arc::new(NoCloneCredentials),
+            update: port.clone(),
+            prompt_optimize: port.clone(),
+            code_search: port.clone(),
+            coding_refresh: port.clone(),
+            extensions: port.clone(),
+            remote: port.clone(),
+            credentials: port.clone(),
+            usage: port.clone(),
+            github: port.clone(),
+            language: port.clone(),
+            suggestions: port.clone(),
+            worktrees: port.clone(),
+            assistant_probes: port.clone(),
+            imports: port.clone(),
+            titles: port,
+        }
+    }
+
+    #[test]
+    fn the_composition_root_boots_with_every_declared_feature_mounted() {
+        let declared: BTreeSet<_> = features(test_services("in-memory:boot-declared"))
+            .iter()
+            .map(|feature| feature.id())
+            .collect();
+
+        let host = KernelHost::start(test_services("in-memory:boot-mounted"), |_| {})
+            .expect("the desktop composition root boots");
+
+        let mounted: BTreeSet<_> = host.kernel().mounted_features().into_iter().collect();
+        assert_eq!(mounted, declared);
+    }
+
+    #[test]
+    fn no_two_features_claim_the_same_id() {
+        let features = features(test_services("in-memory:unique-ids"));
+
+        let ids: BTreeSet<_> = features.iter().map(|feature| feature.id()).collect();
+
+        assert_eq!(
+            ids.len(),
+            features.len(),
+            "two features share an id, so mounting would reject one of them"
+        );
+    }
+
+    /// A protocol bound twice makes the runtime refuse to build, and a protocol
+    /// the shell submits but no feature declares fails only once a user
+    /// triggers it. Both are boot-time facts, so they are asserted here.
+    #[test]
+    fn every_declared_job_protocol_is_unique_and_reaches_the_runtime() {
+        let declared: Vec<_> = features(test_services("in-memory:protocols"))
+            .iter()
+            .flat_map(|feature| feature.protocols())
+            .map(|protocol| protocol.id)
+            .collect();
+
+        let unique: BTreeSet<_> = declared.iter().cloned().collect();
+        assert_eq!(unique.len(), declared.len(), "a job protocol is declared twice");
+
+        for expected in [
+            lilia_feature_project::CLONE_PROTOCOL,
+            lilia_feature_update::CHECK_PROTOCOL,
+            lilia_feature_update::INSTALL_PROTOCOL,
+            lilia_feature_coding::SEARCH_PROTOCOL,
+            lilia_feature_coding::REFRESH_PROTOCOL,
+            lilia_feature_composer::OPTIMIZE_PROMPT_PROTOCOL,
+            lilia_feature_extensions::MUTATE_PROTOCOL,
+            lilia_feature_remote::OPERATE_PROTOCOL,
+            lilia_feature_provider::CREDENTIAL_PROTOCOL,
+            lilia_feature_usage::QUOTA_PROTOCOL,
+            lilia_feature_github::BIND_PROTOCOL,
+            lilia_feature_github::REPOSITORIES_PROTOCOL,
+            lilia_feature_document::DIAGNOSTICS_PROTOCOL,
+            lilia_feature_document::DEFINITION_PROTOCOL,
+            lilia_feature_suggestions::GENERATE_PROTOCOL,
+            lilia_feature_worktree::OPERATE_PROTOCOL,
+            lilia_feature_provider::ASSISTANT_PROBE_PROTOCOL,
+            lilia_feature_import::PLAN_PROTOCOL,
+            lilia_feature_import::EXECUTE_PROTOCOL,
+        ] {
+            assert!(
+                unique.contains(expected),
+                "the shell submits {expected}, but no mounted feature declares it"
+            );
+        }
+    }
+}

@@ -12,6 +12,7 @@ mod debug_timeline;
 mod desktop;
 mod document_editor;
 mod host;
+mod kernel_host;
 mod iab_panel;
 mod iab_window;
 mod markdown_images;

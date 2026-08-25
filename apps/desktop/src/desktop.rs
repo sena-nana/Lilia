@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(debug_assertions)]
 use std::{sync::mpsc, time::Instant};
@@ -12,6 +11,11 @@ use lilia_contracts::{
     SidebarNavigationIcon, SidebarNavigationTarget, TaskId,
 };
 use lilia_desktop_application::DesktopTodoGuideStatus;
+use lilia_feature_project::{CloneJobRequest, CloneProgress, CloneRequest, CloneResult};
+use lilia_feature_provider::CredentialRequest;
+use lilia_feature_remote::RemoteRequest;
+use lilia_kernel::{JobContext, JobEvent, JobId, JobRequest, JobState};
+use lilia_desktop_application::DesktopComposerTurnRequest;
 use lilia_desktop_application::{
     clipboard_text_should_be_attachment, default_panel_states, describe_attachment_paths,
     preview_automatic_turn_selection, ApplicationWorkspaceSurface, ArchitectureBackend,
@@ -44,9 +48,7 @@ use lilia_desktop_application::{
     DesktopMcpElicitationAction, DesktopMcpElicitationMode, DesktopMcpFormFieldKind,
     DesktopMcpPromptGetView, DesktopMcpResourceReadView, DesktopMcpServerUpsert,
     DesktopMcpTransport, DesktopMemory, DesktopNavigationTarget, DesktopOptionalTextUpdate,
-    DesktopPluginInstall, DesktopProjectCloneError, DesktopProjectCloneOperation,
-    DesktopProjectClonePhase, DesktopProjectCloneRequest, DesktopProjectCloneResult,
-    DesktopProjectCloneSnapshot, DesktopProjectCreate, DesktopProjectDashboardSummary,
+    DesktopPluginInstall, DesktopProjectCreate, DesktopProjectDashboardSummary,
     DesktopProjectPatch, DesktopProjectRemovalPreview, DesktopProjectSettings,
     DesktopProjectTaskCatalog, DesktopProjectTaskError, DesktopPromptOptimizeInput,
     DesktopPromptOptimizeResult, DesktopPromptRoute, DesktopProviderCredentialInput,
@@ -423,32 +425,6 @@ enum WorktreeOperation {
 }
 
 #[derive(Debug, Clone)]
-enum ProviderOperation {
-    SaveApiKey {
-        provider_id: String,
-        secret: DesktopSecret,
-    },
-    Revoke {
-        credential_id: String,
-        revision: u64,
-    },
-    Refresh {
-        provider_id: Option<String>,
-    },
-}
-
-#[derive(Debug, Clone)]
-enum RemoteOperation {
-    Refresh,
-    SetEnabled(bool),
-    SavePcName(String),
-    SetKeepAwake(bool),
-    StartPairing,
-    CancelPairing,
-    RevokeDevice(String),
-}
-
-#[derive(Debug, Clone)]
 enum UpdateOperation {
     Check,
     Install(String),
@@ -584,6 +560,214 @@ enum McpContentOperation {
     },
 }
 
+/// One unit of work on the extensions lane. The commands stay in the shell
+/// rather than in the job payload because an MCP credential edit carries the
+/// secret itself; the job payload only names the operation.
+#[derive(Debug)]
+enum ExtensionsCommand {
+    Skill(SkillRegistryOperation),
+    Plugin(PluginRegistryOperation),
+    Hook {
+        operation: HookSourceOperation,
+        overview_project_cwd: Option<String>,
+    },
+    Refresh {
+        project_cwd: Option<String>,
+    },
+    ActivateMcp,
+    McpContent(McpContentOperation),
+    McpRegistry(McpRegistryOperation),
+}
+
+/// Which extensions surface a command answers to. The shell needs it even when
+/// the command failed, because a registry edit clears the credential drafts
+/// either way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ExtensionsLane {
+    Skill,
+    Plugin,
+    Hook,
+    Refresh,
+    Activation,
+    Content,
+}
+
+impl ExtensionsLane {
+    /// A registry edit invalidates whatever the operator had typed into the
+    /// credential fields, whether or not the edit went through.
+    fn clears_credential_drafts(self) -> bool {
+        matches!(self, Self::Refresh | Self::Activation)
+    }
+
+    /// An activation queued behind this command runs once the lane frees up.
+    fn releases_pending_activation(self) -> bool {
+        matches!(
+            self,
+            Self::Skill | Self::Refresh | Self::Activation | Self::Content
+        )
+    }
+}
+
+impl ExtensionsCommand {
+    fn lane(&self) -> ExtensionsLane {
+        match self {
+            Self::Skill(_) => ExtensionsLane::Skill,
+            Self::Plugin(_) => ExtensionsLane::Plugin,
+            Self::Hook { .. } => ExtensionsLane::Hook,
+            Self::Refresh { .. } => ExtensionsLane::Refresh,
+            Self::ActivateMcp | Self::McpRegistry(_) => ExtensionsLane::Activation,
+            Self::McpContent(_) => ExtensionsLane::Content,
+        }
+    }
+
+    /// Journalled label of the command.
+    fn operation(&self) -> &'static str {
+        match self {
+            Self::Skill(SkillRegistryOperation::Create(_)) => "skills.create",
+            Self::Skill(SkillRegistryOperation::SetEnabled { .. }) => "skills.set-enabled",
+            Self::Skill(SkillRegistryOperation::Delete { .. }) => "skills.delete",
+            Self::Plugin(PluginRegistryOperation::Install(_)) => "plugins.install",
+            Self::Plugin(PluginRegistryOperation::SetEnabled { .. }) => "plugins.set-enabled",
+            Self::Plugin(PluginRegistryOperation::Delete { .. }) => "plugins.delete",
+            Self::Hook {
+                operation: HookSourceOperation::Create { .. },
+                ..
+            } => "hooks.create",
+            Self::Hook {
+                operation: HookSourceOperation::Update { .. },
+                ..
+            } => "hooks.update",
+            Self::Hook {
+                operation: HookSourceOperation::SetEnabled { .. },
+                ..
+            } => "hooks.set-enabled",
+            Self::Hook {
+                operation: HookSourceOperation::Delete { .. },
+                ..
+            } => "hooks.delete",
+            Self::Refresh { .. } => "extensions.refresh",
+            Self::ActivateMcp => "mcp.activate",
+            Self::McpContent(McpContentOperation::ReadResource { .. }) => "mcp.read-resource",
+            Self::McpContent(McpContentOperation::GetPrompt { .. }) => "mcp.get-prompt",
+            Self::McpRegistry(McpRegistryOperation::Upsert(_)) => "mcp.upsert",
+            Self::McpRegistry(McpRegistryOperation::SetEnabled { .. }) => "mcp.set-enabled",
+            Self::McpRegistry(McpRegistryOperation::Delete { .. }) => "mcp.delete",
+            Self::McpRegistry(McpRegistryOperation::SetCredential { .. }) => "mcp.credential.set",
+            Self::McpRegistry(McpRegistryOperation::DeleteCredential { .. }) => {
+                "mcp.credential.delete"
+            }
+        }
+    }
+}
+
+/// What an [`ExtensionsCommand`] produced. The shell reads it back from the
+/// exchange when the kernel reports the job completed.
+#[derive(Debug)]
+enum ExtensionsOutcome {
+    Skill(DesktopExtensionsSnapshot),
+    Plugin(DesktopExtensionsSnapshot),
+    Hook(NativeHooksSnapshot),
+    Refresh(DesktopExtensionsSnapshot, NativeHooksSnapshot),
+    Activated(DesktopMcpActivationReport),
+    Content(McpContentPreview),
+}
+
+/// The extensions job the shell is waiting on.
+#[derive(Clone, Copy, Debug)]
+struct ExtensionsJob {
+    id: JobId,
+    ticket: u64,
+    lane: ExtensionsLane,
+}
+
+/// Takes a shell-side job lock, recovering from a poisoned one rather than
+/// unwinding. These guards only move a value in or out of a map, so a poisoned
+/// lock means some unrelated job panicked, and killing the window over it would
+/// turn one failed operation into a lost session.
+fn locked<T>(lock: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    lock.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Parks a job's command and its outcome beside the job payload, for the lanes
+/// whose values must not be journalled — because they carry secret material —
+/// or cannot be, because they are shell-shaped views. The payload keeps the
+/// ticket, which is what a journal reader needs to follow the lane.
+struct JobExchange<C, O> {
+    next_ticket: Mutex<u64>,
+    commands: Mutex<HashMap<u64, C>>,
+    outcomes: Mutex<HashMap<u64, O>>,
+}
+
+impl<C, O> Default for JobExchange<C, O> {
+    fn default() -> Self {
+        Self {
+            next_ticket: Mutex::new(0),
+            commands: Mutex::new(HashMap::new()),
+            outcomes: Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl<C, O> JobExchange<C, O> {
+    fn park(&self, command: C) -> u64 {
+        let mut next = locked(&self.next_ticket);
+        *next = next.saturating_add(1);
+        let ticket = *next;
+        drop(next);
+        locked(&self.commands).insert(ticket, command);
+        ticket
+    }
+
+    fn claim(&self, ticket: u64) -> Option<C> {
+        locked(&self.commands).remove(&ticket)
+    }
+
+    fn store(&self, ticket: u64, outcome: O) {
+        locked(&self.outcomes).insert(ticket, outcome);
+    }
+
+    fn take(&self, ticket: u64) -> Option<O> {
+        locked(&self.outcomes).remove(&ticket)
+    }
+
+    /// Drops whatever a cancelled or superseded ticket left behind.
+    fn discard(&self, ticket: u64) {
+        self.claim(ticket);
+        self.take(ticket);
+    }
+}
+
+type ExtensionsExchange = JobExchange<ExtensionsCommand, ExtensionsOutcome>;
+
+/// The probe job carries a ticket; the draft configuration it names, including
+/// an unsaved API key, waits here.
+type AssistantProbeExchange = JobExchange<DesktopAssistantAiProbeInput, ()>;
+
+/// One prepared import step, waiting for its job to claim it.
+enum ImportCommand {
+    Plan {
+        service: DesktopDataImportService,
+        source: DesktopApplicationConfig,
+    },
+    Execute {
+        service: DesktopDataImportService,
+        plan: Box<DesktopImportPlan>,
+        options: DesktopImportExecutionOptions,
+    },
+}
+
+type ImportExchange = JobExchange<ImportCommand, ()>;
+
+/// What the workspace surface asks the coding refresh to read back.
+#[derive(Debug)]
+struct CodingRefreshCommand {
+    workspace: Option<(String, String)>,
+    project_id: Option<ProjectId>,
+    git_diff_scope: DesktopGitDiffScope,
+}
+
+type CodingExchange = JobExchange<CodingRefreshCommand, CodingToolsRefreshResult>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum McpContentKind {
     Resource,
@@ -651,7 +835,7 @@ struct ConversationStatusEntry {
 
 #[derive(Debug, Clone)]
 struct PromptOptimizationState {
-    operation_id: u64,
+    job_id: JobId,
     task_id: TaskId,
     expected_revision: u64,
 }
@@ -1041,35 +1225,23 @@ pub enum Message {
     PickProjectCloneParent,
     StartProjectClone,
     CancelProjectClone,
-    ProjectCloneProgress {
-        operation_id: u64,
-        snapshot: DesktopProjectCloneSnapshot,
-    },
-    ProjectCloneFinished {
-        operation_id: u64,
-        result: Result<DesktopProjectCloneResult, String>,
-        cancelled: bool,
+    /// One kernel job transition. The job id identifies the operation, so no
+    /// screen keeps its own sequence field to discard stale results.
+    KernelJob(JobEvent),
+    /// A finished turn wants its task named. Carried through the queue so the
+    /// shell stays the only place that submits a job, and so the application
+    /// never holds the kernel that runs its own ports.
+    RequestTitleUpdate {
+        task_id: TaskId,
+        turn_id: Option<String>,
     },
     StartGitHubBinding,
-    GitHubDeviceFlowStarted {
-        operation_id: u64,
-        result: Result<DesktopGitHubDeviceFlowStart, String>,
-    },
-    GitHubDeviceFlowFinished {
-        operation_id: u64,
-        result: Result<DesktopGitHubDeviceFlowPollResult, String>,
-    },
     CancelGitHubBinding,
     OpenGitHubVerification,
     CopyGitHubUserCode,
     UnbindGitHub,
     RefreshGitHubRepositories,
     LoadMoreGitHubRepositories,
-    GitHubRepositoriesLoaded {
-        operation_id: u64,
-        append: bool,
-        result: Result<DesktopGitHubRepoPage, String>,
-    },
     SelectGitHubRepository {
         full_name: String,
     },
@@ -1226,20 +1398,9 @@ pub enum Message {
         item_id: WorkspaceItemId,
         action: String,
     },
-    DocumentDiagnosticsFinished {
-        document_id: lilia_desktop_application::DocumentId,
-        result: Result<DesktopDocumentDiagnosticsSnapshot, String>,
-    },
     GoToDocumentDefinition {
         item_id: WorkspaceItemId,
         window_id: HostedWindowId,
-    },
-    DocumentDefinitionsFinished {
-        item_id: WorkspaceItemId,
-        window_id: HostedWindowId,
-        operation_id: u64,
-        project_id: Option<ProjectId>,
-        result: Result<DesktopDocumentDefinitionResult, String>,
     },
     OpenDocumentDefinitionTarget {
         item_id: WorkspaceItemId,
@@ -1280,10 +1441,6 @@ pub enum Message {
     RollbackArchitecture,
     ArchitectureGraph(GraphCanvasEvent),
     RefreshCodingTools,
-    CodingToolsRefreshed {
-        operation_id: u64,
-        result: Box<CodingToolsRefreshResult>,
-    },
     CodingQueryChanged(String),
     CycleCodingSearchMode,
     ToggleCodingSearchScope,
@@ -1297,10 +1454,6 @@ pub enum Message {
     Terminal(TerminalViewMessage),
     OpenCodingSearchHit(DesktopWorkspaceCodeSearchHit),
     SaveCodingSearchToMemory,
-    CodingSearchFinished {
-        operation_id: u64,
-        result: Result<DesktopWorkspaceCodeSearchResult, String>,
-    },
     SelectProject(ProjectId),
     OpenProjectsOverview,
     RefreshProjectsOverview,
@@ -1374,24 +1527,11 @@ pub enum Message {
         window_id: HostedWindowId,
         force: bool,
     },
-    ConversationSuggestionsFinished {
-        window_id: HostedWindowId,
-        operation_id: u64,
-        task_id: TaskId,
-        result: Result<Vec<DesktopSuggestionItem>, String>,
-    },
     ApplyConversationSuggestion {
         window_id: HostedWindowId,
         prompt: String,
     },
     OptimizePrompt(HostedWindowId),
-    PromptOptimizationFinished {
-        window_id: HostedWindowId,
-        operation_id: u64,
-        task_id: TaskId,
-        expected_revision: u64,
-        result: Result<DesktopPromptOptimizeResult, String>,
-    },
     ApplyPromptRouteWorkflow(HostedWindowId),
     DismissPromptRouteWorkflow(HostedWindowId),
     ComposerModelSelection {
@@ -1669,16 +1809,8 @@ pub enum Message {
     ToggleProjectWorktreeCleanup,
     SaveProjectSettings,
     PickDataImportSource,
-    DataImportPlanFinished {
-        operation_id: u64,
-        result: Result<DesktopImportPlan, String>,
-    },
     ToggleDataImportCredentials,
     ExecuteDataImport,
-    DataImportFinished {
-        operation_id: u64,
-        report: DesktopImportReport,
-    },
     ResetDataImport,
     RestartAfterDataImport,
     SelectProvider(String),
@@ -1689,10 +1821,6 @@ pub enum Message {
         revision: u64,
     },
     RefreshProvider,
-    ProviderOperationFinished {
-        operation_id: u64,
-        error: Option<String>,
-    },
     ProviderModelChanged(String),
     ProviderOpenAiEndpointChanged(String),
     ProviderAnthropicEndpointChanged(String),
@@ -1709,15 +1837,7 @@ pub enum Message {
         value: String,
     },
     FetchAssistantAiModels,
-    AssistantAiModelsFetched {
-        operation_id: u64,
-        result: DesktopAssistantAiModelsResult,
-    },
     TestAssistantAiConnection,
-    AssistantAiConnectionTested {
-        operation_id: u64,
-        result: DesktopAssistantAiTestResult,
-    },
     SaveAssistantAiConfiguration,
     ClearAssistantAiSecret,
     TitleModelChanged(String),
@@ -1752,10 +1872,6 @@ pub enum Message {
     RefreshQuota,
     CycleQuotaDays,
     CycleQuotaBackend,
-    QuotaRefreshed {
-        operation_id: u64,
-        result: Result<QuotaUsageStats, String>,
-    },
     RefreshExtensions,
     SkillIdChanged(String),
     SkillDescriptionChanged(String),
@@ -1764,10 +1880,6 @@ pub enum Message {
     RequestDeleteSkill(String),
     ConfirmDeleteSkill,
     CancelDeleteSkill,
-    SkillOperationFinished {
-        operation_id: u64,
-        result: Result<DesktopExtensionsSnapshot, String>,
-    },
     PluginSourceChanged(String),
     PickPluginDirectory,
     InstallPlugin,
@@ -1775,10 +1887,6 @@ pub enum Message {
     RequestDeletePlugin(String),
     ConfirmDeletePlugin,
     CancelDeletePlugin,
-    PluginOperationFinished {
-        operation_id: u64,
-        result: Result<DesktopExtensionsSnapshot, String>,
-    },
     HookDraftChanged {
         source_id: String,
         value: String,
@@ -1800,10 +1908,6 @@ pub enum Message {
     RequestDeleteHookSource(String),
     ConfirmDeleteHookSource,
     CancelDeleteHookSource,
-    HookOperationFinished {
-        operation_id: u64,
-        result: Result<NativeHooksSnapshot, String>,
-    },
     ActivateRegisteredMcp,
     NewMcpServer,
     EditMcpServer(String),
@@ -1844,18 +1948,6 @@ pub enum Message {
         value: String,
     },
     GetMcpPrompt(String),
-    McpContentLoaded {
-        operation_id: u64,
-        result: Result<McpContentPreview, String>,
-    },
-    ExtensionsRefreshed {
-        operation_id: u64,
-        result: Result<(DesktopExtensionsSnapshot, NativeHooksSnapshot), String>,
-    },
-    ExtensionsActivated {
-        operation_id: u64,
-        result: Result<DesktopMcpActivationReport, String>,
-    },
     RefreshRemote,
     ToggleRemoteHost,
     RemotePcNameChanged(String),
@@ -1865,10 +1957,6 @@ pub enum Message {
     CancelRemotePairing,
     CopyRemotePairingUri,
     RevokeRemoteDevice(String),
-    RemoteOperationFinished {
-        operation_id: u64,
-        result: Result<RemoteControlStatus, String>,
-    },
     ShellShortcutChanged(String),
     BeginShellShortcutCapture,
     ShellShortcutCaptured(KeyCaptureEvent),
@@ -1879,10 +1967,6 @@ pub enum Message {
     DismissUpdatePrompt,
     UpdatePromptDialogInteraction,
     OpenReleases,
-    UpdateOperationFinished {
-        operation_id: u64,
-        result: Result<DesktopUpdateState, String>,
-    },
     Shell(ShellCommand),
     Workspace(WorkspaceAction),
     WindowChrome(WindowChromeEvent),
@@ -1987,20 +2071,18 @@ pub struct DesktopProgram {
     project_clone_percent: Option<u8>,
     project_clone_target: Option<PathBuf>,
     project_clone_detail: Option<String>,
-    project_clone_operation_sequence: u64,
-    active_project_clone_operation: Option<u64>,
-    active_project_clone_handle: Option<DesktopProjectCloneOperation>,
+    active_project_clone_job: Option<JobId>,
+    kernel: crate::kernel_host::KernelHost,
     github_binding: DesktopGitHubBindingStatus,
     github_device_flow: Option<DesktopGitHubDeviceFlowStart>,
     github_binding_busy: bool,
-    github_binding_operation_sequence: u64,
-    active_github_binding_operation: Option<u64>,
-    github_binding_cancel: Option<Arc<AtomicBool>>,
+    active_github_binding_job: Option<JobId>,
     github_repositories: Vec<DesktopGitHubRepoSummary>,
     github_repositories_next_page: Option<u32>,
     github_repositories_busy: bool,
-    github_repository_operation_sequence: u64,
-    active_github_repository_operation: Option<u64>,
+    /// The paging job and whether its page appends to the list or replaces it.
+    /// The flag is shell state, not part of the request GitHub sees.
+    active_github_repository_job: Option<(JobId, bool)>,
     selected_github_repository: Option<String>,
     github_error: Option<String>,
     task_search: String,
@@ -2015,7 +2097,11 @@ pub struct DesktopProgram {
     opened_project_document: Option<DocumentSnapshot>,
     project_files_error: Option<String>,
     document_editors: BTreeMap<WorkspaceItemId, DocumentEditorViewState>,
-    document_definition_operation_sequence: u64,
+    /// Diagnostics and definition jobs in flight, keyed by job id. Each job is
+    /// answered against the document or editor recorded here, so no screen
+    /// keeps a sequence field to recognise its own reply.
+    active_diagnostics_jobs: BTreeMap<JobId, lilia_desktop_application::DocumentId>,
+    active_definition_jobs: BTreeMap<JobId, (WorkspaceItemId, HostedWindowId)>,
     terminal_snapshots: BTreeMap<DesktopTerminalSessionId, DesktopTerminalSnapshot>,
     terminal_inputs: BTreeMap<DesktopTerminalSessionId, String>,
     terminal_scrollback: BTreeMap<DesktopTerminalSessionId, usize>,
@@ -2030,8 +2116,9 @@ pub struct DesktopProgram {
     conversation_reference_results: Vec<ChatConversationReference>,
     context_attachment_results: Vec<ChatContextSearchResult>,
     conversation_suggestions: ConversationSuggestionState,
-    conversation_suggestion_operation_sequence: u64,
-    prompt_optimization_operation_sequence: u64,
+    /// Suggestion jobs in flight, keyed by job id, so a reply lands on the
+    /// window and task it was asked for.
+    active_suggestion_jobs: BTreeMap<JobId, (HostedWindowId, TaskId)>,
     active_prompt_optimizations: BTreeMap<HostedWindowId, PromptOptimizationState>,
     prompt_route_suggestions: BTreeMap<HostedWindowId, PromptRouteSuggestionState>,
     pending_session_branch: Option<PendingSessionBranch>,
@@ -2040,6 +2127,7 @@ pub struct DesktopProgram {
     editing_todo: Option<String>,
     goal_draft: String,
     worktree_busy: bool,
+    active_worktree_job: Option<JobId>,
     worktree_confirmation: Option<WorktreeDangerAction>,
     pending_initial_worktrees: BTreeMap<TaskId, DesktopInitialWorktreeSelection>,
     interaction_drafts: BTreeMap<String, String>,
@@ -2117,8 +2205,9 @@ pub struct DesktopProgram {
     coding_search_all_projects: bool,
     coding_notice: Option<String>,
     coding_busy: bool,
-    coding_operation_sequence: u64,
-    active_coding_operation: Option<u64>,
+    coding_exchange: Arc<CodingExchange>,
+    active_coding_job: Option<(JobId, u64)>,
+    active_coding_search_job: Option<JobId>,
     coding_error: Option<String>,
     settings_model: SettingsModel,
     settings_state: SettingsState,
@@ -2134,8 +2223,15 @@ pub struct DesktopProgram {
     assistant_ai_new_model_id: String,
     assistant_ai_new_model_label: String,
     assistant_ai_probe_busy: bool,
-    assistant_ai_probe_sequence: u64,
-    active_assistant_ai_probe: Option<u64>,
+    /// Draft endpoint configurations parked for a probe job to claim. The API
+    /// key in one is unsaved, so it stays here rather than in the payload.
+    /// The prepared import step a job ticket names. It holds an application
+    /// config and a live host handle, so it cannot travel in a payload.
+    import_exchange: Arc<ImportExchange>,
+    active_import_job: Option<(JobId, u64)>,
+    assistant_probes: Arc<AssistantProbeExchange>,
+    active_assistant_probe_job:
+        Option<(JobId, u64, lilia_feature_provider::AssistantProbeKind)>,
     assistant_ai_probe_notice: Option<(bool, String)>,
     custom_preset_draft: String,
     agent_interaction_settings: DesktopAgentInteractionSettings,
@@ -2149,15 +2245,14 @@ pub struct DesktopProgram {
     selected_provider: Option<String>,
     provider_secret: String,
     provider_busy: bool,
-    provider_operation_sequence: u64,
-    active_provider_operation: Option<u64>,
+    provider_secrets: Arc<StagedProviderSecret>,
+    active_provider_job: Option<JobId>,
     provider_error: Option<String>,
     quota_usage: Option<QuotaUsageStats>,
     quota_days: i64,
     quota_backend: String,
     quota_busy: bool,
-    quota_operation_sequence: u64,
-    active_quota_operation: Option<u64>,
+    active_quota_job: Option<JobId>,
     quota_error: Option<String>,
     extensions: Option<DesktopExtensionsSnapshot>,
     hooks: Option<DesktopHooksOverview>,
@@ -2177,14 +2272,13 @@ pub struct DesktopProgram {
     mcp_content_preview: Option<McpContentPreview>,
     extensions_busy: bool,
     extensions_activation_pending: bool,
-    extensions_operation_sequence: u64,
-    active_extensions_operation: Option<u64>,
+    extensions_exchange: Arc<ExtensionsExchange>,
+    active_extensions_job: Option<ExtensionsJob>,
     extensions_error: Option<String>,
     remote: Option<RemoteControlStatus>,
     remote_pc_name: String,
     remote_busy: bool,
-    remote_operation_sequence: u64,
-    active_remote_operation: Option<u64>,
+    active_remote_job: Option<JobId>,
     remote_error: Option<String>,
     shell: NativeShellIntegration,
     shell_shortcut_edit: String,
@@ -2195,8 +2289,7 @@ pub struct DesktopProgram {
     update_failure_dismissed: bool,
     update_configured: bool,
     update_busy: bool,
-    update_operation_sequence: u64,
-    active_update_operation: Option<u64>,
+    active_update_job: Option<JobId>,
     update_error: Option<String>,
     exit_requested: bool,
     window_state: NativeWindowStateWriter,
@@ -5763,167 +5856,83 @@ impl DesktopProgram {
         if self.github_binding_busy || !self.github_binding.client_id_configured {
             return;
         }
-        self.github_binding_operation_sequence =
-            self.github_binding_operation_sequence.saturating_add(1);
-        let operation_id = self.github_binding_operation_sequence;
-        self.active_github_binding_operation = Some(operation_id);
         self.github_binding_busy = true;
         self.github_device_flow = None;
         self.github_error = None;
-        let cancel = Arc::new(AtomicBool::new(false));
-        self.github_binding_cancel = Some(Arc::clone(&cancel));
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        if let Err(error) = std::thread::Builder::new()
-            .name("lilia-github-device-flow-start".to_owned())
-            .spawn(move || {
-                if cancel.load(Ordering::Acquire) {
-                    return;
-                }
-                let result = application
-                    .start_github_device_flow()
-                    .map_err(|error| github_error_message(&error));
-                let _ = message_sender(Message::GitHubDeviceFlowStarted {
-                    operation_id,
-                    result,
-                });
-            })
-        {
-            eprintln!("failed to start Native GitHub device flow worker: {error}");
-            self.github_binding_busy = false;
-            self.active_github_binding_operation = None;
-            self.github_binding_cancel = None;
-            self.github_error = Some("无法启动 GitHub 绑定任务。".to_owned());
-        }
-    }
-
-    fn finish_github_device_flow_start(
-        &mut self,
-        operation_id: u64,
-        result: Result<DesktopGitHubDeviceFlowStart, String>,
-    ) {
-        if self.active_github_binding_operation != Some(operation_id) {
-            return;
-        }
-        let flow = match result {
-            Ok(flow) => flow,
+        let request = JobRequest::new(lilia_feature_github::BIND_PROTOCOL, Value::Null)
+            .in_slot(lilia_feature_github::bind_slot());
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => self.active_github_binding_job = Some(handle.id()),
             Err(error) => {
+                eprintln!("failed to submit the LiliaCode GitHub binding job: {error}");
                 self.github_binding_busy = false;
-                self.active_github_binding_operation = None;
-                self.github_binding_cancel = None;
-                self.github_error = Some(error);
-                return;
+                self.github_error = Some("无法启动 GitHub 绑定任务。".to_owned());
             }
-        };
-        self.github_device_flow = Some(flow.clone());
-        let Some(cancel) = self.github_binding_cancel.clone() else {
-            return;
-        };
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        if let Err(error) = std::thread::Builder::new()
-            .name("lilia-github-device-flow-poll".to_owned())
-            .spawn(move || {
-                let mut interval = flow.interval_seconds.max(1);
-                loop {
-                    if cancel.load(Ordering::Acquire) {
-                        return;
-                    }
-                    if current_timestamp_millis() >= flow.expires_at {
-                        let _ = message_sender(Message::GitHubDeviceFlowFinished {
-                            operation_id,
-                            result: Ok(DesktopGitHubDeviceFlowPollResult {
-                                status: "expired".to_owned(),
-                                interval_seconds: interval,
-                                binding_status: None,
-                                error: Some("expired_token".to_owned()),
-                            }),
-                        });
-                        return;
-                    }
-                    std::thread::sleep(Duration::from_secs(interval as u64));
-                    if cancel.load(Ordering::Acquire) {
-                        return;
-                    }
-                    let result =
-                        application.poll_github_device_flow(&flow.device_code, Some(interval));
-                    if cancel.load(Ordering::Acquire) {
-                        if matches!(
-                            result.as_ref(),
-                            Ok(result) if result.status == "authorized"
-                        ) {
-                            let _ = application.unbind_github();
-                        }
-                        return;
-                    }
-                    match result {
-                        Ok(result) if result.status == "pending" => {
-                            interval = result.interval_seconds.max(1);
-                        }
-                        Ok(result) => {
-                            let _ = message_sender(Message::GitHubDeviceFlowFinished {
-                                operation_id,
-                                result: Ok(result),
-                            });
-                            return;
-                        }
-                        Err(error) => {
-                            let _ = message_sender(Message::GitHubDeviceFlowFinished {
-                                operation_id,
-                                result: Err(github_error_message(&error)),
-                            });
-                            return;
-                        }
-                    }
-                }
-            })
-        {
-            eprintln!("failed to start Native GitHub device flow poller: {error}");
-            self.github_binding_busy = false;
-            self.active_github_binding_operation = None;
-            self.github_binding_cancel = None;
-            self.github_device_flow = None;
-            self.github_error = Some("无法启动 GitHub 授权检查。".to_owned());
         }
     }
 
-    fn finish_github_device_flow(
-        &mut self,
-        operation_id: u64,
-        result: Result<DesktopGitHubDeviceFlowPollResult, String>,
-    ) {
-        if self.active_github_binding_operation != Some(operation_id) {
+    /// Projects the binding job. Its progress carries the device flow, which is
+    /// what the surface shows while the user authorizes in a browser; its
+    /// terminal state carries the poll result.
+    fn apply_github_binding_job(&mut self, state: JobState) {
+        match state {
+            JobState::Pending => {}
+            JobState::Running { progress } => {
+                if let Ok(flow) =
+                    serde_json::from_value::<DesktopGitHubDeviceFlowStart>(progress)
+                {
+                    self.github_device_flow = Some(flow);
+                }
+            }
+            JobState::Completed { output } => {
+                self.active_github_binding_job = None;
+                self.github_binding_busy = false;
+                self.github_device_flow = None;
+                match serde_json::from_value::<DesktopGitHubDeviceFlowPollResult>(output) {
+                    Ok(result) => self.apply_github_device_flow_result(result),
+                    Err(error) => {
+                        self.github_error = Some(format!("无法读取 GitHub 授权结果：{error}"))
+                    }
+                }
+            }
+            JobState::Failed { message } => {
+                self.active_github_binding_job = None;
+                self.github_binding_busy = false;
+                self.github_device_flow = None;
+                self.github_error = Some(message);
+            }
+            // Cancelling ran `cancel_github_binding`, which already unbound the
+            // account and reset the surface.
+            _ => {
+                self.active_github_binding_job = None;
+                self.github_binding_busy = false;
+                self.github_device_flow = None;
+            }
+        }
+    }
+
+    fn apply_github_device_flow_result(&mut self, result: DesktopGitHubDeviceFlowPollResult) {
+        if result.status == "authorized" {
+            if let Some(status) = result.binding_status {
+                self.github_binding = status;
+            } else {
+                self.refresh_github_binding_status();
+            }
+            self.github_error = None;
+            self.github_repositories.clear();
+            self.github_repositories_next_page = None;
+            self.load_github_repositories(false);
             return;
         }
-        self.github_binding_busy = false;
-        self.active_github_binding_operation = None;
-        self.github_binding_cancel = None;
-        self.github_device_flow = None;
-        match result {
-            Ok(result) if result.status == "authorized" => {
-                if let Some(status) = result.binding_status {
-                    self.github_binding = status;
-                } else {
-                    self.refresh_github_binding_status();
-                }
-                self.github_error = None;
-                self.github_repositories.clear();
-                self.github_repositories_next_page = None;
-                self.load_github_repositories(false);
-            }
-            Ok(result) => {
-                self.github_error = Some(match result.error.as_deref() {
-                    Some("access_denied") => "GitHub 授权已被拒绝。".to_owned(),
-                    _ => "GitHub 授权已过期，请重新绑定。".to_owned(),
-                });
-            }
-            Err(error) => self.github_error = Some(error),
-        }
+        self.github_error = Some(match result.error.as_deref() {
+            Some("access_denied") => "GitHub 授权已被拒绝。".to_owned(),
+            _ => "GitHub 授权已过期，请重新绑定。".to_owned(),
+        });
     }
 
     fn cancel_github_binding(&mut self) {
-        if let Some(cancel) = self.github_binding_cancel.take() {
-            cancel.store(true, Ordering::Release);
+        if let Some(job_id) = self.active_github_binding_job.take() {
+            self.kernel.kernel().jobs().cancel(job_id);
         }
         if let Err(error) = self.application.unbind_github() {
             self.github_error = Some(github_error_message(&error));
@@ -5931,7 +5940,6 @@ impl DesktopProgram {
             self.github_error = None;
         }
         self.github_binding_busy = false;
-        self.active_github_binding_operation = None;
         self.github_device_flow = None;
         self.github_binding = DesktopGitHubBindingStatus {
             state: "unbound".to_owned(),
@@ -6001,45 +6009,40 @@ impl DesktopProgram {
         } else {
             1
         };
-        self.github_repository_operation_sequence =
-            self.github_repository_operation_sequence.saturating_add(1);
-        let operation_id = self.github_repository_operation_sequence;
-        self.active_github_repository_operation = Some(operation_id);
         self.github_repositories_busy = true;
         self.github_error = None;
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        if let Err(error) = std::thread::Builder::new()
-            .name("lilia-github-repositories".to_owned())
-            .spawn(move || {
-                let result = application
-                    .list_github_repositories(Some(page))
-                    .map_err(|error| github_error_message(&error));
-                let _ = message_sender(Message::GitHubRepositoriesLoaded {
-                    operation_id,
-                    append,
-                    result,
-                });
-            })
-        {
-            eprintln!("failed to start Native GitHub repository worker: {error}");
-            self.github_repositories_busy = false;
-            self.active_github_repository_operation = None;
-            self.github_error = Some("无法启动 GitHub 仓库读取任务。".to_owned());
+        let request = JobRequest::new(
+            lilia_feature_github::REPOSITORIES_PROTOCOL,
+            serde_json::to_value(lilia_feature_github::RepositoriesRequest::new(page))
+                .expect("a github repositories request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_github::repositories_slot());
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => self.active_github_repository_job = Some((handle.id(), append)),
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode GitHub repositories job: {error}");
+                self.github_repositories_busy = false;
+                self.github_error = Some("无法启动 GitHub 仓库读取任务。".to_owned());
+            }
         }
     }
 
-    fn finish_github_repositories_load(
-        &mut self,
-        operation_id: u64,
-        append: bool,
-        result: Result<DesktopGitHubRepoPage, String>,
-    ) {
-        if self.active_github_repository_operation != Some(operation_id) {
-            return;
-        }
+    fn apply_github_repositories_job(&mut self, append: bool, state: JobState) {
+        let result = match state {
+            JobState::Pending | JobState::Running { .. } => return,
+            JobState::Completed { output } => {
+                serde_json::from_value::<DesktopGitHubRepoPage>(output)
+                    .map_err(|error| format!("无法读取 GitHub 仓库列表：{error}"))
+            }
+            JobState::Failed { message } => Err(message),
+            _ => {
+                self.active_github_repository_job = None;
+                self.github_repositories_busy = false;
+                return;
+            }
+        };
+        self.active_github_repository_job = None;
         self.github_repositories_busy = false;
-        self.active_github_repository_operation = None;
         match result {
             Ok(page) => {
                 if !append {
@@ -6234,6 +6237,38 @@ impl DesktopProgram {
         {
             return;
         }
+        let use_github_binding = self.selected_github_repository.as_deref()
+            == Some(self.project_clone_repository.trim());
+        let repository = if use_github_binding {
+            match self
+                .application
+                .github_clone_repository(self.project_clone_repository.trim())
+            {
+                Ok(repository) => repository,
+                Err(error) => {
+                    self.fail_project_clone(github_error_message(&error));
+                    return;
+                }
+            }
+        } else {
+            self.project_clone_repository.trim().to_owned()
+        };
+        let request = CloneJobRequest {
+            clone: CloneRequest {
+                repository,
+                parent_directory: PathBuf::from(self.project_clone_parent.trim()),
+            },
+            use_github_binding,
+        };
+        let payload = match serde_json::to_value(&request) {
+            Ok(payload) => payload,
+            Err(error) => {
+                eprintln!("failed to encode the Native project clone request: {error}");
+                self.fail_project_clone("无法启动仓库克隆任务，请稍后重试。".to_owned());
+                return;
+            }
+        };
+
         self.project_clone_busy = true;
         self.project_clone_outcome = ProjectCloneOutcome::Running;
         self.project_clone_phase = Some("preparing".to_owned());
@@ -6241,167 +6276,173 @@ impl DesktopProgram {
         self.project_clone_target = None;
         self.project_clone_detail = Some("正在准备克隆…".to_owned());
         self.project_action_error = None;
-        self.project_clone_operation_sequence =
-            self.project_clone_operation_sequence.saturating_add(1);
-        let operation_id = self.project_clone_operation_sequence;
-        self.active_project_clone_operation = Some(operation_id);
-        let parent_directory = PathBuf::from(self.project_clone_parent.trim());
-        let operation = if self.selected_github_repository.as_deref()
-            == Some(self.project_clone_repository.trim())
-        {
-            self.application
-                .start_github_repository_clone(
-                    self.project_clone_repository.trim(),
-                    parent_directory,
-                )
-                .map_err(|error| github_error_message(&error))
-        } else {
-            self.application
-                .start_project_repository_clone(DesktopProjectCloneRequest {
-                    repository: self.project_clone_repository.clone(),
-                    parent_directory,
-                })
-                .map_err(project_clone_error_message)
-        };
-        let operation = match operation {
-            Ok(operation) => operation,
+
+        match self.kernel.kernel().jobs().submit(
+            JobRequest::new(lilia_feature_project::CLONE_PROTOCOL, payload)
+                .in_slot(lilia_feature_project::clone_slot()),
+        ) {
+            Ok(handle) => self.active_project_clone_job = Some(handle.id()),
             Err(error) => {
-                self.project_clone_busy = false;
-                self.project_clone_outcome = ProjectCloneOutcome::Failed;
-                self.project_clone_phase = Some("failed".to_owned());
-                self.project_clone_detail = None;
-                self.active_project_clone_operation = None;
-                self.project_action_error = Some(error);
-                return;
+                eprintln!("failed to submit the Native project clone job: {error}");
+                self.fail_project_clone("无法启动仓库克隆任务，请稍后重试。".to_owned());
             }
-        };
-        let monitor = operation.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-project-clone".to_owned())
-            .spawn(move || {
-                let mut observed_sequence = None;
-                loop {
-                    let snapshot = monitor.snapshot();
-                    if observed_sequence != Some(snapshot.sequence) {
-                        observed_sequence = Some(snapshot.sequence);
-                        let terminal = project_clone_phase_is_terminal(&snapshot.phase);
-                        let _ = message_sender(Message::ProjectCloneProgress {
-                            operation_id,
-                            snapshot,
-                        });
-                        if terminal {
-                            break;
-                        }
-                    }
-                    std::thread::sleep(Duration::from_millis(50));
-                }
-                let result = monitor.wait();
-                let cancelled = matches!(&result, Err(DesktopProjectCloneError::Cancelled));
-                let result = result.map_err(project_clone_error_message);
-                let _ = message_sender(Message::ProjectCloneFinished {
-                    operation_id,
-                    result,
-                    cancelled,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start Native project clone: {error}");
-            operation.cancel();
-            self.project_clone_busy = false;
-            self.project_clone_outcome = ProjectCloneOutcome::Failed;
-            self.project_clone_phase = Some("failed".to_owned());
-            self.project_clone_detail = None;
-            self.active_project_clone_operation = None;
-            self.project_action_error = Some("无法启动仓库克隆任务。".to_owned());
-        } else {
-            self.active_project_clone_handle = Some(operation);
         }
+    }
+
+    fn fail_project_clone(&mut self, message: String) {
+        self.project_clone_busy = false;
+        self.project_clone_outcome = ProjectCloneOutcome::Failed;
+        self.project_clone_phase = Some("failed".to_owned());
+        self.project_clone_detail = None;
+        self.active_project_clone_job = None;
+        self.project_action_error = Some(message);
     }
 
     fn cancel_project_clone(&mut self) {
+        let Some(job_id) = self.active_project_clone_job else {
+            return;
+        };
         if !self.project_clone_busy {
             return;
         }
-        let Some(operation) = self.active_project_clone_handle.as_ref() else {
-            return;
-        };
-        if operation.cancel() {
-            self.project_clone_phase = Some("cancelling".to_owned());
-            self.project_clone_detail = Some("正在停止 Git 并清理本次克隆目录…".to_owned());
-        }
+        self.kernel.kernel().jobs().cancel(job_id);
+        self.project_clone_phase = Some("cancelling".to_owned());
+        self.project_clone_detail = Some("正在停止 Git 并清理本次克隆目录…".to_owned());
     }
 
-    fn update_project_clone_progress(
-        &mut self,
-        operation_id: u64,
-        snapshot: DesktopProjectCloneSnapshot,
-    ) {
-        if self.active_project_clone_operation != Some(operation_id) {
-            return;
-        }
-        self.project_clone_phase = Some(project_clone_phase_key(&snapshot.phase).to_owned());
-        self.project_clone_percent = Some(snapshot.percent.unwrap_or({
-            if matches!(&snapshot.phase, DesktopProjectClonePhase::Completed) {
-                100
-            } else {
-                0
+    fn apply_kernel_job(&mut self, event: JobEvent) {
+        match event.protocol.as_str() {
+            lilia_feature_project::CLONE_PROTOCOL
+                if self.active_project_clone_job == Some(event.job_id) =>
+            {
+                self.apply_project_clone_job(event.state)
             }
-        }));
-        self.project_clone_target = Some(snapshot.workspace_path);
-        self.project_clone_detail = Some(
-            project_clone_detail_label(&snapshot.phase, snapshot.detail.as_deref()).to_owned(),
-        );
+            lilia_feature_update::CHECK_PROTOCOL | lilia_feature_update::INSTALL_PROTOCOL
+                if self.active_update_job == Some(event.job_id) =>
+            {
+                self.apply_update_job(event.state)
+            }
+            lilia_feature_extensions::MUTATE_PROTOCOL
+                if self
+                    .active_extensions_job
+                    .is_some_and(|job| job.id == event.job_id) =>
+            {
+                self.apply_extensions_job(event.state)
+            }
+            lilia_feature_remote::OPERATE_PROTOCOL
+                if self.active_remote_job == Some(event.job_id) =>
+            {
+                self.apply_remote_job(event.state)
+            }
+            lilia_feature_provider::CREDENTIAL_PROTOCOL
+                if self.active_provider_job == Some(event.job_id) =>
+            {
+                self.apply_provider_job(event.state)
+            }
+            lilia_feature_usage::QUOTA_PROTOCOL
+                if self.active_quota_job == Some(event.job_id) =>
+            {
+                self.apply_quota_job(event.state)
+            }
+            lilia_feature_worktree::OPERATE_PROTOCOL
+                if self.active_worktree_job == Some(event.job_id) =>
+            {
+                self.apply_worktree_job(event.state)
+            }
+            lilia_feature_import::PLAN_PROTOCOL | lilia_feature_import::EXECUTE_PROTOCOL
+                if self
+                    .active_import_job
+                    .is_some_and(|(id, _)| id == event.job_id) =>
+            {
+                let planning = event.protocol == lilia_feature_import::PLAN_PROTOCOL;
+                self.apply_import_job(event.job_id, planning, event.state)
+            }
+            lilia_feature_provider::ASSISTANT_PROBE_PROTOCOL => {
+                if let Some((_, ticket, kind)) = self
+                    .active_assistant_probe_job
+                    .filter(|(id, _, _)| *id == event.job_id)
+                {
+                    self.apply_assistant_probe_job(ticket, kind, event.state);
+                }
+            }
+            lilia_feature_suggestions::GENERATE_PROTOCOL => {
+                self.apply_conversation_suggestion_job(event.job_id, event.state)
+            }
+            lilia_feature_document::DIAGNOSTICS_PROTOCOL => {
+                self.apply_document_diagnostics_job(event.job_id, event.state)
+            }
+            lilia_feature_document::DEFINITION_PROTOCOL => {
+                self.apply_document_definition_job(event.job_id, event.state)
+            }
+            lilia_feature_github::BIND_PROTOCOL
+                if self.active_github_binding_job == Some(event.job_id) =>
+            {
+                self.apply_github_binding_job(event.state)
+            }
+            lilia_feature_github::REPOSITORIES_PROTOCOL => {
+                if let Some((_, append)) = self
+                    .active_github_repository_job
+                    .filter(|(id, _)| *id == event.job_id)
+                {
+                    self.apply_github_repositories_job(append, event.state);
+                }
+            }
+            lilia_feature_coding::REFRESH_PROTOCOL
+                if self
+                    .active_coding_job
+                    .is_some_and(|(id, _)| id == event.job_id) =>
+            {
+                self.apply_coding_refresh_job(event.state)
+            }
+            lilia_feature_composer::OPTIMIZE_PROMPT_PROTOCOL => {
+                self.apply_prompt_optimization_job(event.job_id, event.state)
+            }
+            lilia_feature_coding::SEARCH_PROTOCOL
+                if self.active_coding_search_job == Some(event.job_id) =>
+            {
+                self.apply_coding_search_job(event.state)
+            }
+            // Nothing on screen waits for a title, so only a failure is worth
+            // reporting, and only to the console.
+            lilia_feature_agent_session::TITLE_PROTOCOL => {
+                if let JobState::Failed { message } = event.state {
+                    eprintln!("[title-update] skipped: {message}");
+                }
+            }
+            _ => {}
+        }
     }
 
-    fn finish_project_clone(
-        &mut self,
-        operation_id: u64,
-        result: Result<DesktopProjectCloneResult, String>,
-        cancelled: bool,
-    ) {
-        if self.active_project_clone_operation != Some(operation_id) {
-            return;
-        }
-        self.active_project_clone_operation = None;
-        self.active_project_clone_handle = None;
-        self.project_clone_busy = false;
-        match result {
-            Ok(cloned) => {
-                let focus_cloned_project = self.project_surface == ProjectSurface::Clone;
-                let mut input = DesktopProjectCreate::new(cloned.suggested_name);
-                input.workspace_path = Some(cloned.workspace_path.to_string_lossy().into_owned());
-                let project_id = input.id.clone();
-                match self.application.create_project(input) {
-                    Ok(_) => {
-                        self.project_clone_repository.clear();
-                        self.selected_github_repository = None;
-                        self.project_clone_outcome = ProjectCloneOutcome::Completed;
-                        self.project_clone_phase = Some("completed".to_owned());
-                        self.project_clone_percent = Some(100);
-                        self.project_clone_target = Some(cloned.workspace_path.clone());
-                        self.project_clone_detail = Some("仓库已克隆并创建项目。".to_owned());
-                        self.project_action_error = None;
-                        self.refresh_projects();
-                        if focus_cloned_project {
-                            self.project_surface = ProjectSurface::Tasks;
-                            self.execute_workspace_command(DesktopCommand::SelectProject(
-                                project_id,
-                            ));
-                        }
-                    }
+    fn apply_project_clone_job(&mut self, state: JobState) {
+        match state {
+            JobState::Pending => {}
+            JobState::Running { progress } => {
+                let Ok(progress) = serde_json::from_value::<CloneProgress>(progress) else {
+                    return;
+                };
+                self.project_clone_phase = Some("cloning".to_owned());
+                self.project_clone_percent = Some(progress.percent);
+                self.project_clone_detail =
+                    Some(project_clone_detail_label(&progress.detail).to_owned());
+            }
+            JobState::Completed { output } => {
+                self.active_project_clone_job = None;
+                self.project_clone_busy = false;
+                match serde_json::from_value::<CloneResult>(output) {
+                    Ok(cloned) => self.adopt_cloned_repository(cloned),
                     Err(error) => {
-                        self.project_clone_outcome = ProjectCloneOutcome::Failed;
-                        self.project_clone_phase = Some("failed".to_owned());
-                        self.project_clone_detail = None;
-                        self.project_action_error = Some(format!(
-                            "仓库已克隆到 {}，但无法创建项目：{error}",
-                            cloned.workspace_path.display()
-                        ));
+                        eprintln!("failed to decode the Native project clone result: {error}");
+                        self.fail_project_clone("仓库克隆结果无法解析。".to_owned());
                     }
                 }
             }
-            Err(_error) if cancelled => {
+            JobState::Failed { message } => {
+                self.active_project_clone_job = None;
+                self.fail_project_clone(project_clone_error_message(&message));
+            }
+            JobState::Cancelled | JobState::Superseded => {
+                self.active_project_clone_job = None;
+                self.project_clone_busy = false;
                 self.project_clone_outcome = ProjectCloneOutcome::Cancelled;
                 self.project_clone_phase = Some("cancelled".to_owned());
                 self.project_clone_percent = None;
@@ -6409,11 +6450,38 @@ impl DesktopProgram {
                 self.project_clone_detail = Some("克隆已取消，未创建项目。".to_owned());
                 self.project_action_error = None;
             }
+        }
+    }
+
+    fn adopt_cloned_repository(&mut self, cloned: CloneResult) {
+        let focus_cloned_project = self.project_surface == ProjectSurface::Clone;
+        let mut input = DesktopProjectCreate::new(cloned.suggested_name);
+        input.workspace_path = Some(cloned.workspace_path.to_string_lossy().into_owned());
+        let project_id = input.id.clone();
+        match self.application.create_project(input) {
+            Ok(_) => {
+                self.project_clone_repository.clear();
+                self.selected_github_repository = None;
+                self.project_clone_outcome = ProjectCloneOutcome::Completed;
+                self.project_clone_phase = Some("completed".to_owned());
+                self.project_clone_percent = Some(100);
+                self.project_clone_target = Some(cloned.workspace_path.clone());
+                self.project_clone_detail = Some("仓库已克隆并创建项目。".to_owned());
+                self.project_action_error = None;
+                self.refresh_projects();
+                if focus_cloned_project {
+                    self.project_surface = ProjectSurface::Tasks;
+                    self.execute_workspace_command(DesktopCommand::SelectProject(project_id));
+                }
+            }
             Err(error) => {
                 self.project_clone_outcome = ProjectCloneOutcome::Failed;
                 self.project_clone_phase = Some("failed".to_owned());
                 self.project_clone_detail = None;
-                self.project_action_error = Some(error);
+                self.project_action_error = Some(format!(
+                    "仓库已克隆到 {}，但无法创建项目：{error}",
+                    cloned.workspace_path.display()
+                ));
             }
         }
     }
@@ -7949,7 +8017,7 @@ fn open_application_surface(&mut self, surface: ApplicationWorkspaceSurface) {
             "agent" => self.refresh_agent_interaction(),
             "quota" => self.refresh_quota(),
             "extensions" => self.refresh_extensions(),
-            "remote" => self.start_remote_operation(RemoteOperation::Refresh),
+            "remote" => self.start_remote_operation(RemoteRequest::Refresh),
             _ => {}
         }
     }
@@ -8812,67 +8880,109 @@ fn open_application_surface(&mut self, surface: ApplicationWorkspaceSurface) {
         if self.coding_busy {
             return;
         }
+        let ticket = self.coding_exchange.park(CodingRefreshCommand {
+            workspace: self.selected_project_workspace(),
+            project_id: self.selected_project.clone(),
+            git_diff_scope: self.coding_git_diff_scope,
+        });
+        let request = JobRequest::new(
+            lilia_feature_coding::REFRESH_PROTOCOL,
+            serde_json::to_value(lilia_feature_coding::RefreshRequest { ticket })
+                .expect("a code refresh request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_coding::refresh_slot());
+
         self.coding_busy = true;
         self.coding_error = None;
         self.coding_notice = None;
-        self.coding_operation_sequence = self.coding_operation_sequence.saturating_add(1);
-        let operation_id = self.coding_operation_sequence;
-        self.active_coding_operation = Some(operation_id);
-        let workspace = self.selected_project_workspace();
-        let project_id = self.selected_project.clone();
-        let git_diff_scope = self.coding_git_diff_scope;
-        let operation_project_id = workspace.as_ref().map(|(project_id, _)| project_id.clone());
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-coding-tools-refresh".to_owned())
-            .spawn(move || {
-                let snapshot = application
-                    .coding_services_snapshot()
-                    .map_err(|error| error.to_string());
-                let project_tasks = project_id.as_ref().map(|project_id| {
-                    application
-                        .project_task_catalog(project_id)
-                        .map_err(|error| project_task_error_message(&error))
-                });
-                let (git, git_diff, workspace) =
-                    workspace.map_or((None, None, None), |(workspace_id, root)| {
-                        (
-                            Some(
-                                application
-                                    .shared_git_status(&root)
-                                    .map_err(|error| error.to_string()),
-                            ),
-                            Some(
-                                application
-                                    .shared_git_diff(&root, git_diff_scope)
-                                    .map_err(|error| error.to_string()),
-                            ),
-                            Some(
-                                application
-                                    .shared_workspace_list(&workspace_id, &root, "")
-                                    .map_err(|error| error.to_string()),
-                            ),
-                        )
-                    });
-                let _ = message_sender(Message::CodingToolsRefreshed {
-                    operation_id,
-                    result: Box::new(CodingToolsRefreshResult {
-                        project_id: operation_project_id,
-                        snapshot,
-                        git,
-                        git_diff,
-                        workspace,
-                        project_tasks,
-                    }),
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start Native coding tools refresh: {error}");
-            self.active_coding_operation = None;
-            self.coding_busy = false;
-            self.coding_error = Some("无法启动工作区工具刷新。".to_owned());
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => self.active_coding_job = Some((handle.id(), ticket)),
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode coding refresh job: {error}");
+                self.coding_exchange.discard(ticket);
+                self.coding_busy = false;
+                self.coding_error = Some("无法启动工作区工具刷新。".to_owned());
+            }
         }
+    }
+
+    fn apply_coding_refresh_job(&mut self, state: JobState) {
+        let Some((_, ticket)) = self.active_coding_job else {
+            return;
+        };
+        match state {
+            JobState::Pending | JobState::Running { .. } => {}
+            JobState::Completed { .. } => {
+                self.active_coding_job = None;
+                self.coding_busy = false;
+                match self.coding_exchange.take(ticket) {
+                    Some(result) => self.apply_coding_tools_refresh(result),
+                    None => self.coding_error = Some("工作区工具刷新没有返回结果。".to_owned()),
+                }
+            }
+            JobState::Failed { message } => {
+                self.active_coding_job = None;
+                self.coding_busy = false;
+                self.coding_exchange.discard(ticket);
+                self.coding_error = Some(message);
+            }
+            JobState::Cancelled | JobState::Superseded => {
+                self.active_coding_job = None;
+                self.coding_busy = false;
+                self.coding_exchange.discard(ticket);
+            }
+        }
+    }
+
+    fn apply_coding_tools_refresh(&mut self, result: CodingToolsRefreshResult) {
+        let selected_project = self
+            .selected_project
+            .as_ref()
+            .map(|project_id| project_id.as_str());
+        let project_matches = result.project_id.as_deref() == selected_project;
+        let mut errors = Vec::new();
+        match result.snapshot {
+            Ok(snapshot) => self.coding_tools = Some(snapshot),
+            Err(error) => {
+                self.coding_tools = None;
+                errors.push(error);
+            }
+        }
+        if project_matches {
+            match result.git {
+                Some(Ok(value)) => self.coding_git = Some(value),
+                Some(Err(error)) => {
+                    self.coding_git = None;
+                    errors.push(error);
+                }
+                None => self.coding_git = None,
+            }
+            match result.git_diff {
+                Some(Ok(value)) => self.coding_git_diff = Some(value),
+                Some(Err(error)) => {
+                    self.coding_git_diff = None;
+                    errors.push(error);
+                }
+                None => self.coding_git_diff = None,
+            }
+            match result.workspace {
+                Some(Ok(value)) => self.coding_workspace = Some(value),
+                Some(Err(error)) => {
+                    self.coding_workspace = None;
+                    errors.push(error);
+                }
+                None => self.coding_workspace = None,
+            }
+            match result.project_tasks {
+                Some(Ok(value)) => self.coding_project_tasks = Some(value),
+                Some(Err(error)) => {
+                    self.coding_project_tasks = None;
+                    errors.push(error);
+                }
+                None => self.coding_project_tasks = None,
+            }
+        }
+        self.coding_error = (!errors.is_empty()).then(|| errors.join("\n"));
     }
 
     fn search_coding_tools(&mut self) {
@@ -8892,33 +9002,88 @@ fn open_application_surface(&mut self, surface: ApplicationWorkspaceSurface) {
             };
             DesktopCodeSearchScope::Project { project_id }
         };
+        let request = lilia_feature_coding::SearchRequest {
+            scope,
+            query: self.coding_query.trim().to_owned(),
+            mode: self.coding_search_mode,
+        };
+        let payload = match serde_json::to_value(&request) {
+            Ok(payload) => payload,
+            Err(error) => {
+                eprintln!("failed to encode the Native code search request: {error}");
+                self.coding_error = Some("无法启动代码搜索。".to_owned());
+                return;
+            }
+        };
+
         self.coding_busy = true;
         self.coding_error = None;
         self.coding_notice = None;
-        self.coding_operation_sequence = self.coding_operation_sequence.saturating_add(1);
-        let operation_id = self.coding_operation_sequence;
-        self.active_coding_operation = Some(operation_id);
-        let query = self.coding_query.trim().to_owned();
-        let mode = self.coding_search_mode;
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-code-index-search".to_owned())
-            .spawn(move || {
-                let result = application
-                    .search_code_indexes(scope, &query, mode)
-                    .map_err(|error| error.to_string());
-                let _ = message_sender(Message::CodingSearchFinished {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start Native code index search: {error}");
-            self.active_coding_operation = None;
-            self.coding_busy = false;
-            self.coding_error = Some("无法启动代码搜索。".to_owned());
+        match self.kernel.kernel().jobs().submit(
+            JobRequest::new(lilia_feature_coding::SEARCH_PROTOCOL, payload)
+                .in_slot(lilia_feature_coding::search_slot()),
+        ) {
+            Ok(handle) => self.active_coding_search_job = Some(handle.id()),
+            Err(error) => {
+                eprintln!("failed to submit the Native code search job: {error}");
+                self.coding_busy = false;
+                self.coding_error = Some("无法启动代码搜索。".to_owned());
+            }
         }
+    }
+
+    fn apply_coding_search_job(&mut self, state: JobState) {
+        let result = match state {
+            JobState::Pending | JobState::Running { .. } => return,
+            JobState::Cancelled | JobState::Superseded => {
+                self.active_coding_search_job = None;
+                self.coding_busy = false;
+                return;
+            }
+            JobState::Failed { message } => Err(message),
+            JobState::Completed { output } => serde_json::from_value(output)
+                .map_err(|error| format!("code search result is unreadable: {error}")),
+        };
+        self.active_coding_search_job = None;
+        self.coding_busy = false;
+        self.finish_coding_search(result);
+    }
+
+    fn finish_coding_search(&mut self, result: Result<DesktopWorkspaceCodeSearchResult, String>) {
+        let value = match result {
+            Ok(value) => value,
+            Err(error) => {
+                self.coding_search = None;
+                self.coding_error = Some(error);
+                return;
+            }
+        };
+        let current_project_matches = value
+            .scope
+            .project_id()
+            .is_none_or(|project_id| self.selected_project.as_ref() == Some(project_id));
+        if !current_project_matches {
+            self.coding_search = None;
+            self.coding_notice = None;
+            return;
+        }
+        let failed = value.failures.len();
+        let truncated = value.truncated_projects || value.truncated_hits;
+        self.coding_notice = (failed > 0 || truncated).then(|| {
+            let mut parts = Vec::new();
+            if failed > 0 {
+                parts.push(format!("{failed} 个项目搜索失败"));
+            }
+            if value.truncated_projects {
+                parts.push("项目数量已达上限".to_owned());
+            }
+            if value.truncated_hits {
+                parts.push("结果只显示前 128 项".to_owned());
+            }
+            parts.join("；")
+        });
+        self.coding_search = Some(value);
+        self.coding_error = None;
     }
 
     fn open_project_workspace(&mut self, target: ExternalWorkspaceTarget) {
@@ -10419,33 +10584,52 @@ fn save_coding_search_to_memory(&mut self) {
         {
             state.mark_diagnostics_checking();
         }
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-document-diagnostics".to_owned())
-            .spawn(move || {
-                let result = match project_id {
-                    Some(project_id) => {
-                        application.refresh_project_document_diagnostics(&project_id, document_id)
-                    }
-                    None => application.refresh_document_diagnostics(document_id),
+        let request = JobRequest::new(
+            lilia_feature_document::DIAGNOSTICS_PROTOCOL,
+            serde_json::to_value(lilia_feature_document::DiagnosticsRequest {
+                document_id,
+                project_id: project_id.map(|project_id| project_id.to_string()),
+            })
+            .expect("a diagnostics request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_document::diagnostics_slot(document_id));
+
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => {
+                self.active_diagnostics_jobs.insert(handle.id(), document_id);
+            }
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode document diagnostics job: {error}");
+                for state in self
+                    .document_editors
+                    .values_mut()
+                    .filter(|state| state.document_id == document_id)
+                {
+                    state.mark_diagnostics_unavailable();
                 }
-                .map_err(|error| error.to_string());
-                let _ = message_sender(Message::DocumentDiagnosticsFinished {
-                    document_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start Native document diagnostics: {error}");
-            for state in self
-                .document_editors
-                .values_mut()
-                .filter(|state| state.document_id == document_id)
-            {
-                state.mark_diagnostics_unavailable();
             }
         }
+    }
+
+    fn apply_document_diagnostics_job(&mut self, job_id: JobId, state: JobState) {
+        let result = match state {
+            JobState::Pending | JobState::Running { .. } => return,
+            JobState::Completed { output } => {
+                serde_json::from_value::<DesktopDocumentDiagnosticsSnapshot>(output)
+                    .map_err(|error| error.to_string())
+            }
+            JobState::Failed { message } => Err(message),
+            // Superseded by a newer check of the same document, which will
+            // deliver the answer this one would have.
+            _ => {
+                self.active_diagnostics_jobs.remove(&job_id);
+                return;
+            }
+        };
+        let Some(document_id) = self.active_diagnostics_jobs.remove(&job_id) else {
+            return;
+        };
+        self.finish_document_diagnostics(document_id, result);
     }
 
     fn finish_document_diagnostics(
@@ -10488,7 +10672,7 @@ fn save_coding_search_to_memory(&mut self) {
         let Some(state) = self.document_editors.get(&item_id) else {
             return;
         };
-        if state.definition_operation.is_some() {
+        if state.definition_job.is_some() {
             return;
         }
         let document_id = state.document_id;
@@ -10499,58 +10683,74 @@ fn save_coding_search_to_memory(&mut self) {
             }
             return;
         };
-        self.document_definition_operation_sequence = self
-            .document_definition_operation_sequence
-            .saturating_add(1);
-        let operation_id = self.document_definition_operation_sequence;
         if let Some(state) = self.document_editors.get_mut(&item_id) {
-            state.definition_operation = Some(operation_id);
             state.definition_project_id = None;
             state.definition_targets.clear();
             state.definition_message = Some("正在查找定义…".to_owned());
             state.definition_error = None;
         }
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let message_item_id = item_id.clone();
-        let spawn = std::thread::Builder::new()
-            .name("lilia-document-definition".to_owned())
-            .spawn(move || {
-                let project_id = application
-                    .document_project_id(document_id)
-                    .map_err(|error| error.to_string());
-                let (project_id, result) = match project_id {
-                    Ok(Some(project_id)) => {
-                        let result = application
-                            .project_document_definitions(
-                                &project_id,
-                                document_id,
-                                revision,
-                                source_offset,
-                            )
-                            .map_err(|error| error.to_string());
-                        (Some(project_id), result)
-                    }
-                    Ok(None) => (
-                        None,
-                        Err("document is not inside an active project workspace".to_owned()),
-                    ),
-                    Err(error) => (None, Err(error)),
-                };
-                let _ = message_sender(Message::DocumentDefinitionsFinished {
-                    item_id: message_item_id,
-                    window_id,
-                    operation_id,
-                    project_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start Native document definition lookup: {error}");
-            if let Some(state) = self.document_editors.get_mut(&item_id) {
-                state.definition_operation = None;
+        let request = JobRequest::new(
+            lilia_feature_document::DEFINITION_PROTOCOL,
+            serde_json::to_value(lilia_feature_document::DefinitionRequest {
+                document_id,
+                revision,
+                source_offset,
+            })
+            .expect("a definition request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_document::definition_slot(item_id.as_str()));
+
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => {
+                self.active_definition_jobs
+                    .insert(handle.id(), (item_id.clone(), window_id));
+                if let Some(state) = self.document_editors.get_mut(&item_id) {
+                    state.definition_job = Some(handle.id());
+                }
+            }
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode document definition job: {error}");
+                if let Some(state) = self.document_editors.get_mut(&item_id) {
+                    state.definition_job = None;
+                    state.definition_message = None;
+                    state.definition_error = Some("无法启动定义查找，请重试。".to_owned());
+                }
+            }
+        }
+    }
+
+    fn apply_document_definition_job(&mut self, job_id: JobId, state: JobState) {
+        let result = match state {
+            JobState::Pending | JobState::Running { .. } => return,
+            JobState::Completed { output } => {
+                serde_json::from_value::<DocumentDefinitionOutcome>(output)
+                    .map_err(|error| error.to_string())
+            }
+            JobState::Failed { message } => Err(message),
+            _ => {
+                self.clear_definition_job(job_id);
+                return;
+            }
+        };
+        let Some((item_id, window_id)) = self.active_definition_jobs.remove(&job_id) else {
+            return;
+        };
+        let (project_id, result) = match result {
+            Ok(outcome) => (outcome.project_id, Ok(outcome.result)),
+            Err(error) => (None, Err(error)),
+        };
+        self.finish_document_definitions(item_id, window_id, job_id, project_id, result);
+    }
+
+    /// Drops a definition job the surface will never hear about again.
+    fn clear_definition_job(&mut self, job_id: JobId) {
+        let Some((item_id, _)) = self.active_definition_jobs.remove(&job_id) else {
+            return;
+        };
+        if let Some(state) = self.document_editors.get_mut(&item_id) {
+            if state.definition_job == Some(job_id) {
+                state.definition_job = None;
                 state.definition_message = None;
-                state.definition_error = Some("无法启动定义查找，请重试。".to_owned());
             }
         }
     }
@@ -10559,7 +10759,7 @@ fn save_coding_search_to_memory(&mut self) {
         &mut self,
         item_id: WorkspaceItemId,
         window_id: HostedWindowId,
-        operation_id: u64,
+        job_id: JobId,
         project_id: Option<ProjectId>,
         result: Result<DesktopDocumentDefinitionResult, String>,
     ) {
@@ -10567,10 +10767,10 @@ fn save_coding_search_to_memory(&mut self) {
         let Some(state) = self.document_editors.get_mut(&item_id) else {
             return;
         };
-        if state.definition_operation != Some(operation_id) {
+        if state.definition_job != Some(job_id) {
             return;
         }
-        state.definition_operation = None;
+        state.definition_job = None;
         state.definition_message = None;
         match result {
             Ok(result)
@@ -10888,35 +11088,17 @@ fn refresh_archived_records(&mut self) {
             Message::PickProjectCloneParent => self.pick_project_clone_parent(),
             Message::StartProjectClone => self.start_project_clone(),
             Message::CancelProjectClone => self.cancel_project_clone(),
-            Message::ProjectCloneProgress {
-                operation_id,
-                snapshot,
-            } => self.update_project_clone_progress(operation_id, snapshot),
-            Message::ProjectCloneFinished {
-                operation_id,
-                result,
-                cancelled,
-            } => self.finish_project_clone(operation_id, result, cancelled),
+            Message::KernelJob(event) => self.apply_kernel_job(event),
+            Message::RequestTitleUpdate { task_id, turn_id } => {
+                self.start_title_update(task_id, turn_id)
+            }
             Message::StartGitHubBinding => self.start_github_binding(),
-            Message::GitHubDeviceFlowStarted {
-                operation_id,
-                result,
-            } => self.finish_github_device_flow_start(operation_id, result),
-            Message::GitHubDeviceFlowFinished {
-                operation_id,
-                result,
-            } => self.finish_github_device_flow(operation_id, result),
             Message::CancelGitHubBinding => self.cancel_github_binding(),
             Message::OpenGitHubVerification => self.open_github_verification(),
             Message::CopyGitHubUserCode => self.copy_github_user_code(),
             Message::UnbindGitHub => self.unbind_github(),
             Message::RefreshGitHubRepositories => self.load_github_repositories(false),
             Message::LoadMoreGitHubRepositories => self.load_github_repositories(true),
-            Message::GitHubRepositoriesLoaded {
-                operation_id,
-                append,
-                result,
-            } => self.finish_github_repositories_load(operation_id, append, result),
             Message::SelectGitHubRepository { full_name } => {
                 self.project_clone_repository = full_name.clone();
                 self.selected_github_repository = Some(full_name);
@@ -11299,26 +11481,9 @@ fn refresh_archived_records(&mut self) {
             Message::DocumentEditorEdited { item_id, action } => {
                 self.handle_document_editor_action(item_id, action);
             }
-            Message::DocumentDiagnosticsFinished {
-                document_id,
-                result,
-            } => self.finish_document_diagnostics(document_id, result),
             Message::GoToDocumentDefinition { item_id, window_id } => {
                 self.start_document_definition(item_id, window_id);
             }
-            Message::DocumentDefinitionsFinished {
-                item_id,
-                window_id,
-                operation_id,
-                project_id,
-                result,
-            } => self.finish_document_definitions(
-                item_id,
-                window_id,
-                operation_id,
-                project_id,
-                result,
-            ),
             Message::OpenDocumentDefinitionTarget {
                 item_id,
                 window_id,
@@ -11389,64 +11554,6 @@ fn refresh_archived_records(&mut self) {
                 }
             }
             Message::RefreshCodingTools => self.refresh_coding_tools(),
-            Message::CodingToolsRefreshed {
-                operation_id,
-                result,
-            } => {
-                if self.active_coding_operation == Some(operation_id) {
-                    let result = *result;
-                    self.active_coding_operation = None;
-                    self.coding_busy = false;
-                    let selected_project = self
-                        .selected_project
-                        .as_ref()
-                        .map(|project_id| project_id.as_str());
-                    let project_matches = result.project_id.as_deref() == selected_project;
-                    let mut errors = Vec::new();
-                    match result.snapshot {
-                        Ok(snapshot) => self.coding_tools = Some(snapshot),
-                        Err(error) => {
-                            self.coding_tools = None;
-                            errors.push(error);
-                        }
-                    }
-                    if project_matches {
-                        match result.git {
-                            Some(Ok(value)) => self.coding_git = Some(value),
-                            Some(Err(error)) => {
-                                self.coding_git = None;
-                                errors.push(error);
-                            }
-                            None => self.coding_git = None,
-                        }
-                        match result.git_diff {
-                            Some(Ok(value)) => self.coding_git_diff = Some(value),
-                            Some(Err(error)) => {
-                                self.coding_git_diff = None;
-                                errors.push(error);
-                            }
-                            None => self.coding_git_diff = None,
-                        }
-                        match result.workspace {
-                            Some(Ok(value)) => self.coding_workspace = Some(value),
-                            Some(Err(error)) => {
-                                self.coding_workspace = None;
-                                errors.push(error);
-                            }
-                            None => self.coding_workspace = None,
-                        }
-                        match result.project_tasks {
-                            Some(Ok(value)) => self.coding_project_tasks = Some(value),
-                            Some(Err(error)) => {
-                                self.coding_project_tasks = None;
-                                errors.push(error);
-                            }
-                            None => self.coding_project_tasks = None,
-                        }
-                    }
-                    self.coding_error = (!errors.is_empty()).then(|| errors.join("\n"));
-                }
-            }
             Message::CodingQueryChanged(value) => {
                 self.coding_query = value;
                 self.coding_error = None;
@@ -11492,49 +11599,6 @@ fn refresh_archived_records(&mut self) {
             Message::Terminal(message) => self.update_terminal(message),
             Message::OpenCodingSearchHit(hit) => self.open_coding_search_hit(hit),
             Message::SaveCodingSearchToMemory => self.save_coding_search_to_memory(),
-            Message::CodingSearchFinished {
-                operation_id,
-                result,
-            } => {
-                if self.active_coding_operation == Some(operation_id) {
-                    self.active_coding_operation = None;
-                    self.coding_busy = false;
-                    match result {
-                        Ok(value) => {
-                            let current_project_matches =
-                                value.scope.project_id().is_none_or(|project_id| {
-                                    self.selected_project.as_ref() == Some(project_id)
-                                });
-                            if current_project_matches {
-                                let failed = value.failures.len();
-                                let truncated = value.truncated_projects || value.truncated_hits;
-                                self.coding_notice = (failed > 0 || truncated).then(|| {
-                                    let mut parts = Vec::new();
-                                    if failed > 0 {
-                                        parts.push(format!("{failed} 个项目搜索失败"));
-                                    }
-                                    if value.truncated_projects {
-                                        parts.push("项目数量已达上限".to_owned());
-                                    }
-                                    if value.truncated_hits {
-                                        parts.push("结果只显示前 128 项".to_owned());
-                                    }
-                                    parts.join("；")
-                                });
-                                self.coding_search = Some(value);
-                                self.coding_error = None;
-                            } else {
-                                self.coding_search = None;
-                                self.coding_notice = None;
-                            }
-                        }
-                        Err(error) => {
-                            self.coding_search = None;
-                            self.coding_error = Some(error);
-                        }
-                    }
-                }
-            }
             Message::SelectProject(project_id) => {
                 self.close_sidebar_search();
                 self.close_main_conversation_draft();
@@ -11681,29 +11745,10 @@ fn refresh_archived_records(&mut self) {
             Message::RefreshConversationSuggestions { window_id, force } => {
                 self.refresh_conversation_suggestions(window_id, force);
             }
-            Message::ConversationSuggestionsFinished {
-                window_id,
-                operation_id,
-                task_id,
-                result,
-            } => self.finish_conversation_suggestions(window_id, operation_id, task_id, result),
             Message::ApplyConversationSuggestion { window_id, prompt } => {
                 self.apply_conversation_suggestion(window_id, prompt);
             }
             Message::OptimizePrompt(window_id) => self.start_prompt_optimization(window_id),
-            Message::PromptOptimizationFinished {
-                window_id,
-                operation_id,
-                task_id,
-                expected_revision,
-                result,
-            } => self.finish_prompt_optimization(
-                window_id,
-                operation_id,
-                task_id,
-                expected_revision,
-                result,
-            ),
             Message::ApplyPromptRouteWorkflow(window_id) => {
                 self.apply_prompt_route_workflow(window_id)
             }
@@ -12317,18 +12362,8 @@ fn refresh_archived_records(&mut self) {
             }
             Message::SaveProjectSettings => self.save_project_preferences(),
             Message::PickDataImportSource => self.pick_data_import_source(),
-            Message::DataImportPlanFinished {
-                operation_id,
-                result,
-            } => {
-                self.data_import.finish_plan(operation_id, result);
-            }
             Message::ToggleDataImportCredentials => self.data_import.toggle_credentials(),
             Message::ExecuteDataImport => self.start_data_import_execution(),
-            Message::DataImportFinished {
-                operation_id,
-                report,
-            } => self.finish_data_import(operation_id, report),
             Message::ResetDataImport => self.reset_data_import(),
             Message::RestartAfterDataImport => self.restart_after_data_import(),
             Message::SelectProvider(provider_id) => {
@@ -12353,25 +12388,14 @@ fn refresh_archived_records(&mut self) {
             Message::RevokeProviderCredential {
                 credential_id,
                 revision,
-            } => self.start_provider_operation(ProviderOperation::Revoke {
+            } => self.start_provider_operation(CredentialRequest::Revoke {
                 credential_id,
                 revision,
             }),
             Message::RefreshProvider => {
-                self.start_provider_operation(ProviderOperation::Refresh {
+                self.start_provider_operation(CredentialRequest::Refresh {
                     provider_id: self.selected_provider.clone(),
                 });
-            }
-            Message::ProviderOperationFinished {
-                operation_id,
-                error,
-            } => {
-                if self.active_provider_operation == Some(operation_id) {
-                    self.active_provider_operation = None;
-                    self.provider_busy = false;
-                    self.provider_error = error;
-                    self.refresh_provider();
-                }
             }
             Message::ProviderModelChanged(value) => {
                 self.provider_model = value;
@@ -12441,52 +12465,7 @@ fn refresh_archived_records(&mut self) {
                 }
             }
             Message::FetchAssistantAiModels => self.start_assistant_ai_models_fetch(),
-            Message::AssistantAiModelsFetched {
-                operation_id,
-                result,
-            } => {
-                if self.active_assistant_ai_probe == Some(operation_id) {
-                    self.active_assistant_ai_probe = None;
-                    self.assistant_ai_probe_busy = false;
-                    if result.ok {
-                        let fetched = result.models.len();
-                        let added = self
-                            .provider_ai_settings
-                            .merge_fetched_assistant_models(result.models);
-                        self.assistant_ai_probe_notice =
-                            Some((true, format!("已同步 {fetched} 个模型，新增 {added} 个。")));
-                    } else {
-                        self.assistant_ai_probe_notice = Some((
-                            false,
-                            result.error.unwrap_or_else(|| "无法获取模型。".to_owned()),
-                        ));
-                    }
-                }
-            }
             Message::TestAssistantAiConnection => self.start_assistant_ai_connection_test(),
-            Message::AssistantAiConnectionTested {
-                operation_id,
-                result,
-            } => {
-                if self.active_assistant_ai_probe == Some(operation_id) {
-                    self.active_assistant_ai_probe = None;
-                    self.assistant_ai_probe_busy = false;
-                    self.assistant_ai_probe_notice = if result.ok {
-                        Some(match result.model_matched {
-                            Some(true) => (true, "连接成功，默认模型可用。".to_owned()),
-                            Some(false) => {
-                                (false, "连接成功，但默认模型不在模型列表中。".to_owned())
-                            }
-                            None => (true, "连接成功。".to_owned()),
-                        })
-                    } else {
-                        Some((
-                            false,
-                            result.error.unwrap_or_else(|| "连接测试失败。".to_owned()),
-                        ))
-                    };
-                }
-            }
             Message::SaveAssistantAiConfiguration => self.save_assistant_ai_configuration(),
             Message::ClearAssistantAiSecret => self.clear_assistant_ai_secret(),
             Message::TitleModelChanged(value) => {
@@ -12575,24 +12554,6 @@ fn refresh_archived_records(&mut self) {
                     self.refresh_quota();
                 }
             }
-            Message::QuotaRefreshed {
-                operation_id,
-                result,
-            } => {
-                if self.active_quota_operation == Some(operation_id) {
-                    self.active_quota_operation = None;
-                    self.quota_busy = false;
-                    match result {
-                        Ok(stats) => {
-                            self.quota_days = stats.days;
-                            self.quota_backend = stats.backend.clone();
-                            self.quota_usage = Some(stats);
-                            self.quota_error = None;
-                        }
-                        Err(error) => self.quota_error = Some(error),
-                    }
-                }
-            }
             Message::RefreshExtensions => self.refresh_extensions(),
             Message::SkillIdChanged(value) => {
                 if !self.extensions_busy {
@@ -12620,28 +12581,6 @@ fn refresh_archived_records(&mut self) {
                     self.skill_delete_confirmation = None;
                 }
             }
-            Message::SkillOperationFinished {
-                operation_id,
-                result,
-            } => {
-                if self.active_extensions_operation == Some(operation_id) {
-                    self.active_extensions_operation = None;
-                    self.extensions_busy = false;
-                    match result {
-                        Ok(snapshot) => {
-                            self.extensions = Some(snapshot);
-                            self.skill_id_input.clear();
-                            self.skill_description_input.clear();
-                            self.skill_delete_confirmation = None;
-                            self.extensions_error = None;
-                        }
-                        Err(error) => self.extensions_error = Some(error),
-                    }
-                    if std::mem::take(&mut self.extensions_activation_pending) {
-                        self.activate_registered_mcp();
-                    }
-                }
-            }
             Message::PluginSourceChanged(value) => {
                 if !self.extensions_busy {
                     self.plugin_source_input = value;
@@ -12661,24 +12600,6 @@ fn refresh_archived_records(&mut self) {
             Message::CancelDeletePlugin => {
                 if !self.extensions_busy {
                     self.plugin_delete_confirmation = None;
-                }
-            }
-            Message::PluginOperationFinished {
-                operation_id,
-                result,
-            } => {
-                if self.active_extensions_operation == Some(operation_id) {
-                    self.active_extensions_operation = None;
-                    self.extensions_busy = false;
-                    match result {
-                        Ok(snapshot) => {
-                            self.extensions = Some(snapshot);
-                            self.plugin_source_input.clear();
-                            self.plugin_delete_confirmation = None;
-                            self.extensions_error = None;
-                        }
-                        Err(error) => self.extensions_error = Some(error),
-                    }
                 }
             }
             Message::HookDraftChanged { source_id, value } => {
@@ -12710,23 +12631,6 @@ fn refresh_archived_records(&mut self) {
             Message::CancelDeleteHookSource => {
                 if !self.extensions_busy {
                     self.hook_delete_confirmation = None;
-                }
-            }
-            Message::HookOperationFinished {
-                operation_id,
-                result,
-            } => {
-                if self.active_extensions_operation == Some(operation_id) {
-                    self.active_extensions_operation = None;
-                    self.extensions_busy = false;
-                    match result {
-                        Ok(snapshot) => {
-                            self.apply_hooks_snapshot(snapshot);
-                            self.hook_delete_confirmation = None;
-                            self.extensions_error = None;
-                        }
-                        Err(error) => self.extensions_error = Some(error),
-                    }
                 }
             }
             Message::ActivateRegisteredMcp => self.activate_registered_mcp(),
@@ -12886,73 +12790,12 @@ fn refresh_archived_records(&mut self) {
                     Err(error) => self.extensions_error = Some(error),
                 }
             }
-            Message::McpContentLoaded {
-                operation_id,
-                result,
-            } => {
-                if self.active_extensions_operation == Some(operation_id) {
-                    self.active_extensions_operation = None;
-                    self.extensions_busy = false;
-                    match result {
-                        Ok(preview) => {
-                            self.mcp_content_preview = Some(preview);
-                            self.extensions_error = None;
-                        }
-                        Err(error) => self.extensions_error = Some(error),
-                    }
-                    if std::mem::take(&mut self.extensions_activation_pending) {
-                        self.activate_registered_mcp();
-                    }
-                }
-            }
-            Message::ExtensionsRefreshed {
-                operation_id,
-                result,
-            } => {
-                if self.active_extensions_operation == Some(operation_id) {
-                    self.active_extensions_operation = None;
-                    self.extensions_busy = false;
-                    self.mcp_credential_drafts.clear();
-                    match result {
-                        Ok((snapshot, hooks)) => {
-                            self.extensions = Some(snapshot);
-                            self.apply_hooks_snapshot(hooks);
-                            self.extensions_error = None;
-                        }
-                        Err(error) => self.extensions_error = Some(error),
-                    }
-                    if std::mem::take(&mut self.extensions_activation_pending) {
-                        self.activate_registered_mcp();
-                    }
-                }
-            }
-            Message::ExtensionsActivated {
-                operation_id,
-                result,
-            } => {
-                if self.active_extensions_operation == Some(operation_id) {
-                    self.active_extensions_operation = None;
-                    self.extensions_busy = false;
-                    self.mcp_credential_drafts.clear();
-                    match result {
-                        Ok(report) => {
-                            self.extensions = Some(report.snapshot.clone());
-                            self.extensions_activation = Some(report);
-                            self.mcp_editor = None;
-                            self.mcp_delete_confirmation = None;
-                            self.extensions_error = None;
-                        }
-                        Err(error) => self.extensions_error = Some(error),
-                    }
-                    if std::mem::take(&mut self.extensions_activation_pending) {
-                        self.activate_registered_mcp();
-                    }
-                }
-            }
-            Message::RefreshRemote => self.start_remote_operation(RemoteOperation::Refresh),
+            Message::RefreshRemote => self.start_remote_operation(RemoteRequest::Refresh),
             Message::ToggleRemoteHost => {
                 if let Some(status) = &self.remote {
-                    self.start_remote_operation(RemoteOperation::SetEnabled(!status.host_enabled));
+                    self.start_remote_operation(RemoteRequest::SetEnabled {
+                        enabled: !status.host_enabled,
+                    });
                 }
             }
             Message::RemotePcNameChanged(value) => {
@@ -12962,19 +12805,21 @@ fn refresh_archived_records(&mut self) {
                 }
             }
             Message::SaveRemotePcName => self
-                .start_remote_operation(RemoteOperation::SavePcName(self.remote_pc_name.clone())),
+                .start_remote_operation(RemoteRequest::SetPcName {
+                name: self.remote_pc_name.clone(),
+            }),
             Message::ToggleRemoteKeepAwake => {
                 if let Some(status) = &self.remote {
-                    self.start_remote_operation(RemoteOperation::SetKeepAwake(
-                        !status.keep_awake_enabled,
-                    ));
+                    self.start_remote_operation(RemoteRequest::SetKeepAwake {
+                        enabled: !status.keep_awake_enabled,
+                    });
                 }
             }
             Message::StartRemotePairing => {
-                self.start_remote_operation(RemoteOperation::StartPairing)
+                self.start_remote_operation(RemoteRequest::StartPairing)
             }
             Message::CancelRemotePairing => {
-                self.start_remote_operation(RemoteOperation::CancelPairing)
+                self.start_remote_operation(RemoteRequest::CancelPairing)
             }
             Message::CopyRemotePairingUri => {
                 let pairing_uri = self
@@ -12997,24 +12842,7 @@ fn refresh_archived_records(&mut self) {
                 }
             }
             Message::RevokeRemoteDevice(device_id) => {
-                self.start_remote_operation(RemoteOperation::RevokeDevice(device_id))
-            }
-            Message::RemoteOperationFinished {
-                operation_id,
-                result,
-            } => {
-                if self.active_remote_operation == Some(operation_id) {
-                    self.active_remote_operation = None;
-                    self.remote_busy = false;
-                    match result {
-                        Ok(status) => {
-                            self.remote_pc_name = status.pc_name.clone();
-                            self.remote = Some(status);
-                            self.remote_error = None;
-                        }
-                        Err(error) => self.remote_error = Some(error),
-                    }
-                }
+                self.start_remote_operation(RemoteRequest::RevokeDevice { device_id })
             }
             Message::ShellShortcutChanged(value) => {
                 self.shell_shortcut_edit = value;
@@ -13091,35 +12919,6 @@ fn refresh_archived_records(&mut self) {
                     Err(error) => {
                         eprintln!("failed to open LiliaCode releases: {error}");
                         self.update_error = Some("无法打开 发布页，请稍后重试。".to_owned());
-                    }
-                }
-            }
-            Message::UpdateOperationFinished {
-                operation_id,
-                result,
-            } => {
-                if self.active_update_operation == Some(operation_id) {
-                    self.active_update_operation = None;
-                    self.update_busy = false;
-                    match result {
-                        Ok(state) => {
-                            self.exit_requested =
-                                matches!(&state, DesktopUpdateState::Restarting { .. });
-                            self.update_state = state;
-                            self.update_error = None;
-                            if self.update_prompt_is_visible() {
-                                self.dismiss_command_palette();
-                            }
-                        }
-                        Err(error) => {
-                            self.update_state =
-                                self.application.update_state().unwrap_or_else(|_| {
-                                    DesktopUpdateState::Failed {
-                                        message: error.clone(),
-                                    }
-                                });
-                            self.update_error = Some(error);
-                        }
                     }
                 }
             }
@@ -13635,49 +13434,75 @@ fn refresh_archived_records(&mut self) {
         {
             return;
         }
-        self.conversation_suggestion_operation_sequence = self
-            .conversation_suggestion_operation_sequence
-            .saturating_add(1);
-        let operation_id = self.conversation_suggestion_operation_sequence;
-        let Some(state) = self.conversation_suggestion_state_mut(window_id) else {
-            return;
-        };
-        state.begin(task_id.clone(), project_id.clone(), operation_id);
-        let application = self.application.clone();
-        let sender = Arc::clone(&self.message_sender);
-        let thread_task_id = task_id.clone();
-        let spawn = std::thread::Builder::new()
-            .name(format!("lilia-native-suggestions-{}", window_id.0))
-            .spawn(move || {
-                let models = DesktopApplicationSuggestionModelPort::new(application.clone());
-                let result = application
-                    .conversation_suggestions(Some(&project_id), force, &models)
-                    .map_err(|error| error.to_string());
-                if let Err(error) = sender(Message::ConversationSuggestionsFinished {
-                    window_id,
-                    operation_id,
-                    task_id: thread_task_id,
-                    result,
-                }) {
-                    eprintln!("failed to publish Native conversation suggestions: {error}");
+        let request = JobRequest::new(
+            lilia_feature_suggestions::GENERATE_PROTOCOL,
+            serde_json::to_value(lilia_feature_suggestions::GenerateRequest {
+                project_id: project_id.clone(),
+                force,
+            })
+            .expect("a suggestion request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_suggestions::generate_slot(window_id.0));
+
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => {
+                self.active_suggestion_jobs
+                    .insert(handle.id(), (window_id, task_id.clone()));
+                if let Some(state) = self.conversation_suggestion_state_mut(window_id) {
+                    state.begin(task_id, project_id, handle.id());
                 }
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start Native conversation suggestions: {error}");
-            if let Some(state) = self.conversation_suggestion_state_mut(window_id) {
-                state.finish(
-                    &task_id,
-                    operation_id,
-                    Err("suggestion worker unavailable".to_owned()),
-                );
+            }
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode conversation suggestion job: {error}");
+                if let Some(state) = self.conversation_suggestion_state_mut(window_id) {
+                    state.disable(Some(task_id));
+                }
             }
         }
+    }
+
+    /// Titling is best-effort: nothing on screen waits for it, so the job id is
+    /// not retained and a refused submission only costs the task its name.
+    fn start_title_update(&mut self, task_id: TaskId, turn_id: Option<String>) {
+        let request = JobRequest::new(
+            lilia_feature_agent_session::TITLE_PROTOCOL,
+            serde_json::to_value(lilia_feature_agent_session::TitleRequest {
+                task_id: task_id.to_string(),
+                turn_id,
+            })
+            .expect("a title request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_agent_session::title_slot(task_id.as_str()));
+
+        if let Err(error) = self.kernel.kernel().jobs().submit(request) {
+            eprintln!("failed to submit the LiliaCode task title job: {error}");
+        }
+    }
+
+    fn apply_conversation_suggestion_job(&mut self, job_id: JobId, state: JobState) {
+        let result = match state {
+            JobState::Pending | JobState::Running { .. } => return,
+            JobState::Completed { output } => {
+                serde_json::from_value::<Vec<DesktopSuggestionItem>>(output)
+                    .map_err(|error| error.to_string())
+            }
+            JobState::Failed { message } => Err(message),
+            // A newer request for this window replaced it and will answer.
+            _ => {
+                self.active_suggestion_jobs.remove(&job_id);
+                return;
+            }
+        };
+        let Some((window_id, task_id)) = self.active_suggestion_jobs.remove(&job_id) else {
+            return;
+        };
+        self.finish_conversation_suggestions(window_id, job_id, task_id, result);
     }
 
     fn finish_conversation_suggestions(
         &mut self,
         window_id: HostedWindowId,
-        operation_id: u64,
+        job_id: JobId,
         task_id: TaskId,
         result: Result<Vec<DesktopSuggestionItem>, String>,
     ) {
@@ -13685,7 +13510,7 @@ fn refresh_archived_records(&mut self) {
             eprintln!("failed to load Native conversation suggestions: {error}");
         }
         if let Some(state) = self.conversation_suggestion_state_mut(window_id) {
-            state.finish(&task_id, operation_id, result);
+            state.finish(&task_id, job_id, result);
         }
     }
 
@@ -13781,19 +13606,7 @@ fn refresh_archived_records(&mut self) {
             return;
         }
 
-        self.prompt_optimization_operation_sequence = self
-            .prompt_optimization_operation_sequence
-            .saturating_add(1);
-        let operation_id = self.prompt_optimization_operation_sequence;
         let expected_revision = composer.revision;
-        self.active_prompt_optimizations.insert(
-            window_id,
-            PromptOptimizationState {
-                operation_id,
-                task_id: task_id.clone(),
-                expected_revision,
-            },
-        );
         if window_id == HostedWindowId::PRIMARY {
             self.task_action_error = None;
         } else if let Some(popup) = self.task_popups.get_mut(&window_id) {
@@ -13820,55 +13633,71 @@ fn refresh_archived_records(&mut self) {
             project_cwd,
             task_id: Some(task_id.as_str().to_owned()),
         };
-        let application = self.application.clone();
-        let sender = Arc::clone(&self.message_sender);
-        let thread_task_id = task_id.clone();
-        let spawn = std::thread::Builder::new()
-            .name(format!("lilia-native-prompt-optimize-{}", window_id.0))
-            .spawn(move || {
-                let result = application
-                    .optimize_prompt(input)
-                    .map_err(|error| error.to_string());
-                if let Err(error) = sender(Message::PromptOptimizationFinished {
+        let payload = match serde_json::to_value(&input) {
+            Ok(payload) => payload,
+            Err(error) => {
+                eprintln!("failed to encode the Native prompt optimization request: {error}");
+                self.set_prompt_optimization_error(
                     window_id,
-                    operation_id,
-                    task_id: thread_task_id,
-                    expected_revision,
-                    result,
-                }) {
-                    eprintln!("failed to publish Native prompt optimization: {error}");
-                }
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start Native prompt optimization: {error}");
-            self.active_prompt_optimizations.remove(&window_id);
-            self.set_prompt_optimization_error(
-                window_id,
-                "无法启动提示优化，请稍后重试。".to_owned(),
-            );
+                    "无法启动提示优化，请稍后重试。".to_owned(),
+                );
+                return;
+            }
+        };
+        let request = JobRequest::new(lilia_feature_composer::OPTIMIZE_PROMPT_PROTOCOL, payload)
+            .in_slot(lilia_feature_composer::optimize_prompt_slot(window_id.0));
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => {
+                self.active_prompt_optimizations.insert(
+                    window_id,
+                    PromptOptimizationState {
+                        job_id: handle.id(),
+                        task_id,
+                        expected_revision,
+                    },
+                );
+            }
+            Err(error) => {
+                eprintln!("failed to submit the Native prompt optimization job: {error}");
+                self.set_prompt_optimization_error(
+                    window_id,
+                    "无法启动提示优化，请稍后重试。".to_owned(),
+                );
+            }
         }
+    }
+
+    fn apply_prompt_optimization_job(&mut self, job_id: JobId, state: JobState) {
+        let Some((&window_id, active)) = self
+            .active_prompt_optimizations
+            .iter()
+            .find(|(_, active)| active.job_id == job_id)
+        else {
+            return;
+        };
+        let task_id = active.task_id.clone();
+        let expected_revision = active.expected_revision;
+        let result = match state {
+            JobState::Pending | JobState::Running { .. } => return,
+            JobState::Cancelled | JobState::Superseded => {
+                self.active_prompt_optimizations.remove(&window_id);
+                return;
+            }
+            JobState::Failed { message } => Err(message),
+            JobState::Completed { output } => serde_json::from_value(output)
+                .map_err(|error| format!("prompt optimization result is unreadable: {error}")),
+        };
+        self.active_prompt_optimizations.remove(&window_id);
+        self.finish_prompt_optimization(window_id, task_id, expected_revision, result);
     }
 
     fn finish_prompt_optimization(
         &mut self,
         window_id: HostedWindowId,
-        operation_id: u64,
         task_id: TaskId,
         expected_revision: u64,
         result: Result<DesktopPromptOptimizeResult, String>,
     ) {
-        let is_current = self
-            .active_prompt_optimizations
-            .get(&window_id)
-            .is_some_and(|active| {
-                active.operation_id == operation_id
-                    && active.task_id == task_id
-                    && active.expected_revision == expected_revision
-            });
-        if !is_current {
-            return;
-        }
-        self.active_prompt_optimizations.remove(&window_id);
         let surface_task_is_current = if window_id == HostedWindowId::PRIMARY {
             self.main_conversation_draft
                 .as_ref()
@@ -14827,45 +14656,38 @@ fn refresh_archived_records(&mut self) {
         self.worktree_busy = true;
         self.worktree_confirmation = None;
         self.task_action_error = None;
-        let application = self.application.clone();
-        let worker_task_id = task_id.clone();
-        let spawn = std::thread::Builder::new()
-            .name(format!("lilia-worktree-{}", task_id.as_str()))
-            .spawn(move || {
-                let result = match operation {
-                    WorktreeOperation::Create => application
-                        .create_task_worktree(&worker_task_id, None)
-                        .map(|_| ()),
-                    WorktreeOperation::Attach(path) => application
-                        .attach_task_worktree(&worker_task_id, &path)
-                        .map(|_| ()),
-                    WorktreeOperation::Clear => {
-                        application.clear_task_worktree(&worker_task_id).map(|_| ())
-                    }
-                    WorktreeOperation::CleanupAndArchive => application
-                        .cleanup_task_worktree_and_archive(&worker_task_id)
-                        .map(|_| ()),
-                    WorktreeOperation::MergeAndArchive => application
-                        .merge_task_worktree_and_archive(&worker_task_id)
-                        .map(|_| ()),
-                };
-                match result {
-                    Ok(()) => {
-                        application.emit_event(DesktopEventKind::WorktreeOperationCompleted {
-                            task_id: worker_task_id,
-                        });
-                    }
-                    Err(error) => {
-                        application.emit_event(DesktopEventKind::WorktreeOperationFailed {
-                            task_id: worker_task_id,
-                            message: error.to_string(),
-                        });
-                    }
-                }
-            });
-        if let Err(error) = spawn {
+        let request = JobRequest::new(
+            lilia_feature_worktree::OPERATE_PROTOCOL,
+            serde_json::to_value(lilia_feature_worktree::WorktreeRequest {
+                task_id: task_id.to_string(),
+                operation: worktree_operation_request(operation),
+            })
+            .expect("a worktree request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_worktree::worktree_slot(task_id.as_str()));
+
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => self.active_worktree_job = Some(handle.id()),
+            Err(error) => {
+                self.worktree_busy = false;
+                self.task_action_error = Some(format!("无法启动工作树操作：{error}"));
+            }
+        }
+    }
+
+    /// Releases the surface if the job died without announcing itself. The
+    /// success and failure paths both emit a domain event, which does the real
+    /// projection — archiving a task moves the surface off it, and every open
+    /// popup has to follow.
+    fn apply_worktree_job(&mut self, state: JobState) {
+        if !state.is_terminal() {
+            return;
+        }
+        self.active_worktree_job = None;
+        if let JobState::Failed { message } = state {
             self.worktree_busy = false;
-            self.task_action_error = Some(format!("无法启动工作树操作：{error}"));
+            self.worktree_confirmation = None;
+            self.task_action_error = Some(message);
         }
     }
 
@@ -16707,64 +16529,127 @@ fn refresh_archived_records(&mut self) {
         }
     }
 
-    fn begin_assistant_ai_probe(&mut self) -> Option<(u64, DesktopAssistantAiProbeInput)> {
-        if self.provider_busy || self.assistant_ai_probe_busy {
-            return None;
-        }
-        self.assistant_ai_probe_busy = true;
-        self.assistant_ai_probe_notice = None;
-        self.assistant_ai_probe_sequence = self.assistant_ai_probe_sequence.saturating_add(1);
-        let operation_id = self.assistant_ai_probe_sequence;
-        self.active_assistant_ai_probe = Some(operation_id);
-        Some((operation_id, self.assistant_ai_probe_input()))
-    }
-
     fn start_assistant_ai_models_fetch(&mut self) {
-        let Some((operation_id, input)) = self.begin_assistant_ai_probe() else {
-            return;
-        };
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-assistant-ai-models".to_owned())
-            .spawn(move || {
-                let result = application.fetch_assistant_ai_models(input);
-                let _ = message_sender(Message::AssistantAiModelsFetched {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start Native Assistant AI model fetch: {error}");
-            self.active_assistant_ai_probe = None;
-            self.assistant_ai_probe_busy = false;
-            self.assistant_ai_probe_notice =
-                Some((false, "无法启动模型获取，请稍后重试。".to_owned()));
-        }
+        self.start_assistant_ai_probe(
+            lilia_feature_provider::AssistantProbeKind::Models,
+            "无法启动模型获取，请稍后重试。",
+        );
     }
 
     fn start_assistant_ai_connection_test(&mut self) {
-        let Some((operation_id, input)) = self.begin_assistant_ai_probe() else {
+        self.start_assistant_ai_probe(
+            lilia_feature_provider::AssistantProbeKind::Connection,
+            "无法启动连接测试，请稍后重试。",
+        );
+    }
+
+    /// Probes the auxiliary model endpoint the user is configuring. The draft
+    /// base URL, model and API key are staged here and claimed on the worker
+    /// thread, so an unsaved key never reaches a job payload.
+    fn start_assistant_ai_probe(
+        &mut self,
+        kind: lilia_feature_provider::AssistantProbeKind,
+        failure_notice: &str,
+    ) {
+        if self.provider_busy || self.assistant_ai_probe_busy {
+            return;
+        }
+        self.assistant_ai_probe_busy = true;
+        self.assistant_ai_probe_notice = None;
+        let ticket = self.assistant_probes.park(self.assistant_ai_probe_input());
+        let request = JobRequest::new(
+            lilia_feature_provider::ASSISTANT_PROBE_PROTOCOL,
+            serde_json::to_value(lilia_feature_provider::AssistantProbeRequest::new(
+                ticket, kind,
+            ))
+            .expect("an assistant probe request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_provider::assistant_probe_slot());
+
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => self.active_assistant_probe_job = Some((handle.id(), ticket, kind)),
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode assistant probe job: {error}");
+                self.assistant_probes.discard(ticket);
+                self.assistant_ai_probe_busy = false;
+                self.assistant_ai_probe_notice = Some((false, failure_notice.to_owned()));
+            }
+        }
+    }
+
+    fn apply_assistant_probe_job(
+        &mut self,
+        ticket: u64,
+        kind: lilia_feature_provider::AssistantProbeKind,
+        state: JobState,
+    ) {
+        let output = match state {
+            JobState::Pending | JobState::Running { .. } => return,
+            JobState::Completed { output } => output,
+            JobState::Failed { message } => {
+                self.active_assistant_probe_job = None;
+                self.assistant_probes.discard(ticket);
+                self.assistant_ai_probe_busy = false;
+                self.assistant_ai_probe_notice = Some((false, message));
+                return;
+            }
+            _ => {
+                self.active_assistant_probe_job = None;
+                self.assistant_probes.discard(ticket);
+                self.assistant_ai_probe_busy = false;
+                return;
+            }
+        };
+        self.active_assistant_probe_job = None;
+        self.assistant_probes.discard(ticket);
+        self.assistant_ai_probe_busy = false;
+        match kind {
+            lilia_feature_provider::AssistantProbeKind::Models => {
+                self.apply_assistant_ai_models_result(output)
+            }
+            lilia_feature_provider::AssistantProbeKind::Connection => {
+                self.apply_assistant_ai_connection_result(output)
+            }
+        }
+    }
+
+    fn apply_assistant_ai_models_result(&mut self, output: Value) {
+        let Ok(result) = serde_json::from_value::<DesktopAssistantAiModelsResult>(output) else {
+            self.assistant_ai_probe_notice = Some((false, "无法读取模型列表。".to_owned()));
             return;
         };
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-assistant-ai-test".to_owned())
-            .spawn(move || {
-                let result = application.test_assistant_ai_connection(input);
-                let _ = message_sender(Message::AssistantAiConnectionTested {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start Native Assistant AI connection test: {error}");
-            self.active_assistant_ai_probe = None;
-            self.assistant_ai_probe_busy = false;
-            self.assistant_ai_probe_notice =
-                Some((false, "无法启动连接测试，请稍后重试。".to_owned()));
+        if !result.ok {
+            self.assistant_ai_probe_notice = Some((
+                false,
+                result.error.unwrap_or_else(|| "无法获取模型。".to_owned()),
+            ));
+            return;
         }
+        let fetched = result.models.len();
+        let added = self
+            .provider_ai_settings
+            .merge_fetched_assistant_models(result.models);
+        self.assistant_ai_probe_notice =
+            Some((true, format!("已同步 {fetched} 个模型，新增 {added} 个。")));
+    }
+
+    fn apply_assistant_ai_connection_result(&mut self, output: Value) {
+        let Ok(result) = serde_json::from_value::<DesktopAssistantAiTestResult>(output) else {
+            self.assistant_ai_probe_notice = Some((false, "无法读取连接测试结果。".to_owned()));
+            return;
+        };
+        self.assistant_ai_probe_notice = if result.ok {
+            Some(match result.model_matched {
+                Some(true) => (true, "连接成功，默认模型可用。".to_owned()),
+                Some(false) => (false, "连接成功，但默认模型不在模型列表中。".to_owned()),
+                None => (true, "连接成功。".to_owned()),
+            })
+        } else {
+            Some((
+                false,
+                result.error.unwrap_or_else(|| "连接测试失败。".to_owned()),
+            ))
+        };
     }
 
     fn save_model_feature_settings(&mut self) {
@@ -17011,10 +16896,8 @@ fn refresh_archived_records(&mut self) {
             return;
         }
         let secret = DesktopSecret::new(std::mem::take(&mut self.provider_secret).into_bytes());
-        self.start_provider_operation(ProviderOperation::SaveApiKey {
-            provider_id,
-            secret,
-        });
+        self.provider_secrets.stage(secret);
+        self.start_provider_operation(CredentialRequest::SaveApiKey { provider_id });
     }
 
     fn pick_data_import_source(&mut self) {
@@ -17075,13 +16958,12 @@ fn refresh_archived_records(&mut self) {
                 return;
             }
         }
-        let operation_id = self.data_import.begin_plan(source_home.clone());
+        self.data_import.reset_for_plan(source_home.clone());
         let staging_home = match crate::pending_import::create_staging_home(&self.home) {
             Ok(home) => home,
             Err(error) => {
                 eprintln!("LiliaCode import staging directory failed: {error}");
-                self.data_import
-                    .fail_to_start(operation_id, "无法准备导入目录，请稍后重试。");
+                self.data_import.fail("无法准备导入目录，请稍后重试。");
                 return;
             }
         };
@@ -17092,15 +16974,14 @@ fn refresh_archived_records(&mut self) {
             Ok(target) => target,
             Err(error) => {
                 eprintln!("LiliaCode import staging configuration failed: {error}");
-                self.data_import
-                    .fail_to_start(operation_id, "无法准备导入，请稍后重试。");
+                self.data_import.fail("无法准备导入，请稍后重试。");
                 return;
             }
         };
         let source_identity = match legacy_instance_identity(&source_home) {
             Ok(identity) => identity,
             Err(error) => {
-                self.data_import.finish_plan(operation_id, Err(error));
+                self.data_import.fail(error);
                 return;
             }
         };
@@ -17108,39 +16989,25 @@ fn refresh_archived_records(&mut self) {
             Ok(source) => source,
             Err(error) => {
                 eprintln!("LiliaCode import source configuration failed: {error}");
-                self.data_import
-                    .fail_to_start(operation_id, "所选目录无法使用，请重新选择。");
+                self.data_import.fail("所选目录无法使用，请重新选择。");
                 return;
             }
         };
         let service = DesktopDataImportService::new(target, Arc::new(NativeDesktopHost));
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-data-import-plan".to_owned())
-            .spawn(move || {
-                let result = service.plan(&source).map_err(|error| {
-                    eprintln!("LiliaCode data import planning failed: {error}");
-                    "无法检查所选目录，请确认旧版已退出且目录可以读取。".to_owned()
-                });
-                let _ = message_sender(Message::DataImportPlanFinished {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode import planning: {error}");
-            self.data_import
-                .fail_to_start(operation_id, "无法开始检查，请稍后重试。");
-        }
+        self.submit_import_job(
+            lilia_feature_import::PLAN_PROTOCOL,
+            ImportCommand::Plan { service, source },
+            "无法开始检查，请稍后重试。",
+        );
     }
 
     fn start_data_import_execution(&mut self) {
         let Some(plan) = self.data_import.plan.clone() else {
             return;
         };
-        let Some(operation_id) = self.data_import.begin_execute() else {
+        if !self.data_import.can_execute() {
             return;
-        };
+        }
         let target = match DesktopApplicationConfig::new(
             plan.target_home.clone(),
             self.data_import_target_identity.clone(),
@@ -17148,8 +17015,7 @@ fn refresh_archived_records(&mut self) {
             Ok(target) => target,
             Err(error) => {
                 eprintln!("LiliaCode import execution configuration failed: {error}");
-                self.data_import
-                    .fail_to_start(operation_id, "无法准备导入，请重新生成计划。");
+                self.data_import.fail("无法准备导入，请重新生成计划。");
                 return;
             }
         };
@@ -17159,33 +17025,84 @@ fn refresh_archived_records(&mut self) {
             CredentialImportDecision::Denied
         };
         let service = DesktopDataImportService::new(target, Arc::new(NativeDesktopHost));
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-data-import-execute".to_owned())
-            .spawn(move || {
-                let report = service.execute(
-                    &plan,
-                    DesktopImportExecutionOptions {
-                        credential_decision,
-                    },
-                );
-                let _ = message_sender(Message::DataImportFinished {
-                    operation_id,
-                    report,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode import execution: {error}");
-            self.data_import
-                .fail_to_start(operation_id, "无法开始导入，请稍后重试。");
+        self.submit_import_job(
+            lilia_feature_import::EXECUTE_PROTOCOL,
+            ImportCommand::Execute {
+                service,
+                plan: Box::new(plan),
+                options: DesktopImportExecutionOptions {
+                    credential_decision,
+                },
+            },
+            "无法开始导入，请稍后重试。",
+        );
+    }
+
+    /// Stages one import step and submits the job that claims it. The step runs
+    /// against an application config and a live host handle, neither of which
+    /// belongs in a payload, so only the ticket travels.
+    fn submit_import_job(
+        &mut self,
+        protocol: &str,
+        command: ImportCommand,
+        failure_notice: &str,
+    ) {
+        let ticket = self.import_exchange.park(command);
+        let request = JobRequest::new(
+            protocol,
+            serde_json::to_value(lilia_feature_import::ImportRequest::new(ticket))
+                .expect("an import request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_import::import_slot());
+
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => {
+                self.active_import_job = Some((handle.id(), ticket));
+                self.data_import.begin(handle.id());
+            }
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode import job: {error}");
+                self.import_exchange.discard(ticket);
+                self.data_import.fail(failure_notice);
+            }
         }
     }
 
-    fn finish_data_import(&mut self, operation_id: u64, report: DesktopImportReport) {
-        if !self
-            .data_import
-            .finish_execute(operation_id, report.clone())
-        {
+    fn apply_import_job(&mut self, job_id: JobId, planning: bool, state: JobState) {
+        let output = match state {
+            JobState::Pending | JobState::Running { .. } => return,
+            JobState::Completed { output } => output,
+            JobState::Failed { message } => {
+                self.clear_import_job();
+                self.data_import.fail(message);
+                return;
+            }
+            _ => {
+                self.clear_import_job();
+                return;
+            }
+        };
+        self.clear_import_job();
+        if planning {
+            let result = serde_json::from_value::<DesktopImportPlan>(output)
+                .map_err(|_| "无法读取导入计划。".to_owned());
+            self.data_import.finish_plan(job_id, result);
+            return;
+        }
+        match serde_json::from_value::<DesktopImportReport>(output) {
+            Ok(report) => self.finish_data_import(job_id, report),
+            Err(_) => self.data_import.fail("无法读取导入结果。"),
+        }
+    }
+
+    fn clear_import_job(&mut self) {
+        if let Some((_, ticket)) = self.active_import_job.take() {
+            self.import_exchange.discard(ticket);
+        }
+    }
+
+    fn finish_data_import(&mut self, job_id: JobId, report: DesktopImportReport) {
+        if !self.data_import.finish_execute(job_id, report.clone()) {
             return;
         }
         match crate::pending_import::schedule(&self.home, &report) {
@@ -17229,97 +17146,102 @@ fn refresh_archived_records(&mut self) {
         }
     }
 
-    fn start_provider_operation(&mut self, operation: ProviderOperation) {
+    fn start_provider_operation(&mut self, request: CredentialRequest) {
         if self.provider_busy {
             return;
         }
+        let request = JobRequest::new(
+            lilia_feature_provider::CREDENTIAL_PROTOCOL,
+            serde_json::to_value(request).expect("a credential request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_provider::credential_slot());
+
         self.provider_busy = true;
         self.provider_error = None;
-        self.provider_operation_sequence = self.provider_operation_sequence.saturating_add(1);
-        let operation_id = self.provider_operation_sequence;
-        self.active_provider_operation = Some(operation_id);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-provider-operation".to_owned())
-            .spawn(move || {
-                let result = match operation {
-                    ProviderOperation::SaveApiKey {
-                        provider_id,
-                        secret,
-                    } => application
-                        .login_provider_credential(DesktopProviderCredentialInput {
-                            provider_id,
-                            kind: DesktopCredentialKind::ApiKey,
-                            secret,
-                            account_label: None,
-                            source: Some("desktop_settings".to_owned()),
-                        })
-                        .map(|_| ()),
-                    ProviderOperation::Revoke {
-                        credential_id,
-                        revision,
-                        ..
-                    } => application
-                        .revoke_provider_credential(
-                            credential_id,
-                            revision,
-                            Some("revoked from LiliaCode settings".to_owned()),
-                        )
-                        .map(|_| ()),
-                    ProviderOperation::Refresh { provider_id } => application
-                        .refresh_provider_runtime(provider_id)
-                        .map(|_| ()),
-                };
-                let error = result.err().map(|error| {
-                    eprintln!("LiliaCode provider operation failed: {error}");
-                    provider_operation_error_message(&error).to_owned()
-                });
-                let _ = message_sender(Message::ProviderOperationFinished {
-                    operation_id,
-                    error,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode provider operation: {error}");
-            self.active_provider_operation = None;
-            self.provider_busy = false;
-            self.provider_error = Some("无法启动凭据操作，请稍后重试。".to_owned());
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => self.active_provider_job = Some(handle.id()),
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode provider job: {error}");
+                self.provider_secrets.discard();
+                self.provider_busy = false;
+                self.provider_error = Some("无法启动凭据操作，请稍后重试。".to_owned());
+            }
         }
+    }
+
+    fn apply_provider_job(&mut self, state: JobState) {
+        match state {
+            JobState::Pending | JobState::Running { .. } => return,
+            JobState::Completed { .. } => {
+                self.active_provider_job = None;
+                self.provider_busy = false;
+                self.provider_error = None;
+            }
+            JobState::Failed { message } => {
+                self.active_provider_job = None;
+                self.provider_busy = false;
+                self.provider_error = Some(message);
+            }
+            JobState::Cancelled | JobState::Superseded => {
+                self.active_provider_job = None;
+                self.provider_busy = false;
+            }
+        }
+        self.provider_secrets.discard();
+        self.refresh_provider();
     }
 
     fn refresh_quota(&mut self) {
         if self.quota_busy {
             return;
         }
+        let request = JobRequest::new(
+            lilia_feature_usage::QUOTA_PROTOCOL,
+            serde_json::to_value(QuotaUsageStatsInput {
+                days: Some(self.quota_days),
+                backend: Some(self.quota_backend.clone()),
+            })
+            .expect("a quota request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_usage::quota_slot());
+
         self.quota_busy = true;
         self.quota_error = None;
-        self.quota_operation_sequence = self.quota_operation_sequence.saturating_add(1);
-        let operation_id = self.quota_operation_sequence;
-        self.active_quota_operation = Some(operation_id);
-        let application = self.application.clone();
-        let days = self.quota_days;
-        let backend = self.quota_backend.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-quota-refresh".to_owned())
-            .spawn(move || {
-                let result = application
-                    .quota_usage_stats(QuotaUsageStatsInput {
-                        days: Some(days),
-                        backend: Some(backend),
-                    })
-                    .map_err(|error| error.to_string());
-                let _ = message_sender(Message::QuotaRefreshed {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode quota refresh: {error}");
-            self.active_quota_operation = None;
-            self.quota_busy = false;
-            self.quota_error = Some("无法刷新本地用量，请稍后重试。".to_owned());
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => self.active_quota_job = Some(handle.id()),
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode quota job: {error}");
+                self.quota_busy = false;
+                self.quota_error = Some("无法刷新本地用量，请稍后重试。".to_owned());
+            }
+        }
+    }
+
+    fn apply_quota_job(&mut self, state: JobState) {
+        match state {
+            JobState::Pending | JobState::Running { .. } => {}
+            JobState::Completed { output } => {
+                self.active_quota_job = None;
+                self.quota_busy = false;
+                match serde_json::from_value::<QuotaUsageStats>(output) {
+                    Ok(stats) => {
+                        self.quota_days = stats.days;
+                        self.quota_backend = stats.backend.clone();
+                        self.quota_usage = Some(stats);
+                        self.quota_error = None;
+                    }
+                    Err(error) => self.quota_error = Some(format!("无法读取用量报告：{error}")),
+                }
+            }
+            JobState::Failed { message } => {
+                self.active_quota_job = None;
+                self.quota_busy = false;
+                self.quota_error = Some(message);
+            }
+            JobState::Cancelled | JobState::Superseded => {
+                self.active_quota_job = None;
+                self.quota_busy = false;
+            }
         }
     }
 
@@ -17385,48 +17307,115 @@ fn refresh_archived_records(&mut self) {
     }
 
     fn start_skill_registry_operation(&mut self, operation: SkillRegistryOperation) {
+        self.submit_extensions_command(
+            ExtensionsCommand::Skill(operation),
+            "无法更新 Skills 注册表，请稍后重试。",
+        );
+    }
+
+    /// Puts one extensions operation on the kernel's extensions lane. The lane
+    /// is single-flight, which is what `extensions_busy` already means to the
+    /// surface.
+    fn submit_extensions_command(&mut self, command: ExtensionsCommand, failure: &str) {
         if self.extensions_busy {
             return;
         }
+        let operation = command.operation();
+        let lane = command.lane();
+        let ticket = self.extensions_exchange.park(command);
+        let request = JobRequest::new(
+            lilia_feature_extensions::MUTATE_PROTOCOL,
+            serde_json::to_value(lilia_feature_extensions::MutateRequest::new(
+                ticket, operation,
+            ))
+            .expect("an extensions request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_extensions::extensions_slot());
+
         self.extensions_busy = true;
         self.extensions_error = None;
-        self.extensions_operation_sequence = self.extensions_operation_sequence.saturating_add(1);
-        let operation_id = self.extensions_operation_sequence;
-        self.active_extensions_operation = Some(operation_id);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-skills-registry".to_owned())
-            .spawn(move || {
-                let result = match operation {
-                    SkillRegistryOperation::Create(input) => {
-                        application.create_skill_package(input)
-                    }
-                    SkillRegistryOperation::SetEnabled {
-                        skill_id,
-                        enabled,
-                        expected_registry_revision,
-                    } => application.set_skill_package_enabled(
-                        &skill_id,
-                        enabled,
-                        expected_registry_revision,
-                    ),
-                    SkillRegistryOperation::Delete {
-                        skill_id,
-                        expected_registry_revision,
-                    } => application.delete_skill_package(&skill_id, expected_registry_revision),
-                }
-                .map_err(|error| error.to_string());
-                let _ = message_sender(Message::SkillOperationFinished {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode Skill registry operation: {error}");
-            self.active_extensions_operation = None;
-            self.extensions_busy = false;
-            self.extensions_error = Some("无法更新 Skills 注册表，请稍后重试。".to_owned());
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => {
+                self.active_extensions_job = Some(ExtensionsJob {
+                    id: handle.id(),
+                    ticket,
+                    lane,
+                })
+            }
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode extensions job: {error}");
+                self.extensions_exchange.discard(ticket);
+                self.extensions_busy = false;
+                self.extensions_error = Some(failure.to_owned());
+            }
+        }
+    }
+
+    fn apply_extensions_job(&mut self, state: JobState) {
+        let Some(job) = self.active_extensions_job else {
+            return;
+        };
+        if matches!(state, JobState::Pending | JobState::Running { .. }) {
+            return;
+        }
+
+        self.active_extensions_job = None;
+        self.extensions_busy = false;
+        if job.lane.clears_credential_drafts() {
+            self.mcp_credential_drafts.clear();
+        }
+        match state {
+            JobState::Completed { .. } => match self.extensions_exchange.take(job.ticket) {
+                Some(outcome) => self.apply_extensions_outcome(outcome),
+                None => self.extensions_error = Some("扩展操作没有返回结果。".to_owned()),
+            },
+            JobState::Failed { message } => {
+                self.extensions_exchange.discard(job.ticket);
+                self.extensions_error = Some(message);
+            }
+            // Cancelled, superseded, and any terminal state added later: the
+            // ticket's command and outcome are the only thing to clean up.
+            _ => self.extensions_exchange.discard(job.ticket),
+        }
+
+        if job.lane.releases_pending_activation()
+            && std::mem::take(&mut self.extensions_activation_pending)
+        {
+            self.activate_registered_mcp();
+        }
+    }
+
+    fn apply_extensions_outcome(&mut self, outcome: ExtensionsOutcome) {
+        self.extensions_error = None;
+        match outcome {
+            ExtensionsOutcome::Skill(snapshot) => {
+                self.extensions = Some(snapshot);
+                self.skill_id_input.clear();
+                self.skill_description_input.clear();
+                self.skill_delete_confirmation = None;
+            }
+            ExtensionsOutcome::Plugin(snapshot) => {
+                self.extensions = Some(snapshot);
+                self.plugin_source_input.clear();
+                self.plugin_delete_confirmation = None;
+            }
+            ExtensionsOutcome::Hook(snapshot) => {
+                self.apply_hooks_snapshot(snapshot);
+                self.hook_delete_confirmation = None;
+            }
+            ExtensionsOutcome::Refresh(snapshot, hooks) => {
+                self.extensions = Some(snapshot);
+                self.apply_hooks_snapshot(hooks);
+            }
+            ExtensionsOutcome::Activated(report) => {
+                self.extensions = Some(report.snapshot.clone());
+                self.extensions_activation = Some(report);
+                self.mcp_editor = None;
+                self.mcp_delete_confirmation = None;
+            }
+            ExtensionsOutcome::Content(preview) => {
+                self.mcp_content_preview = Some(preview);
+            }
         }
     }
 
@@ -17520,48 +17509,10 @@ fn refresh_archived_records(&mut self) {
     }
 
     fn start_plugin_registry_operation(&mut self, operation: PluginRegistryOperation) {
-        if self.extensions_busy {
-            return;
-        }
-        self.extensions_busy = true;
-        self.extensions_error = None;
-        self.extensions_operation_sequence = self.extensions_operation_sequence.saturating_add(1);
-        let operation_id = self.extensions_operation_sequence;
-        self.active_extensions_operation = Some(operation_id);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-plugins-registry".to_owned())
-            .spawn(move || {
-                let result = match operation {
-                    PluginRegistryOperation::Install(input) => {
-                        application.install_plugin_package(input).map(|_| ())
-                    }
-                    PluginRegistryOperation::SetEnabled {
-                        plugin_id,
-                        enabled,
-                        expected_registry_revision,
-                    } => application
-                        .set_plugin_package_enabled(&plugin_id, enabled, expected_registry_revision)
-                        .map(|_| ()),
-                    PluginRegistryOperation::Delete {
-                        plugin_id,
-                        expected_registry_revision,
-                    } => application.delete_plugin_package(&plugin_id, expected_registry_revision),
-                }
-                .and_then(|_| application.extensions_snapshot())
-                .map_err(|error| error.to_string());
-                let _ = message_sender(Message::PluginOperationFinished {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode Plugin registry operation: {error}");
-            self.active_extensions_operation = None;
-            self.extensions_busy = false;
-            self.extensions_error = Some("无法更新 Plugins 注册表，请稍后重试。".to_owned());
-        }
+        self.submit_extensions_command(
+            ExtensionsCommand::Plugin(operation),
+            "无法更新 Plugins 注册表，请稍后重试。",
+        );
     }
 
     fn create_hook_source(&mut self, source_id: &str) {
@@ -17709,65 +17660,14 @@ fn refresh_archived_records(&mut self) {
         if self.extensions_busy {
             return;
         }
-        self.extensions_busy = true;
-        self.extensions_error = None;
-        self.extensions_operation_sequence = self.extensions_operation_sequence.saturating_add(1);
-        let operation_id = self.extensions_operation_sequence;
-        self.active_extensions_operation = Some(operation_id);
         let overview_project_cwd = self.selected_project_workspace().map(|(_, root)| root);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-hooks-registry".to_owned())
-            .spawn(move || {
-                let operation_result = match operation {
-                    HookSourceOperation::Create { scope, project_cwd } => application
-                        .create_hook_source(scope, project_cwd.as_deref())
-                        .map(|_| ()),
-                    HookSourceOperation::Update {
-                        scope,
-                        project_cwd,
-                        input,
-                    } => application
-                        .update_hook_source(scope, project_cwd.as_deref(), input)
-                        .map(|_| ()),
-                    HookSourceOperation::SetEnabled {
-                        scope,
-                        project_cwd,
-                        expected_revision,
-                        enabled,
-                    } => application
-                        .set_hook_source_enabled(
-                            scope,
-                            project_cwd.as_deref(),
-                            expected_revision,
-                            enabled,
-                        )
-                        .map(|_| ()),
-                    HookSourceOperation::Delete {
-                        scope,
-                        project_cwd,
-                        expected_revision,
-                    } => application.delete_hook_source(
-                        scope,
-                        project_cwd.as_deref(),
-                        expected_revision,
-                    ),
-                };
-                let result = operation_result
-                    .map_err(|error| error.to_string())
-                    .and_then(|_| load_native_hooks(&application, overview_project_cwd.as_deref()));
-                let _ = message_sender(Message::HookOperationFinished {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode Hook operation: {error}");
-            self.active_extensions_operation = None;
-            self.extensions_busy = false;
-            self.extensions_error = Some("无法更新 Hooks，请稍后重试。".to_owned());
-        }
+        self.submit_extensions_command(
+            ExtensionsCommand::Hook {
+                operation,
+                overview_project_cwd,
+            },
+            "无法更新 Hooks，请稍后重试。",
+        );
     }
 
     fn apply_hooks_snapshot(&mut self, snapshot: NativeHooksSnapshot) {
@@ -17781,38 +17681,11 @@ fn refresh_archived_records(&mut self) {
     }
 
     fn refresh_extensions(&mut self) {
-        if self.extensions_busy {
-            return;
-        }
-        self.extensions_busy = true;
-        self.extensions_error = None;
-        self.extensions_operation_sequence = self.extensions_operation_sequence.saturating_add(1);
-        let operation_id = self.extensions_operation_sequence;
-        self.active_extensions_operation = Some(operation_id);
         let project_cwd = self.selected_project_workspace().map(|(_, root)| root);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-extensions-refresh".to_owned())
-            .spawn(move || {
-                let result = application
-                    .extensions_snapshot()
-                    .map_err(|error| error.to_string())
-                    .and_then(|extensions| {
-                        load_native_hooks(&application, project_cwd.as_deref())
-                            .map(|hooks| (extensions, hooks))
-                    });
-                let _ = message_sender(Message::ExtensionsRefreshed {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode extensions refresh: {error}");
-            self.active_extensions_operation = None;
-            self.extensions_busy = false;
-            self.extensions_error = Some("无法读取扩展状态，请稍后重试。".to_owned());
-        }
+        self.submit_extensions_command(
+            ExtensionsCommand::Refresh { project_cwd },
+            "无法读取扩展状态，请稍后重试。",
+        );
     }
 
     fn activate_registered_mcp(&mut self) {
@@ -17821,72 +17694,23 @@ fn refresh_archived_records(&mut self) {
             return;
         }
         self.extensions_activation_pending = false;
-        self.extensions_busy = true;
-        self.extensions_error = None;
         self.extensions_activation = None;
         self.mcp_content_preview = None;
-        self.extensions_operation_sequence = self.extensions_operation_sequence.saturating_add(1);
-        let operation_id = self.extensions_operation_sequence;
-        self.active_extensions_operation = Some(operation_id);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-mcp-activation".to_owned())
-            .spawn(move || {
-                let result = application
-                    .activate_registered_mcp_servers()
-                    .map_err(|error| error.to_string());
-                let _ = message_sender(Message::ExtensionsActivated {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode MCP activation: {error}");
-            self.active_extensions_operation = None;
-            self.extensions_busy = false;
-            self.extensions_error = Some("无法启动 MCP 连接，请稍后重试。".to_owned());
-        }
+        self.submit_extensions_command(
+            ExtensionsCommand::ActivateMcp,
+            "无法启动 MCP 连接，请稍后重试。",
+        );
     }
 
     fn start_mcp_content_operation(&mut self, operation: McpContentOperation) {
         if self.extensions_busy {
             return;
         }
-        self.extensions_busy = true;
-        self.extensions_error = None;
         self.mcp_content_preview = None;
-        self.extensions_operation_sequence = self.extensions_operation_sequence.saturating_add(1);
-        let operation_id = self.extensions_operation_sequence;
-        self.active_extensions_operation = Some(operation_id);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-mcp-content".to_owned())
-            .spawn(move || {
-                let result = match operation {
-                    McpContentOperation::ReadResource { server_id, uri } => application
-                        .read_mcp_resource(&server_id, &uri)
-                        .map(mcp_resource_preview),
-                    McpContentOperation::GetPrompt {
-                        namespaced_name,
-                        arguments,
-                    } => application
-                        .get_mcp_prompt(&namespaced_name, arguments)
-                        .map(mcp_prompt_preview),
-                }
-                .map_err(|error| error.to_string());
-                let _ = message_sender(Message::McpContentLoaded {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode MCP content request: {error}");
-            self.active_extensions_operation = None;
-            self.extensions_busy = false;
-            self.extensions_error = Some("无法读取 MCP 内容，请稍后重试。".to_owned());
-        }
+        self.submit_extensions_command(
+            ExtensionsCommand::McpContent(operation),
+            "无法读取 MCP 内容，请稍后重试。",
+        );
     }
 
     fn begin_edit_mcp_server(&mut self, server_id: &str) {
@@ -18029,105 +17853,62 @@ fn refresh_archived_records(&mut self) {
         if self.extensions_busy {
             return;
         }
-        self.extensions_busy = true;
-        self.extensions_error = None;
         self.extensions_activation = None;
         self.mcp_content_preview = None;
-        self.extensions_operation_sequence = self.extensions_operation_sequence.saturating_add(1);
-        let operation_id = self.extensions_operation_sequence;
-        self.active_extensions_operation = Some(operation_id);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-mcp-registry".to_owned())
-            .spawn(move || {
-                let result = match operation {
-                    McpRegistryOperation::Upsert(input) => application.upsert_mcp_server(input),
-                    McpRegistryOperation::SetEnabled {
-                        server_id,
-                        enabled,
-                        expected_registry_revision,
-                    } => application.set_mcp_server_enabled(
-                        &server_id,
-                        enabled,
-                        expected_registry_revision,
-                    ),
-                    McpRegistryOperation::Delete {
-                        server_id,
-                        expected_registry_revision,
-                    } => application.delete_mcp_server(&server_id, expected_registry_revision),
-                    McpRegistryOperation::SetCredential {
-                        server_id,
-                        kind,
-                        name,
-                        secret,
-                    } => application.set_mcp_server_credential(&server_id, kind, &name, secret),
-                    McpRegistryOperation::DeleteCredential {
-                        server_id,
-                        kind,
-                        name,
-                    } => application.delete_mcp_server_credential(&server_id, kind, &name),
-                }
-                .map_err(|error| error.to_string());
-                let _ = message_sender(Message::ExtensionsActivated {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode MCP registry operation: {error}");
-            self.active_extensions_operation = None;
-            self.extensions_busy = false;
-            self.extensions_error = Some("无法更新 MCP 注册表，请稍后重试。".to_owned());
-        }
+        self.submit_extensions_command(
+            ExtensionsCommand::McpRegistry(operation),
+            "无法更新 MCP 注册表，请稍后重试。",
+        );
     }
 
-    fn start_remote_operation(&mut self, operation: RemoteOperation) {
+    fn start_remote_operation(&mut self, request: RemoteRequest) {
         if self.remote_busy {
             return;
         }
+        let request = JobRequest::new(
+            lilia_feature_remote::OPERATE_PROTOCOL,
+            serde_json::to_value(request).expect("a remote request is representable as JSON"),
+        )
+        .in_slot(lilia_feature_remote::remote_slot());
+
         self.remote_busy = true;
         self.remote_error = None;
-        self.remote_operation_sequence = self.remote_operation_sequence.saturating_add(1);
-        let operation_id = self.remote_operation_sequence;
-        self.active_remote_operation = Some(operation_id);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-remote-control".to_owned())
-            .spawn(move || {
-                let result = match operation {
-                    RemoteOperation::Refresh => application.remote_control_status(),
-                    RemoteOperation::SetEnabled(enabled) => {
-                        application.set_remote_control_enabled(enabled)
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => self.active_remote_job = Some(handle.id()),
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode remote job: {error}");
+                self.remote_busy = false;
+                self.remote_error = Some("无法启动远控操作，请稍后重试。".to_owned());
+            }
+        }
+    }
+
+    fn apply_remote_job(&mut self, state: JobState) {
+        match state {
+            JobState::Pending | JobState::Running { .. } => {}
+            JobState::Completed { output } => {
+                self.active_remote_job = None;
+                self.remote_busy = false;
+                match serde_json::from_value::<RemoteControlStatus>(output) {
+                    Ok(status) => {
+                        self.remote_pc_name = status.pc_name.clone();
+                        self.remote = Some(status);
+                        self.remote_error = None;
                     }
-                    RemoteOperation::SavePcName(name) => {
-                        application.set_remote_control_pc_name(name)
-                    }
-                    RemoteOperation::SetKeepAwake(enabled) => {
-                        application.set_remote_control_keep_awake(enabled)
-                    }
-                    RemoteOperation::StartPairing => application
-                        .start_remote_pairing()
-                        .and_then(|_| application.remote_control_status()),
-                    RemoteOperation::CancelPairing => application
-                        .cancel_remote_pairing()
-                        .and_then(|_| application.remote_control_status()),
-                    RemoteOperation::RevokeDevice(device_id) => {
-                        application.revoke_remote_device(&device_id)
+                    Err(error) => {
+                        self.remote_error = Some(format!("无法读取远控状态：{error}"));
                     }
                 }
-                .map_err(|error| error.to_string());
-                let _ = message_sender(Message::RemoteOperationFinished {
-                    operation_id,
-                    result,
-                });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode remote operation: {error}");
-            self.active_remote_operation = None;
-            self.remote_busy = false;
-            self.remote_error = Some("无法启动远控操作，请稍后重试。".to_owned());
+            }
+            JobState::Failed { message } => {
+                self.active_remote_job = None;
+                self.remote_busy = false;
+                self.remote_error = Some(message);
+            }
+            JobState::Cancelled | JobState::Superseded => {
+                self.active_remote_job = None;
+                self.remote_busy = false;
+            }
         }
     }
 
@@ -18139,31 +17920,59 @@ fn refresh_archived_records(&mut self) {
             self.update_error = Some("此版本暂不支持自动更新，请前往 发布页。".to_owned());
             return;
         }
+        let request = match operation {
+            UpdateOperation::Check => JobRequest::new(
+                lilia_feature_update::CHECK_PROTOCOL,
+                serde_json::json!({ "channel": "preview" }),
+            ),
+            UpdateOperation::Install(version) => JobRequest::new(
+                lilia_feature_update::INSTALL_PROTOCOL,
+                serde_json::json!({ "version": version }),
+            ),
+        }
+        .in_slot(lilia_feature_update::update_slot());
+
         self.update_busy = true;
         self.update_error = None;
-        self.update_operation_sequence = self.update_operation_sequence.saturating_add(1);
-        let operation_id = self.update_operation_sequence;
-        self.active_update_operation = Some(operation_id);
-        let application = self.application.clone();
-        let message_sender = Arc::clone(&self.message_sender);
-        let spawn = std::thread::Builder::new()
-            .name("lilia-native-update".to_owned())
-            .spawn(move || {
-                let result = match operation {
-                    UpdateOperation::Check => application.check_for_update("preview"),
-                    UpdateOperation::Install(version) => application.install_update(version),
+        match self.kernel.kernel().jobs().submit(request) {
+            Ok(handle) => self.active_update_job = Some(handle.id()),
+            Err(error) => {
+                eprintln!("failed to submit the LiliaCode update job: {error}");
+                self.update_busy = false;
+                self.update_error = Some("无法启动更新操作，请稍后重试。".to_owned());
+            }
+        }
+    }
+
+    fn apply_update_job(&mut self, state: JobState) {
+        match state {
+            JobState::Pending | JobState::Running { .. } => {}
+            JobState::Completed { .. } => {
+                self.active_update_job = None;
+                self.update_busy = false;
+                self.update_error = None;
+                if let Ok(state) = self.application.update_state() {
+                    self.exit_requested = matches!(&state, DesktopUpdateState::Restarting { .. });
+                    self.update_state = state;
                 }
-                .map_err(|error| update_operation_error_message(&error));
-                let _ = message_sender(Message::UpdateOperationFinished {
-                    operation_id,
-                    result,
+                if self.update_prompt_is_visible() {
+                    self.dismiss_command_palette();
+                }
+            }
+            JobState::Failed { message } => {
+                self.active_update_job = None;
+                self.update_busy = false;
+                self.update_state = self.application.update_state().unwrap_or_else(|_| {
+                    DesktopUpdateState::Failed {
+                        message: message.clone(),
+                    }
                 });
-            });
-        if let Err(error) = spawn {
-            eprintln!("failed to start LiliaCode update operation: {error}");
-            self.active_update_operation = None;
-            self.update_busy = false;
-            self.update_error = Some("无法启动更新操作，请稍后重试。".to_owned());
+                self.update_error = Some(message);
+            }
+            JobState::Cancelled | JobState::Superseded => {
+                self.active_update_job = None;
+                self.update_busy = false;
+            }
         }
     }
 
@@ -21993,7 +21802,7 @@ fn refresh_archived_records(&mut self) {
                     && self.settings_state.active_tab().as_str() == "remote"
                     && !self.remote_busy =>
             {
-                self.start_remote_operation(RemoteOperation::Refresh);
+                self.start_remote_operation(RemoteRequest::Refresh);
             }
             target_ids::REMOTE_HOST_TOGGLE
                 if settings_visible
@@ -25895,7 +25704,7 @@ fn refresh_archived_records(&mut self) {
         }
         for (_, item_id) in self.visible_document_editor_locations() {
             if let Some(state) = self.document_editors.get(&item_id) {
-                if state.language_label != "plaintext" && state.definition_operation.is_none() {
+                if state.language_label != "plaintext" && state.definition_job.is_none() {
                     targets.push(target_ids::document_editor_definition(item_id.as_str()));
                 }
                 targets.extend(
@@ -30534,6 +30343,87 @@ impl RuntimeProgram for DesktopProgram {
                 }
             })
             .map_err(|error| format!("failed to start desktop event bridge: {error}"))?;
+        let extensions_exchange = Arc::new(ExtensionsExchange::default());
+        let provider_secrets = Arc::new(StagedProviderSecret::default());
+        let assistant_probes = Arc::new(AssistantProbeExchange::default());
+        let import_exchange = Arc::new(ImportExchange::default());
+        let coding_exchange = Arc::new(CodingExchange::default());
+        let kernel = {
+            let dispatcher = context.clone();
+            crate::kernel_host::KernelHost::start(
+                crate::kernel_host::KernelServices {
+                    authority: application.authority().clone(),
+                    db: application.domain_db().clone(),
+                    terminals: application.terminal_service().clone(),
+                    documents: application.document_store().clone(),
+                    languages: application.language_registry().clone(),
+                    memory: application.memory_service(),
+                    roadmap: application.roadmap_service(),
+                    architecture: application.architecture_service(),
+                    automation: application.automation_service(),
+                    clone_credentials: Arc::new(GitHubCloneCredentials {
+                        application: application.clone(),
+                    }),
+                    update: Arc::new(DesktopUpdatePort {
+                        application: application.clone(),
+                    }),
+                    prompt_optimize: Arc::new(DesktopPromptOptimizePort {
+                        application: application.clone(),
+                    }),
+                    code_search: Arc::new(DesktopCodeSearchPort {
+                        application: application.clone(),
+                    }),
+                    coding_refresh: Arc::new(DesktopCodingRefreshPort {
+                        application: application.clone(),
+                        exchange: Arc::clone(&coding_exchange),
+                    }),
+                    extensions: Arc::new(DesktopExtensionsPort {
+                        application: application.clone(),
+                        exchange: Arc::clone(&extensions_exchange),
+                    }),
+                    remote: Arc::new(DesktopRemotePort {
+                        application: application.clone(),
+                    }),
+                    credentials: Arc::new(DesktopCredentialPort {
+                        application: application.clone(),
+                        staged: Arc::clone(&provider_secrets),
+                    }),
+                    usage: Arc::new(DesktopUsagePort {
+                        application: application.clone(),
+                    }),
+                    github: Arc::new(DesktopGitHubPort {
+                        application: application.clone(),
+                    }),
+                    language: Arc::new(DesktopLanguagePort {
+                        application: application.clone(),
+                    }),
+                    suggestions: Arc::new(DesktopSuggestionPort {
+                        application: application.clone(),
+                    }),
+                    worktrees: Arc::new(DesktopWorktreePort {
+                        application: application.clone(),
+                    }),
+                    assistant_probes: Arc::new(DesktopAssistantProbePort {
+                        application: application.clone(),
+                        staged: Arc::clone(&assistant_probes),
+                    }),
+                    imports: Arc::new(DesktopImportPort {
+                        staged: Arc::clone(&import_exchange),
+                    }),
+                    titles: Arc::new(DesktopTitlePort {
+                        application: application.clone(),
+                    }),
+                },
+                move |event| {
+                    dispatcher.dispatch(Message::KernelJob(event));
+                },
+            )?
+        };
+        application
+            .install_title_update_scheduler(Arc::new(QueuedTitleScheduler {
+                messages: Arc::clone(&message_sender),
+            }))
+            .map_err(|error| format!("failed to install the title update scheduler: {error}"))?;
         for task in application
             .query_tasks(TaskQuery::default().including_archived())
             .map_err(|error| {
@@ -30726,20 +30616,16 @@ impl RuntimeProgram for DesktopProgram {
             project_clone_percent: None,
             project_clone_target: None,
             project_clone_detail: None,
-            project_clone_operation_sequence: 0,
-            active_project_clone_operation: None,
-            active_project_clone_handle: None,
+            active_project_clone_job: None,
+            kernel,
             github_binding,
             github_device_flow: None,
             github_binding_busy: false,
-            github_binding_operation_sequence: 0,
-            active_github_binding_operation: None,
-            github_binding_cancel: None,
+            active_github_binding_job: None,
             github_repositories: Vec::new(),
             github_repositories_next_page: None,
             github_repositories_busy: false,
-            github_repository_operation_sequence: 0,
-            active_github_repository_operation: None,
+            active_github_repository_job: None,
             selected_github_repository: None,
             github_error,
             task_search: String::new(),
@@ -30758,7 +30644,8 @@ impl RuntimeProgram for DesktopProgram {
             project_workspace_previews: BTreeMap::new(),
             main_conversation_draft: None,
             document_editors: BTreeMap::new(),
-            document_definition_operation_sequence: 0,
+            active_diagnostics_jobs: BTreeMap::new(),
+            active_definition_jobs: BTreeMap::new(),
             terminal_snapshots: BTreeMap::new(),
             terminal_inputs: BTreeMap::new(),
             terminal_scrollback: BTreeMap::new(),
@@ -30769,8 +30656,7 @@ impl RuntimeProgram for DesktopProgram {
             conversation_reference_results: Vec::new(),
             context_attachment_results: Vec::new(),
             conversation_suggestions: ConversationSuggestionState::default(),
-            conversation_suggestion_operation_sequence: 0,
-            prompt_optimization_operation_sequence: 0,
+            active_suggestion_jobs: BTreeMap::new(),
             active_prompt_optimizations: BTreeMap::new(),
             prompt_route_suggestions: BTreeMap::new(),
             pending_session_branch: None,
@@ -30779,6 +30665,7 @@ impl RuntimeProgram for DesktopProgram {
             editing_todo: None,
             goal_draft: String::new(),
             worktree_busy: false,
+            active_worktree_job: None,
             worktree_confirmation: None,
             pending_initial_worktrees: BTreeMap::new(),
             interaction_drafts: BTreeMap::new(),
@@ -30856,8 +30743,9 @@ impl RuntimeProgram for DesktopProgram {
             coding_search_all_projects: false,
             coding_notice: None,
             coding_busy: false,
-            coding_operation_sequence: 0,
-            active_coding_operation: None,
+            coding_exchange,
+            active_coding_job: None,
+            active_coding_search_job: None,
             coding_error: None,
             settings_model,
             settings_state,
@@ -30873,8 +30761,10 @@ impl RuntimeProgram for DesktopProgram {
             assistant_ai_new_model_id: String::new(),
             assistant_ai_new_model_label: String::new(),
             assistant_ai_probe_busy: false,
-            assistant_ai_probe_sequence: 0,
-            active_assistant_ai_probe: None,
+            import_exchange,
+            active_import_job: None,
+            assistant_probes,
+            active_assistant_probe_job: None,
             assistant_ai_probe_notice: None,
             custom_preset_draft: String::new(),
             agent_interaction_settings,
@@ -30888,15 +30778,14 @@ impl RuntimeProgram for DesktopProgram {
             selected_provider,
             provider_secret: String::new(),
             provider_busy: false,
-            provider_operation_sequence: 0,
-            active_provider_operation: None,
+            provider_secrets,
+            active_provider_job: None,
             provider_error: None,
             quota_usage: None,
             quota_days: 30,
             quota_backend: "all".to_owned(),
             quota_busy: false,
-            quota_operation_sequence: 0,
-            active_quota_operation: None,
+            active_quota_job: None,
             quota_error: None,
             extensions: None,
             hooks: None,
@@ -30916,14 +30805,13 @@ impl RuntimeProgram for DesktopProgram {
             mcp_content_preview: None,
             extensions_busy: false,
             extensions_activation_pending: false,
-            extensions_operation_sequence: 0,
-            active_extensions_operation: None,
+            extensions_exchange,
+            active_extensions_job: None,
             extensions_error: None,
             remote,
             remote_pc_name,
             remote_busy: false,
-            remote_operation_sequence: 0,
-            active_remote_operation: None,
+            active_remote_job: None,
             remote_error,
             shell,
             shell_shortcut_edit,
@@ -30934,8 +30822,7 @@ impl RuntimeProgram for DesktopProgram {
             update_failure_dismissed: false,
             update_configured,
             update_busy: false,
-            update_operation_sequence: 0,
-            active_update_operation: None,
+            active_update_job: None,
             update_error: None,
             exit_requested: false,
             window_state,
@@ -32715,34 +32602,27 @@ fn permission_label(permission: DesktopExecutionPermission) -> &'static str {
     }
 }
 
-fn project_clone_error_message(error: DesktopProjectCloneError) -> String {
-    match error {
-        DesktopProjectCloneError::EmptyRepository => "请输入仓库地址。".to_owned(),
-        DesktopProjectCloneError::RepositoryCredentialsUnsupported => {
-            "仓库地址不能包含账号或令牌，请使用系统凭据管理。".to_owned()
-        }
-        DesktopProjectCloneError::ParentDirectoryUnavailable(_) => {
-            "克隆位置不存在或当前不可访问。".to_owned()
-        }
-        DesktopProjectCloneError::TargetUnavailable(_) => {
-            "克隆位置中没有可用的仓库目录名。".to_owned()
-        }
-        DesktopProjectCloneError::GitUnavailable => {
-            "无法启动 Git，请确认 Git 已安装并加入 PATH。".to_owned()
-        }
-        DesktopProjectCloneError::GitProcessTreeUnavailable => {
-            "无法建立可安全取消的 Git 进程，请稍后重试。".to_owned()
-        }
-        DesktopProjectCloneError::WorkerUnavailable => {
-            "无法启动仓库克隆任务，请稍后重试。".to_owned()
-        }
-        DesktopProjectCloneError::GitFailed { .. } | DesktopProjectCloneError::GitWaitFailed => {
-            "Git 克隆失败，请检查仓库地址、网络和访问权限。".to_owned()
-        }
-        DesktopProjectCloneError::Cancelled => "克隆已取消，未创建项目。".to_owned(),
-        DesktopProjectCloneError::CleanupFailed { path, .. } => {
-            format!("克隆未完成，且无法清理 {}，请检查该目录。", path.display())
-        }
+/// Maps a failed clone job's message onto the product wording. The job reports
+/// the [`CloneError`](lilia_feature_project::CloneError) display text.
+fn project_clone_error_message(message: &str) -> String {
+    if message.contains("repository must not be empty") {
+        "请输入仓库地址。".to_owned()
+    } else if message.contains("inline credentials") {
+        "仓库地址不能包含账号或令牌，请使用系统凭据管理。".to_owned()
+    } else if message.contains("is not an existing directory") {
+        "克隆位置不存在或当前不可访问。".to_owned()
+    } else if message.contains("unable to reserve a clone target") {
+        "克隆位置中没有可用的仓库目录名。".to_owned()
+    } else if message.contains("unable to start Git") {
+        "无法启动 Git，请确认 Git 已安装并加入 PATH。".to_owned()
+    } else if message.contains("contain the Git process tree") {
+        "无法建立可安全取消的 Git 进程，请稍后重试。".to_owned()
+    } else if message.contains("unable to clean clone target") {
+        "克隆未完成，且无法清理本次克隆目录，请检查该目录。".to_owned()
+    } else if message.contains("was cancelled") {
+        "克隆已取消，未创建项目。".to_owned()
+    } else {
+        "Git 克隆失败，请检查仓库地址、网络和访问权限。".to_owned()
     }
 }
 
@@ -32772,7 +32652,6 @@ fn github_error_message(error: &DesktopGitHubError) -> String {
         DesktopGitHubError::Persistence(_) | DesktopGitHubError::Credential(_) => {
             "无法保存 GitHub 绑定，请稍后重试。".to_owned()
         }
-        DesktopGitHubError::Clone(error) => project_clone_error_message(error.clone()),
     }
 }
 
@@ -32787,49 +32666,734 @@ fn project_clone_outcome_key(outcome: ProjectCloneOutcome) -> &'static str {
     }
 }
 
-fn project_clone_phase_key(phase: &DesktopProjectClonePhase) -> &'static str {
-    match phase {
-        DesktopProjectClonePhase::Preparing => "preparing",
-        DesktopProjectClonePhase::Cloning => "cloning",
-        DesktopProjectClonePhase::Cancelling => "cancelling",
-        DesktopProjectClonePhase::Completed => "completed",
-        DesktopProjectClonePhase::Failed => "failed",
-        DesktopProjectClonePhase::Cancelled => "cancelled",
+/// Resolves the product's GitHub binding for the clone job. Runs on the job
+/// worker thread so the token never enters the task payload or the journal.
+struct GitHubCloneCredentials {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_project::CloneCredentials for GitHubCloneCredentials {
+    fn github_token(&self, repository: &str) -> Result<Option<Vec<u8>>, String> {
+        self.application
+            .github_clone_token(repository)
+            .map(|token| token.map(lilia_desktop_application::DesktopSecret::into_inner))
+            .map_err(|error| github_error_message(&error))
     }
 }
 
-fn project_clone_phase_label(phase: &DesktopProjectClonePhase) -> &'static str {
-    match phase {
-        DesktopProjectClonePhase::Preparing => "正在准备克隆…",
-        DesktopProjectClonePhase::Cloning => "正在克隆仓库…",
-        DesktopProjectClonePhase::Cancelling => "正在停止并清理…",
-        DesktopProjectClonePhase::Completed => "仓库克隆完成。",
-        DesktopProjectClonePhase::Failed => "仓库克隆失败。",
-        DesktopProjectClonePhase::Cancelled => "克隆已取消。",
+/// Searches every eligible project's code index on the job worker thread.
+struct DesktopCodeSearchPort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_coding::CodeSearchPort for DesktopCodeSearchPort {
+    fn search(
+        &self,
+        request: lilia_feature_coding::SearchRequest,
+    ) -> Result<DesktopWorkspaceCodeSearchResult, String> {
+        self.application
+            .search_code_indexes(request.scope, &request.query, request.mode)
+            .map_err(|error| error.to_string())
     }
 }
 
-fn project_clone_detail_label(
-    phase: &DesktopProjectClonePhase,
-    detail: Option<&str>,
-) -> &'static str {
-    match detail.unwrap_or_default() {
+/// Rewrites a composer draft through the auxiliary model on the job worker
+/// thread.
+struct DesktopPromptOptimizePort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_composer::PromptOptimizePort for DesktopPromptOptimizePort {
+    fn optimize(
+        &self,
+        input: lilia_feature_composer::PromptOptimizeInput,
+    ) -> Result<lilia_feature_composer::PromptOptimizeResult, String> {
+        self.application
+            .optimize_prompt(input)
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Runs one parked extensions command on the job worker thread and leaves its
+/// outcome in the exchange for the shell to pick up.
+struct DesktopExtensionsPort {
+    application: DesktopApplication,
+    exchange: Arc<ExtensionsExchange>,
+}
+
+impl lilia_feature_extensions::ExtensionsPort for DesktopExtensionsPort {
+    fn run(&self, ticket: u64) -> Result<(), String> {
+        let command = self
+            .exchange
+            .claim(ticket)
+            .ok_or_else(|| "扩展操作已失效，请重试。".to_owned())?;
+        let outcome = run_extensions_command(&self.application, command)?;
+        self.exchange.store(ticket, outcome);
+        Ok(())
+    }
+}
+
+fn run_extensions_command(
+    application: &DesktopApplication,
+    command: ExtensionsCommand,
+) -> Result<ExtensionsOutcome, String> {
+    match command {
+        ExtensionsCommand::Skill(operation) => match operation {
+            SkillRegistryOperation::Create(input) => application.create_skill_package(input),
+            SkillRegistryOperation::SetEnabled {
+                skill_id,
+                enabled,
+                expected_registry_revision,
+            } => application.set_skill_package_enabled(
+                &skill_id,
+                enabled,
+                expected_registry_revision,
+            ),
+            SkillRegistryOperation::Delete {
+                skill_id,
+                expected_registry_revision,
+            } => application.delete_skill_package(&skill_id, expected_registry_revision),
+        }
+        .map(ExtensionsOutcome::Skill)
+        .map_err(|error| error.to_string()),
+        ExtensionsCommand::Plugin(operation) => match operation {
+            PluginRegistryOperation::Install(input) => {
+                application.install_plugin_package(input).map(|_| ())
+            }
+            PluginRegistryOperation::SetEnabled {
+                plugin_id,
+                enabled,
+                expected_registry_revision,
+            } => application
+                .set_plugin_package_enabled(&plugin_id, enabled, expected_registry_revision)
+                .map(|_| ()),
+            PluginRegistryOperation::Delete {
+                plugin_id,
+                expected_registry_revision,
+            } => application.delete_plugin_package(&plugin_id, expected_registry_revision),
+        }
+        .and_then(|_| application.extensions_snapshot())
+        .map(ExtensionsOutcome::Plugin)
+        .map_err(|error| error.to_string()),
+        ExtensionsCommand::Hook {
+            operation,
+            overview_project_cwd,
+        } => match operation {
+            HookSourceOperation::Create { scope, project_cwd } => application
+                .create_hook_source(scope, project_cwd.as_deref())
+                .map(|_| ()),
+            HookSourceOperation::Update {
+                scope,
+                project_cwd,
+                input,
+            } => application
+                .update_hook_source(scope, project_cwd.as_deref(), input)
+                .map(|_| ()),
+            HookSourceOperation::SetEnabled {
+                scope,
+                project_cwd,
+                expected_revision,
+                enabled,
+            } => application
+                .set_hook_source_enabled(scope, project_cwd.as_deref(), expected_revision, enabled)
+                .map(|_| ()),
+            HookSourceOperation::Delete {
+                scope,
+                project_cwd,
+                expected_revision,
+            } => application.delete_hook_source(scope, project_cwd.as_deref(), expected_revision),
+        }
+        .map_err(|error| error.to_string())
+        .and_then(|_| load_native_hooks(application, overview_project_cwd.as_deref()))
+        .map(ExtensionsOutcome::Hook),
+        ExtensionsCommand::Refresh { project_cwd } => application
+            .extensions_snapshot()
+            .map_err(|error| error.to_string())
+            .and_then(|extensions| {
+                load_native_hooks(application, project_cwd.as_deref())
+                    .map(|hooks| ExtensionsOutcome::Refresh(extensions, hooks))
+            }),
+        ExtensionsCommand::ActivateMcp => application
+            .activate_registered_mcp_servers()
+            .map(ExtensionsOutcome::Activated)
+            .map_err(|error| error.to_string()),
+        ExtensionsCommand::McpContent(operation) => match operation {
+            McpContentOperation::ReadResource { server_id, uri } => application
+                .read_mcp_resource(&server_id, &uri)
+                .map(mcp_resource_preview),
+            McpContentOperation::GetPrompt {
+                namespaced_name,
+                arguments,
+            } => application
+                .get_mcp_prompt(&namespaced_name, arguments)
+                .map(mcp_prompt_preview),
+        }
+        .map(ExtensionsOutcome::Content)
+        .map_err(|error| error.to_string()),
+        ExtensionsCommand::McpRegistry(operation) => match operation {
+            McpRegistryOperation::Upsert(input) => application.upsert_mcp_server(input),
+            McpRegistryOperation::SetEnabled {
+                server_id,
+                enabled,
+                expected_registry_revision,
+            } => {
+                application.set_mcp_server_enabled(&server_id, enabled, expected_registry_revision)
+            }
+            McpRegistryOperation::Delete {
+                server_id,
+                expected_registry_revision,
+            } => application.delete_mcp_server(&server_id, expected_registry_revision),
+            McpRegistryOperation::SetCredential {
+                server_id,
+                kind,
+                name,
+                secret,
+            } => application.set_mcp_server_credential(&server_id, kind, &name, secret),
+            McpRegistryOperation::DeleteCredential {
+                server_id,
+                kind,
+                name,
+            } => application.delete_mcp_server_credential(&server_id, kind, &name),
+        }
+        .map(ExtensionsOutcome::Activated)
+        .map_err(|error| error.to_string()),
+    }
+}
+
+/// Gathers every view the workspace surface renders, on the job worker thread.
+struct DesktopCodingRefreshPort {
+    application: DesktopApplication,
+    exchange: Arc<CodingExchange>,
+}
+
+impl lilia_feature_coding::CodingRefreshPort for DesktopCodingRefreshPort {
+    fn refresh(&self, ticket: u64) -> Result<(), String> {
+        let command = self
+            .exchange
+            .claim(ticket)
+            .ok_or_else(|| "工作区工具刷新已失效，请重试。".to_owned())?;
+        let application = &self.application;
+        let snapshot = application
+            .coding_services_snapshot()
+            .map_err(|error| error.to_string());
+        let project_tasks = command.project_id.as_ref().map(|project_id| {
+            application
+                .project_task_catalog(project_id)
+                .map_err(|error| project_task_error_message(&error))
+        });
+        let (git, git_diff, workspace) =
+            command
+                .workspace
+                .as_ref()
+                .map_or((None, None, None), |(workspace_id, root)| {
+                    (
+                        Some(
+                            application
+                                .shared_git_status(root)
+                                .map_err(|error| error.to_string()),
+                        ),
+                        Some(
+                            application
+                                .shared_git_diff(root, command.git_diff_scope)
+                                .map_err(|error| error.to_string()),
+                        ),
+                        Some(
+                            application
+                                .shared_workspace_list(workspace_id, root, "")
+                                .map_err(|error| error.to_string()),
+                        ),
+                    )
+                });
+        self.exchange.store(
+            ticket,
+            CodingToolsRefreshResult {
+                project_id: command.workspace.map(|(project_id, _)| project_id),
+                snapshot,
+                git,
+                git_diff,
+                workspace,
+                project_tasks,
+            },
+        );
+        Ok(())
+    }
+}
+
+/// Holds the API key a pending credential save needs. The key stays here
+/// instead of travelling in the job payload, so it never reaches the journal.
+/// The credential lane is single-flight, so at most one key is ever staged.
+#[derive(Default)]
+struct StagedProviderSecret {
+    secret: Mutex<Option<DesktopSecret>>,
+}
+
+impl StagedProviderSecret {
+    fn stage(&self, secret: DesktopSecret) {
+        *locked(&self.secret) = Some(secret);
+    }
+
+    fn claim(&self) -> Option<DesktopSecret> {
+        locked(&self.secret).take()
+    }
+
+    fn discard(&self) {
+        self.claim();
+    }
+}
+
+/// Applies one credential operation on the job worker thread, claiming the
+/// staged API key when the operation needs it.
+struct DesktopCredentialPort {
+    application: DesktopApplication,
+    staged: Arc<StagedProviderSecret>,
+}
+
+impl lilia_feature_provider::CredentialPort for DesktopCredentialPort {
+    fn save_api_key(&self, provider_id: &str) -> Result<(), String> {
+        let secret = self
+            .staged
+            .claim()
+            .ok_or_else(|| "凭据已失效，请重新输入 API Key。".to_owned())?;
+        self.application
+            .login_provider_credential(DesktopProviderCredentialInput {
+                provider_id: provider_id.to_owned(),
+                kind: DesktopCredentialKind::ApiKey,
+                secret,
+                account_label: None,
+                source: Some("desktop_settings".to_owned()),
+            })
+            .map(|_| ())
+            .map_err(provider_operation_failure)
+    }
+
+    fn revoke(&self, credential_id: &str, revision: u64) -> Result<(), String> {
+        self.application
+            .revoke_provider_credential(
+                credential_id.to_owned(),
+                revision,
+                Some("revoked from LiliaCode settings".to_owned()),
+            )
+            .map(|_| ())
+            .map_err(provider_operation_failure)
+    }
+
+    fn refresh(&self, provider_id: Option<&str>) -> Result<(), String> {
+        self.application
+            .refresh_provider_runtime(provider_id.map(str::to_owned))
+            .map(|_| ())
+            .map_err(provider_operation_failure)
+    }
+}
+
+fn provider_operation_failure(error: DesktopApplicationError) -> String {
+    eprintln!("LiliaCode provider operation failed: {error}");
+    provider_operation_error_message(&error).to_owned()
+}
+
+/// How long the device flow waits between cancellation checks while it sits out
+/// GitHub's polling interval. The old poller slept the whole interval in one
+/// call, so pressing cancel did nothing visible for up to five seconds.
+const GITHUB_POLL_SLICE: Duration = Duration::from_millis(250);
+
+/// Output of the definition job. Resolving which project a document belongs to
+/// is part of the lookup, so the project travels back with the targets rather
+/// than being re-derived on the shell thread.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DocumentDefinitionOutcome {
+    project_id: Option<ProjectId>,
+    result: DesktopDocumentDefinitionResult,
+}
+
+/// Runs one import step on the job worker thread against the prepared service
+/// the shell staged under the job's ticket.
+struct DesktopImportPort {
+    staged: Arc<ImportExchange>,
+}
+
+impl lilia_feature_import::ImportPort for DesktopImportPort {
+    fn plan(&self, ticket: u64) -> Result<Value, String> {
+        let Some(ImportCommand::Plan { service, source }) = self.staged.claim(ticket) else {
+            return Err(STALE_IMPORT_STEP.to_owned());
+        };
+        let plan = service.plan(&source).map_err(|error| {
+            eprintln!("LiliaCode data import planning failed: {error}");
+            "无法检查所选目录，请确认旧版已退出且目录可以读取。".to_owned()
+        })?;
+        serde_json::to_value(plan).map_err(|error| error.to_string())
+    }
+
+    fn execute(&self, ticket: u64) -> Result<Value, String> {
+        let Some(ImportCommand::Execute {
+            service,
+            plan,
+            options,
+        }) = self.staged.claim(ticket)
+        else {
+            return Err(STALE_IMPORT_STEP.to_owned());
+        };
+        let report = service.execute(&plan, options);
+        serde_json::to_value(report).map_err(|error| error.to_string())
+    }
+}
+
+const STALE_IMPORT_STEP: &str = "导入准备已失效，请重新开始。";
+
+/// Runs one auxiliary model probe on the job worker thread against the draft
+/// configuration the shell staged under the job's ticket.
+struct DesktopAssistantProbePort {
+    application: DesktopApplication,
+    staged: Arc<AssistantProbeExchange>,
+}
+
+impl lilia_feature_provider::AssistantProbePort for DesktopAssistantProbePort {
+    fn probe(
+        &self,
+        ticket: u64,
+        kind: lilia_feature_provider::AssistantProbeKind,
+    ) -> Result<Value, String> {
+        let input = self
+            .staged
+            .claim(ticket)
+            .ok_or_else(|| "待测试的辅助模型配置已失效。".to_owned())?;
+        match kind {
+            lilia_feature_provider::AssistantProbeKind::Models => {
+                serde_json::to_value(self.application.fetch_assistant_ai_models(input))
+            }
+            lilia_feature_provider::AssistantProbeKind::Connection => {
+                serde_json::to_value(self.application.test_assistant_ai_connection(input))
+            }
+        }
+        .map_err(|error| error.to_string())
+    }
+}
+
+fn worktree_operation_request(
+    operation: WorktreeOperation,
+) -> lilia_feature_worktree::WorktreeOperationRequest {
+    use lilia_feature_worktree::WorktreeOperationRequest as Request;
+    match operation {
+        WorktreeOperation::Create => Request::Create,
+        WorktreeOperation::Attach(path) => Request::Attach { path },
+        WorktreeOperation::Clear => Request::Clear,
+        WorktreeOperation::CleanupAndArchive => Request::CleanupAndArchive,
+        WorktreeOperation::MergeAndArchive => Request::MergeAndArchive,
+    }
+}
+
+/// Runs one worktree git operation on the job worker thread and announces the
+/// outcome as a domain event, which is what moves every surface showing the
+/// task.
+struct DesktopWorktreePort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_worktree::WorktreePort for DesktopWorktreePort {
+    fn operate(&self, request: lilia_feature_worktree::WorktreeRequest) -> Result<(), String> {
+        use lilia_feature_worktree::WorktreeOperationRequest as Request;
+        let task_id = TaskId::new(request.task_id).map_err(|error| error.to_string())?;
+        let application = &self.application;
+        let result = match request.operation {
+            Request::Create => application.create_task_worktree(&task_id, None).map(|_| ()),
+            Request::Attach { path } => application
+                .attach_task_worktree(&task_id, &path)
+                .map(|_| ()),
+            Request::Clear => application.clear_task_worktree(&task_id).map(|_| ()),
+            Request::CleanupAndArchive => application
+                .cleanup_task_worktree_and_archive(&task_id)
+                .map(|_| ()),
+            Request::MergeAndArchive => application
+                .merge_task_worktree_and_archive(&task_id)
+                .map(|_| ()),
+        };
+        match result {
+            Ok(()) => {
+                application.emit_event(DesktopEventKind::WorktreeOperationCompleted { task_id });
+                Ok(())
+            }
+            Err(error) => {
+                let message = error.to_string();
+                application.emit_event(DesktopEventKind::WorktreeOperationFailed {
+                    task_id,
+                    message: message.clone(),
+                });
+                Err(message)
+            }
+        }
+    }
+}
+
+/// Generates a suggestion set on the job worker thread. The auxiliary model
+/// port is built here rather than passed in, because it borrows the same
+/// application handle and is only needed for the duration of one generation.
+struct DesktopSuggestionPort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_suggestions::SuggestionPort for DesktopSuggestionPort {
+    fn generate(
+        &self,
+        request: lilia_feature_suggestions::GenerateRequest,
+    ) -> Result<Value, String> {
+        let models = DesktopApplicationSuggestionModelPort::new(self.application.clone());
+        let items = self
+            .application
+            .conversation_suggestions(Some(&request.project_id), request.force, &models)
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(items).map_err(|error| error.to_string())
+    }
+}
+
+/// Names a task after one of its turns, on the job worker thread.
+struct DesktopTitlePort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_agent_session::TitlePort for DesktopTitlePort {
+    fn title(&self, request: lilia_feature_agent_session::TitleRequest) -> Result<(), String> {
+        let task_id = TaskId::new(&request.task_id).map_err(|error| error.to_string())?;
+        self.application
+            .run_title_update_after_turn(task_id, request.turn_id)
+    }
+}
+
+/// Carries a finished turn's title off the turn worker and onto the shell's
+/// queue. It deliberately does not hold the kernel: the kernel's title protocol
+/// holds the application, so an application holding the kernel would close a
+/// cycle that outlives the window.
+struct QueuedTitleScheduler {
+    messages: MessageSender,
+}
+
+impl lilia_desktop_application::DesktopTitleUpdateScheduler for QueuedTitleScheduler {
+    fn request(&self, task_id: TaskId, turn_id: Option<String>) {
+        if let Err(error) = (self.messages)(Message::RequestTitleUpdate { task_id, turn_id }) {
+            eprintln!("[title-update] skipped: {error}");
+        }
+    }
+}
+
+/// Answers diagnostics and definition queries on the job worker thread.
+struct DesktopLanguagePort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_document::LanguagePort for DesktopLanguagePort {
+    fn diagnostics(
+        &self,
+        request: lilia_feature_document::DiagnosticsRequest,
+    ) -> Result<Value, String> {
+        let snapshot = match request.project_id {
+            Some(project_id) => {
+                let project_id = ProjectId::new(project_id).map_err(|error| error.to_string())?;
+                self.application
+                    .refresh_project_document_diagnostics(&project_id, request.document_id)
+            }
+            None => self
+                .application
+                .refresh_document_diagnostics(request.document_id),
+        }
+        .map_err(|error| error.to_string())?;
+        serde_json::to_value(snapshot).map_err(|error| error.to_string())
+    }
+
+    fn definitions(
+        &self,
+        request: lilia_feature_document::DefinitionRequest,
+    ) -> Result<Value, String> {
+        let project_id = self
+            .application
+            .document_project_id(request.document_id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| "document is not inside an active project workspace".to_owned())?;
+        let result = self
+            .application
+            .project_document_definitions(
+                &project_id,
+                request.document_id,
+                request.revision,
+                request.source_offset,
+            )
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(DocumentDefinitionOutcome {
+            project_id: Some(project_id),
+            result,
+        })
+        .map_err(|error| error.to_string())
+    }
+}
+
+/// Drives the GitHub device flow and reads repository pages on the job worker
+/// thread.
+struct DesktopGitHubPort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_github::GitHubPort for DesktopGitHubPort {
+    fn bind(&self, context: &JobContext) -> Result<Value, String> {
+        let flow = self
+            .application
+            .start_github_device_flow()
+            .map_err(|error| github_error_message(&error))?;
+        context.report(
+            serde_json::to_value(&flow)
+                .map_err(|error| format!("无法上报 GitHub 设备码：{error}"))?,
+        );
+
+        let mut interval = flow.interval_seconds.max(1);
+        loop {
+            if context.is_cancelled() {
+                return Err(GITHUB_BINDING_CANCELLED.to_owned());
+            }
+            if current_timestamp_millis() >= flow.expires_at {
+                return expired_github_device_flow(interval);
+            }
+            if !self.wait_out_poll_interval(context, interval) {
+                return Err(GITHUB_BINDING_CANCELLED.to_owned());
+            }
+
+            let result = self
+                .application
+                .poll_github_device_flow(&flow.device_code, Some(interval));
+            if context.is_cancelled() {
+                // The user cancelled while this request was in flight. If it
+                // came back authorized, the account is now bound to a flow
+                // nobody wants, so undo it here rather than leave it behind.
+                if matches!(result.as_ref(), Ok(result) if result.status == "authorized") {
+                    let _ = self.application.unbind_github();
+                }
+                return Err(GITHUB_BINDING_CANCELLED.to_owned());
+            }
+            match result {
+                Ok(result) if result.status == "pending" => {
+                    interval = result.interval_seconds.max(1);
+                }
+                Ok(result) => {
+                    return serde_json::to_value(result)
+                        .map_err(|error| format!("无法读取 GitHub 授权结果：{error}"))
+                }
+                Err(error) => return Err(github_error_message(&error)),
+            }
+        }
+    }
+
+    fn repositories(&self, page: u32) -> Result<Value, String> {
+        let page = self
+            .application
+            .list_github_repositories(Some(page))
+            .map_err(|error| github_error_message(&error))?;
+        serde_json::to_value(page).map_err(|error| format!("无法读取 GitHub 仓库列表：{error}"))
+    }
+}
+
+impl DesktopGitHubPort {
+    /// Sleeps out one polling interval, returning false as soon as the job is
+    /// cancelled.
+    fn wait_out_poll_interval(&self, context: &JobContext, interval: i64) -> bool {
+        let deadline = Instant::now() + Duration::from_secs(interval.max(1) as u64);
+        while Instant::now() < deadline {
+            if context.is_cancelled() {
+                return false;
+            }
+            std::thread::sleep(GITHUB_POLL_SLICE);
+        }
+        !context.is_cancelled()
+    }
+}
+
+const GITHUB_BINDING_CANCELLED: &str = "GitHub 绑定已取消。";
+
+fn expired_github_device_flow(interval: i64) -> Result<Value, String> {
+    serde_json::to_value(DesktopGitHubDeviceFlowPollResult {
+        status: "expired".to_owned(),
+        interval_seconds: interval,
+        binding_status: None,
+        error: Some("expired_token".to_owned()),
+    })
+    .map_err(|error| format!("无法读取 GitHub 授权结果：{error}"))
+}
+
+/// Aggregates the quota report on the job worker thread.
+struct DesktopUsagePort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_usage::UsagePort for DesktopUsagePort {
+    fn quota(&self, input: QuotaUsageStatsInput) -> Result<QuotaUsageStats, String> {
+        self.application
+            .quota_usage_stats(input)
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// Applies one remote control operation and reads the host status back on the
+/// job worker thread.
+struct DesktopRemotePort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_remote::RemotePort for DesktopRemotePort {
+    fn operate(&self, request: RemoteRequest) -> Result<Value, String> {
+        let application = &self.application;
+        match request {
+            RemoteRequest::Refresh => application.remote_control_status(),
+            RemoteRequest::SetEnabled { enabled } => {
+                application.set_remote_control_enabled(enabled)
+            }
+            RemoteRequest::SetPcName { name } => application.set_remote_control_pc_name(name),
+            RemoteRequest::SetKeepAwake { enabled } => {
+                application.set_remote_control_keep_awake(enabled)
+            }
+            RemoteRequest::StartPairing => application
+                .start_remote_pairing()
+                .and_then(|_| application.remote_control_status()),
+            RemoteRequest::CancelPairing => application
+                .cancel_remote_pairing()
+                .and_then(|_| application.remote_control_status()),
+            RemoteRequest::RevokeDevice { device_id } => {
+                application.revoke_remote_device(&device_id)
+            }
+        }
+        .map_err(|error| error.to_string())
+        .and_then(|status| {
+            serde_json::to_value(status)
+                .map_err(|error| format!("无法编码远控状态：{error}"))
+        })
+    }
+}
+
+/// Drives the OS updater from the job worker thread. The application publishes
+/// the update state itself, so the job only relays failure.
+struct DesktopUpdatePort {
+    application: DesktopApplication,
+}
+
+impl lilia_feature_update::UpdatePort for DesktopUpdatePort {
+    fn check(&self, channel: &str) -> Result<(), String> {
+        self.application
+            .check_for_update(channel)
+            .map(|_| ())
+            .map_err(|error| update_operation_error_message(&error))
+    }
+
+    fn install(&self, version: &str) -> Result<(), String> {
+        self.application
+            .install_update(version)
+            .map(|_| ())
+            .map_err(|error| update_operation_error_message(&error))
+    }
+}
+
+fn project_clone_detail_label(detail: &str) -> &'static str {
+    match detail {
         detail if detail.starts_with("Enumerating objects") => "正在扫描仓库对象…",
         detail if detail.starts_with("Counting objects") => "正在统计仓库对象…",
         detail if detail.starts_with("Compressing objects") => "正在压缩仓库对象…",
         detail if detail.starts_with("Receiving objects") => "正在接收仓库对象…",
         detail if detail.starts_with("Resolving deltas") => "正在整理仓库对象…",
-        _ => project_clone_phase_label(phase),
+        detail if detail.starts_with("Preparing") => "正在准备克隆…",
+        _ => "正在克隆仓库…",
     }
-}
-
-fn project_clone_phase_is_terminal(phase: &DesktopProjectClonePhase) -> bool {
-    matches!(
-        phase,
-        DesktopProjectClonePhase::Completed
-            | DesktopProjectClonePhase::Failed
-            | DesktopProjectClonePhase::Cancelled
-    )
 }
 
 fn provider_runtime_settings_error_message(error: &DesktopApplicationError) -> String {
