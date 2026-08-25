@@ -1,5 +1,7 @@
-//! Desktop platform composition: host ports, bootstrap, and remaining
-//! application services that have not yet moved into a feature crate.
+//! Desktop session composition used by `KernelHost`.
+//!
+//! Domain stores live in `lilia-feature-*`. GitHub and import executors are
+//! host ports under `crate::ports`.
 
 mod agent;
 mod agent_interaction;
@@ -29,13 +31,11 @@ mod domain_services;
 mod equivalence;
 mod events;
 mod extensions;
-mod github;
 mod goal;
 mod handoff;
 mod hooks;
 mod host;
 mod iab;
-mod import;
 mod language_service;
 mod mcp_elicitation;
 mod panel;
@@ -46,7 +46,7 @@ mod project_files;
 mod project_settings;
 mod project_tasks;
 mod prompt_optimize;
-mod provider;
+pub(crate) mod provider;
 mod provider_ui_settings;
 mod registry_watch;
 mod remote;
@@ -149,7 +149,7 @@ pub use extensions::{
     DesktopMcpServerUpsert, DesktopMcpServerView, DesktopMcpToolView, DesktopMcpTransport,
     DesktopRuntimeServiceView, DesktopSkillCreate, DesktopSkillPackageView, DesktopSkillScope,
 };
-pub use github::{
+pub use crate::ports::github::{
     DesktopGitHubBindingMetadata, DesktopGitHubBindingStatus, DesktopGitHubClientIdSource,
     DesktopGitHubDeviceFlowPollResult, DesktopGitHubDeviceFlowStart, DesktopGitHubError,
     DesktopGitHubRepoPage, DesktopGitHubRepoSummary,
@@ -173,7 +173,7 @@ pub use host::{
 pub use iab::{
     DesktopIabSnapshot, DesktopIabSnapshotInput, DesktopIabSnapshotStatus, DesktopIabSubmission,
 };
-pub use import::{
+pub use crate::ports::import::{
     CredentialImportDecision, DesktopDataImportService, DesktopDatabaseKind, DesktopImportError,
     DesktopImportErrorCode, DesktopImportExecutionOptions, DesktopImportFile,
     DesktopImportFileMetadata, DesktopImportFileRole, DesktopImportItemError,

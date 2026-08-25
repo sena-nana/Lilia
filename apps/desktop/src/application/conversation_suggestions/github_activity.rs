@@ -1,6 +1,6 @@
 use serde_json::Value as JsonValue;
 
-use crate::application::github::{github_client, github_request_headers};
+use crate::ports::github::{github_client, github_request_headers};
 use crate::application::{DesktopApplication, DesktopGitHubBindingMetadata};
 use lilia_feature_suggestions::generation::{compact_line, truncate_chars};
 use lilia_feature_suggestions::types::{
