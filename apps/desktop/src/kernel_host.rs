@@ -36,7 +36,8 @@ use lilia_kernel::{Feature, JobEvent, Journal, Kernel};
 use lilia_service::ServiceAuthority;
 use lilia_storage::Db;
 
-use crate::shell_service::{WorkspaceSessionFeature, WorkspaceSessions};
+use crate::application::DesktopApplication;
+use crate::shell_service::{ApplicationFeature, WorkspaceSessionFeature, WorkspaceSessions};
 
 /// Authorities the desktop process already owns and hands to the features it
 /// mounts. Everything here outlives the kernel.
@@ -56,6 +57,9 @@ pub struct KernelServices {
     /// bootstrap because restoring persisted panes has to precede the kernel;
     /// workspace windows add theirs as they open.
     pub workspace_sessions: Arc<WorkspaceSessions>,
+    /// The application facade, so a module can validate and broadcast a domain
+    /// write the same way the shell did before the domain moved.
+    pub application: DesktopApplication,
     /// The log the shell already writes to, shared so kernel lifecycle, job and
     /// event records interleave with the mutations recorded before boot.
     pub journal: Journal,
@@ -137,6 +141,7 @@ fn features(services: KernelServices) -> Vec<Arc<dyn Feature>> {
         project_tasks,
         project_task_events,
         workspace_sessions,
+        application,
         journal: _,
         clone_credentials,
         update,
@@ -180,6 +185,8 @@ fn features(services: KernelServices) -> Vec<Arc<dyn Feature>> {
         Arc::new(ImportFeature::new(imports)),
         Arc::new(SuggestionsFeature::new(suggestions)),
         Arc::new(WorkspaceSessionFeature::new(workspace_sessions)),
+        Arc::new(ApplicationFeature::new(application)),
+        Arc::new(crate::module::ShellUiFeature),
     ]
 }
 
@@ -198,8 +205,8 @@ mod tests {
 
     use super::*;
     use crate::application::{
-        DesktopApplication, DesktopApplicationConfig, DesktopHost, DesktopHostAction,
-        DesktopHostContext, DesktopHostError, DesktopHostResult,
+        DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
+        DesktopHostError, DesktopHostResult,
     };
     use crate::shell_service::WorkspaceSessionsKey;
 
@@ -404,6 +411,7 @@ mod tests {
         );
         KernelServices {
             workspace_sessions,
+            application,
             project_tasks: ProjectTaskService::new(authority.clone(), project_task_events.clone())
                 .with_journal(journal.clone()),
             project_task_events,

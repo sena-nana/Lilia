@@ -14,7 +14,7 @@ use lilia_kernel::{
 };
 use nana_ui_platform::WindowId;
 
-use crate::application::DesktopWorkspaceSession;
+use crate::application::{DesktopApplication, DesktopWorkspaceSession};
 
 /// Service slot for every window's workspace session.
 ///
@@ -105,4 +105,44 @@ pub fn workspace_sessions(kernel: &Kernel) -> Arc<WorkspaceSessions> {
     kernel
         .service::<WorkspaceSessionsKey>()
         .expect("the workspace sessions slot is filled while features mount")
+}
+
+/// Service slot for the application facade.
+///
+/// A domain write is not just a store call: `DesktopApplication` validates the
+/// project/task the write is attributed to and broadcasts the change so other
+/// windows refresh. A module that reached the domain store directly would skip
+/// both, so it resolves this slot instead. The slot shrinks as `application/`
+/// dissolves into feature crates and those crates own their own broadcasts.
+pub enum ApplicationKey {}
+
+impl ServiceKey for ApplicationKey {
+    type Value = DesktopApplication;
+
+    const NAME: &'static str = "lilia.shell.application";
+}
+
+pub struct ApplicationFeature {
+    application: DesktopApplication,
+}
+
+impl ApplicationFeature {
+    pub fn new(application: DesktopApplication) -> Self {
+        Self { application }
+    }
+}
+
+impl Feature for ApplicationFeature {
+    fn id(&self) -> FeatureId {
+        FeatureId::new("lilia.shell.application")
+            .expect("the application shell feature id is not blank")
+    }
+
+    fn provides(&self) -> Vec<ServiceRef> {
+        vec![ServiceRef::of::<ApplicationKey>()]
+    }
+
+    fn mount(&self, cx: &mut FeatureContext<'_>) -> Result<(), KernelError> {
+        cx.provide::<ApplicationKey>(self.application.clone())
+    }
 }

@@ -15,7 +15,8 @@ use std::collections::HashMap;
 
 use lilia_kernel::{Contribution, FeatureId, Kernel};
 
-use crate::runtime_shell::PrimaryShellSnapshot;
+use crate::application::ProjectWorkspaceSurface;
+use crate::runtime_shell::{PrimaryShellSnapshot, ShellProjectPage};
 use nana_ui_platform::WindowId;
 
 /// What the shell owes a module: the kernel, and which window it serves.
@@ -28,25 +29,80 @@ use nana_ui_platform::WindowId;
 pub struct UiModuleContext<'a> {
     kernel: &'a Kernel,
     window: WindowId,
+    page: Option<ShellProjectPage>,
 }
 
 impl<'a> UiModuleContext<'a> {
     pub fn new(kernel: &'a Kernel, window: WindowId) -> Self {
-        Self { kernel, window }
+        Self {
+            kernel,
+            window,
+            page: None,
+        }
     }
 
-    pub fn kernel(&self) -> &Kernel {
-        self.kernel
+    /// Tells the module which project page this window is showing.
+    ///
+    /// Visibility is the shell's compositing decision, not a fact a module can
+    /// derive: it depends on whether settings, automations or a task have taken
+    /// the surface. A module compares this against its own page so an unopened
+    /// page still costs nothing to project.
+    pub fn showing(mut self, page: Option<ShellProjectPage>) -> Self {
+        self.page = page;
+        self
     }
 
-    pub fn window(&self) -> WindowId {
-        self.window
+    /// Whether this window is currently showing `page`.
+    pub fn shows(&self, page: ShellProjectPage) -> bool {
+        self.page == Some(page)
     }
 
     /// This window's workspace session, or `None` once its window has closed.
     pub fn workspace(&self) -> Option<crate::application::DesktopWorkspaceSession> {
         crate::shell_service::workspace_sessions(self.kernel).get(self.window)
     }
+
+    /// The application facade, through which a domain write is validated and
+    /// broadcast to the other windows.
+    pub fn application(&self) -> Result<crate::application::DesktopApplication, String> {
+        self.kernel
+            .service::<crate::shell_service::ApplicationKey>()
+            .map_err(|error| format!("应用服务不可用：{error}"))
+    }
+
+    /// The project this window has selected, read from its session rather than
+    /// mirrored, so it cannot disagree with what the sidebar shows.
+    pub fn selected_project(&self) -> Option<lilia_contracts::ProjectId> {
+        self.workspace()?.snapshot().ok()?.selected_project
+    }
+
+    /// The task this window has open, if any.
+    pub fn selected_task(&self) -> Option<lilia_contracts::TaskId> {
+        self.workspace()?.snapshot().ok()?.selected_task
+    }
+
+    /// The window's first task, which is what a project-scoped write is
+    /// attributed to when the user did not pick one.
+    pub fn first_task(&self) -> Option<lilia_contracts::TaskId> {
+        Some(
+            self.workspace()?
+                .snapshot()
+                .ok()?
+                .tasks
+                .first()?
+                .id
+                .clone(),
+        )
+    }
+}
+
+/// Something only the shell can do, requested by a module.
+///
+/// Revealing a surface means moving panes and possibly windows, which is the
+/// shell's job; a module asks rather than reaches.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ShellEffect {
+    RevealProjectSurface(ProjectWorkspaceSurface),
 }
 
 /// What a module asks the shell to do after handling a message.
@@ -59,6 +115,8 @@ pub struct UiModuleOutcome {
     pub dirty: bool,
     /// Message to surface in the shell's error strip.
     pub error: Option<String>,
+    /// Work the shell performs on the module's behalf.
+    pub effects: Vec<ShellEffect>,
 }
 
 impl UiModuleOutcome {
@@ -71,7 +129,7 @@ impl UiModuleOutcome {
     pub fn dirty() -> Self {
         Self {
             dirty: true,
-            error: None,
+            ..Self::default()
         }
     }
 
@@ -79,6 +137,15 @@ impl UiModuleOutcome {
         Self {
             dirty: true,
             error: Some(error.into()),
+            ..Self::default()
+        }
+    }
+
+    /// Asks the shell to act, without claiming the module's own slice changed.
+    pub fn effect(effect: ShellEffect) -> Self {
+        Self {
+            effects: vec![effect],
+            ..Self::default()
         }
     }
 }
@@ -109,6 +176,17 @@ pub trait UiModule: 'static {
 pub trait ErasedUiModule {
     fn feature(&self) -> FeatureId;
 
+    /// Lets the shell recover the concrete module.
+    ///
+    /// Needed by the paths that are not projection: the debug harness observing
+    /// domain state, and layout persistence writing a graph back to its
+    /// workspace item. Both are shell responsibilities that no projection field
+    /// carries, so they ask for the module by type rather than duplicating its
+    /// state back onto the shell.
+    fn as_any(&self) -> &dyn Any;
+
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+
     /// Applies a message already routed to this module. A payload of the wrong
     /// type means the shell's routing table disagrees with the module's message
     /// type, which is a wiring bug rather than a runtime condition.
@@ -127,6 +205,14 @@ where
 {
     fn feature(&self) -> FeatureId {
         UiModule::feature(self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 
     fn reduce_erased(
@@ -184,24 +270,17 @@ impl UiModuleRegistry {
     }
 
     /// Builds a fresh set of modules for one window.
+    ///
+    /// The routing key is the module's own declared feature, not the feature that
+    /// contributed it: while the contract lives in the shell's crate, the shell
+    /// contributes modules on a feature's behalf. Two modules claiming one domain
+    /// is still refused, which is the conflict worth catching.
     pub fn host(&self) -> Result<UiModuleHost, String> {
         let mut host = UiModuleHost::new();
-        for (contributor, factory) in &self.factories {
-            let module = factory();
-            if &module.feature() != contributor {
-                return Err(format!(
-                    "{} contributed a UI module claiming {}",
-                    contributor.as_str(),
-                    module.feature().as_str()
-                ));
-            }
-            host.register(module)?;
+        for (_, factory) in &self.factories {
+            host.register(factory())?;
         }
         Ok(host)
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.factories.is_empty()
     }
 }
 
@@ -236,8 +315,15 @@ impl UiModuleHost {
         Ok(())
     }
 
-    pub fn hosts(&self, feature: &FeatureId) -> bool {
-        self.routes.contains_key(feature)
+    /// The module owning `feature`, by concrete type.
+    pub fn get<M: UiModule>(&self, feature: &FeatureId) -> Option<&M> {
+        let index = *self.routes.get(feature)?;
+        self.modules[index].as_any().downcast_ref::<M>()
+    }
+
+    pub fn get_mut<M: UiModule>(&mut self, feature: &FeatureId) -> Option<&mut M> {
+        let index = *self.routes.get(feature)?;
+        self.modules[index].as_any_mut().downcast_mut::<M>()
     }
 
     /// Routes one message to the module owning `feature`.
@@ -409,11 +495,8 @@ mod tests {
             .expect("the feature mounts");
 
         let registry = UiModuleRegistry::from_kernel(&kernel);
-        let header = FeatureId::new("test.header").unwrap();
         for window in [WindowId::PRIMARY, WindowId(7)] {
             let host = registry.host().expect("the contributed module is accepted");
-            assert!(host.hosts(&header));
-
             let cx = UiModuleContext::new(&kernel, window);
             let mut snapshot = crate::runtime_shell::empty_snapshot();
             host.project(&cx, &mut snapshot);

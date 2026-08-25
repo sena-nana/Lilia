@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -22,8 +23,8 @@ use crate::application::DesktopComposerTurnRequest;
 use crate::application::DesktopTodoGuideStatus;
 use crate::application::{
     clipboard_text_should_be_attachment, default_panel_states, describe_attachment_paths,
-    preview_automatic_turn_selection, ApplicationWorkspaceSurface, ArchitectureBackend,
-    ArchitectureChangeStatus, ArchitecturePermission, AutomationBeginRunInput, AutomationNode,
+    preview_automatic_turn_selection, ApplicationWorkspaceSurface, ArchitectureChangeStatus,
+    ArchitecturePermission, AutomationBeginRunInput, AutomationNode,
     AutomationNodePosition, AutomationResumeRunInput, AutomationRunDetail, AutomationRunStatus,
     AutomationRunSummary, AutomationSaveDraftInput, AutomationScopeFilter,
     AutomationSignalEnvelope, AutomationWorkflow, ChatAttachment, ChatAttachmentKind,
@@ -67,12 +68,11 @@ use crate::application::{
     DesktopWorkspaceListing, DesktopWorkspaceProject, DesktopWorkspaceSession,
     DesktopWorkspaceSessionId, DesktopWorkspaceSnapshot, DesktopWorkspaceTask,
     DesktopWorktreeSelectionMode, DiagnosticSeverity, DockSlot, DocumentSnapshot,
-    MemoryInjectionState, MemoryScope, MemorySettings, MemoryUpsertInput, MilestoneDueDateUpdate,
-    MilestoneStatus, MilestoneUpdatePatch, PaneId, PaneNode, PanelId, PanelLayoutSnapshot,
-    PanelState, ProjectArchitectureChange, ProjectArchitectureChangeRecord,
-    ProjectArchitectureGraph, ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery,
-    ProjectRoadmap, ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput,
-    RemoteControlStatus, SplitAxis, TaskQuery, WorkspaceItem, WorkspaceItemId,
+    MemoryScope, MemoryUpsertInput, MilestoneDueDateUpdate, MilestoneStatus, PaneId, PaneNode,
+    PanelId, PanelLayoutSnapshot, PanelState, ProjectArchitectureChange, ProjectArchitectureGraph,
+    ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery, ProjectRoadmap,
+    ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput, RemoteControlStatus, SplitAxis,
+    TaskQuery, WorkspaceItem, WorkspaceItemId,
     CODING_TOOLS_PANEL_ID, IAB_PANEL_ID, MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES,
     TASK_INSPECTOR_PANEL_ID, TASK_WORKSPACE_ITEM_KIND, TITLE_UPDATE_ACTION_KIND,
 };
@@ -367,34 +367,6 @@ enum ProjectWorkspacePreview {
     Architecture(ProjectArchitectureGraph),
     Files { entry_count: usize, revision: u64 },
     Error(String),
-}
-
-#[derive(Clone)]
-struct ProjectWorkspaceEditorState {
-    project_id: ProjectId,
-    surface: ProjectWorkspaceSurface,
-    tasks: Vec<DesktopWorkspaceTask>,
-    roadmap: ProjectRoadmap,
-    selected_milestone: Option<String>,
-    milestone_title: String,
-    milestone_description: String,
-    milestone_due_date: String,
-    roadmap_error: Option<String>,
-    memories: Vec<DesktopMemory>,
-    selected_memory: Option<String>,
-    memory_title: String,
-    memory_body: TextEditorState,
-    memory_tags: String,
-    memory_scope: MemoryScope,
-    memory_updated_at: Option<i64>,
-    memory_error: Option<String>,
-    architecture: ProjectArchitectureGraph,
-    architecture_history: Vec<ProjectArchitectureChangeRecord>,
-    architecture_quarantine_count: usize,
-    architecture_graph: GraphModel,
-    architecture_viewport: GraphViewport,
-    architecture_selection: Option<GraphSelection>,
-    architecture_error: Option<String>,
 }
 
 const ARCHITECTURE_WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 1;
@@ -893,7 +865,6 @@ struct TaskPopupWindow {
     surface_position: Option<(i32, i32)>,
     scale_factor: f32,
     workspace_splits: BTreeMap<WorkspaceSplitKey, WorkspaceSplitState>,
-    project_states: BTreeMap<WorkspaceItemId, ProjectWorkspaceEditorState>,
 }
 
 struct MainConversationDraft {
@@ -1220,53 +1191,11 @@ pub enum AutomationMessage {
     AutomationGraph(GraphCanvasEvent),
 }
 
-#[derive(Debug, Clone)]
-pub enum RoadmapMessage {
-    OpenRoadmap,
-    RefreshRoadmap,
-    SelectMilestone(String),
-    MilestoneTitleChanged(String),
-    MilestoneDescriptionChanged(String),
-    MilestoneDueDateChanged(String),
-    CreateMilestone,
-    SaveMilestone,
-    CycleMilestoneStatus,
-    MoveMilestoneUp,
-    MoveMilestoneDown,
-    DeleteMilestone,
-    ToggleMilestoneTask(String),
-}
+pub use crate::module::roadmap::RoadmapMessage;
 
-#[derive(Debug, Clone)]
-pub enum MemoryMessage {
-    OpenMemory,
-    RefreshMemory,
-    SelectMemory(String),
-    NewMemory,
-    MemoryTitleChanged(String),
-    MemoryBodyEdited(String),
-    MemoryBodyReplaced(String),
-    MemoryTagsChanged(String),
-    ToggleMemoryScope,
-    SaveMemory,
-    ToggleMemoryEnabled,
-    DeleteMemory,
-    ToggleMemoryGlobal,
-    ToggleMemoryBaseline,
-    CycleMemoryCooldown,
-    MemoryCooldownChanged(String),
-    SaveMemoryCooldown,
-    ToggleTaskMemory,
-    ResetTaskMemoryCooldown,
-}
+pub use crate::module::memory::MemoryMessage;
 
-#[derive(Debug, Clone)]
-pub enum ArchitectureMessage {
-    OpenArchitecture,
-    RefreshArchitecture,
-    RollbackArchitecture,
-    ArchitectureGraph(GraphCanvasEvent),
-}
+pub use crate::module::architecture::ArchitectureMessage;
 
 #[derive(Debug, Clone)]
 pub enum CodingMessage {
@@ -1825,6 +1754,11 @@ pub struct DesktopProgram {
     /// than one set the shell swaps state into: two windows editing the same
     /// project must not share an editor.
     ui_module_hosts: HashMap<HostedWindowId, crate::ui_module::UiModuleHost>,
+    /// Which window's modules a dispatch reaches, when it is not the primary
+    /// one. Set only while the shell acts on a workspace window's project page:
+    /// a debug target names a widget rather than a window, so the window has to
+    /// come from the shell instead of the message.
+    module_dispatch: Option<(HostedWindowId, crate::runtime_shell::ShellProjectPage)>,
     /// Builds a fresh module set per window. Workspace windows open long after
     /// mount, and contributions can only be drained once.
     ui_module_registry: crate::ui_module::UiModuleRegistry,
@@ -1926,30 +1860,6 @@ pub struct DesktopProgram {
     automation_selection: Option<GraphSelection>,
     automation_node_inspector: AutomationNodeInspectorDraft,
     automation_error: Option<String>,
-    roadmap: ProjectRoadmap,
-    selected_milestone: Option<String>,
-    milestone_title: String,
-    milestone_description: String,
-    milestone_due_date: String,
-    roadmap_error: Option<String>,
-    architecture: ProjectArchitectureGraph,
-    architecture_history: Vec<ProjectArchitectureChangeRecord>,
-    architecture_quarantine_count: usize,
-    architecture_graph: GraphModel,
-    architecture_viewport: GraphViewport,
-    architecture_selection: Option<GraphSelection>,
-    architecture_error: Option<String>,
-    memories: Vec<DesktopMemory>,
-    selected_memory: Option<String>,
-    memory_title: String,
-    memory_body: TextEditorState,
-    memory_tags: String,
-    memory_scope: MemoryScope,
-    memory_updated_at: Option<i64>,
-    memory_error: Option<String>,
-    memory_settings: MemorySettings,
-    memory_cooldown_input: String,
-    memory_injection: Option<MemoryInjectionState>,
     coding_tools: Option<DesktopCodingServicesSnapshot>,
     coding_git: Option<DesktopGitStatus>,
     coding_git_diff: Option<DesktopGitDiff>,
@@ -2462,14 +2372,14 @@ impl DesktopProgram {
                 Message::Project(ProjectMessage::OpenNativeProjectTerminal)
             }
             crate::runtime_shell::ShellIntent::SelectRoadmapMilestone(id) => {
-                Message::Roadmap(RoadmapMessage::SelectMilestone(id))
+                Message::Roadmap(RoadmapMessage::Select(id))
             }
-            crate::runtime_shell::ShellIntent::RefreshArchitecture => Message::Architecture(ArchitectureMessage::RefreshArchitecture),
+            crate::runtime_shell::ShellIntent::RefreshArchitecture => Message::Architecture(ArchitectureMessage::Refresh),
             crate::runtime_shell::ShellIntent::RollbackArchitecture => {
-                Message::Architecture(ArchitectureMessage::RollbackArchitecture)
+                Message::Architecture(ArchitectureMessage::Rollback)
             }
             crate::runtime_shell::ShellIntent::ArchitectureGraph(event) => {
-                Message::Architecture(ArchitectureMessage::ArchitectureGraph(event))
+                Message::Architecture(ArchitectureMessage::Graph(event))
             }
             crate::runtime_shell::ShellIntent::RespondApproval {
                 request_id,
@@ -2664,10 +2574,10 @@ impl DesktopProgram {
                 Message::ProjectClone(ProjectCloneMessage::Cancel)
             }
             crate::runtime_shell::ShellIntent::MilestoneTitleChanged(value) => {
-                Message::Roadmap(RoadmapMessage::MilestoneTitleChanged(value))
+                Message::Roadmap(RoadmapMessage::TitleChanged(value))
             }
-            crate::runtime_shell::ShellIntent::CreateMilestone => Message::Roadmap(RoadmapMessage::CreateMilestone),
-            crate::runtime_shell::ShellIntent::SaveMilestone => Message::Roadmap(RoadmapMessage::SaveMilestone),
+            crate::runtime_shell::ShellIntent::CreateMilestone => Message::Roadmap(RoadmapMessage::Create),
+            crate::runtime_shell::ShellIntent::SaveMilestone => Message::Roadmap(RoadmapMessage::Save),
             crate::runtime_shell::ShellIntent::LoadEarlierTimeline => Message::Timeline(TimelineMessage::LoadEarlierTimeline),
             crate::runtime_shell::ShellIntent::CopyTimeline(event_id) => {
                 let text = self
@@ -3824,26 +3734,6 @@ impl DesktopProgram {
             Some(crate::runtime_shell::ShellProjectPage::Clone) => {
                 self.project_clone_detail.clone().unwrap_or_default()
             }
-            Some(crate::runtime_shell::ShellProjectPage::Roadmap) => {
-                self.roadmap_error.clone().unwrap_or_else(|| {
-                    self.roadmap
-                        .milestones
-                        .iter()
-                        .map(|milestone| milestone.title.clone())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-            }
-            Some(crate::runtime_shell::ShellProjectPage::Memory) => self
-                .memories
-                .iter()
-                .map(|memory| memory.title.clone())
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Some(crate::runtime_shell::ShellProjectPage::Architecture) => self
-                .architecture_error
-                .clone()
-                .unwrap_or_else(|| self.architecture.summary.clone()),
             Some(crate::runtime_shell::ShellProjectPage::Settings) => {
                 self.project_settings_error.clone().unwrap_or_default()
             }
@@ -4030,9 +3920,98 @@ impl DesktopProgram {
         let mut snapshot = self.shell_owned_snapshot();
         // Modules fold their own fields last, so a migrated domain overrides the
         // shell's value for exactly the fields it claims and nothing else.
-        let cx = crate::ui_module::UiModuleContext::new(self.kernel.kernel(), WindowId::PRIMARY);
+        let cx = self.primary_module_context();
         self.ui_modules.project(&cx, &mut snapshot);
         snapshot
+    }
+
+    /// The primary window's module for a domain that has moved out of the shell.
+    ///
+    /// Every window is furnished from the same registry, so a missing module is a
+    /// composition bug rather than a state the shell has to render around.
+    fn primary_module<M: crate::ui_module::UiModule>(&self, feature: &lilia_kernel::FeatureId) -> &M {
+        self.ui_modules
+            .get(feature)
+            .expect("every window is furnished with the same modules")
+    }
+
+    fn primary_module_mut<M: crate::ui_module::UiModule>(
+        &mut self,
+        feature: &lilia_kernel::FeatureId,
+    ) -> &mut M {
+        self.ui_modules
+            .get_mut(feature)
+            .expect("every window is furnished with the same modules")
+    }
+
+    /// The window the shell is currently acting on.
+    fn dispatch_window(&self) -> HostedWindowId {
+        self.module_dispatch
+            .map_or(HostedWindowId::PRIMARY, |(window_id, _)| window_id)
+    }
+
+    /// The module owning a domain in the window the shell is acting on.
+    ///
+    /// Reading through the dispatch window is what lets the shell's own guards —
+    /// "is a milestone selected", "is the graph rollable" — stay written once
+    /// while answering for whichever window the message came from.
+    fn dispatch_module<M: crate::ui_module::UiModule>(
+        &self,
+        feature: &lilia_kernel::FeatureId,
+    ) -> &M {
+        match self.module_dispatch {
+            Some((window_id, _)) => self
+                .window_module(window_id, feature)
+                .expect("a window the shell dispatches to is furnished with modules"),
+            None => self.primary_module(feature),
+        }
+    }
+
+    fn architecture_module(&self) -> &crate::module::architecture::ArchitectureModule {
+        self.dispatch_module(&crate::module::architecture::ArchitectureModule::feature_id())
+    }
+
+    fn architecture_module_mut(&mut self) -> &mut crate::module::architecture::ArchitectureModule {
+        self.primary_module_mut(&crate::module::architecture::ArchitectureModule::feature_id())
+    }
+
+    fn roadmap_module(&self) -> &crate::module::roadmap::RoadmapModule {
+        self.dispatch_module(&crate::module::roadmap::RoadmapModule::feature_id())
+    }
+
+    /// The module context for the primary window.
+    fn primary_module_context(&self) -> crate::ui_module::UiModuleContext<'_> {
+        crate::ui_module::UiModuleContext::new(self.kernel.kernel(), WindowId::PRIMARY)
+            .showing(self.shell_project_page())
+    }
+
+    /// A workspace window's module for a domain, if that window has opened yet.
+    fn window_module<M: crate::ui_module::UiModule>(
+        &self,
+        window_id: HostedWindowId,
+        feature: &lilia_kernel::FeatureId,
+    ) -> Option<&M> {
+        self.ui_module_hosts.get(&window_id)?.get(feature)
+    }
+
+    fn window_architecture_module(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<&crate::module::architecture::ArchitectureModule> {
+        self.window_module(
+            window_id,
+            &crate::module::architecture::ArchitectureModule::feature_id(),
+        )
+    }
+
+    fn window_roadmap_module(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<&crate::module::roadmap::RoadmapModule> {
+        self.window_module(
+            window_id,
+            &crate::module::roadmap::RoadmapModule::feature_id(),
+        )
     }
 
     /// This window's modules, furnished on first use.
@@ -4170,7 +4149,7 @@ impl DesktopProgram {
             pending_blocks_send,
             clone_repository: self.project_clone_repository.clone(),
             clone_parent: self.project_clone_parent.clone(),
-            milestone_title: self.milestone_title.clone(),
+            milestone_title: String::new(),
             attachments: composer_state
                 .map(|composer| {
                     composer
@@ -4353,54 +4332,12 @@ impl DesktopProgram {
             } else {
                 Vec::new()
             },
-            roadmap_cards: if project_page == Some(crate::runtime_shell::ShellProjectPage::Roadmap) {
-                self.roadmap
-                    .milestones
-                    .iter()
-                    .map(|milestone| crate::runtime_shell::ShellRoadmapCard {
-                        id: milestone.id.clone(),
-                        title: milestone.title.clone(),
-                        status: milestone_status_label(milestone.status).to_owned(),
-                        date: milestone
-                            .due_date
-                            .map(|due| due.to_string())
-                            .unwrap_or_else(|| "无截止日期".to_owned()),
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            },
-            architecture_records: if project_page == Some(crate::runtime_shell::ShellProjectPage::Architecture) {
-                self.architecture_history
-                    .iter()
-                    .map(|record| crate::runtime_shell::ShellArchitectureRecord {
-                        id: record.event.id.clone().unwrap_or_else(|| {
-                            record.event.created_at.unwrap_or_default().to_string()
-                        }),
-                        title: record
-                            .event
-                            .changes
-                            .iter()
-                            .map(architecture_change_label)
-                            .collect::<Vec<_>>()
-                            .join(" · "),
-                        status: architecture_status_label(record.event.status).to_owned(),
-                    })
-                    .collect()
-            } else {
-                Vec::new()
-            },
-            architecture_graph: if project_page == Some(crate::runtime_shell::ShellProjectPage::Architecture) {
-                self.architecture_graph.clone()
-            } else {
-                nana_ui::GraphModel::default()
-            },
-            architecture_viewport: self.architecture_viewport,
-            architecture_selection: if project_page == Some(crate::runtime_shell::ShellProjectPage::Architecture) {
-                self.architecture_selection.clone()
-            } else {
-                None
-            },
+            roadmap_cards: Vec::new(),
+            // Written by the architecture module's own projection.
+            architecture_records: Vec::new(),
+            architecture_graph: nana_ui::GraphModel::default(),
+            architecture_viewport: nana_ui::GraphViewport::default(),
+            architecture_selection: None,
             inspector_kind: if self.inspector_region_is_visible() {
                 match self.inspector_surface {
                     InspectorSurface::CodingTools => "coding".to_owned(),
@@ -8022,412 +7959,51 @@ impl DesktopProgram {
     }
 
     fn refresh_roadmap(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            self.roadmap = ProjectRoadmap::default();
-            self.selected_milestone = None;
-            return;
-        };
-        match self.application.project_roadmap(&project_id) {
-            Ok(roadmap) => {
-                self.roadmap = roadmap;
-                if !self.roadmap.milestones.iter().any(|milestone| {
-                    self.selected_milestone.as_deref() == Some(milestone.id.as_str())
-                }) {
-                    self.selected_milestone = self
-                        .roadmap
-                        .milestones
-                        .first()
-                        .map(|milestone| milestone.id.clone());
-                }
-                self.load_selected_milestone();
-                self.roadmap_error = None;
-            }
-            Err(error) => self.roadmap_error = Some(format!("无法读取路线图：{error}")),
-        }
+        self.route_roadmap_message(RoadmapMessage::Refresh);
     }
 
-    fn select_milestone(&mut self, milestone_id: String) {
-        if self
-            .roadmap
-            .milestones
-            .iter()
-            .any(|milestone| milestone.id == milestone_id)
-        {
-            self.selected_milestone = Some(milestone_id);
-            self.load_selected_milestone();
-        }
-    }
-
-    fn load_selected_milestone(&mut self) {
-        let milestone = self.selected_milestone.as_deref().and_then(|selected| {
-            self.roadmap
-                .milestones
-                .iter()
-                .find(|milestone| milestone.id == selected)
-        });
-        if let Some(milestone) = milestone {
-            self.milestone_title = milestone.title.clone();
-            self.milestone_description = milestone.description.clone();
-            self.milestone_due_date = milestone
-                .due_date
-                .map(format_civil_date)
-                .unwrap_or_default();
-        } else {
-            self.milestone_title.clear();
-            self.milestone_description.clear();
-            self.milestone_due_date.clear();
-        }
-    }
-
-    fn create_milestone(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            return;
-        };
-        match self.application.create_milestone(&project_id, "新里程碑") {
-            Ok(milestone) => {
-                self.refresh_roadmap();
-                self.select_milestone(milestone.id);
-            }
-            Err(error) => self.roadmap_error = Some(format!("无法创建里程碑：{error}")),
-        }
-    }
-
-    fn save_milestone(&mut self) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        let due_date = match parse_civil_date_update(&self.milestone_due_date) {
-            Ok(due_date) => due_date,
-            Err(error) => {
-                self.roadmap_error = Some(error);
-                return;
-            }
-        };
-        let patch = MilestoneUpdatePatch {
-            title: Some(self.milestone_title.clone()),
-            description: Some(self.milestone_description.clone()),
-            status: None,
-            due_date,
-        };
-        match self
-            .application
-            .update_milestone(&project_id, &milestone_id, patch)
-        {
-            Ok(_) => self.refresh_roadmap(),
-            Err(error) => self.roadmap_error = Some(format!("无法保存里程碑：{error}")),
-        }
-    }
-
-    fn cycle_milestone_status(&mut self) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        let Some(status) = self
-            .roadmap
-            .milestones
-            .iter()
-            .find(|milestone| milestone.id == milestone_id)
-            .map(|milestone| next_milestone_status(milestone.status))
-        else {
-            return;
-        };
-        let patch = MilestoneUpdatePatch {
-            status: Some(status),
-            ..MilestoneUpdatePatch::default()
-        };
-        match self
-            .application
-            .update_milestone(&project_id, &milestone_id, patch)
-        {
-            Ok(_) => self.refresh_roadmap(),
-            Err(error) => self.roadmap_error = Some(format!("无法更新里程碑状态：{error}")),
-        }
-    }
-
-    fn move_milestone(&mut self, offset: isize) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        let Some(index) = self
-            .roadmap
-            .milestones
-            .iter()
-            .position(|milestone| milestone.id == milestone_id)
-        else {
-            return;
-        };
-        let target = index as isize + offset;
-        if target < 0 || target >= self.roadmap.milestones.len() as isize {
-            return;
-        }
-        let mut ids = self
-            .roadmap
-            .milestones
-            .iter()
-            .map(|milestone| milestone.id.clone())
-            .collect::<Vec<_>>();
-        ids.swap(index, target as usize);
-        match self.application.reorder_milestones(&project_id, ids) {
-            Ok(_) => self.refresh_roadmap(),
-            Err(error) => self.roadmap_error = Some(format!("无法调整里程碑顺序：{error}")),
-        }
-    }
-
-    fn delete_milestone(&mut self) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        match self
-            .application
-            .delete_milestone(&project_id, &milestone_id)
-        {
-            Ok(_) => {
-                self.selected_milestone = None;
-                self.refresh_roadmap();
-            }
-            Err(error) => self.roadmap_error = Some(format!("无法删除里程碑：{error}")),
-        }
-    }
-
-    fn toggle_milestone_task(&mut self, task_id: String) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        let mut task_ids = self
-            .roadmap
-            .links
-            .iter()
-            .filter(|link| link.milestone_id == milestone_id)
-            .map(|link| link.task_id.clone())
-            .collect::<BTreeSet<_>>();
-        if !task_ids.remove(&task_id) {
-            task_ids.insert(task_id);
-        }
-        match self.application.set_milestone_tasks(
-            &project_id,
-            &milestone_id,
-            task_ids.into_iter().collect(),
-        ) {
-            Ok(_) => self.refresh_roadmap(),
-            Err(error) => self.roadmap_error = Some(format!("无法更新关联任务：{error}")),
+    /// Routes a roadmap message to the module owning the domain.
+    fn route_roadmap_message(&mut self, message: RoadmapMessage) {
+        let outcome = self.route_to_module(
+            &crate::module::roadmap::RoadmapModule::feature_id(),
+            Box::new(message),
+        );
+        if let Some(outcome) = outcome {
+            self.apply_ui_module_outcome(outcome);
         }
     }
 
     fn refresh_memories(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            self.memories.clear();
-            self.selected_memory = None;
-            return;
-        };
-        match self.application.list_memories(Some(&project_id)) {
-            Ok(memories) => {
-                self.memories = memories;
-                if !self
-                    .memories
-                    .iter()
-                    .any(|memory| self.selected_memory.as_deref() == Some(memory.id.as_str()))
-                {
-                    self.selected_memory = self.memories.first().map(|memory| memory.id.clone());
-                }
-                self.load_selected_memory();
-                self.memory_error = None;
-            }
-            Err(error) => self.memory_error = Some(format!("无法读取 Memory：{error}")),
-        }
-    }
-
-    fn select_memory(&mut self, memory_id: String) {
-        if self.memories.iter().any(|memory| memory.id == memory_id) {
-            self.selected_memory = Some(memory_id);
-            self.load_selected_memory();
-        }
-    }
-
-    fn new_memory(&mut self) {
-        self.selected_memory = None;
-        self.memory_title.clear();
-        self.memory_body.clear();
-        self.memory_tags.clear();
-        self.memory_scope = MemoryScope::Project;
-        self.memory_updated_at = None;
-        self.memory_error = None;
-    }
-
-    fn load_selected_memory(&mut self) {
-        let memory = self
-            .selected_memory
-            .as_deref()
-            .and_then(|selected| self.memories.iter().find(|memory| memory.id == selected));
-        if let Some(memory) = memory {
-            self.memory_title = memory.title.clone();
-            self.memory_body.set_text(&memory.body);
-            self.memory_tags = memory.tags.join(", ");
-            self.memory_scope = memory.scope;
-            self.memory_updated_at = Some(memory.updated_at);
-        } else {
-            self.new_memory();
-        }
-    }
-
-    fn save_memory(&mut self) {
-        let project_id = match self.memory_scope {
-            MemoryScope::User => None,
-            MemoryScope::Project => self
-                .selected_project
-                .as_ref()
-                .map(|project_id| project_id.as_str().to_owned()),
-        };
-        let input = MemoryUpsertInput {
-            id: self.selected_memory.clone(),
-            scope: self.memory_scope,
-            project_id,
-            title: self.memory_title.clone(),
-            body: self.memory_body.text(),
-            tags: parse_memory_tags(&self.memory_tags),
-            enabled: self
-                .selected_memory
-                .as_deref()
-                .and_then(|selected| self.memories.iter().find(|memory| memory.id == selected))
-                .is_none_or(|memory| memory.enabled),
-            source_task_id: None,
-            expected_updated_at: self.memory_updated_at,
-        };
-        match self.application.save_memory(input) {
-            Ok(memory) => {
-                self.selected_memory = Some(memory.id);
-                self.refresh_memories();
-            }
-            Err(error) => self.memory_error = Some(format!("无法保存 Memory：{error}")),
-        }
-    }
-
-    fn toggle_memory_enabled(&mut self) {
-        let Some(memory) = self
-            .selected_memory
-            .as_deref()
-            .and_then(|selected| self.memories.iter().find(|memory| memory.id == selected))
-        else {
-            return;
-        };
-        let memory_id = memory.id.clone();
-        let enabled = !memory.enabled;
-        let expected_updated_at = Some(memory.updated_at);
-        match self
-            .application
-            .set_memory_enabled(&memory_id, enabled, expected_updated_at)
-        {
-            Ok(_) => self.refresh_memories(),
-            Err(error) => self.memory_error = Some(format!("无法更新 Memory 状态：{error}")),
-        }
-    }
-
-    fn delete_memory(&mut self) {
-        let Some(memory_id) = self.selected_memory.clone() else {
-            return;
-        };
-        match self
-            .application
-            .delete_memory(&memory_id, self.memory_updated_at)
-        {
-            Ok(_) => {
-                self.selected_memory = None;
-                self.refresh_memories();
-            }
-            Err(error) => self.memory_error = Some(format!("无法删除 Memory：{error}")),
-        }
-    }
-
-    fn update_memory_settings(&mut self, settings: MemorySettings) {
-        let cooldown_changed = settings.cooldown_turns != self.memory_settings.cooldown_turns;
-        match self.application.save_memory_settings(settings) {
-            Ok(settings) => {
-                if cooldown_changed {
-                    self.memory_cooldown_input = settings.cooldown_turns.to_string();
-                }
-                self.memory_settings = settings;
-                self.memory_error = None;
-            }
-            Err(error) => self.memory_error = Some(format!("无法保存 Memory 设置：{error}")),
-        }
-    }
-
-    fn save_memory_cooldown(&mut self) {
-        match parse_memory_cooldown(&self.memory_cooldown_input) {
-            Ok(cooldown_turns) => {
-                let mut settings = self.memory_settings.clone();
-                settings.cooldown_turns = cooldown_turns;
-                self.update_memory_settings(settings);
-            }
-            Err(error) => self.memory_error = Some(error.to_owned()),
-        }
+        self.route_memory_message(MemoryMessage::Refresh);
     }
 
     fn refresh_memory_injection(&mut self) {
-        let Some(task_id) = self.selected_task.clone() else {
-            self.memory_injection = None;
-            return;
-        };
-        match self.application.memory_injection_state(&task_id) {
-            Ok(state) => self.memory_injection = Some(state),
-            Err(error) => {
-                self.task_action_error = Some(format!("无法读取 Memory 注入状态：{error}"))
-            }
+        self.route_memory_message(MemoryMessage::Refresh);
+    }
+
+    /// Routes a memory message to the module owning the domain.
+    fn route_memory_message(&mut self, message: MemoryMessage) {
+        let outcome = self.route_to_module(
+            &crate::module::memory::MemoryModule::feature_id(),
+            Box::new(message),
+        );
+        if let Some(outcome) = outcome {
+            self.apply_ui_module_outcome(outcome);
         }
     }
 
-    fn toggle_task_memory(&mut self) {
-        let (Some(task_id), Some(state)) =
-            (self.selected_task.clone(), self.memory_injection.clone())
-        else {
-            return;
-        };
-        match self.application.set_task_memory_enabled(
-            &task_id,
-            !state.enabled,
-            Some(state.updated_at),
-        ) {
-            Ok(state) => {
-                self.memory_injection = Some(state);
-                self.task_action_error = None;
-            }
-            Err(error) => {
-                self.task_action_error = Some(format!("无法更新 Memory 注入状态：{error}"))
-            }
-        }
-        self.refresh_memory_injection();
+    fn memory_module(&self) -> &crate::module::memory::MemoryModule {
+        self.dispatch_module(&crate::module::memory::MemoryModule::feature_id())
     }
 
-    fn reset_task_memory_cooldown(&mut self) {
-        let (Some(task_id), Some(state)) =
-            (self.selected_task.clone(), self.memory_injection.clone())
-        else {
-            return;
-        };
-        match self
-            .application
-            .reset_task_memory_cooldown(&task_id, Some(state.updated_at))
-        {
-            Ok(state) => {
-                self.memory_injection = Some(state);
-                self.task_action_error = None;
-            }
-            Err(error) => self.task_action_error = Some(format!("无法重置 Memory 冷却：{error}")),
-        }
+    fn window_memory_module(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<&crate::module::memory::MemoryModule> {
+        self.window_module(
+            window_id,
+            &crate::module::memory::MemoryModule::feature_id(),
+        )
     }
 
     fn active_inspector_panel(&self) -> Option<&PanelState> {
@@ -8696,116 +8272,176 @@ impl DesktopProgram {
         self.iab.set_panel_visible(visible, HostedWindowId::PRIMARY);
     }
 
-    fn open_architecture(&mut self) {
-        self.open_project_surface(ProjectWorkspaceSurface::Architecture);
+    /// Routes an architecture message to the module owning the domain and
+    /// performs whatever it asks the shell to do.
+    fn route_architecture_message(&mut self, message: ArchitectureMessage) {
+        let outcome = self.route_to_module(
+            &crate::module::architecture::ArchitectureModule::feature_id(),
+            Box::new(message),
+        );
+        if let Some(outcome) = outcome {
+            self.apply_ui_module_outcome(outcome);
+        }
+    }
+
+    /// Hands a message to the module for `feature` in whichever window the shell
+    /// is currently acting on.
+    fn route_to_module(
+        &mut self,
+        feature: &lilia_kernel::FeatureId,
+        message: Box<dyn std::any::Any>,
+    ) -> Option<crate::ui_module::UiModuleOutcome> {
+        match self.module_dispatch {
+            Some((window_id, page)) => {
+                self.route_to_window_module(window_id, feature, message, Some(page))
+            }
+            None => self.route_to_primary_module(feature, message),
+        }
+    }
+
+    /// Hands a message to the primary window's module for `feature`.
+    ///
+    /// The host is moved out for the call because building the context borrows
+    /// the shell, and a module reducing must be able to mutate itself.
+    fn route_to_primary_module(
+        &mut self,
+        feature: &lilia_kernel::FeatureId,
+        message: Box<dyn std::any::Any>,
+    ) -> Option<crate::ui_module::UiModuleOutcome> {
+        let page = self.shell_project_page();
+        let mut host = std::mem::take(&mut self.ui_modules);
+        let outcome = {
+            let cx = crate::ui_module::UiModuleContext::new(self.kernel.kernel(), WindowId::PRIMARY)
+                .showing(page);
+            host.reduce(feature, message, &cx)
+        };
+        self.ui_modules = host;
+        outcome
+    }
+
+    /// Hands a message to a workspace window's module for `feature`.
+    fn route_to_window_module(
+        &mut self,
+        window_id: HostedWindowId,
+        feature: &lilia_kernel::FeatureId,
+        message: Box<dyn std::any::Any>,
+        page: Option<crate::runtime_shell::ShellProjectPage>,
+    ) -> Option<crate::ui_module::UiModuleOutcome> {
+        let mut host = std::mem::take(self.window_ui_modules(window_id));
+        let outcome = {
+            let cx = crate::ui_module::UiModuleContext::new(self.kernel.kernel(), window_id)
+                .showing(page);
+            host.reduce(feature, message, &cx)
+        };
+        *self.window_ui_modules(window_id) = host;
+        outcome
+    }
+
+    fn apply_ui_module_outcome(&mut self, outcome: crate::ui_module::UiModuleOutcome) {
+        if let Some(error) = outcome.error {
+            self.error_message = Some(error);
+        }
+        for effect in outcome.effects {
+            match effect {
+                crate::ui_module::ShellEffect::RevealProjectSurface(surface) => {
+                    self.open_project_surface(surface);
+                }
+            }
+        }
     }
 
     fn refresh_architecture(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            return;
-        };
-        match (
-            self.application.project_architecture(&project_id),
-            self.application
-                .project_architecture_changes(&project_id, 40),
-            self.application
-                .project_architecture_quarantine(&project_id),
-        ) {
-            (Ok(graph), Ok(history), Ok(quarantine)) => {
-                let reset_viewport = self.architecture.project_id != graph.project_id
-                    || self.architecture.nodes.is_empty();
-                self.architecture = graph;
-                self.architecture_history = history;
-                self.architecture_quarantine_count = quarantine.len();
-                self.architecture_error = None;
-                self.rebuild_architecture_graph(reset_viewport);
-            }
-            (graph, history, quarantine) => {
-                self.architecture_error = Some(format!(
-                    "无法读取架构快照：{}",
-                    graph
-                        .err()
-                        .or_else(|| history.err())
-                        .or_else(|| quarantine.err())
-                        .map(|error| error.to_string())
-                        .unwrap_or_else(|| "未知错误".to_owned())
-                ));
-            }
-        }
+        self.route_architecture_message(ArchitectureMessage::Refresh);
     }
 
-    fn rollback_architecture(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            return;
-        };
-        let Some(task_id) = self.tasks.first().map(|task| task.id.clone()) else {
-            self.architecture_error = Some("当前项目没有可记录回滚来源的任务。".to_owned());
-            return;
-        };
-        match self.application.rollback_project_architecture(
-            &project_id,
-            &task_id,
-            ArchitectureBackend::NativeAgentkit,
-        ) {
-            Ok(result) => {
-                let rolled_back = result.event.is_some();
-                self.refresh_architecture();
-                if !rolled_back {
-                    self.architecture_error = Some("当前没有可回滚的已应用版本。".to_owned());
-                }
-            }
+    /// Applies a workspace item's saved graph layout to the primary window's
+    /// module. A layout that no longer matches the graph version is discarded
+    /// rather than drawn against the wrong nodes.
+    fn restore_primary_architecture_layout(&mut self, saved: Option<&Value>) {
+        let module = self.architecture_module();
+        let mut model = module.model().clone();
+        let mut viewport = module.viewport();
+        let version = module.graph().version;
+        match restore_architecture_workspace_layout(saved, version, &mut model, &mut viewport) {
+            Ok(()) => self.architecture_module_mut().restore_layout(model, viewport),
             Err(error) => {
-                self.architecture_error = Some(format!("无法回滚架构：{error}"));
+                self.error_message =
+                    Some(format!("架构图布局已重置，保存的布局无法恢复：{error}"));
             }
         }
     }
 
-    fn rebuild_architecture_graph(&mut self, reset_viewport: bool) {
-        let previous_positions = self
-            .architecture_graph
-            .nodes()
-            .iter()
-            .map(|node| (node.id.clone(), node.position))
-            .collect::<Vec<_>>();
-        let had_previous_nodes = !previous_positions.is_empty();
-        match architecture_graph_model(&self.architecture) {
-            Ok(mut graph) => {
-                if !reset_viewport {
-                    for (node_id, position) in previous_positions {
-                        if graph.node(&node_id).is_some() {
-                            let _ = graph.set_node_position(&node_id, position);
-                        }
-                    }
-                }
-                self.architecture_graph = graph;
-                if reset_viewport || !had_previous_nodes {
-                    self.architecture_viewport =
-                        architecture_default_viewport(&self.architecture_graph);
-                    self.architecture_selection = None;
-                }
-            }
-            Err(error) => {
-                self.architecture_graph = GraphModel::empty();
-                self.architecture_selection = None;
-                self.architecture_error = Some(format!("架构图无法显示：{error}"));
-            }
-        }
+    /// The primary window's architecture layout, as stored on its workspace item.
+    fn architecture_layout_value(&self) -> Value {
+        let module = self.architecture_module();
+        architecture_workspace_layout_value(
+            module.graph().version,
+            module.model(),
+            module.viewport(),
+        )
     }
 
-    fn update_architecture_graph(&mut self, event: GraphCanvasEvent) {
-        match event {
-            GraphCanvasEvent::SelectionChanged(selection) => {
-                self.architecture_selection = selection;
-            }
-            GraphCanvasEvent::ViewportInput(viewport)
-            | GraphCanvasEvent::ViewportChanged(viewport) => {
-                self.architecture_viewport = viewport;
-            }
-            GraphCanvasEvent::NodePositionInput { node, position }
-            | GraphCanvasEvent::NodePositionChanged { node, position } => {
-                let _ = self.architecture_graph.set_node_position(&node, position);
-            }
-            GraphCanvasEvent::ConnectionRequested { .. } => {}
+    /// Whether the rendered graph matches an applied version, which is what
+    /// makes a rollback meaningful.
+    fn architecture_can_roll_back(&self) -> bool {
+        architecture_module_can_roll_back(self.architecture_module())
+    }
+
+    /// What a workspace window persists on its project item: each module-owned
+    /// page answers for its own slice.
+    fn workspace_window_item_state(&mut self, window_id: HostedWindowId) -> Value {
+        let host = self.window_ui_modules(window_id);
+        let milestone = host
+            .get::<crate::module::roadmap::RoadmapModule>(
+                &crate::module::roadmap::RoadmapModule::feature_id(),
+            )
+            .expect("every window is furnished with the same modules")
+            .selected()
+            .map(str::to_owned);
+        let selected_memory = host
+            .get::<crate::module::memory::MemoryModule>(
+                &crate::module::memory::MemoryModule::feature_id(),
+            )
+            .expect("every window is furnished with the same modules")
+            .selected()
+            .map(str::to_owned);
+        let architecture = host
+            .get::<crate::module::architecture::ArchitectureModule>(
+                &crate::module::architecture::ArchitectureModule::feature_id(),
+            )
+            .expect("every window is furnished with the same modules");
+        let layout = architecture_workspace_layout_value(
+            architecture.graph().version,
+            architecture.model(),
+            architecture.viewport(),
+        );
+        json!({
+            "selectedMilestoneId": milestone,
+            "selectedMemoryId": selected_memory,
+            "architectureLayout": layout,
+        })
+    }
+
+    /// Routes a message to a workspace window's own module for `feature`.
+    ///
+    /// The old register swapped the domain into the primary window's fields for
+    /// the call; a per-window module makes that unnecessary, so the window's
+    /// editor state never passes through the primary window's.
+    fn route_workspace_window_module(
+        &mut self,
+        window_id: HostedWindowId,
+        item_id: WorkspaceItemId,
+        feature: &lilia_kernel::FeatureId,
+        message: Box<dyn std::any::Any>,
+        page: crate::runtime_shell::ShellProjectPage,
+        persist_item_state: bool,
+    ) {
+        let outcome = self.route_to_window_module(window_id, feature, message, Some(page));
+        if let Some(error) = outcome.and_then(|outcome| outcome.error) {
+            self.error_message = Some(error);
+        }
+        if persist_item_state {
+            self.persist_workspace_window_item_state(window_id, item_id);
         }
     }
 
@@ -8843,11 +8479,7 @@ impl DesktopProgram {
         };
         serialized_state.insert(
             "architectureLayout".to_owned(),
-            architecture_workspace_layout_value(
-                self.architecture.version,
-                &self.architecture_graph,
-                self.architecture_viewport,
-            ),
+            self.architecture_layout_value(),
         );
         self.execute_workspace_command(DesktopCommand::UpdateWorkspaceItemState {
             item_id,
@@ -10460,15 +10092,9 @@ impl DesktopProgram {
                 ProjectSurface::Memory => self.refresh_memories(),
                 ProjectSurface::Architecture => {
                     self.refresh_architecture();
-                    if let Err(error) = restore_architecture_workspace_layout(
+                    self.restore_primary_architecture_layout(
                         next_architecture_workspace_state.as_ref(),
-                        self.architecture.version,
-                        &mut self.architecture_graph,
-                        &mut self.architecture_viewport,
-                    ) {
-                        self.architecture_error =
-                            Some(format!("架构图布局已重置，保存的布局无法恢复：{error}"));
-                    }
+                    );
                 }
                 ProjectSurface::Files => self.refresh_project_files(),
                 ProjectSurface::Tasks | ProjectSurface::Settings | ProjectSurface::Clone => {}
@@ -11171,102 +10797,28 @@ impl DesktopProgram {
     }
 
     fn apply_roadmap_message(&mut self, message: RoadmapMessage) -> Option<HostedWindowAction> {
-        match message {
-            RoadmapMessage::OpenRoadmap => self.open_project_surface(ProjectWorkspaceSurface::Roadmap),
-            RoadmapMessage::RefreshRoadmap => self.refresh_roadmap(),
-            RoadmapMessage::SelectMilestone(milestone_id) => self.select_milestone(milestone_id),
-            RoadmapMessage::MilestoneTitleChanged(value) => {
-                self.milestone_title = value;
-                self.roadmap_error = None;
-            },
-            RoadmapMessage::MilestoneDescriptionChanged(value) => {
-                self.milestone_description = value;
-                self.roadmap_error = None;
-            },
-            RoadmapMessage::MilestoneDueDateChanged(value) => {
-                self.milestone_due_date = value;
-                self.roadmap_error = None;
-            },
-            RoadmapMessage::CreateMilestone => self.create_milestone(),
-            RoadmapMessage::SaveMilestone => self.save_milestone(),
-            RoadmapMessage::CycleMilestoneStatus => self.cycle_milestone_status(),
-            RoadmapMessage::MoveMilestoneUp => self.move_milestone(-1),
-            RoadmapMessage::MoveMilestoneDown => self.move_milestone(1),
-            RoadmapMessage::DeleteMilestone => self.delete_milestone(),
-            RoadmapMessage::ToggleMilestoneTask(task_id) => self.toggle_milestone_task(task_id),
-        }
+        self.route_roadmap_message(message);
         None
     }
 
     fn apply_memory_message(&mut self, message: MemoryMessage) -> Option<HostedWindowAction> {
-        match message {
-            MemoryMessage::OpenMemory => self.open_project_surface(ProjectWorkspaceSurface::Memory),
-            MemoryMessage::RefreshMemory => self.refresh_memories(),
-            MemoryMessage::SelectMemory(memory_id) => self.select_memory(memory_id),
-            MemoryMessage::NewMemory => self.new_memory(),
-            MemoryMessage::MemoryTitleChanged(value) => {
-                self.memory_title = value;
-                self.memory_error = None;
-            },
-            MemoryMessage::MemoryBodyEdited(action) => {
-                self.memory_body.perform(action);
-                self.memory_error = None;
-            },
-            MemoryMessage::MemoryBodyReplaced(value) => {
-                self.memory_body.set_text(&value);
-                self.memory_error = None;
-            },
-            MemoryMessage::MemoryTagsChanged(value) => {
-                self.memory_tags = value;
-                self.memory_error = None;
-            },
-            MemoryMessage::ToggleMemoryScope => {
-                self.memory_scope = match self.memory_scope {
-                    MemoryScope::User => MemoryScope::Project,
-                    MemoryScope::Project => MemoryScope::User,
-                };
-            },
-            MemoryMessage::SaveMemory => self.save_memory(),
-            MemoryMessage::ToggleMemoryEnabled => self.toggle_memory_enabled(),
-            MemoryMessage::DeleteMemory => self.delete_memory(),
-            MemoryMessage::ToggleMemoryGlobal => {
-                let mut settings = self.memory_settings.clone();
-                settings.enabled = !settings.enabled;
-                self.update_memory_settings(settings);
-            },
-            MemoryMessage::ToggleMemoryBaseline => {
-                let mut settings = self.memory_settings.clone();
-                settings.baseline_injection_enabled = !settings.baseline_injection_enabled;
-                self.update_memory_settings(settings);
-            },
-            MemoryMessage::CycleMemoryCooldown => {
-                let mut settings = self.memory_settings.clone();
-                settings.cooldown_turns = next_memory_cooldown(settings.cooldown_turns);
-                self.update_memory_settings(settings);
-            },
-            MemoryMessage::MemoryCooldownChanged(value) => {
-                self.memory_cooldown_input = value;
-                self.memory_error = None;
-            },
-            MemoryMessage::SaveMemoryCooldown => self.save_memory_cooldown(),
-            MemoryMessage::ToggleTaskMemory => self.toggle_task_memory(),
-            MemoryMessage::ResetTaskMemoryCooldown => self.reset_task_memory_cooldown(),
-        }
+        self.route_memory_message(message);
         None
     }
 
-    fn apply_architecture_message(&mut self, message: ArchitectureMessage) -> Option<HostedWindowAction> {
-        match message {
-            ArchitectureMessage::OpenArchitecture => self.open_architecture(),
-            ArchitectureMessage::RefreshArchitecture => self.refresh_architecture(),
-            ArchitectureMessage::RollbackArchitecture => self.rollback_architecture(),
-            ArchitectureMessage::ArchitectureGraph(event) => {
-                let layout_changed = architecture_layout_event_committed(&event);
-                self.update_architecture_graph(event);
-                if layout_changed {
-                    self.persist_main_architecture_layout();
-                }
-            },
+    fn apply_architecture_message(
+        &mut self,
+        message: ArchitectureMessage,
+    ) -> Option<HostedWindowAction> {
+        // Layout is persisted by the shell, not the module: which workspace item
+        // stores it is the shell's pane bookkeeping, not the domain's business.
+        let layout_changed = match &message {
+            ArchitectureMessage::Graph(event) => architecture_layout_event_committed(event),
+            _ => false,
+        };
+        self.route_architecture_message(message);
+        if layout_changed {
+            self.persist_main_architecture_layout();
         }
         None
     }
@@ -16325,7 +15877,7 @@ impl DesktopProgram {
     fn refresh_task_session(&mut self) {
         let Some(task_id) = self.selected_task.clone() else {
             self.task_session = None;
-            self.memory_injection = None;
+            self.refresh_memory_injection();
             self.sync_markdown_images();
             return;
         };
@@ -18936,48 +18488,41 @@ impl DesktopProgram {
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::ROADMAP_TITLE
                     && self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some()
+                    && self.roadmap_module().selected().is_some()
                 {
-                    self.milestone_title = text;
-                    self.roadmap_error = None;
+                    self.route_roadmap_message(RoadmapMessage::TitleChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::ROADMAP_DESCRIPTION
                     && self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some()
+                    && self.roadmap_module().selected().is_some()
                 {
-                    self.milestone_description = text;
-                    self.roadmap_error = None;
+                    self.route_roadmap_message(RoadmapMessage::DescriptionChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::ROADMAP_DUE_DATE
                     && self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some()
+                    && self.roadmap_module().selected().is_some()
                 {
-                    self.milestone_due_date = text;
-                    self.roadmap_error = None;
+                    self.route_roadmap_message(RoadmapMessage::DueDateChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::MEMORY_TITLE
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    self.memory_title = text;
-                    self.memory_error = None;
+                    self.route_memory_message(MemoryMessage::TitleChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::MEMORY_BODY
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    self.memory_body.set_text(&text);
-                    self.memory_error = None;
+                    self.route_memory_message(MemoryMessage::BodyReplaced(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::MEMORY_TAGS
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    self.memory_tags = text;
-                    self.memory_error = None;
+                    self.route_memory_message(MemoryMessage::TagsChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    self.memory_cooldown_input = text;
-                    self.memory_error = None;
+                    self.route_memory_message(MemoryMessage::CooldownChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::IAB_URL
                     && self.inspector_surface == InspectorSurface::Iab
@@ -19411,13 +18956,13 @@ impl DesktopProgram {
             return false;
         };
         let message = match inner_target.as_str() {
-            target_ids::ROADMAP_TITLE => Message::Roadmap(RoadmapMessage::MilestoneTitleChanged(value)),
-            target_ids::ROADMAP_DESCRIPTION => Message::Roadmap(RoadmapMessage::MilestoneDescriptionChanged(value)),
-            target_ids::ROADMAP_DUE_DATE => Message::Roadmap(RoadmapMessage::MilestoneDueDateChanged(value)),
-            target_ids::MEMORY_TITLE => Message::Memory(MemoryMessage::MemoryTitleChanged(value)),
-            target_ids::MEMORY_BODY => Message::Memory(MemoryMessage::MemoryBodyReplaced(value)),
-            target_ids::MEMORY_TAGS => Message::Memory(MemoryMessage::MemoryTagsChanged(value)),
-            target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT => Message::Memory(MemoryMessage::MemoryCooldownChanged(value)),
+            target_ids::ROADMAP_TITLE => Message::Roadmap(RoadmapMessage::TitleChanged(value)),
+            target_ids::ROADMAP_DESCRIPTION => Message::Roadmap(RoadmapMessage::DescriptionChanged(value)),
+            target_ids::ROADMAP_DUE_DATE => Message::Roadmap(RoadmapMessage::DueDateChanged(value)),
+            target_ids::MEMORY_TITLE => Message::Memory(MemoryMessage::TitleChanged(value)),
+            target_ids::MEMORY_BODY => Message::Memory(MemoryMessage::BodyReplaced(value)),
+            target_ids::MEMORY_TAGS => Message::Memory(MemoryMessage::TagsChanged(value)),
+            target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT => Message::Memory(MemoryMessage::CooldownChanged(value)),
             _ => return false,
         };
         self.update_workspace_window_project_action(window_id, item_id, message);
@@ -19867,8 +19412,8 @@ impl DesktopProgram {
     ) -> Option<(HostedWindowId, WorkspaceItemId, String)> {
         self.task_popups.values().find_map(|popup| {
             let item_id = popup.active_workspace_item_id.as_ref()?;
-            let editor = popup.project_states.get(item_id)?;
-            self.project_workspace_editor_debug_targets(editor)
+            let (_, surface) = self.workspace_window_project_surface(popup.id, item_id)?;
+            self.project_workspace_editor_debug_targets(popup.id, surface)
                 .into_iter()
                 .find(|inner_target| {
                     target_ids::workspace_window_project_action(popup.id.0, inner_target)
@@ -21559,109 +21104,100 @@ impl DesktopProgram {
                     && !self.automations_open
                     && self.selected_project.is_some() =>
             {
-                self.update_message(Message::Roadmap(RoadmapMessage::OpenRoadmap));
+                self.update_message(Message::Roadmap(RoadmapMessage::Open));
             }
             target_ids::ROADMAP_REFRESH if self.project_surface == ProjectSurface::Roadmap => {
                 self.refresh_roadmap();
             }
             target_ids::ROADMAP_CREATE if self.project_surface == ProjectSurface::Roadmap => {
-                self.create_milestone();
+                self.route_roadmap_message(RoadmapMessage::Create);
             }
             target_ids::ROADMAP_SAVE
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some()
-                    && !self.milestone_title.trim().is_empty() =>
+                    && self.roadmap_module().selected().is_some()
+                    && !self.roadmap_module().title().trim().is_empty() =>
             {
-                self.save_milestone();
+                self.route_roadmap_message(RoadmapMessage::Save);
             }
             target_ids::ROADMAP_STATUS
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some() =>
+                    && self.roadmap_module().selected().is_some() =>
             {
-                self.cycle_milestone_status();
+                self.route_roadmap_message(RoadmapMessage::CycleStatus);
             }
             target_ids::ROADMAP_MOVE_UP
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some() =>
+                    && self.roadmap_module().selected().is_some() =>
             {
-                self.move_milestone(-1);
+                self.route_roadmap_message(RoadmapMessage::Move(-1));
             }
             target_ids::ROADMAP_MOVE_DOWN
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some() =>
+                    && self.roadmap_module().selected().is_some() =>
             {
-                self.move_milestone(1);
+                self.route_roadmap_message(RoadmapMessage::Move(1));
             }
             target_ids::ROADMAP_DELETE
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some() =>
+                    && self.roadmap_module().selected().is_some() =>
             {
-                self.delete_milestone();
+                self.route_roadmap_message(RoadmapMessage::Delete);
             }
             target_ids::MEMORY_OPEN
                 if !self.settings_open
                     && !self.automations_open
                     && self.selected_project.is_some() =>
             {
-                self.update_message(Message::Memory(MemoryMessage::OpenMemory));
+                self.update_message(Message::Memory(MemoryMessage::Open));
             }
             target_ids::MEMORY_REFRESH if self.project_surface == ProjectSurface::Memory => {
                 self.refresh_memories();
             }
             target_ids::MEMORY_NEW if self.project_surface == ProjectSurface::Memory => {
-                self.new_memory();
+                self.route_memory_message(MemoryMessage::New);
             }
             target_ids::MEMORY_SCOPE if self.project_surface == ProjectSurface::Memory => {
-                self.memory_scope = match self.memory_scope {
-                    MemoryScope::User => MemoryScope::Project,
-                    MemoryScope::Project => MemoryScope::User,
-                };
+                self.route_memory_message(MemoryMessage::ToggleScope);
             }
             target_ids::MEMORY_SAVE
                 if self.project_surface == ProjectSurface::Memory
-                    && !self.memory_title.trim().is_empty()
-                    && !self.memory_body.text().trim().is_empty() =>
+                    && !self.memory_module().title().trim().is_empty()
+                    && !self.memory_module().body().text().trim().is_empty() =>
             {
-                self.save_memory();
+                self.route_memory_message(MemoryMessage::Save);
             }
             target_ids::MEMORY_TOGGLE
                 if self.project_surface == ProjectSurface::Memory
-                    && self.selected_memory.is_some() =>
+                    && self.memory_module().selected().is_some() =>
             {
-                self.toggle_memory_enabled();
+                self.route_memory_message(MemoryMessage::ToggleEnabled);
             }
             target_ids::MEMORY_DELETE
                 if self.project_surface == ProjectSurface::Memory
-                    && self.selected_memory.is_some() =>
+                    && self.memory_module().selected().is_some() =>
             {
-                self.delete_memory();
+                self.route_memory_message(MemoryMessage::Delete);
             }
             target_ids::MEMORY_SETTINGS_GLOBAL
                 if self.project_surface == ProjectSurface::Memory =>
             {
-                let mut settings = self.memory_settings.clone();
-                settings.enabled = !settings.enabled;
-                self.update_memory_settings(settings);
+                self.route_memory_message(MemoryMessage::ToggleGlobal);
             }
             target_ids::MEMORY_SETTINGS_BASELINE
                 if self.project_surface == ProjectSurface::Memory =>
             {
-                let mut settings = self.memory_settings.clone();
-                settings.baseline_injection_enabled = !settings.baseline_injection_enabled;
-                self.update_memory_settings(settings);
+                self.route_memory_message(MemoryMessage::ToggleBaseline);
             }
             target_ids::MEMORY_SETTINGS_COOLDOWN
                 if self.project_surface == ProjectSurface::Memory =>
             {
-                let mut settings = self.memory_settings.clone();
-                settings.cooldown_turns = next_memory_cooldown(settings.cooldown_turns);
-                self.update_memory_settings(settings);
+                self.route_memory_message(MemoryMessage::CycleCooldown);
             }
             target_ids::MEMORY_SETTINGS_COOLDOWN_SAVE
                 if self.project_surface == ProjectSurface::Memory
-                    && parse_memory_cooldown(&self.memory_cooldown_input).is_ok() =>
+                    && parse_memory_cooldown(self.memory_module().cooldown_input()).is_ok() =>
             {
-                self.save_memory_cooldown();
+                self.route_memory_message(MemoryMessage::SaveCooldown);
             }
             target_ids::CODING_TOOLS_OPEN
                 if !self.settings_open
@@ -21831,7 +21367,7 @@ impl DesktopProgram {
                     && !self.automations_open
                     && self.selected_project.is_some() =>
             {
-                self.open_architecture();
+                self.route_architecture_message(ArchitectureMessage::Open);
             }
             target_ids::ARCHITECTURE_REFRESH
                 if self.project_surface == ProjectSurface::Architecture =>
@@ -21840,13 +21376,10 @@ impl DesktopProgram {
             }
             target_ids::ARCHITECTURE_ROLLBACK
                 if self.project_surface == ProjectSurface::Architecture
-                    && !self.tasks.is_empty()
-                    && self.architecture_history.iter().any(|record| {
-                        record.event.status == ArchitectureChangeStatus::Applied
-                            && record.after_graph.as_ref() == Some(&self.architecture)
-                    }) =>
+                    && !self.window_tasks(self.dispatch_window()).is_empty()
+                    && self.architecture_can_roll_back() =>
             {
-                self.rollback_architecture();
+                self.route_architecture_message(ArchitectureMessage::Rollback);
             }
             target_ids::AUTOMATIONS_OPEN if !self.settings_open && !self.automations_open => {
                 self.update_message(Message::Automation(AutomationMessage::OpenAutomations));
@@ -22591,11 +22124,13 @@ impl DesktopProgram {
             {
                 self.clear_goal();
             }
-            target_ids::TASK_MEMORY_TOGGLE if self.memory_injection.is_some() => {
-                self.toggle_task_memory();
+            target_ids::TASK_MEMORY_TOGGLE if self.memory_module().injection().is_some() => {
+                self.route_memory_message(MemoryMessage::ToggleTaskInjection);
             }
-            target_ids::TASK_MEMORY_RESET_COOLDOWN if self.memory_injection.is_some() => {
-                self.reset_task_memory_cooldown();
+            target_ids::TASK_MEMORY_RESET_COOLDOWN
+                if self.memory_module().injection().is_some() =>
+            {
+                self.route_memory_message(MemoryMessage::ResetTaskCooldown);
             }
             target_ids::WORKTREE_CREATE
                 if !self.composer_is_locked()
@@ -22860,22 +22395,29 @@ impl DesktopProgram {
                     && self.project_surface == ProjectSurface::Roadmap
                 {
                     if let Some(milestone_id) =
-                        self.roadmap.milestones.iter().find_map(|milestone| {
-                            (target_ids::milestone(&milestone.id) == target_id)
-                                .then(|| milestone.id.clone())
-                        })
+                        self.roadmap_module()
+                            .roadmap()
+                            .milestones
+                            .iter()
+                            .find_map(|milestone| {
+                                (target_ids::milestone(&milestone.id) == target_id)
+                                    .then(|| milestone.id.clone())
+                            })
                     {
-                        self.select_milestone(milestone_id);
+                        self.route_roadmap_message(RoadmapMessage::Select(milestone_id));
                         return true;
                     }
-                    if let Some(milestone_id) = self.selected_milestone.clone() {
-                        let task_id = self.tasks.iter().find_map(|task| {
-                            (target_ids::milestone_task(&milestone_id, task.id.as_str())
-                                == target_id)
-                                .then(|| task.id.as_str().to_owned())
-                        });
+                    if let Some(milestone_id) = self.roadmap_module().selected().map(str::to_owned) {
+                        let task_id =
+                            self.window_tasks(self.dispatch_window())
+                                .iter()
+                                .find_map(|task| {
+                                    (target_ids::milestone_task(&milestone_id, task.id.as_str())
+                                        == target_id)
+                                        .then(|| task.id.as_str().to_owned())
+                                });
                         if let Some(task_id) = task_id {
-                            self.toggle_milestone_task(task_id);
+                            self.route_roadmap_message(RoadmapMessage::ToggleTask(task_id));
                             return true;
                         }
                     }
@@ -22884,10 +22426,12 @@ impl DesktopProgram {
                     && !self.automations_open
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    if let Some(memory_id) = self.memories.iter().find_map(|memory| {
-                        (target_ids::memory(&memory.id) == target_id).then(|| memory.id.clone())
-                    }) {
-                        self.select_memory(memory_id);
+                    if let Some(memory_id) =
+                        self.memory_module().memories().iter().find_map(|memory| {
+                            (target_ids::memory(&memory.id) == target_id).then(|| memory.id.clone())
+                        })
+                    {
+                        self.route_memory_message(MemoryMessage::Select(memory_id));
                         return true;
                     }
                     return false;
@@ -23426,15 +22970,25 @@ impl DesktopProgram {
             .as_ref()
             .and_then(|runtime| runtime.turn_id.as_deref())
             .and_then(|turn_id| durable_turns.iter().find(|turn| turn.turn_id == turn_id));
-        let selected_milestone = self.selected_milestone.as_deref().and_then(|selected| {
-            self.roadmap
+        let memory_module = self.memory_module();
+        let selected_memory = memory_module.selected().and_then(|selected| {
+            memory_module
+                .memories()
+                .iter()
+                .find(|memory| memory.id == selected)
+        });
+        let roadmap_module = self.roadmap_module();
+        let selected_milestone = roadmap_module.selected().and_then(|selected| {
+            roadmap_module
+                .roadmap()
                 .milestones
                 .iter()
                 .find(|milestone| milestone.id == selected)
         });
         let selected_milestone_task_count = selected_milestone
             .map(|milestone| {
-                self.roadmap
+                roadmap_module
+                    .roadmap()
                     .links
                     .iter()
                     .filter(|link| link.milestone_id == milestone.id)
@@ -23833,7 +23387,7 @@ impl DesktopProgram {
                 .and_then(|_| {
                     parse_automation_node_config(&self.automation_node_inspector.config).ok()
                 }),
-            selected_milestone: self.selected_milestone.clone(),
+            selected_milestone: roadmap_module.selected().map(str::to_owned),
             selected_milestone_title: selected_milestone.map(|milestone| milestone.title.clone()),
             selected_milestone_description: selected_milestone
                 .map(|milestone| milestone.description.clone()),
@@ -23843,39 +23397,25 @@ impl DesktopProgram {
             selected_milestone_status: selected_milestone
                 .map(|milestone| milestone.status.as_str()),
             selected_milestone_task_count,
-            milestone_count: self.roadmap.milestones.len(),
-            roadmap_error: self.roadmap_error.clone(),
-            selected_memory: self.selected_memory.clone(),
-            selected_memory_title: self.selected_memory.as_deref().and_then(|selected| {
-                self.memories
-                    .iter()
-                    .find(|memory| memory.id == selected)
-                    .map(|memory| memory.title.clone())
-            }),
-            selected_memory_body_line_count: self.selected_memory.as_deref().and_then(|selected| {
-                self.memories
-                    .iter()
-                    .find(|memory| memory.id == selected)
-                    .map(|memory| memory.body.lines().count())
-            }),
-            memory_draft_body_line_count: self.memory_body.line_count(),
-            memory_count: self.memories.len(),
-            memory_enabled: self.selected_memory.as_deref().and_then(|selected| {
-                self.memories
-                    .iter()
-                    .find(|memory| memory.id == selected)
-                    .map(|memory| memory.enabled)
-            }),
+            milestone_count: roadmap_module.roadmap().milestones.len(),
+            roadmap_error: roadmap_module.error().map(str::to_owned),
+            selected_memory: memory_module.selected().map(str::to_owned),
+            selected_memory_title: selected_memory.map(|memory| memory.title.clone()),
+            selected_memory_body_line_count: selected_memory
+                .map(|memory| memory.body.lines().count()),
+            memory_draft_body_line_count: memory_module.body().line_count(),
+            memory_count: memory_module.memories().len(),
+            memory_enabled: selected_memory.map(|memory| memory.enabled),
             memory_scope: (self.project_surface == ProjectSurface::Memory).then_some(
-                match self.memory_scope {
+                match memory_module.scope() {
                     MemoryScope::User => "user",
                     MemoryScope::Project => "project",
                 },
             ),
-            memory_global_enabled: self.memory_settings.enabled,
-            memory_baseline_enabled: self.memory_settings.baseline_injection_enabled,
-            memory_cooldown_turns: self.memory_settings.cooldown_turns,
-            task_memory_enabled: self.memory_injection.as_ref().map(|state| state.enabled),
+            memory_global_enabled: memory_module.settings().enabled,
+            memory_baseline_enabled: memory_module.settings().baseline_injection_enabled,
+            memory_cooldown_turns: memory_module.settings().cooldown_turns,
+            task_memory_enabled: memory_module.injection().map(|state| state.enabled),
             sidebar_region_extent: self
                 .workspace
                 .layout()
@@ -23951,12 +23491,12 @@ impl DesktopProgram {
             coding_tools_has_git: self.coding_git.is_some(),
             coding_tools_has_workspace: self.coding_workspace.is_some(),
             coding_tools_has_search: self.coding_search.is_some(),
-            architecture_version: self.architecture.version,
-            architecture_node_count: self.architecture.nodes.len(),
-            architecture_edge_count: self.architecture.edges.len(),
-            architecture_history_count: self.architecture_history.len(),
-            architecture_quarantine_count: self.architecture_quarantine_count,
-            architecture_selected_node: match self.architecture_selection.as_ref() {
+            architecture_version: self.architecture_module().graph().version,
+            architecture_node_count: self.architecture_module().graph().nodes.len(),
+            architecture_edge_count: self.architecture_module().graph().edges.len(),
+            architecture_history_count: self.architecture_module().history().len(),
+            architecture_quarantine_count: self.architecture_module().quarantine_count(),
+            architecture_selected_node: match self.architecture_module().selection() {
                 Some(GraphSelection::Node(node)) => Some(node.as_str().to_owned()),
                 _ => None,
             },
@@ -24578,9 +24118,9 @@ impl DesktopProgram {
                 self.conversation_status_error.as_deref(),
             ),
             ("automation", self.automation_error.as_deref()),
-            ("roadmap", self.roadmap_error.as_deref()),
-            ("architecture", self.architecture_error.as_deref()),
-            ("memory", self.memory_error.as_deref()),
+            ("roadmap", self.roadmap_module().error()),
+            ("architecture", self.architecture_module().error()),
+            ("memory", self.memory_module().error()),
             ("coding-tools", self.coding_error.as_deref()),
             ("provider", self.provider_error.as_deref()),
             ("quota", self.quota_error.as_deref()),
@@ -24627,22 +24167,24 @@ impl DesktopProgram {
     #[cfg(debug_assertions)]
     fn project_workspace_editor_debug_targets(
         &self,
-        editor: &ProjectWorkspaceEditorState,
+        window_id: HostedWindowId,
+        surface: ProjectWorkspaceSurface,
     ) -> Vec<String> {
-        match editor.surface {
+        match surface {
             ProjectWorkspaceSurface::Roadmap => {
                 let mut targets = vec![
                     target_ids::ROADMAP_REFRESH.to_owned(),
                     target_ids::ROADMAP_CREATE.to_owned(),
                 ];
+                let module = self.window_roadmap_module(window_id);
                 targets.extend(
-                    editor
-                        .roadmap
-                        .milestones
+                    module
+                        .map(|module| module.roadmap().milestones.as_slice())
+                        .unwrap_or_default()
                         .iter()
                         .map(|milestone| target_ids::milestone(&milestone.id)),
                 );
-                if let Some(milestone_id) = &editor.selected_milestone {
+                if let Some(milestone_id) = module.and_then(|module| module.selected()) {
                     targets.extend([
                         target_ids::ROADMAP_TITLE.to_owned(),
                         target_ids::ROADMAP_DESCRIPTION.to_owned(),
@@ -24652,12 +24194,11 @@ impl DesktopProgram {
                         target_ids::ROADMAP_MOVE_DOWN.to_owned(),
                         target_ids::ROADMAP_DELETE.to_owned(),
                     ]);
-                    if !editor.milestone_title.trim().is_empty() {
+                    if module.is_some_and(|module| !module.title().trim().is_empty()) {
                         targets.push(target_ids::ROADMAP_SAVE.to_owned());
                     }
                     targets.extend(
-                        editor
-                            .tasks
+                        self.window_tasks(window_id)
                             .iter()
                             .map(|task| target_ids::milestone_task(milestone_id, task.id.as_str())),
                     );
@@ -24677,21 +24218,25 @@ impl DesktopProgram {
                     target_ids::MEMORY_SETTINGS_COOLDOWN.to_owned(),
                     target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT.to_owned(),
                 ];
-                if parse_memory_cooldown(&self.memory_cooldown_input).is_ok() {
+                let module = self.window_memory_module(window_id);
+                if module
+                    .is_some_and(|module| parse_memory_cooldown(module.cooldown_input()).is_ok())
+                {
                     targets.push(target_ids::MEMORY_SETTINGS_COOLDOWN_SAVE.to_owned());
                 }
                 targets.extend(
-                    editor
-                        .memories
+                    module
+                        .map(crate::module::memory::MemoryModule::memories)
+                        .unwrap_or_default()
                         .iter()
                         .map(|memory| target_ids::memory(&memory.id)),
                 );
-                if !editor.memory_title.trim().is_empty()
-                    && !editor.memory_body.text().trim().is_empty()
-                {
+                if module.is_some_and(|module| {
+                    !module.title().trim().is_empty() && !module.body().text().trim().is_empty()
+                }) {
                     targets.push(target_ids::MEMORY_SAVE.to_owned());
                 }
-                if editor.selected_memory.is_some() {
+                if module.is_some_and(|module| module.selected().is_some()) {
                     targets.extend([
                         target_ids::MEMORY_TOGGLE.to_owned(),
                         target_ids::MEMORY_DELETE.to_owned(),
@@ -24701,11 +24246,10 @@ impl DesktopProgram {
             }
             ProjectWorkspaceSurface::Architecture => {
                 let mut targets = vec![target_ids::ARCHITECTURE_REFRESH.to_owned()];
-                if !editor.tasks.is_empty()
-                    && editor.architecture_history.iter().any(|record| {
-                        record.event.status == ArchitectureChangeStatus::Applied
-                            && record.after_graph.as_ref() == Some(&editor.architecture)
-                    })
+                if !self.window_tasks(window_id).is_empty()
+                    && self
+                        .window_architecture_module(window_id)
+                        .is_some_and(architecture_module_can_roll_back)
                 {
                     targets.push(target_ids::ARCHITECTURE_ROLLBACK.to_owned());
                 }
@@ -24730,11 +24274,11 @@ impl DesktopProgram {
             let Some(item_id) = popup.active_workspace_item_id.as_ref() else {
                 continue;
             };
-            let Some(editor) = popup.project_states.get(item_id) else {
+            let Some((_, surface)) = self.workspace_window_project_surface(popup.id, item_id) else {
                 continue;
             };
             targets.extend(
-                self.project_workspace_editor_debug_targets(editor)
+                self.project_workspace_editor_debug_targets(popup.id, surface)
                     .into_iter()
                     .map(|target_id| {
                         target_ids::workspace_window_project_action(popup.id.0, &target_id)
@@ -26104,12 +25648,13 @@ impl DesktopProgram {
                 target_ids::ROADMAP_CREATE.to_owned(),
             ]);
             targets.extend(
-                self.roadmap
+                self.roadmap_module()
+                    .roadmap()
                     .milestones
                     .iter()
                     .map(|milestone| target_ids::milestone(&milestone.id)),
             );
-            if let Some(milestone_id) = &self.selected_milestone {
+            if let Some(milestone_id) = self.roadmap_module().selected() {
                 targets.extend([
                     target_ids::ROADMAP_TITLE.to_owned(),
                     target_ids::ROADMAP_DESCRIPTION.to_owned(),
@@ -26119,7 +25664,7 @@ impl DesktopProgram {
                     target_ids::ROADMAP_MOVE_DOWN.to_owned(),
                     target_ids::ROADMAP_DELETE.to_owned(),
                 ]);
-                if !self.milestone_title.trim().is_empty() {
+                if !self.roadmap_module().title().trim().is_empty() {
                     targets.push(target_ids::ROADMAP_SAVE.to_owned());
                 }
                 targets.extend(
@@ -26143,18 +25688,21 @@ impl DesktopProgram {
                 target_ids::MEMORY_SETTINGS_COOLDOWN.to_owned(),
                 target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT.to_owned(),
             ]);
-            if parse_memory_cooldown(&self.memory_cooldown_input).is_ok() {
+            if parse_memory_cooldown(self.memory_module().cooldown_input()).is_ok() {
                 targets.push(target_ids::MEMORY_SETTINGS_COOLDOWN_SAVE.to_owned());
             }
             targets.extend(
-                self.memories
+                self.memory_module()
+                    .memories()
                     .iter()
                     .map(|memory| target_ids::memory(&memory.id)),
             );
-            if !self.memory_title.trim().is_empty() && !self.memory_body.text().trim().is_empty() {
+            if !self.memory_module().title().trim().is_empty()
+                && !self.memory_module().body().text().trim().is_empty()
+            {
                 targets.push(target_ids::MEMORY_SAVE.to_owned());
             }
-            if self.selected_memory.is_some() {
+            if self.memory_module().selected().is_some() {
                 targets.extend([
                     target_ids::MEMORY_TOGGLE.to_owned(),
                     target_ids::MEMORY_DELETE.to_owned(),
@@ -26266,12 +25814,7 @@ impl DesktopProgram {
         }
         if self.project_surface == ProjectSurface::Architecture {
             targets.push(target_ids::ARCHITECTURE_REFRESH.to_owned());
-            if !self.tasks.is_empty()
-                && self.architecture_history.iter().any(|record| {
-                    record.event.status == ArchitectureChangeStatus::Applied
-                        && record.after_graph.as_ref() == Some(&self.architecture)
-                })
-            {
+            if !self.tasks.is_empty() && self.architecture_can_roll_back() {
                 targets.push(target_ids::ARCHITECTURE_ROLLBACK.to_owned());
             }
             return targets;
@@ -26854,7 +26397,7 @@ impl DesktopProgram {
                     }
                 }
             }
-            if self.memory_injection.is_some() {
+            if self.memory_module().injection().is_some() {
                 targets.extend([
                     target_ids::TASK_MEMORY_TOGGLE.to_owned(),
                     target_ids::TASK_MEMORY_RESET_COOLDOWN.to_owned(),
@@ -27459,7 +27002,7 @@ impl DesktopProgram {
         }
         if item_changed {
             self.sync_workspace_window_application_surface(window_id);
-            self.sync_workspace_window_project_surfaces(window_id, false);
+            self.sync_workspace_window_project_surfaces(window_id);
         }
         self.sync_workspace_window_splits(window_id);
         self.sync_document_editors_from_workspaces();
@@ -27683,14 +27226,13 @@ impl DesktopProgram {
                     surface_position: persisted.geometry.map(|geometry| (geometry.x, geometry.y)),
                     scale_factor: 1.0,
                     workspace_splits: BTreeMap::new(),
-                    project_states: BTreeMap::new(),
                 },
             );
             self.sync_workspace_window_splits(window_id);
             self.refresh_task_popup(window_id);
             self.refresh_conversation_suggestions(window_id, false);
             self.sync_workspace_window_application_surface(window_id);
-            self.sync_workspace_window_project_surfaces(window_id, false);
+            self.sync_workspace_window_project_surfaces(window_id);
             self.sync_document_editors_from_workspaces();
             let Some(popup) = self.task_popups.get(&window_id) else {
                 continue;
@@ -27786,14 +27328,13 @@ impl DesktopProgram {
                 surface_position: None,
                 scale_factor: 1.0,
                 workspace_splits: BTreeMap::new(),
-                project_states: BTreeMap::new(),
             },
         );
         self.apply_workspace_snapshot(outcome.source);
         self.sync_workspace_window_splits(window_id);
         self.refresh_task_popup(window_id);
         self.sync_workspace_window_application_surface(window_id);
-        self.sync_workspace_window_project_surfaces(window_id, false);
+        self.sync_workspace_window_project_surfaces(window_id);
         self.persist_workspace_topology();
         self.pending_window_commands
             .push(HostedWindowCommand::Open {
@@ -27958,7 +27499,6 @@ impl DesktopProgram {
                 surface_position: None,
                 scale_factor: 1.0,
                 workspace_splits: BTreeMap::new(),
-                project_states: BTreeMap::new(),
             },
         );
         self.refresh_conversation_suggestions(window_id, false);
@@ -28200,7 +27740,6 @@ impl DesktopProgram {
                 surface_position: None,
                 scale_factor: 1.0,
                 workspace_splits: BTreeMap::new(),
-                project_states: BTreeMap::new(),
             },
         );
         self.sync_workspace_window_splits(window_id);
@@ -28476,147 +28015,43 @@ impl DesktopProgram {
         }
     }
 
-    fn load_project_workspace_editor_state(
+    /// The project and page a workspace window's item shows.
+    ///
+    /// Read from the item each time rather than mirrored beside it: the item is
+    /// the only writer of its own surface, and a second copy is what used to
+    /// drift when a window reopened.
+    fn workspace_window_project_surface(
         &self,
-        item: &WorkspaceItem,
-    ) -> Option<ProjectWorkspaceEditorState> {
-        let (project_id, surface) = item.project_surface().ok().flatten()?;
-        let tasks = self
-            .application
-            .query_tasks(TaskQuery::for_project(project_id.clone()))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|task| DesktopWorkspaceTask {
-                id: task.id,
-                title: task.title,
-                parent_id: task.parent_id,
-                status: task.status,
-                priority: task.priority,
-                pinned: task.pinned,
-                sort_order: task.sort_order,
-            })
-            .collect::<Vec<_>>();
-        let selected_milestone = item
-            .serialized_state
-            .as_ref()
-            .and_then(|state| state.get("selectedMilestoneId"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let selected_memory = item
-            .serialized_state
-            .as_ref()
-            .and_then(|state| state.get("selectedMemoryId"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let (roadmap, roadmap_error) = match self.application.project_roadmap(&project_id) {
-            Ok(roadmap) => (roadmap, None),
-            Err(error) => (
-                ProjectRoadmap::default(),
-                Some(format!("无法读取路线图：{error}")),
-            ),
-        };
-        let selected_milestone = selected_milestone
-            .filter(|selected| roadmap.milestones.iter().any(|item| &item.id == selected))
-            .or_else(|| roadmap.milestones.first().map(|item| item.id.clone()));
-        let milestone = selected_milestone
-            .as_deref()
-            .and_then(|selected| roadmap.milestones.iter().find(|item| item.id == selected));
-        let milestone_title = milestone.map(|item| item.title.clone()).unwrap_or_default();
-        let milestone_description = milestone
-            .map(|item| item.description.clone())
-            .unwrap_or_default();
-        let milestone_due_date = milestone
-            .and_then(|item| item.due_date)
-            .map(format_civil_date)
-            .unwrap_or_default();
-        let (memories, memory_error) = match self.application.list_memories(Some(&project_id)) {
-            Ok(memories) => (memories, None),
-            Err(error) => (Vec::new(), Some(format!("无法读取 Memory：{error}"))),
-        };
-        let selected_memory = selected_memory
-            .filter(|selected| memories.iter().any(|item| &item.id == selected))
-            .or_else(|| memories.first().map(|item| item.id.clone()));
-        let memory = selected_memory
-            .as_deref()
-            .and_then(|selected| memories.iter().find(|item| item.id == selected));
-        let memory_title = memory.map(|item| item.title.clone()).unwrap_or_default();
-        let memory_body =
-            TextEditorState::with_text(memory.map(|item| item.body.as_str()).unwrap_or_default());
-        let memory_tags = memory.map(|item| item.tags.join(", ")).unwrap_or_default();
-        let memory_scope = memory.map_or(MemoryScope::Project, |item| item.scope);
-        let memory_updated_at = memory.map(|item| item.updated_at);
-        let (
-            architecture,
-            architecture_history,
-            architecture_quarantine_count,
-            mut architecture_error,
-        ) = match (
-            self.application.project_architecture(&project_id),
-            self.application
-                .project_architecture_changes(&project_id, 40),
-            self.application
-                .project_architecture_quarantine(&project_id),
-        ) {
-            (Ok(graph), Ok(history), Ok(quarantine)) => (graph, history, quarantine.len(), None),
-            (graph, history, quarantine) => (
-                ProjectArchitectureGraph::empty(project_id.as_str()),
-                Vec::new(),
-                0,
-                Some(format!(
-                    "无法读取架构快照：{}",
-                    graph
-                        .err()
-                        .or_else(|| history.err())
-                        .or_else(|| quarantine.err())
-                        .map(|error| error.to_string())
-                        .unwrap_or_else(|| "未知错误".to_owned())
-                )),
-            ),
-        };
-        let mut architecture_graph =
-            architecture_graph_model(&architecture).unwrap_or_else(|_| GraphModel::empty());
-        let mut architecture_viewport = architecture_default_viewport(&architecture_graph);
-        if let Err(error) = restore_architecture_workspace_layout(
-            item.serialized_state.as_ref(),
-            architecture.version,
-            &mut architecture_graph,
-            &mut architecture_viewport,
-        ) {
-            architecture_error = Some(format!("架构图布局已重置，保存的布局无法恢复：{error}"));
-        }
-        Some(ProjectWorkspaceEditorState {
-            project_id,
-            surface,
-            tasks,
-            roadmap,
-            selected_milestone,
-            milestone_title,
-            milestone_description,
-            milestone_due_date,
-            roadmap_error,
-            memories,
-            selected_memory,
-            memory_title,
-            memory_body,
-            memory_tags,
-            memory_scope,
-            memory_updated_at,
-            memory_error,
-            architecture,
-            architecture_history,
-            architecture_quarantine_count,
-            architecture_graph,
-            architecture_viewport,
-            architecture_selection: None,
-            architecture_error,
-        })
+        window_id: HostedWindowId,
+        item_id: &WorkspaceItemId,
+    ) -> Option<(ProjectId, ProjectWorkspaceSurface)> {
+        self.task_popups
+            .get(&window_id)?
+            .workspace
+            .snapshot()
+            .ok()?
+            .workspace_items
+            .iter()
+            .find(|item| &item.id == item_id)
+            .and_then(|item| item.project_surface().ok().flatten())
     }
 
-    fn sync_workspace_window_project_surfaces(
-        &mut self,
-        window_id: HostedWindowId,
-        replace_existing: bool,
-    ) {
+    /// The tasks a window's project pages render against, taken from that
+    /// window's own session.
+    fn window_tasks(&self, window_id: HostedWindowId) -> Cow<'_, [DesktopWorkspaceTask]> {
+        if window_id == HostedWindowId::PRIMARY {
+            return Cow::Borrowed(&self.tasks);
+        }
+        self.task_popups
+            .get(&window_id)
+            .and_then(|popup| popup.workspace.snapshot().ok())
+            .map(|snapshot| Cow::Owned(snapshot.tasks))
+            .unwrap_or(Cow::Borrowed(&[]))
+    }
+
+    /// Loads every project page a workspace window has open into that window's
+    /// own modules.
+    fn sync_workspace_window_project_surfaces(&mut self, window_id: HostedWindowId) {
         let items = self
             .task_popups
             .get(&window_id)
@@ -28629,27 +28064,118 @@ impl DesktopProgram {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let item_ids = items
+        self.sync_workspace_window_architecture(window_id, &items);
+        self.sync_workspace_window_roadmap(window_id, &items);
+        self.sync_workspace_window_memory(window_id, &items);
+    }
+
+    /// Loads the window's memory module and restores the memory its item
+    /// remembered.
+    fn sync_workspace_window_memory(&mut self, window_id: HostedWindowId, items: &[WorkspaceItem]) {
+        let Some(saved) = Self::workspace_item_state(items, ProjectWorkspaceSurface::Memory) else {
+            return;
+        };
+        self.route_to_window_module(
+            window_id,
+            &crate::module::memory::MemoryModule::feature_id(),
+            Box::new(MemoryMessage::Refresh),
+            Some(crate::runtime_shell::ShellProjectPage::Memory),
+        );
+        let selected = saved
+            .as_ref()
+            .and_then(|state| state.get("selectedMemoryId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(module) = self
+            .window_ui_modules(window_id)
+            .get_mut::<crate::module::memory::MemoryModule>(
+                &crate::module::memory::MemoryModule::feature_id(),
+            )
+        {
+            module.restore_selection(selected);
+        }
+    }
+
+    /// The state a workspace item saved for one of the window's project pages.
+    fn workspace_item_state(
+        items: &[WorkspaceItem],
+        surface: ProjectWorkspaceSurface,
+    ) -> Option<Option<Value>> {
+        items
             .iter()
-            .map(|item| item.id.clone())
-            .collect::<BTreeSet<_>>();
-        let loaded = items
-            .iter()
-            .filter_map(|item| {
-                self.load_project_workspace_editor_state(item)
-                    .map(|state| (item.id.clone(), state))
+            .find(|item| {
+                item.project_surface()
+                    .ok()
+                    .flatten()
+                    .is_some_and(|(_, item_surface)| item_surface == surface)
             })
-            .collect::<Vec<_>>();
-        if let Some(popup) = self.task_popups.get_mut(&window_id) {
-            popup
-                .project_states
-                .retain(|item_id, _| item_ids.contains(item_id));
-            for (item_id, state) in loaded {
-                if replace_existing {
-                    popup.project_states.insert(item_id, state);
-                } else {
-                    popup.project_states.entry(item_id).or_insert(state);
-                }
+            .map(|item| item.serialized_state.clone())
+    }
+
+    /// Loads the window's roadmap module and restores the milestone its item
+    /// remembered. Without a roadmap item the module stays empty, which is what
+    /// an unopened page should project.
+    fn sync_workspace_window_roadmap(&mut self, window_id: HostedWindowId, items: &[WorkspaceItem]) {
+        let Some(saved) = Self::workspace_item_state(items, ProjectWorkspaceSurface::Roadmap) else {
+            return;
+        };
+        self.route_to_window_module(
+            window_id,
+            &crate::module::roadmap::RoadmapModule::feature_id(),
+            Box::new(RoadmapMessage::Refresh),
+            Some(crate::runtime_shell::ShellProjectPage::Roadmap),
+        );
+        let selected = saved
+            .as_ref()
+            .and_then(|state| state.get("selectedMilestoneId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(module) = self
+            .window_ui_modules(window_id)
+            .get_mut::<crate::module::roadmap::RoadmapModule>(
+                &crate::module::roadmap::RoadmapModule::feature_id(),
+            )
+        {
+            module.restore_selection(selected);
+        }
+    }
+
+    /// Loads the window's architecture module and lays it out with whatever the
+    /// architecture item saved.
+    fn sync_workspace_window_architecture(
+        &mut self,
+        window_id: HostedWindowId,
+        items: &[WorkspaceItem],
+    ) {
+        let Some(saved) = Self::workspace_item_state(items, ProjectWorkspaceSurface::Architecture)
+        else {
+            return;
+        };
+        self.route_to_window_module(
+            window_id,
+            &crate::module::architecture::ArchitectureModule::feature_id(),
+            Box::new(ArchitectureMessage::Refresh),
+            Some(crate::runtime_shell::ShellProjectPage::Architecture),
+        );
+        let module = self
+            .window_ui_modules(window_id)
+            .get_mut::<crate::module::architecture::ArchitectureModule>(
+                &crate::module::architecture::ArchitectureModule::feature_id(),
+            )
+            .expect("the architecture module is registered for every window");
+        let mut model = module.model().clone();
+        let mut viewport = module.viewport();
+        let version = module.graph().version;
+        match restore_architecture_workspace_layout(
+            saved.as_ref(),
+            version,
+            &mut model,
+            &mut viewport,
+        ) {
+            Ok(()) => module.restore_layout(model, viewport),
+            Err(error) => {
+                self.error_message =
+                    Some(format!("架构图布局已重置，保存的布局无法恢复：{error}"));
             }
         }
     }
@@ -28681,72 +28207,18 @@ impl DesktopProgram {
             })
             .collect::<Vec<_>>();
         for window_id in window_ids {
-            self.sync_workspace_window_project_surfaces(window_id, true);
+            self.sync_workspace_window_project_surfaces(window_id);
         }
     }
 
-    fn capture_project_workspace_editor_state(
-        &self,
-        project_id: ProjectId,
-        surface: ProjectWorkspaceSurface,
-    ) -> ProjectWorkspaceEditorState {
-        ProjectWorkspaceEditorState {
-            project_id,
-            surface,
-            tasks: self.tasks.clone(),
-            roadmap: self.roadmap.clone(),
-            selected_milestone: self.selected_milestone.clone(),
-            milestone_title: self.milestone_title.clone(),
-            milestone_description: self.milestone_description.clone(),
-            milestone_due_date: self.milestone_due_date.clone(),
-            roadmap_error: self.roadmap_error.clone(),
-            memories: self.memories.clone(),
-            selected_memory: self.selected_memory.clone(),
-            memory_title: self.memory_title.clone(),
-            memory_body: TextEditorState::with_text(&self.memory_body.text()),
-            memory_tags: self.memory_tags.clone(),
-            memory_scope: self.memory_scope,
-            memory_updated_at: self.memory_updated_at,
-            memory_error: self.memory_error.clone(),
-            architecture: self.architecture.clone(),
-            architecture_history: self.architecture_history.clone(),
-            architecture_quarantine_count: self.architecture_quarantine_count,
-            architecture_graph: self.architecture_graph.clone(),
-            architecture_viewport: self.architecture_viewport,
-            architecture_selection: self.architecture_selection.clone(),
-            architecture_error: self.architecture_error.clone(),
-        }
-    }
-
-    fn apply_project_workspace_editor_state(&mut self, state: &ProjectWorkspaceEditorState) {
-        self.selected_project = Some(state.project_id.clone());
-        self.inbox_selected = false;
-        self.selected_task = None;
-        self.project_surface = ProjectSurface::from(state.surface);
-        self.tasks = state.tasks.clone();
-        self.roadmap = state.roadmap.clone();
-        self.selected_milestone = state.selected_milestone.clone();
-        self.milestone_title = state.milestone_title.clone();
-        self.milestone_description = state.milestone_description.clone();
-        self.milestone_due_date = state.milestone_due_date.clone();
-        self.roadmap_error = state.roadmap_error.clone();
-        self.memories = state.memories.clone();
-        self.selected_memory = state.selected_memory.clone();
-        self.memory_title = state.memory_title.clone();
-        self.memory_body.set_text(&state.memory_body.text());
-        self.memory_tags = state.memory_tags.clone();
-        self.memory_scope = state.memory_scope;
-        self.memory_updated_at = state.memory_updated_at;
-        self.memory_error = state.memory_error.clone();
-        self.architecture = state.architecture.clone();
-        self.architecture_history = state.architecture_history.clone();
-        self.architecture_quarantine_count = state.architecture_quarantine_count;
-        self.architecture_graph = state.architecture_graph.clone();
-        self.architecture_viewport = state.architecture_viewport;
-        self.architecture_selection = state.architecture_selection.clone();
-        self.architecture_error = state.architecture_error.clone();
-    }
-
+    /// Runs `operation` as if the workspace window's project page were the one
+    /// the primary window is showing.
+    ///
+    /// The domains that page renders now live in the window's own modules, so
+    /// nothing is swapped into the primary window's state any more. What remains
+    /// is the selection the shell's own handlers read, plus a note of which
+    /// window's modules a dispatch belongs to — a debug target names a widget,
+    /// never a window, so the shell has to say.
     fn with_workspace_window_project_state<R>(
         &mut self,
         window_id: HostedWindowId,
@@ -28754,63 +28226,55 @@ impl DesktopProgram {
         persist_item_state: bool,
         operation: impl FnOnce(&mut Self) -> R,
     ) -> Option<R> {
-        let mut editor = self
-            .task_popups
-            .get_mut(&window_id)
-            .and_then(|popup| popup.project_states.remove(&item_id))?;
-        let previous_project = self.selected_project.clone();
-        let previous_inbox = self.inbox_selected;
-        let previous_task = self.selected_task.clone();
-        let previous_surface = self.project_surface;
-        let previous_editor = self.capture_project_workspace_editor_state(
-            previous_project
-                .clone()
-                .unwrap_or_else(|| editor.project_id.clone()),
-            editor.surface,
-        );
-        self.apply_project_workspace_editor_state(&editor);
+        let (project_id, surface) = self.workspace_window_project_surface(window_id, &item_id)?;
+        // Furnished up front so the guards the operation runs can read this
+        // window's modules rather than falling back to the primary window's.
+        self.window_ui_modules(window_id);
+        let previous_project = self.selected_project.replace(project_id);
+        let previous_inbox = std::mem::replace(&mut self.inbox_selected, false);
+        let previous_task = self.selected_task.take();
+        let previous_surface =
+            std::mem::replace(&mut self.project_surface, ProjectSurface::from(surface));
+        let previous_dispatch = self
+            .module_dispatch
+            .replace((window_id, crate::runtime_shell::ShellProjectPage::from(surface)));
         let result = operation(self);
-        editor =
-            self.capture_project_workspace_editor_state(editor.project_id.clone(), editor.surface);
-        self.apply_project_workspace_editor_state(&previous_editor);
+        self.module_dispatch = previous_dispatch;
         self.selected_project = previous_project;
         self.inbox_selected = previous_inbox;
         self.selected_task = previous_task;
         self.project_surface = previous_surface;
-        if let Some(popup) = self.task_popups.get_mut(&window_id) {
-            popup.project_states.insert(item_id.clone(), editor.clone());
-        }
-        if !persist_item_state {
-            return Some(result);
-        }
-        let serialized_state = Some(serde_json::json!({
-            "selectedMilestoneId": editor.selected_milestone,
-            "selectedMemoryId": editor.selected_memory,
-            "architectureLayout": architecture_workspace_layout_value(
-                editor.architecture.version,
-                &editor.architecture_graph,
-                editor.architecture_viewport,
-            ),
-        }));
-        let workspace = self
-            .task_popups
-            .get(&window_id)
-            .map(|popup| popup.workspace.clone());
-        if let Some(workspace) = workspace {
-            match workspace.execute(DesktopCommand::UpdateWorkspaceItemState {
-                item_id,
-                serialized_state,
-            }) {
-                Ok(outcome) => {
-                    self.apply_task_popup_workspace_snapshot(window_id, outcome.workspace);
-                    self.persist_workspace_topology();
-                }
-                Err(error) => {
-                    eprintln!("failed to persist Native project Workspace Item state: {error}");
-                }
-            }
+        if persist_item_state {
+            self.persist_workspace_window_item_state(window_id, item_id);
         }
         Some(result)
+    }
+
+    fn persist_workspace_window_item_state(
+        &mut self,
+        window_id: HostedWindowId,
+        item_id: WorkspaceItemId,
+    ) {
+        let serialized_state = self.workspace_window_item_state(window_id);
+        let Some(workspace) = self
+            .task_popups
+            .get(&window_id)
+            .map(|popup| popup.workspace.clone())
+        else {
+            return;
+        };
+        match workspace.execute(DesktopCommand::UpdateWorkspaceItemState {
+            item_id,
+            serialized_state: Some(serialized_state),
+        }) {
+            Ok(outcome) => {
+                self.apply_task_popup_workspace_snapshot(window_id, outcome.workspace);
+                self.persist_workspace_topology();
+            }
+            Err(error) => {
+                eprintln!("failed to persist Native project Workspace Item state: {error}");
+            }
+        }
     }
 
     fn update_workspace_window_project_action(
@@ -28819,22 +28283,46 @@ impl DesktopProgram {
         item_id: WorkspaceItemId,
         message: Message,
     ) -> Option<HostedWindowAction> {
-        let persist_item_state = match &message {
-            Message::Architecture(ArchitectureMessage::ArchitectureGraph(event)) => architecture_layout_event_committed(event),
-            _ => true,
-        };
-        self.with_workspace_window_project_state(
-            window_id,
-            item_id,
-            persist_item_state,
-            |program| match message {
-                Message::Architecture(ArchitectureMessage::ArchitectureGraph(event)) => {
-                    program.update_architecture_graph(event);
-                    None
-                }
-                message => program.update_message(message),
-            },
-        )
+        if let Message::Architecture(message) = message {
+            let persist_item_state = match &message {
+                ArchitectureMessage::Graph(event) => architecture_layout_event_committed(event),
+                _ => true,
+            };
+            self.route_workspace_window_module(
+                window_id,
+                item_id,
+                &crate::module::architecture::ArchitectureModule::feature_id(),
+                Box::new(message),
+                crate::runtime_shell::ShellProjectPage::Architecture,
+                persist_item_state,
+            );
+            return None;
+        }
+        if let Message::Roadmap(message) = message {
+            self.route_workspace_window_module(
+                window_id,
+                item_id,
+                &crate::module::roadmap::RoadmapModule::feature_id(),
+                Box::new(message),
+                crate::runtime_shell::ShellProjectPage::Roadmap,
+                true,
+            );
+            return None;
+        }
+        if let Message::Memory(message) = message {
+            self.route_workspace_window_module(
+                window_id,
+                item_id,
+                &crate::module::memory::MemoryModule::feature_id(),
+                Box::new(message),
+                crate::runtime_shell::ShellProjectPage::Memory,
+                true,
+            );
+            return None;
+        }
+        self.with_workspace_window_project_state(window_id, item_id, true, |program| {
+            program.update_message(message)
+        })
         .flatten()
     }
 
@@ -30880,6 +30368,7 @@ impl RuntimeProgram for DesktopProgram {
                         sessions.install(WindowId::PRIMARY, application_workspace);
                         sessions
                     },
+                    application: application.clone(),
                     journal: application.journal(),
                     clone_credentials: Arc::new(GitHubCloneCredentials {
                         application: application.clone(),
@@ -31063,10 +30552,6 @@ impl RuntimeProgram for DesktopProgram {
             .as_ref()
             .map(|status| status.pc_name.clone())
             .unwrap_or_else(|| "Lilia 电脑".to_owned());
-        let memory_settings = application
-            .memory_settings()
-            .map_err(|error| error.to_string())?;
-        let memory_cooldown_input = memory_settings.cooldown_turns.to_string();
         let (github_binding, github_error) = match application.github_binding_status() {
             Ok(status) => (status, None),
             Err(error) => (unbound_github_status(), Some(github_error_message(&error))),
@@ -31157,6 +30642,7 @@ impl RuntimeProgram for DesktopProgram {
             active_project_clone_job: None,
             ui_modules,
             ui_module_hosts: HashMap::new(),
+            module_dispatch: None,
             ui_module_registry,
             workspace_sessions,
             kernel,
@@ -31246,30 +30732,6 @@ impl RuntimeProgram for DesktopProgram {
             automation_selection: None,
             automation_node_inspector: AutomationNodeInspectorDraft::default(),
             automation_error: None,
-            roadmap: ProjectRoadmap::default(),
-            selected_milestone: None,
-            milestone_title: String::new(),
-            milestone_description: String::new(),
-            milestone_due_date: String::new(),
-            roadmap_error: None,
-            architecture: ProjectArchitectureGraph::empty(""),
-            architecture_history: Vec::new(),
-            architecture_quarantine_count: 0,
-            architecture_graph: GraphModel::empty(),
-            architecture_viewport: GraphViewport::default(),
-            architecture_selection: None,
-            architecture_error: None,
-            memories: Vec::new(),
-            selected_memory: None,
-            memory_title: String::new(),
-            memory_body: TextEditorState::new(),
-            memory_tags: String::new(),
-            memory_scope: MemoryScope::Project,
-            memory_updated_at: None,
-            memory_error: None,
-            memory_settings,
-            memory_cooldown_input,
-            memory_injection: None,
             coding_tools: None,
             coding_git: None,
             coding_git_diff: None,
@@ -32989,7 +32451,17 @@ fn architecture_permission_label(permission: ArchitecturePermission) -> &'static
     }
 }
 
-fn architecture_change_label(change: &ProjectArchitectureChange) -> String {
+/// A rollback only means something when the drawn graph is an applied version.
+fn architecture_module_can_roll_back(
+    module: &crate::module::architecture::ArchitectureModule,
+) -> bool {
+    module.history().iter().any(|record| {
+        record.event.status == ArchitectureChangeStatus::Applied
+            && record.after_graph.as_ref() == Some(module.graph())
+    })
+}
+
+pub(crate) fn architecture_change_label(change: &ProjectArchitectureChange) -> String {
     match change {
         ProjectArchitectureChange::UpsertNode { node } => format!("更新节点 {}", node.label),
         ProjectArchitectureChange::RemoveNode { node_id } => format!("移除节点 {node_id}"),
@@ -34641,7 +34113,7 @@ fn automation_node_kind_label(kind: &str) -> &str {
     }
 }
 
-fn milestone_status_label(status: MilestoneStatus) -> &'static str {
+pub(crate) fn milestone_status_label(status: MilestoneStatus) -> &'static str {
     match status {
         MilestoneStatus::Upcoming => "即将开始",
         MilestoneStatus::InProgress => "进行中",
@@ -34650,7 +34122,7 @@ fn milestone_status_label(status: MilestoneStatus) -> &'static str {
     }
 }
 
-fn next_milestone_status(status: MilestoneStatus) -> MilestoneStatus {
+pub(crate) fn next_milestone_status(status: MilestoneStatus) -> MilestoneStatus {
     match status {
         MilestoneStatus::Upcoming => MilestoneStatus::InProgress,
         MilestoneStatus::InProgress => MilestoneStatus::Done,
@@ -34659,7 +34131,7 @@ fn next_milestone_status(status: MilestoneStatus) -> MilestoneStatus {
     }
 }
 
-fn parse_memory_tags(value: &str) -> Vec<String> {
+pub(crate) fn parse_memory_tags(value: &str) -> Vec<String> {
     value
         .split([',', '，'])
         .map(str::trim)
@@ -34668,7 +34140,7 @@ fn parse_memory_tags(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_memory_cooldown(value: &str) -> Result<u64, &'static str> {
+pub(crate) fn parse_memory_cooldown(value: &str) -> Result<u64, &'static str> {
     value
         .trim()
         .parse::<u64>()
@@ -34677,7 +34149,7 @@ fn parse_memory_cooldown(value: &str) -> Result<u64, &'static str> {
         .ok_or("冷却 turn 必须是 1–100 的整数。")
 }
 
-fn next_memory_cooldown(current: u64) -> u64 {
+pub(crate) fn next_memory_cooldown(current: u64) -> u64 {
     match current {
         0..=1 => 3,
         2..=3 => 5,
@@ -34686,7 +34158,7 @@ fn next_memory_cooldown(current: u64) -> u64 {
     }
 }
 
-fn parse_civil_date_update(value: &str) -> Result<MilestoneDueDateUpdate, String> {
+pub(crate) fn parse_civil_date_update(value: &str) -> Result<MilestoneDueDateUpdate, String> {
     let value = value.trim();
     if value.is_empty() {
         return Ok(MilestoneDueDateUpdate::Clear);
@@ -34715,7 +34187,7 @@ fn parse_civil_date_update(value: &str) -> Result<MilestoneDueDateUpdate, String
     Ok(MilestoneDueDateUpdate::Set(millis))
 }
 
-fn format_civil_date(timestamp_millis: i64) -> String {
+pub(crate) fn format_civil_date(timestamp_millis: i64) -> String {
     let days = timestamp_millis.div_euclid(86_400_000);
     let (year, month, day) = civil_from_days(days);
     format!("{year:04}-{month:02}-{day:02}")
@@ -35055,7 +34527,7 @@ fn architecture_layout_event_committed(event: &GraphCanvasEvent) -> bool {
     )
 }
 
-fn architecture_default_viewport(graph: &GraphModel) -> GraphViewport {
+pub(crate) fn architecture_default_viewport(graph: &GraphModel) -> GraphViewport {
     graph
         .bounds()
         .map(|bounds| GraphViewport::fit(bounds, GraphSize::new(900.0, 560.0), 64.0))
@@ -35140,7 +34612,7 @@ fn restore_architecture_workspace_layout(
     Ok(())
 }
 
-fn architecture_graph_model(graph: &ProjectArchitectureGraph) -> Result<GraphModel, String> {
+pub(crate) fn architecture_graph_model(graph: &ProjectArchitectureGraph) -> Result<GraphModel, String> {
     let nodes = graph
         .nodes
         .iter()
@@ -35187,7 +34659,7 @@ fn architecture_graph_model(graph: &ProjectArchitectureGraph) -> Result<GraphMod
     GraphModel::new(nodes, edges).map_err(|error| error.to_string())
 }
 
-fn architecture_status_label(status: ArchitectureChangeStatus) -> &'static str {
+pub(crate) fn architecture_status_label(status: ArchitectureChangeStatus) -> &'static str {
     match status {
         ArchitectureChangeStatus::Proposed => "已提议",
         ArchitectureChangeStatus::Pending => "待确认",

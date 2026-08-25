@@ -209,6 +209,18 @@ pub enum ShellProjectPage {
     Files,
 }
 
+impl From<crate::application::ProjectWorkspaceSurface> for ShellProjectPage {
+    fn from(surface: crate::application::ProjectWorkspaceSurface) -> Self {
+        use crate::application::ProjectWorkspaceSurface;
+        match surface {
+            ProjectWorkspaceSurface::Roadmap => Self::Roadmap,
+            ProjectWorkspaceSurface::Memory => Self::Memory,
+            ProjectWorkspaceSurface::Architecture => Self::Architecture,
+            ProjectWorkspaceSurface::Files => Self::Files,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShellNavItem {
     pub id: String,

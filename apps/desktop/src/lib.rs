@@ -19,6 +19,7 @@ mod iab_window;
 mod journal_export;
 mod kernel_host;
 mod markdown_images;
+mod module;
 mod pending_import;
 mod project_files_panel;
 mod provider_ai_settings;
