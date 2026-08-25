@@ -5,6 +5,7 @@
 //! ([`queue`]). Turn execution, approval and interaction state stay with the
 //! agent runtime; this crate never models a turn's lifecycle.
 
+mod execution;
 mod queue;
 mod settings;
 mod title;
@@ -17,12 +18,16 @@ use lilia_kernel::{
 };
 use lilia_storage::Db;
 
+pub use execution::{
+    turn_slot, ApprovalJobRequest, InteractionJobRequest, TurnJobRequest, TurnPort,
+    APPROVAL_PROTOCOL, INTERACTION_PROTOCOL, TURN_PROTOCOL,
+};
+#[cfg(debug_assertions)]
+pub use queue::PersistedDesktopTurnDebugState;
 pub use queue::{
     DesktopTurnQueueError, DesktopTurnQueueStore, PersistedDesktopTurn, PersistedDesktopTurnState,
     QuarantinedDesktopTurn,
 };
-#[cfg(debug_assertions)]
-pub use queue::PersistedDesktopTurnDebugState;
 pub use settings::DesktopAutoTurnDecisionSettings;
 pub use title::{title_slot, TitlePort, TitleRequest, TITLE_PROTOCOL};
 pub use turn::{
@@ -42,11 +47,12 @@ impl ServiceKey for TurnQueueKey {
 pub struct AgentSessionFeature {
     db: Db,
     title: Arc<dyn TitlePort>,
+    turns: Arc<dyn TurnPort>,
 }
 
 impl AgentSessionFeature {
-    pub fn new(db: Db, title: Arc<dyn TitlePort>) -> Self {
-        Self { db, title }
+    pub fn new(db: Db, title: Arc<dyn TitlePort>, turns: Arc<dyn TurnPort>) -> Self {
+        Self { db, title, turns }
     }
 }
 
@@ -61,17 +67,18 @@ impl Feature for AgentSessionFeature {
     }
 
     fn protocols(&self) -> Vec<JobProtocol> {
-        vec![title::title_protocol(Arc::clone(&self.title))]
+        let mut protocols = vec![title::title_protocol(Arc::clone(&self.title))];
+        protocols.extend(execution::turn_protocols(Arc::clone(&self.turns)));
+        protocols
     }
 
     fn mount(&self, cx: &mut FeatureContext<'_>) -> Result<(), KernelError> {
-        let queue =
-            DesktopTurnQueueStore::from_shared(self.db.clone()).map_err(|error| {
-                KernelError::Mount {
-                    feature: self.id(),
-                    source: Box::new(error),
-                }
-            })?;
+        let queue = DesktopTurnQueueStore::from_shared(self.db.clone()).map_err(|error| {
+            KernelError::Mount {
+                feature: self.id(),
+                source: Box::new(error),
+            }
+        })?;
         cx.provide::<TurnQueueKey>(Arc::new(queue))
     }
 }

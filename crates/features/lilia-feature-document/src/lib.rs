@@ -6,6 +6,7 @@
 //! buffer plus its on-disk fingerprint.
 
 mod buffer;
+mod diagnostics;
 mod document;
 mod jobs;
 mod language;
@@ -20,11 +21,12 @@ use lilia_kernel::{
 pub use buffer::{
     BufferError, BufferId, BufferRevision, BufferSnapshot, BufferStore, TextBuffer, TextEdit,
 };
+pub use diagnostics::{Diagnostic, DiagnosticSeverity, DiagnosticStore};
 pub use document::{
-    canonicalize_existing_file, content_fingerprint, document_resource_key, path_key,
-    path_from_document_resource_key, persist_document_replacement, read_document_disk_text,
-    stage_document_replacement, DocumentError, DocumentId, DocumentSavePlan, DocumentSnapshot,
-    DocumentStore,
+    canonicalize_existing_file, content_fingerprint, document_resource_key,
+    path_from_document_resource_key, path_key, persist_document_replacement,
+    read_document_disk_text, stage_document_replacement, DocumentError, DocumentId,
+    DocumentSavePlan, DocumentSnapshot, DocumentStore,
 };
 pub use jobs::{
     definition_slot, diagnostics_slot, DefinitionRequest, DiagnosticsRequest, LanguagePort,

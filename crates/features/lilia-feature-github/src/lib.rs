@@ -11,6 +11,8 @@
 //! [`JobContext::is_cancelled`], so the kernel's cancellation replaces the flag
 //! and the slot replaces the sequence.
 
+mod types;
+
 use std::sync::Arc;
 
 use lilia_kernel::{
@@ -18,6 +20,12 @@ use lilia_kernel::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub use types::{
+    DesktopGitHubBindingMetadata, DesktopGitHubBindingStatus, DesktopGitHubClientIdSource,
+    DesktopGitHubDeviceFlowPollResult, DesktopGitHubDeviceFlowStart, DesktopGitHubError,
+    DesktopGitHubRepoPage, DesktopGitHubRepoSummary,
+};
 
 pub const BIND_PROTOCOL: &str = "lilia.github/bind@1";
 pub const REPOSITORIES_PROTOCOL: &str = "lilia.github/repositories@1";

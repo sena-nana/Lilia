@@ -34,8 +34,7 @@ pub trait TitlePort: Send + Sync + 'static {
 /// One lane per task. Two tasks may be titled at once, but a task's newer turn
 /// replaces the title still pending from its previous one.
 pub fn title_slot(task_id: &str) -> JobSlot {
-    JobSlot::new(format!("lilia.agent.title.{task_id}"))
-        .expect("the title slot name is not blank")
+    JobSlot::new(format!("lilia.agent.title.{task_id}")).expect("the title slot name is not blank")
 }
 
 pub(crate) fn title_protocol(port: Arc<dyn TitlePort>) -> JobProtocol {

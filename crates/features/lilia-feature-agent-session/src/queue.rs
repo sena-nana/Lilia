@@ -136,17 +136,14 @@ impl DesktopTurnQueueStore {
 
     #[cfg(test)]
     pub fn in_memory() -> Result<Self, DesktopTurnQueueError> {
-        let connection =
-            Db::in_memory().map_err(|error| DesktopTurnQueueError::Storage {
+        let connection = Db::in_memory().map_err(|error| DesktopTurnQueueError::Storage {
             operation: "open in-memory database",
             message: error.to_string(),
         })?;
         Self::from_shared(connection)
     }
 
-    pub fn from_shared(
-        connection: Db,
-    ) -> Result<Self, DesktopTurnQueueError> {
+    pub fn from_shared(connection: Db) -> Result<Self, DesktopTurnQueueError> {
         let locked = connection.lock();
         locked.execute_batch(TURN_QUEUE_SCHEMA).map_err(|error| {
             DesktopTurnQueueError::Storage {
@@ -535,9 +532,7 @@ impl DesktopTurnQueueStore {
         Ok(quarantined)
     }
 
-    pub fn list_quarantined(
-        &self,
-    ) -> Result<Vec<QuarantinedDesktopTurn>, DesktopTurnQueueError> {
+    pub fn list_quarantined(&self) -> Result<Vec<QuarantinedDesktopTurn>, DesktopTurnQueueError> {
         let connection = self.connection();
         let mut statement = connection
             .prepare(
@@ -566,10 +561,7 @@ impl DesktopTurnQueueStore {
     }
 
     #[cfg(debug_assertions)]
-    pub fn corrupt_request_for_debug(
-        &self,
-        turn_id: &str,
-    ) -> Result<bool, DesktopTurnQueueError> {
+    pub fn corrupt_request_for_debug(&self, turn_id: &str) -> Result<bool, DesktopTurnQueueError> {
         self.connection()
             .execute(
                 r#"UPDATE desktop_pending_turns
@@ -1577,6 +1569,18 @@ mod tests {
             replay.claim_token.as_deref(),
             Some(first_claim_token.as_str())
         );
+        assert!(matches!(
+            restarted.ack_and_claim_next(
+                &task_id,
+                "turn-before-crash",
+                first_claim_token.as_str(),
+                "epoch-after-crash",
+            ),
+            Err(DesktopTurnQueueError::ClaimOwnership { .. })
+        ));
+        let still_claimed = restarted.list(&task_id).unwrap();
+        assert_eq!(still_claimed[0].state, PersistedDesktopTurnState::Claimed);
+        assert_eq!(still_claimed[0].claim_token, replay.claim_token);
 
         let rebound = restarted
             .prepare_recovery(&task_id, Some("turn-before-crash"), "epoch-projected-wait")
