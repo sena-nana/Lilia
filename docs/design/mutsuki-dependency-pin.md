@@ -24,8 +24,8 @@ mutsuki-agent-adapter-anthropic = {
 验证：
 
 ```bash
-cargo check -p lilia-agent-integration --locked
-cargo test -p lilia-agent-integration --locked
+cargo check -p lilia-agent --locked
+cargo test -p lilia-agent --locked
 cargo check -p lilia --locked
 bash scripts/check-rust-boundaries.sh
 ```

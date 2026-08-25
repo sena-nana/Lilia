@@ -9,6 +9,7 @@
 
 mod agentkit_registry;
 mod artifact_policy;
+mod db;
 mod paths;
 mod product;
 mod runtime_state;
@@ -32,6 +33,7 @@ pub use artifact_policy::{
     ArtifactRetentionPolicy, ARTIFACT_DEFAULT_COMPAT_UNTIL, ARTIFACT_STATUS_AVAILABLE,
     ARTIFACT_STATUS_EXPIRED, ARTIFACT_STATUS_INACCESSIBLE, ARTIFACT_STATUS_PINNED,
 };
+pub use db::{Db, DbError, Migration};
 pub use paths::{
     LiliaDataPaths, AGENT_RUNTIME_DB_FILE, LEGACY_DESKTOP_DB_FILE, LILIA_HOME_ENV, PRODUCT_DB_FILE,
     PRODUCT_PROJECTIONS_DB_FILE,

@@ -12,7 +12,7 @@ LiliaCode/
 │   └── android/                 # Android companion (Gradle/Kotlin)
 ├── crates/
 │   ├── lilia-desktop-application/ # Host-independent application services
-│   ├── lilia-agent-integration/ # Mutsuki AgentKit anticorruption layer
+│   ├── lilia-agent/ # Mutsuki AgentKit anticorruption layer
 │   ├── lilia-storage/           # Product storage and paths
 │   └── lilia-contracts/         # Rust API and canonical JSON contracts
 ├── xtask/                       # Development, verification, and release tasks

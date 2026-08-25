@@ -3,7 +3,7 @@
 //! Exposed over HTTP by `apps/service` and reusable by Remote clients. Mutation and
 //! AgentKit session control are intentionally out of scope here.
 
-use lilia_agent_integration::IndependentDiagnostics;
+use lilia_agent::IndependentDiagnostics;
 use lilia_contracts::{TaskId, TimelineProjectionEvent};
 use mutsuki_agent_contracts::AgentWireRequestEnvelope;
 use serde::Serialize;
@@ -214,7 +214,7 @@ pub fn serve_readonly_http(authority: &ServiceAuthority, request: &str) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lilia_agent_integration::ProductCredentialLoginInput;
+    use lilia_agent::ProductCredentialLoginInput;
     use lilia_contracts::{
         AgentSessionRef, ProjectionEventId, TimelineProjectionCommand, TimelineProjectionEvent,
         PRODUCT_TIMELINE_STORE_ID,

@@ -78,7 +78,7 @@ flowchart TB
 | --- | --- | --- |
 | 用户 Task 面 | Lilia 产品 | `apps/desktop` · `apps/service` · 产品 SQLite |
 | Lilia Protocol | `crates/lilia-contracts` | `ChatWorkflow` · `ChatRuntimeCommand` · Interaction · RuntimeOptions |
-| 防腐层 | `lilia-core` · `lilia-agent-integration` | profile 装配、Wire 服务、Task↔Session 绑定、事件投影 |
+| 防腐层 | `lilia-core` · `lilia-agent` | profile 装配、Wire 服务、Task↔Session 绑定、事件投影 |
 | Model 管理 / 分流 | 产品配置 + contracts 自动选择 + 运行时 profile | 目录、tier/预设、本轮 model 覆盖 |
 | Provider 连接 | 产品凭据 + Mutsuki adapter/gateway | Provider instance · CredentialRef · HTTP effect |
 | Agent 运行时 | **Mutsuki AgentKit** | session · turn · approval · budget · plugins · model gateway |

@@ -2,7 +2,7 @@
 //!
 //! Separate from Agent Runtime and the unsupported legacy UI cache (`lilia.db`).
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Mutex;
 
 use lilia_contracts::{
@@ -18,6 +18,8 @@ use lilia_contracts::{
     ProjectArchiveState, ProjectId, TaskDependencyGraph, TaskId, WorkflowId,
 };
 use lilia_core::{ensure_expected_revision, ProductRepository};
+
+use crate::Db;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -158,42 +160,46 @@ CREATE TABLE IF NOT EXISTS product_task_handoffs (
 
 /// Durable product domain repository (SQLite).
 pub struct SqliteProductStore {
-    path: Option<PathBuf>,
-    conn: Mutex<Connection>,
+    conn: Db,
     mutation_lock: Mutex<()>,
 }
 
 impl SqliteProductStore {
     pub fn open(path: impl AsRef<Path>) -> ProductResult<Self> {
-        let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|err| ProductError::Unavailable {
-                message: format!("create product db dir: {err}"),
-            })?;
-        }
-        let conn = Connection::open(&path).map_err(db_err)?;
-        Self::configure(&conn)?;
-        Self::migrate(&conn)?;
-        Ok(Self {
-            path: Some(path),
-            conn: Mutex::new(conn),
-            mutation_lock: Mutex::new(()),
-        })
+        let conn = Db::open(path).map_err(|err| ProductError::Unavailable {
+            message: err.to_string(),
+        })?;
+        Self::from_db(conn)
     }
 
     pub fn open_in_memory() -> ProductResult<Self> {
-        let conn = Connection::open_in_memory().map_err(db_err)?;
-        Self::configure(&conn)?;
-        Self::migrate(&conn)?;
+        let conn = Db::in_memory().map_err(|err| ProductError::Unavailable {
+            message: err.to_string(),
+        })?;
+        Self::from_db(conn)
+    }
+
+    /// Joins an already-open handle. The product schema is the first thing
+    /// written to `product.db`, so every other domain sharing this handle sees
+    /// `projects` and `tasks` already present.
+    pub fn from_db(conn: Db) -> ProductResult<Self> {
+        {
+            let guard = conn.lock();
+            Self::configure(&guard)?;
+            Self::migrate(&guard)?;
+        }
         Ok(Self {
-            path: None,
-            conn: Mutex::new(conn),
+            conn,
             mutation_lock: Mutex::new(()),
         })
     }
 
+    pub fn db(&self) -> Db {
+        self.conn.clone()
+    }
+
     pub fn path(&self) -> Option<&Path> {
-        self.path.as_deref()
+        self.conn.path()
     }
 
     fn configure(conn: &Connection) -> ProductResult<()> {
@@ -266,10 +272,7 @@ impl SqliteProductStore {
     }
 
     fn with_conn<T>(&self, f: impl FnOnce(&Connection) -> ProductResult<T>) -> ProductResult<T> {
-        let conn = self.conn.lock().map_err(|_| ProductError::Unavailable {
-            message: "sqlite product store lock poisoned".into(),
-        })?;
-        f(&conn)
+        f(&self.conn.lock())
     }
 
     fn lock_mutation(&self) -> ProductResult<std::sync::MutexGuard<'_, ()>> {
@@ -4215,28 +4218,26 @@ mod tests {
 
     #[test]
     fn migrates_v1_rows_with_v2_defaults() {
-        let conn = Connection::open_in_memory().unwrap();
-        SqliteProductStore::configure(&conn).unwrap();
-        conn.execute_batch(MIGRATION_V1).unwrap();
-        conn.execute("INSERT INTO schema_migrations(version) VALUES (1)", [])
+        let db = Db::in_memory().unwrap();
+        {
+            let conn = db.lock();
+            SqliteProductStore::configure(&conn).unwrap();
+            conn.execute_batch(MIGRATION_V1).unwrap();
+            conn.execute("INSERT INTO schema_migrations(version) VALUES (1)", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO projects(id, name, revision) VALUES ('p1', 'Legacy', 1)",
+                [],
+            )
             .unwrap();
-        conn.execute(
-            "INSERT INTO projects(id, name, revision) VALUES ('p1', 'Legacy', 1)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO tasks(id, project_id, title, revision) VALUES ('t1', 'p1', 'Legacy task', 1)",
-            [],
-        )
-        .unwrap();
+            conn.execute(
+                "INSERT INTO tasks(id, project_id, title, revision) VALUES ('t1', 'p1', 'Legacy task', 1)",
+                [],
+            )
+            .unwrap();
+        }
 
-        SqliteProductStore::migrate(&conn).unwrap();
-        let store = SqliteProductStore {
-            path: None,
-            conn: Mutex::new(conn),
-            mutation_lock: Mutex::new(()),
-        };
+        let store = SqliteProductStore::from_db(db).unwrap();
 
         let project = store.get_project(&ProjectId::new("p1").unwrap()).unwrap();
         assert_eq!(project.settings, ProjectSettings::default());

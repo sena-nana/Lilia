@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use lilia_agent_integration::{
+use lilia_agent::{
     IndependentDiagnostics, NativeAgentWireService, NativeQuotaSurface, NativeRuntimeBootstrap,
     NativeRuntimeError, NativeRuntimeMode, NativeTurnStreamPage, ProductCredentialBridge,
     SharedNativeAgentKitRuntime,
@@ -713,7 +713,7 @@ pub fn health_http_response(report: &ServiceHealthReport) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lilia_agent_integration::{ProductCredentialLoginInput, QuotaApiAvailability};
+    use lilia_agent::{ProductCredentialLoginInput, QuotaApiAvailability};
     use lilia_contracts::{
         AgentSessionRef, BindingId, ProjectId, ProjectionEventId, TaskId,
         TimelineProjectionCommand, TimelineProjectionEvent, PRODUCT_TIMELINE_STORE_ID,

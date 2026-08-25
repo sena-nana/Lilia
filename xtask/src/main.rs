@@ -47,19 +47,10 @@ fn verify() -> Result {
         "cargo metadata",
     )?;
     lilia_xtask::run(
-        lilia_xtask::command("cargo").current_dir(&root).args([
-            "test",
-            "--locked",
-            "-p",
-            "lilia-contracts",
-            "-p",
-            "lilia-desktop-application",
-            "-p",
-            "lilia-desktop",
-            "-p",
-            "lilia-xtask",
-        ]),
-        "targeted Rust tests",
+        lilia_xtask::command("cargo")
+            .current_dir(&root)
+            .args(["test", "--locked", "--workspace"]),
+        "workspace Rust tests",
     )?;
     lilia_xtask::run(
         lilia_xtask::command("cargo")
