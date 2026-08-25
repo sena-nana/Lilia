@@ -2835,12 +2835,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "lilia-agent-integration"
+name = "lilia-agent"
 version = "0.1.0"
 dependencies = [
  "lilia-client",
  "lilia-contracts",
  "lilia-core",
+ "lilia-kernel",
  "lilia-storage",
  "mutsuki-agent-adapter-anthropic",
  "mutsuki-agent-adapter-api",
@@ -2858,6 +2859,7 @@ dependencies = [
  "mutsuki-agent-testkit",
  "mutsuki-plugin-agent-memory-router",
  "mutsuki-runtime-contracts",
+ "mutsuki-runtime-core",
  "mutsuki-runtime-host",
  "mutsuki-runtime-sdk",
  "reqwest",
@@ -2905,17 +2907,40 @@ dependencies = [
 name = "lilia-desktop"
 version = "0.1.0"
 dependencies = [
- "arboard",
  "base64 0.22.1",
  "fs2",
  "global-hotkey",
  "gtk",
  "image",
- "keyring",
  "libloading 0.9.0",
- "lilia-agent-integration",
+ "lilia-agent",
  "lilia-contracts",
  "lilia-desktop-application",
+ "lilia-feature-agent-session",
+ "lilia-feature-architecture",
+ "lilia-feature-automation",
+ "lilia-feature-coding",
+ "lilia-feature-composer",
+ "lilia-feature-document",
+ "lilia-feature-extensions",
+ "lilia-feature-github",
+ "lilia-feature-hooks",
+ "lilia-feature-import",
+ "lilia-feature-memory",
+ "lilia-feature-project",
+ "lilia-feature-provider",
+ "lilia-feature-remote",
+ "lilia-feature-roadmap",
+ "lilia-feature-suggestions",
+ "lilia-feature-task",
+ "lilia-feature-terminal",
+ "lilia-feature-timeline",
+ "lilia-feature-update",
+ "lilia-feature-usage",
+ "lilia-feature-worktree",
+ "lilia-kernel",
+ "lilia-platform",
+ "lilia-service",
  "lilia-storage",
  "minisign-verify",
  "mutsuki-agent-contracts",
@@ -2925,7 +2950,6 @@ dependencies = [
  "objc2-app-kit 0.3.2",
  "objc2-foundation 0.3.2",
  "reqwest",
- "rfd",
  "rusqlite",
  "semver",
  "serde",
@@ -2946,8 +2970,25 @@ dependencies = [
  "ignore",
  "image",
  "libc",
- "lilia-agent-integration",
+ "lilia-agent",
  "lilia-contracts",
+ "lilia-feature-agent-session",
+ "lilia-feature-architecture",
+ "lilia-feature-automation",
+ "lilia-feature-coding",
+ "lilia-feature-composer",
+ "lilia-feature-document",
+ "lilia-feature-extensions",
+ "lilia-feature-hooks",
+ "lilia-feature-memory",
+ "lilia-feature-provider",
+ "lilia-feature-roadmap",
+ "lilia-feature-suggestions",
+ "lilia-feature-task",
+ "lilia-feature-terminal",
+ "lilia-feature-timeline",
+ "lilia-feature-usage",
+ "lilia-feature-worktree",
  "lilia-service",
  "lilia-storage",
  "mutsuki-agent-contracts",
@@ -2969,10 +3010,304 @@ dependencies = [
 ]
 
 [[package]]
+name = "lilia-feature-agent-session"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "lilia-feature-architecture"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-storage",
+ "mutsuki-agent-contracts",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "lilia-feature-automation"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "lilia-feature-coding"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "lilia-feature-composer"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "lilia-feature-document"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "lilia-feature-extensions"
+version = "0.1.0"
+dependencies = [
+ "lilia-kernel",
+ "lilia-storage",
+ "mutsuki-agent-contracts",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "url",
+]
+
+[[package]]
+name = "lilia-feature-github"
+version = "0.1.0"
+dependencies = [
+ "lilia-kernel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "lilia-feature-hooks"
+version = "0.1.0"
+dependencies = [
+ "lilia-kernel",
+ "lilia-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "lilia-feature-import"
+version = "0.1.0"
+dependencies = [
+ "lilia-kernel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "lilia-feature-memory"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "lilia-feature-project"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "libc",
+ "lilia-kernel",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "windows",
+]
+
+[[package]]
+name = "lilia-feature-provider"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-storage",
+ "mutsuki-agent-contracts",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "lilia-feature-remote"
+version = "0.1.0"
+dependencies = [
+ "lilia-kernel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "lilia-feature-roadmap"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "lilia-feature-suggestions"
+version = "0.1.0"
+dependencies = [
+ "lilia-kernel",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "lilia-feature-task"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-service",
+ "serde",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "lilia-feature-terminal"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "portable-pty",
+ "serde",
+ "thiserror 2.0.20",
+ "uuid",
+ "vt100",
+]
+
+[[package]]
+name = "lilia-feature-timeline"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-service",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "lilia-feature-update"
+version = "0.1.0"
+dependencies = [
+ "lilia-kernel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "lilia-feature-usage"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "lilia-feature-worktree"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "lilia-kernel",
+ "lilia-storage",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.20",
+ "uuid",
+]
+
+[[package]]
+name = "lilia-kernel"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+]
+
+[[package]]
+name = "lilia-platform"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "keyring",
+ "rfd",
+ "uuid",
+ "windows",
+]
+
+[[package]]
 name = "lilia-service"
 version = "0.1.0"
 dependencies = [
- "lilia-agent-integration",
+ "lilia-agent",
  "lilia-client",
  "lilia-contracts",
  "lilia-core",
@@ -3001,6 +3336,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.20",
 ]
 

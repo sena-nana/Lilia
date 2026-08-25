@@ -12,6 +12,8 @@ mod command;
 mod context;
 mod conversation;
 mod entity;
+mod execution;
+mod secret;
 mod error;
 mod frontend_contract;
 mod handoff;
@@ -52,6 +54,8 @@ pub use command::{
 pub use context::ChatContextUsage;
 pub use conversation::{ChatConversationReference, ProductConversation, ProductConversationStatus};
 pub use entity::{ProductEntity, ProductEntityKind};
+pub use execution::ExecutionPermission;
+pub use secret::Secret;
 pub use error::{ConflictKind, ProductError, ProductResult};
 pub use frontend_contract::{product_event_name, PRODUCT_CORE_FRONTEND_CONTRACT_JSON};
 pub use handoff::{

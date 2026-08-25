@@ -1,0 +1,17 @@
+[package]
+name = "lilia-platform"
+description = "OS ports for LiliaCode: clipboard, file dialogs, credentials, launchers, power"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+arboard = "3.6.1"
+keyring = "4.1.2"
+rfd = "0.17.2"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_Power"] }
+
+[dev-dependencies]
+uuid = { workspace = true }

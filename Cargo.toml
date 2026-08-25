@@ -2,12 +2,36 @@
 resolver = "2"
 members = [
     "crates/lilia-contracts",
+    "crates/lilia-kernel",
+    "crates/lilia-platform",
     "crates/lilia-core",
     "crates/lilia-client",
     "crates/lilia-storage",
-    "crates/lilia-agent-integration",
+    "crates/lilia-agent",
     "crates/lilia-service",
     "crates/lilia-desktop-application",
+    "crates/features/lilia-feature-agent-session",
+    "crates/features/lilia-feature-architecture",
+    "crates/features/lilia-feature-automation",
+    "crates/features/lilia-feature-coding",
+    "crates/features/lilia-feature-composer",
+    "crates/features/lilia-feature-document",
+    "crates/features/lilia-feature-extensions",
+    "crates/features/lilia-feature-github",
+    "crates/features/lilia-feature-import",
+    "crates/features/lilia-feature-hooks",
+    "crates/features/lilia-feature-memory",
+    "crates/features/lilia-feature-project",
+    "crates/features/lilia-feature-provider",
+    "crates/features/lilia-feature-roadmap",
+    "crates/features/lilia-feature-suggestions",
+    "crates/features/lilia-feature-task",
+    "crates/features/lilia-feature-terminal",
+    "crates/features/lilia-feature-timeline",
+    "crates/features/lilia-feature-remote",
+    "crates/features/lilia-feature-update",
+    "crates/features/lilia-feature-usage",
+    "crates/features/lilia-feature-worktree",
     "apps/service",
     "apps/desktop",
     "xtask",
@@ -23,16 +47,41 @@ version = "0.1.0"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 sha2 = "0.10.9"
+tempfile = "3.27.0"
 thiserror = "2.0"
 uuid = { version = "1.23.4", features = ["v4"] }
 url = "2.5.8"
 lilia-contracts = { path = "crates/lilia-contracts" }
+lilia-kernel = { path = "crates/lilia-kernel" }
+lilia-platform = { path = "crates/lilia-platform" }
 lilia-core = { path = "crates/lilia-core" }
 lilia-client = { path = "crates/lilia-client" }
 lilia-storage = { path = "crates/lilia-storage" }
-lilia-agent-integration = { path = "crates/lilia-agent-integration" }
+lilia-agent = { path = "crates/lilia-agent" }
 lilia-service = { path = "crates/lilia-service" }
 lilia-desktop-application = { path = "crates/lilia-desktop-application" }
+lilia-feature-agent-session = { path = "crates/features/lilia-feature-agent-session" }
+lilia-feature-architecture = { path = "crates/features/lilia-feature-architecture" }
+lilia-feature-automation = { path = "crates/features/lilia-feature-automation" }
+lilia-feature-coding = { path = "crates/features/lilia-feature-coding" }
+lilia-feature-composer = { path = "crates/features/lilia-feature-composer" }
+lilia-feature-document = { path = "crates/features/lilia-feature-document" }
+lilia-feature-extensions = { path = "crates/features/lilia-feature-extensions" }
+lilia-feature-github = { path = "crates/features/lilia-feature-github" }
+lilia-feature-import = { path = "crates/features/lilia-feature-import" }
+lilia-feature-hooks = { path = "crates/features/lilia-feature-hooks" }
+lilia-feature-memory = { path = "crates/features/lilia-feature-memory" }
+lilia-feature-project = { path = "crates/features/lilia-feature-project" }
+lilia-feature-provider = { path = "crates/features/lilia-feature-provider" }
+lilia-feature-roadmap = { path = "crates/features/lilia-feature-roadmap" }
+lilia-feature-suggestions = { path = "crates/features/lilia-feature-suggestions" }
+lilia-feature-task = { path = "crates/features/lilia-feature-task" }
+lilia-feature-terminal = { path = "crates/features/lilia-feature-terminal" }
+lilia-feature-timeline = { path = "crates/features/lilia-feature-timeline" }
+lilia-feature-remote = { path = "crates/features/lilia-feature-remote" }
+lilia-feature-update = { path = "crates/features/lilia-feature-update" }
+lilia-feature-usage = { path = "crates/features/lilia-feature-usage" }
+lilia-feature-worktree = { path = "crates/features/lilia-feature-worktree" }
 # Mutsuki pin mode: PATH (sibling checkout) vs GIT (release rev).
 # See docs/design/mutsuki-dependency-pin.md — switch all entries together.
 # GIT mode (default): pin https://github.com/sena-nana/Mutsuki.git @ bb728d20e89ef65dffda882c70e5c9f70ee48b11
