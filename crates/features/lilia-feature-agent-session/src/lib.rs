@@ -1,14 +1,16 @@
 //! Agent session domain feature.
 //!
-//! Owns the two things the agent runtime does not: what a caller asked a turn
-//! to do ([`turn`]) and which turns are still waiting for a free session
-//! ([`queue`]). Turn execution, approval and interaction state stay with the
-//! agent runtime; this crate never models a turn's lifecycle.
+//! Owns turn vocabulary ([`turn`]), the durable pending-turn queue ([`queue`]),
+//! the in-memory coordinator that still holds `claim_token` ([`runtime`]),
+//! task todos ([`todo`]), and the title job protocol ([`title`]). Turn
+//! *execution* stays with AgentKit; this crate never holds `Jobs`.
 
 mod execution;
 mod queue;
+mod runtime;
 mod settings;
 mod title;
+mod todo;
 mod turn;
 
 use std::sync::Arc;
@@ -21,6 +23,19 @@ use lilia_storage::Db;
 pub use execution::{
     turn_slot, ApprovalJobRequest, InteractionJobRequest, TurnJobRequest, TurnPort,
     APPROVAL_PROTOCOL, INTERACTION_PROTOCOL, TURN_PROTOCOL,
+};
+pub use runtime::{
+    ActiveTurnSnapshot, ActiveWait, CancelSnapshot, DesktopAgentRuntime, DesktopApprovalResponse,
+    DesktopInteractionResponse, DesktopInterruptResult, DesktopTaskRuntimeSnapshot, QueuedTurn,
+    TurnCancellationMode, WaitingApprovalSnapshot,
+};
+#[cfg(debug_assertions)]
+pub use runtime::{DesktopDurableTurnDebugSnapshot, DesktopQuarantinedTurnDebugSnapshot};
+pub use todo::{
+    guide_message, merge_todos_with_latest_projection, DesktopGuideDispatchResult,
+    DesktopGuideDispatchWindow, DesktopTaskTodo, DesktopTodoCreate, DesktopTodoError,
+    DesktopTodoGuideStatus, DesktopTodoPriority, DesktopTodoSource, DesktopTodoStore,
+    DesktopTodoUpdate,
 };
 #[cfg(debug_assertions)]
 pub use queue::PersistedDesktopTurnDebugState;
