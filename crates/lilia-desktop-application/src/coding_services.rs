@@ -1,5 +1,4 @@
-use lilia_agent_integration::SharedCodingServicesStatus;
-use lilia_contracts::ProjectId;
+use lilia_agent::SharedCodingServicesStatus;
 use mutsuki_agent_contracts::{
     CodeSearchMode, CodeSearchResult, ComputerUseServiceResponse, GitDiffScope, GitFileChange,
     GitFileStatus, GitServiceResponse,
@@ -8,6 +7,18 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::{DesktopApplication, DesktopApplicationError, ProjectQuery};
+
+pub use lilia_feature_coding::{
+    CodeSearchHit as DesktopCodeSearchHit, CodeSearchMode as DesktopCodeSearchMode,
+    CodeSearchResult as DesktopCodeSearchResult, CodeSearchScope as DesktopCodeSearchScope,
+    GitChange as DesktopGitChange, GitDiff as DesktopGitDiff,
+    GitDiffScope as DesktopGitDiffScope, GitFileStatus as DesktopGitFileStatus,
+    GitStatus as DesktopGitStatus,
+    WorkspaceCodeSearchFailure as DesktopWorkspaceCodeSearchFailure,
+    WorkspaceCodeSearchHit as DesktopWorkspaceCodeSearchHit,
+    WorkspaceCodeSearchResult as DesktopWorkspaceCodeSearchResult,
+    WorkspaceEntry as DesktopWorkspaceEntry, WorkspaceListing as DesktopWorkspaceListing,
+};
 
 const MAX_CODE_SEARCH_PROJECTS: usize = 32;
 const MAX_CODE_SEARCH_HITS: usize = 128;
@@ -19,150 +30,6 @@ pub struct DesktopCodingServicesSnapshot {
     pub mcp_servers: Value,
     pub lsp: Value,
     pub registry: Value,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopGitStatus {
-    pub root: String,
-    pub branch: Option<String>,
-    pub commit: String,
-    pub clean: bool,
-    pub changes: Vec<DesktopGitChange>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopGitDiffScope {
-    WorkingTree,
-    Staged,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopGitDiff {
-    pub root: String,
-    pub scope: DesktopGitDiffScope,
-    pub summary: String,
-    pub files: Vec<DesktopGitChange>,
-    pub patch: Option<String>,
-    pub truncated: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopGitChange {
-    pub path: String,
-    pub previous_path: Option<String>,
-    pub status: DesktopGitFileStatus,
-    pub staged: bool,
-    pub additions: u64,
-    pub deletions: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopGitFileStatus {
-    Untracked,
-    Modified,
-    Added,
-    Deleted,
-    Renamed,
-    Copied,
-    Conflicted,
-    Ignored,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopWorkspaceListing {
-    pub entries: Vec<DesktopWorkspaceEntry>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopWorkspaceEntry {
-    pub path: String,
-    pub kind: String,
-    pub size_bytes: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopCodeSearchResult {
-    pub query: String,
-    pub mode: DesktopCodeSearchMode,
-    pub index_revision: u64,
-    pub hits: Vec<DesktopCodeSearchHit>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopCodeSearchMode {
-    Text,
-    Regex,
-    Symbol,
-    Semantic,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopCodeSearchHit {
-    pub path: String,
-    pub summary: String,
-    pub start_line: Option<u32>,
-    pub start_character: Option<u32>,
-    pub end_line: Option<u32>,
-    pub end_character: Option<u32>,
-    pub score: Option<f64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case", tag = "kind")]
-pub enum DesktopCodeSearchScope {
-    Project { project_id: ProjectId },
-    AllProjects,
-}
-
-impl DesktopCodeSearchScope {
-    pub fn project_id(&self) -> Option<&ProjectId> {
-        match self {
-            Self::Project { project_id } => Some(project_id),
-            Self::AllProjects => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopWorkspaceCodeSearchHit {
-    pub project_id: ProjectId,
-    pub project_name: String,
-    pub workspace_root: String,
-    pub index_revision: u64,
-    pub hit: DesktopCodeSearchHit,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopWorkspaceCodeSearchFailure {
-    pub project_id: ProjectId,
-    pub project_name: String,
-    pub message: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopWorkspaceCodeSearchResult {
-    pub query: String,
-    pub mode: DesktopCodeSearchMode,
-    pub scope: DesktopCodeSearchScope,
-    pub eligible_project_count: usize,
-    pub projects_searched: usize,
-    pub truncated_projects: bool,
-    pub truncated_hits: bool,
-    pub hits: Vec<DesktopWorkspaceCodeSearchHit>,
-    pub failures: Vec<DesktopWorkspaceCodeSearchFailure>,
 }
 
 impl DesktopApplication {
@@ -209,7 +76,7 @@ impl DesktopApplication {
             .authority()
             .shared_runtime()
             .inner()
-            .shared_git_diff(path.trim(), scope.into())
+            .shared_git_diff(path.trim(), runtime_git_diff_scope(scope))
             .map_err(coding_service_error)?;
         decode_git_diff(response, scope)
     }
@@ -246,7 +113,7 @@ impl DesktopApplication {
                 workspace_id.trim(),
                 root.trim(),
                 query.trim(),
-                mode.into(),
+                runtime_code_search_mode(mode),
             )
             .map_err(coding_service_error)?;
         decode_code_search(response)
@@ -416,19 +283,17 @@ fn desktop_git_change(change: GitFileChange) -> DesktopGitChange {
     DesktopGitChange {
         path: change.path,
         previous_path: change.old_path,
-        status: change.status.into(),
+        status: desktop_git_file_status(change.status),
         staged: change.staged,
         additions: change.additions,
         deletions: change.deletions,
     }
 }
 
-impl From<DesktopGitDiffScope> for GitDiffScope {
-    fn from(value: DesktopGitDiffScope) -> Self {
-        match value {
-            DesktopGitDiffScope::WorkingTree => Self::WorkingTree,
-            DesktopGitDiffScope::Staged => Self::Staged,
-        }
+fn runtime_git_diff_scope(value: DesktopGitDiffScope) -> GitDiffScope {
+    match value {
+        DesktopGitDiffScope::WorkingTree => GitDiffScope::WorkingTree,
+        DesktopGitDiffScope::Staged => GitDiffScope::Staged,
     }
 }
 
@@ -462,7 +327,7 @@ fn decode_code_search(response: Value) -> Result<DesktopCodeSearchResult, Deskto
     })?;
     Ok(DesktopCodeSearchResult {
         query: result.query.query,
-        mode: result.query.mode.into(),
+        mode: desktop_code_search_mode(result.query.mode),
         index_revision: result.index_revision,
         hits: result
             .hits
@@ -480,40 +345,34 @@ fn decode_code_search(response: Value) -> Result<DesktopCodeSearchResult, Deskto
     })
 }
 
-impl From<DesktopCodeSearchMode> for CodeSearchMode {
-    fn from(value: DesktopCodeSearchMode) -> Self {
-        match value {
-            DesktopCodeSearchMode::Text => Self::Text,
-            DesktopCodeSearchMode::Regex => Self::Regex,
-            DesktopCodeSearchMode::Symbol => Self::Symbol,
-            DesktopCodeSearchMode::Semantic => Self::Semantic,
-        }
+fn runtime_code_search_mode(value: DesktopCodeSearchMode) -> CodeSearchMode {
+    match value {
+        DesktopCodeSearchMode::Text => CodeSearchMode::Text,
+        DesktopCodeSearchMode::Regex => CodeSearchMode::Regex,
+        DesktopCodeSearchMode::Symbol => CodeSearchMode::Symbol,
+        DesktopCodeSearchMode::Semantic => CodeSearchMode::Semantic,
     }
 }
 
-impl From<CodeSearchMode> for DesktopCodeSearchMode {
-    fn from(value: CodeSearchMode) -> Self {
-        match value {
-            CodeSearchMode::Text => Self::Text,
-            CodeSearchMode::Regex => Self::Regex,
-            CodeSearchMode::Symbol => Self::Symbol,
-            CodeSearchMode::Semantic => Self::Semantic,
-        }
+fn desktop_code_search_mode(value: CodeSearchMode) -> DesktopCodeSearchMode {
+    match value {
+        CodeSearchMode::Text => DesktopCodeSearchMode::Text,
+        CodeSearchMode::Regex => DesktopCodeSearchMode::Regex,
+        CodeSearchMode::Symbol => DesktopCodeSearchMode::Symbol,
+        CodeSearchMode::Semantic => DesktopCodeSearchMode::Semantic,
     }
 }
 
-impl From<GitFileStatus> for DesktopGitFileStatus {
-    fn from(value: GitFileStatus) -> Self {
-        match value {
-            GitFileStatus::Untracked => Self::Untracked,
-            GitFileStatus::Modified => Self::Modified,
-            GitFileStatus::Added => Self::Added,
-            GitFileStatus::Deleted => Self::Deleted,
-            GitFileStatus::Renamed => Self::Renamed,
-            GitFileStatus::Copied => Self::Copied,
-            GitFileStatus::Conflicted => Self::Conflicted,
-            GitFileStatus::Ignored => Self::Ignored,
-        }
+fn desktop_git_file_status(value: GitFileStatus) -> DesktopGitFileStatus {
+    match value {
+        GitFileStatus::Untracked => DesktopGitFileStatus::Untracked,
+        GitFileStatus::Modified => DesktopGitFileStatus::Modified,
+        GitFileStatus::Added => DesktopGitFileStatus::Added,
+        GitFileStatus::Deleted => DesktopGitFileStatus::Deleted,
+        GitFileStatus::Renamed => DesktopGitFileStatus::Renamed,
+        GitFileStatus::Copied => DesktopGitFileStatus::Copied,
+        GitFileStatus::Conflicted => DesktopGitFileStatus::Conflicted,
+        GitFileStatus::Ignored => DesktopGitFileStatus::Ignored,
     }
 }
 

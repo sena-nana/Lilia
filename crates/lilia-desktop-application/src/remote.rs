@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
-use std::path::Path;
 use std::sync::{Arc, Condvar, Mutex, Weak};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -12,6 +11,7 @@ use lilia_contracts::{
     ChatAttachment, PendingProjection, PendingProjectionStatus, ProductTask, ProductTaskStatus,
     TaskId,
 };
+use lilia_storage::Db;
 use mutsuki_agent_contracts::AgentWireRequestEnvelope;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -204,7 +204,7 @@ pub struct DesktopRemoteControlService {
 }
 
 struct RemoteServiceInner {
-    connection: Mutex<Connection>,
+    connection: Db,
     bridge: Mutex<Option<RemoteHttpBridge>>,
     wake: Arc<RemoteWakeController>,
     process_sessions: Mutex<HashMap<TaskId, DesktopTerminalSessionId>>,
@@ -230,31 +230,21 @@ struct RemoteWakeRuntime {
 }
 
 impl DesktopRemoteControlService {
-    pub fn open(
-        path: impl AsRef<Path>,
-        host: Arc<dyn DesktopHost>,
-        context: DesktopHostContext,
-    ) -> Result<Self, DesktopRemoteControlError> {
-        let connection = Connection::open(path)
-            .map_err(|error| DesktopRemoteControlError::internal(error.to_string()))?;
-        Self::from_connection(connection, host, context)
-    }
-
     pub fn in_memory(
         host: Arc<dyn DesktopHost>,
         context: DesktopHostContext,
     ) -> Result<Self, DesktopRemoteControlError> {
-        let connection = Connection::open_in_memory()
+        let connection = Db::in_memory()
             .map_err(|error| DesktopRemoteControlError::internal(error.to_string()))?;
-        Self::from_connection(connection, host, context)
+        Self::from_db(connection, host, context)
     }
 
-    fn from_connection(
-        connection: Connection,
+    pub fn from_db(
+        connection: Db,
         host: Arc<dyn DesktopHost>,
         context: DesktopHostContext,
     ) -> Result<Self, DesktopRemoteControlError> {
-        initialize_schema(&connection)?;
+        initialize_schema(&connection.lock())?;
         let wake = Arc::new(RemoteWakeController {
             state: Mutex::new(RemoteWakeRuntime {
                 configured: false,
@@ -272,7 +262,7 @@ impl DesktopRemoteControlService {
             .map_err(|error| DesktopRemoteControlError::internal(error.to_string()))?;
         Ok(Self {
             inner: Arc::new(RemoteServiceInner {
-                connection: Mutex::new(connection),
+                connection,
                 bridge: Mutex::new(None),
                 wake,
                 process_sessions: Mutex::new(HashMap::new()),
@@ -284,11 +274,7 @@ impl DesktopRemoteControlService {
         &self,
         action: impl FnOnce(&Connection) -> Result<T, DesktopRemoteControlError>,
     ) -> Result<T, DesktopRemoteControlError> {
-        let connection =
-            self.inner.connection.lock().map_err(|_| {
-                DesktopRemoteControlError::internal("remote database lock poisoned")
-            })?;
-        action(&connection)
+        action(&self.inner.connection.lock())
     }
 
     fn bridge_url(&self) -> Result<Option<String>, DesktopRemoteControlError> {
@@ -2140,7 +2126,7 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Instant;
 
-    use lilia_agent_integration::ProductCredentialLoginInput;
+    use lilia_agent::ProductCredentialLoginInput;
     use lilia_service::ServiceAuthority;
     use mutsuki_agent_contracts::{
         AgentPermissionMode, CredentialKind, InteractionKind, InteractionRequest,

@@ -137,28 +137,7 @@ pub struct DesktopCredentialImportEntry {
     pub target_key: String,
 }
 
-#[derive(Clone, PartialEq, Eq)]
-pub struct DesktopSecret(Vec<u8>);
-
-impl DesktopSecret {
-    pub fn new(secret: impl Into<Vec<u8>>) -> Self {
-        Self(secret.into())
-    }
-
-    pub fn expose(&self) -> &[u8] {
-        &self.0
-    }
-
-    pub fn into_inner(self) -> Vec<u8> {
-        self.0
-    }
-}
-
-impl fmt::Debug for DesktopSecret {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str("DesktopSecret([REDACTED])")
-    }
-}
+pub use lilia_contracts::Secret as DesktopSecret;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DesktopSingleInstanceRequest {

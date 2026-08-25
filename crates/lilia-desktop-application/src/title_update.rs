@@ -1,11 +1,11 @@
 //! Shared title-update coordinator for desktop hosts.
 //!
 //! Application owns scheduling / freshness / apply decisions. Hosts only
-//! resolve models, spawn workers, and invalidate UI via events.
+//! resolve models, run the update off the turn worker, and invalidate UI via
+//! events.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use lilia_contracts::{
@@ -19,8 +19,6 @@ use serde_json::Value as JsonValue;
 use crate::{DesktopApplication, DesktopApplicationError, DesktopEventKind, DesktopTaskPatch};
 
 const TITLE_REQUEST_TIMEOUT_SECS: u64 = 10;
-const TITLE_UPDATE_CONCURRENCY: usize = 2;
-const TITLE_UPDATE_QUEUE_CAPACITY: usize = 64;
 
 pub const TITLE_UPDATE_ACTION_KIND: &str = "title_update";
 pub const TITLE_MAX_CHARS: usize = 18;
@@ -107,50 +105,12 @@ struct DesktopTitleUpdateCoordinatorInner {
     stopped: AtomicBool,
 }
 
-type TitleUpdateTask = Box<dyn FnOnce() + Send + 'static>;
-
-struct TitleUpdateExecutor {
-    sender: SyncSender<TitleUpdateTask>,
-}
-
-impl TitleUpdateExecutor {
-    fn new(concurrency: usize, queue_capacity: usize) -> Self {
-        let (sender, receiver) = mpsc::sync_channel::<TitleUpdateTask>(queue_capacity);
-        let receiver = Arc::new(Mutex::new(receiver));
-        for index in 0..concurrency {
-            let receiver = Arc::clone(&receiver);
-            std::thread::Builder::new()
-                .name(format!("lilia-title-update-{index}"))
-                .spawn(move || loop {
-                    let task = receiver
-                        .lock()
-                        .ok()
-                        .and_then(|receiver| receiver.recv().ok());
-                    let Some(task) = task else {
-                        return;
-                    };
-                    task();
-                })
-                .expect("title update worker threads must start");
-        }
-        Self { sender }
-    }
-
-    fn try_execute(&self, task: impl FnOnce() + Send + 'static) -> Result<(), &'static str> {
-        self.sender
-            .try_send(Box::new(task))
-            .map_err(|error| match error {
-                TrySendError::Full(_) => "title update queue is full",
-                TrySendError::Disconnected(_) => "title update executor is unavailable",
-            })
-    }
-}
-
-fn title_update_executor() -> &'static TitleUpdateExecutor {
-    static EXECUTOR: OnceLock<TitleUpdateExecutor> = OnceLock::new();
-    EXECUTOR.get_or_init(|| {
-        TitleUpdateExecutor::new(TITLE_UPDATE_CONCURRENCY, TITLE_UPDATE_QUEUE_CAPACITY)
-    })
+/// Carries a finished turn's title update away from the turn worker that
+/// produced it. The desktop host answers this by submitting `lilia.agent/title@1`;
+/// a host that installs nothing simply goes untitled, because naming a task is
+/// never worth holding up the turn that just ended.
+pub trait DesktopTitleUpdateScheduler: Send + Sync + 'static {
+    fn request(&self, task_id: TaskId, turn_id: Option<String>);
 }
 
 #[derive(Clone)]
@@ -285,6 +245,22 @@ impl DesktopApplication {
         Arc::clone(&self.inner.title_update)
     }
 
+    /// Installed once by the host, after the kernel it submits to exists.
+    pub fn install_title_update_scheduler(
+        &self,
+        scheduler: Arc<dyn DesktopTitleUpdateScheduler>,
+    ) -> Result<(), DesktopApplicationError> {
+        self.inner
+            .title_update_scheduler
+            .set(scheduler)
+            .map_err(|_| {
+                DesktopApplicationError::InvalidInput {
+                    field: "titleUpdateScheduler",
+                    message: "title update scheduler is already installed".to_owned(),
+                }
+            })
+    }
+
     pub fn task_title_state(
         &self,
         task_id: &TaskId,
@@ -304,7 +280,7 @@ impl DesktopApplication {
         }))
     }
 
-    pub fn schedule_title_update(
+    fn schedule_title_update(
         &self,
         task_id: &TaskId,
         turn_id: Option<String>,
@@ -480,51 +456,47 @@ impl DesktopApplication {
         normalize_title(input)
     }
 
-    /// Schedule and run auto-title after a completed turn. Silent skip when model/prompt unavailable.
-    pub fn spawn_title_update_after_turn(&self, task_id: TaskId, turn_id: Option<String>) {
-        let job = match self.schedule_title_update(&task_id, turn_id) {
-            Ok(Some(job)) => job,
-            Ok(None) => return,
-            Err(error) => {
-                eprintln!("[title-update] skipped: {error}");
-                return;
-            }
+    /// Hands auto-titling to the host after a completed turn. Runs nothing here:
+    /// the caller is the turn worker, and titling calls a model.
+    pub fn request_title_update_after_turn(&self, task_id: TaskId, turn_id: Option<String>) {
+        let Some(scheduler) = self.inner.title_update_scheduler.get() else {
+            return;
         };
-        let application = self.clone();
-        if let Err(error) = title_update_executor().try_execute(move || {
-            if let Err(error) = application.run_title_update_job(&job) {
-                eprintln!("[title-update] skipped: {error}");
-            }
-        }) {
-            eprintln!("[title-update] skipped: {error}");
-        }
+        scheduler.request(task_id, turn_id);
     }
 
-    fn run_title_update_job(&self, job: &DesktopTitleUpdateJob) -> Result<(), String> {
-        let coordinator = self.title_update_coordinator();
-        if !coordinator.is_latest(job) {
+    /// Runs one requested title update to completion. Silent skip when the
+    /// model or prompt is unavailable, or when a later turn already superseded
+    /// this one.
+    pub fn run_title_update_after_turn(
+        &self,
+        task_id: TaskId,
+        turn_id: Option<String>,
+    ) -> Result<(), String> {
+        let job = match self.schedule_title_update(&task_id, turn_id) {
+            Ok(Some(job)) => job,
+            Ok(None) => return Ok(()),
+            Err(error) => return Err(error.to_string()),
+        };
+        if !self.title_update_coordinator().is_latest(&job) {
             return Ok(());
         }
         let Some(prompt) = self
-            .build_title_prompt_for_job(job)
+            .build_title_prompt_for_job(&job)
             .map_err(|error| error.to_string())?
         else {
             return Ok(());
         };
-        let model = self
-            .resolve_title_model_request()
-            .ok_or_else(|| "assistant AI model unavailable for title".to_string())?;
+        // An unconfigured auxiliary model is a setting, not a failure: failing
+        // here would record one job failure per completed turn for every user
+        // who never set one up.
+        let Some(model) = self.resolve_title_model_request() else {
+            return Ok(());
+        };
         let proposed = request_title(&model, &prompt).and_then(normalize_title)?;
-        let decision = self
-            .apply_title_proposal(job, &proposed)
+        self.apply_title_proposal(&job, &proposed)
             .map_err(|error| error.to_string())?;
-        match decision {
-            DesktopTitleUpdateDecision::Success(_)
-            | DesktopTitleUpdateDecision::RequiresAction(_)
-            | DesktopTitleUpdateDecision::Stale(_)
-            | DesktopTitleUpdateDecision::Unchanged
-            | DesktopTitleUpdateDecision::Stopped => Ok(()),
-        }
+        Ok(())
     }
 
     fn resolve_title_model_request(&self) -> Option<TitleModelRequest> {
@@ -988,9 +960,7 @@ pub fn title_system_instruction() -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicUsize;
-    use std::sync::{Arc, Condvar};
-    use std::time::Duration;
+    use std::sync::Arc;
 
     use super::*;
     use lilia_contracts::TaskId;
@@ -1064,46 +1034,52 @@ mod tests {
         assert!(matches!(decision, DesktopTitleUpdateDecision::Success(_)));
     }
 
-    #[test]
-    fn title_executor_bounds_concurrent_model_jobs() {
-        let executor = TitleUpdateExecutor::new(2, 8);
-        let active = Arc::new(AtomicUsize::new(0));
-        let max_active = Arc::new(AtomicUsize::new(0));
-        let gate = Arc::new((Mutex::new(false), Condvar::new()));
-        let (started_tx, started_rx) = mpsc::channel();
-        let (done_tx, done_rx) = mpsc::channel();
-        for _ in 0..4 {
-            let active = Arc::clone(&active);
-            let max_active = Arc::clone(&max_active);
-            let gate = Arc::clone(&gate);
-            let started_tx = started_tx.clone();
-            let done_tx = done_tx.clone();
-            executor
-                .try_execute(move || {
-                    let now_active = active.fetch_add(1, Ordering::SeqCst) + 1;
-                    max_active.fetch_max(now_active, Ordering::SeqCst);
-                    started_tx.send(()).unwrap();
-                    let (released, ready) = &*gate;
-                    let mut released = released.lock().unwrap();
-                    while !*released {
-                        released = ready.wait(released).unwrap();
-                    }
-                    active.fetch_sub(1, Ordering::SeqCst);
-                    done_tx.send(()).unwrap();
-                })
-                .unwrap();
-        }
+    #[derive(Default)]
+    struct RecordingScheduler {
+        requests: Mutex<Vec<(TaskId, Option<String>)>>,
+    }
 
-        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert!(started_rx.recv_timeout(Duration::from_millis(50)).is_err());
-        let (released, ready) = &*gate;
-        *released.lock().unwrap() = true;
-        ready.notify_all();
-        for _ in 0..4 {
-            done_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    impl DesktopTitleUpdateScheduler for RecordingScheduler {
+        fn request(&self, task_id: TaskId, turn_id: Option<String>) {
+            self.requests.lock().unwrap().push((task_id, turn_id));
         }
-        assert_eq!(max_active.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_finished_turn_hands_its_title_to_the_scheduler_instead_of_titling_inline() {
+        let (_home, application) = temp_app();
+        let scheduler = Arc::new(RecordingScheduler::default());
+        application
+            .install_title_update_scheduler(scheduler.clone())
+            .unwrap();
+        let task_id = TaskId::new("task-1").unwrap();
+
+        application.request_title_update_after_turn(task_id.clone(), Some("turn-7".to_owned()));
+
+        assert_eq!(
+            scheduler.requests.lock().unwrap().as_slice(),
+            [(task_id, Some("turn-7".to_owned()))]
+        );
+    }
+
+    #[test]
+    fn a_host_without_a_scheduler_leaves_the_task_untitled_rather_than_blocking_the_turn() {
+        let (_home, application) = temp_app();
+
+        application
+            .request_title_update_after_turn(TaskId::new("task-1").unwrap(), Some("t".to_owned()));
+    }
+
+    #[test]
+    fn the_scheduler_is_installed_once_so_two_hosts_cannot_both_title() {
+        let (_home, application) = temp_app();
+        application
+            .install_title_update_scheduler(Arc::new(RecordingScheduler::default()))
+            .unwrap();
+
+        application
+            .install_title_update_scheduler(Arc::new(RecordingScheduler::default()))
+            .expect_err("a second scheduler is refused");
     }
 
     #[test]

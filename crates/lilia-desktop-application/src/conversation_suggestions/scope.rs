@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use lilia_contracts::{ProductTask, ProductTaskStatus, ProjectId, TimelineProjectionEvent};
 use serde_json::Value as JsonValue;
 
-use super::generation::{compact_line, truncate_chars};
+use lilia_feature_suggestions::generation::{compact_line, truncate_chars};
 use super::github_activity::load_github_activity_context;
-use super::local_git::load_local_git_context;
-use super::types::{
+use lilia_feature_suggestions::local_git::load_local_git_context;
+use lilia_feature_suggestions::types::{
     DesktopSuggestionItemSource, DesktopSuggestionLocalGitProbe, DesktopSuggestionSourceProbe,
     GitHubActivitySample, GitHubRepoRef, LocalGitContextSample, ProjectContext,
     SessionThreadSample, SuggestionScope, TaskSample, MAX_TASKS_PER_SCOPE, SAMPLE_TEXT_LIMIT,
@@ -388,7 +388,7 @@ fn todo_item_is_done(item: &JsonValue) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conversation_suggestions::types::DesktopSuggestionLocalGitContextRef;
+    use lilia_feature_suggestions::types::DesktopSuggestionLocalGitContextRef;
 
     #[test]
     fn summarize_includes_local_git_probe() {

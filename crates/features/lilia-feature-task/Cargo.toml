@@ -1,0 +1,15 @@
+[package]
+name = "lilia-feature-task"
+description = "Project and task domain feature: product entity commands and queries"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-contracts = { workspace = true }
+lilia-kernel = { workspace = true }
+lilia-service = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }

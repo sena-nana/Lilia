@@ -1,5 +1,6 @@
-use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+
+use lilia_storage::Db;
 
 use super::{
     DesktopMemory, InMemoryMemorySettingsStore, MemoryInjectionState, MemorySettings,
@@ -17,15 +18,11 @@ struct DesktopMemoryServiceState {
 }
 
 impl DesktopMemoryService {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, DesktopMemoryError> {
-        Ok(Self::from_store(SqliteMemoryStore::open(path)?))
-    }
-
-    pub fn open_with_settings(
-        path: impl AsRef<Path>,
+    pub fn from_db_with_settings(
+        db: Db,
         settings: impl MemorySettingsStore + 'static,
     ) -> Result<Self, DesktopMemoryError> {
-        Ok(Self::from_stores(SqliteMemoryStore::open(path)?, settings))
+        Ok(Self::from_stores(SqliteMemoryStore::from_db(db)?, settings))
     }
 
     pub fn in_memory() -> Result<Self, DesktopMemoryError> {

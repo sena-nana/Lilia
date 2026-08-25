@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     DesktopApplication, DesktopCredentialAction, DesktopEventKind, DesktopHostAction,
-    DesktopHostResult, DesktopProjectCloneError, DesktopProjectCloneOperation,
-    DesktopProjectCloneRequest, DesktopSecret,
+    DesktopHostResult, DesktopSecret,
 };
 
 const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
@@ -117,8 +116,6 @@ pub enum DesktopGitHubError {
     Persistence(String),
     #[error("GitHub credential storage failed: {0}")]
     Credential(String),
-    #[error(transparent)]
-    Clone(#[from] DesktopProjectCloneError),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -413,28 +410,22 @@ impl DesktopApplication {
         })
     }
 
-    pub fn start_github_repository_clone(
+    /// Normalizes `repository` to a clone URL for the project clone job.
+    pub fn github_clone_repository(&self, repository: &str) -> Result<String, DesktopGitHubError> {
+        normalize_github_repository(repository)
+    }
+
+    /// Resolves the bound GitHub token used to authenticate a clone. Called on
+    /// the job worker thread so the secret never enters a task payload.
+    pub fn github_clone_token(
         &self,
         repository: &str,
-        parent_directory: std::path::PathBuf,
-    ) -> Result<DesktopProjectCloneOperation, DesktopGitHubError> {
-        let repository = normalize_github_repository(repository)?;
-        let token = self.reconcile_github_binding(false)?.1;
-        let request = DesktopProjectCloneRequest {
-            repository,
-            parent_directory,
-        };
-        match token {
-            Some(token) => self
-                .start_project_repository_clone_with_github_token(
-                    request,
-                    DesktopSecret::new(token.into_bytes()),
-                )
-                .map_err(DesktopGitHubError::from),
-            None => self
-                .start_project_repository_clone(request)
-                .map_err(DesktopGitHubError::from),
-        }
+    ) -> Result<Option<DesktopSecret>, DesktopGitHubError> {
+        normalize_github_repository(repository)?;
+        Ok(self
+            .reconcile_github_binding(false)?
+            .1
+            .map(|token| DesktopSecret::new(token.into_bytes())))
     }
 
     fn github_store(&self) -> Result<SqliteAgentRuntimeStateStore, DesktopGitHubError> {

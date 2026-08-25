@@ -1,5 +1,6 @@
-use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
+
+use lilia_storage::Db;
 
 use super::{
     Milestone, MilestoneUpdatePatch, ProjectRoadmap, RoadmapStore, RoadmapStoreError,
@@ -16,8 +17,8 @@ struct DesktopRoadmapServiceInner {
 }
 
 impl DesktopRoadmapService {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, RoadmapStoreError> {
-        Self::from_store(SqliteRoadmapStore::open(path)?)
+    pub fn from_db(db: Db) -> Result<Self, RoadmapStoreError> {
+        Self::from_store(SqliteRoadmapStore::from_db(db)?)
     }
 
     pub fn in_memory() -> Result<Self, RoadmapStoreError> {

@@ -3,7 +3,7 @@ use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use lilia_service::{StorageWriterGuard, WriterLeaseError, WriterMode};
 use lilia_storage::{LiliaDataPaths, SqliteAgentRuntimeStateStore, PRODUCT_SCHEMA_VERSION};
@@ -29,6 +29,12 @@ const ASSISTANT_AI_TARGET_KEY: &str = "assistant-ai";
 const GITHUB_BINDING_SETTINGS_KEY: &str = "desktop.github.binding.v1";
 const GITHUB_TARGET_KEY: &str = "github.oauth.token";
 const LEGACY_PROVIDER_STORE_MAX_BYTES: u64 = 4 * 1024 * 1024;
+/// A child process inherits every descriptor between `fork` and `exec`, so any
+/// unrelated spawn briefly holds the writer lock this process just released.
+/// A live writer holds it for a whole session, so waiting out this window tells
+/// the two apart without weakening exclusivity.
+const LOCK_CONTENTION_BUDGET: Duration = Duration::from_millis(500);
+const LOCK_CONTENTION_PAUSE: Duration = Duration::from_millis(5);
 
 #[derive(Clone)]
 pub struct DesktopDataImportService {
@@ -537,7 +543,7 @@ pub enum CredentialImportDecision {
     Confirmed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopImportReport {
     pub plan_id: String,
@@ -547,7 +553,7 @@ pub struct DesktopImportReport {
     pub items: Vec<DesktopImportReportItem>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DesktopImportReportStatus {
     Completed,
@@ -557,7 +563,7 @@ pub enum DesktopImportReportStatus {
     Failed,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopImportReportItem {
     pub kind: DesktopImportItemKind,
@@ -566,7 +572,7 @@ pub struct DesktopImportReportItem {
     pub error: Option<DesktopImportItemError>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DesktopImportReportItemStatus {
     Copied,
@@ -1254,30 +1260,40 @@ fn acquire_source_import_lock(
     paths: &LiliaDataPaths,
 ) -> Result<SourceImportGuard, DesktopImportItemError> {
     let lock_path = paths.db_dir().join("writer.lock");
-    let file = open_existing_source_lock(&lock_path).map_err(|error| {
-        if error.kind() == io::ErrorKind::NotFound {
-            DesktopImportItemError::new(
-                DesktopImportErrorCode::SourceLockMissing,
-                format!(
-                    "source writer lock `{}` is missing; source shutdown cannot be proven",
-                    lock_path.display()
-                ),
-                true,
-            )
-        } else if error.kind() == io::ErrorKind::WouldBlock
-            || error.kind() == io::ErrorKind::PermissionDenied
-            || matches!(error.raw_os_error(), Some(16 | 32 | 33))
-        {
-            DesktopImportItemError::new(
-                DesktopImportErrorCode::SourceBusy,
-                format!("source writer lock `{}` is busy", lock_path.display()),
-                true,
-            )
-        } else {
-            io_item_error("acquire source writer lock", &lock_path, error)
+    let deadline = Instant::now() + LOCK_CONTENTION_BUDGET;
+    let error = loop {
+        match open_existing_source_lock(&lock_path) {
+            Ok(file) => return Ok(SourceImportGuard { _file: file }),
+            Err(error) if is_lock_busy(&error) && Instant::now() < deadline => {
+                std::thread::sleep(LOCK_CONTENTION_PAUSE);
+            }
+            Err(error) => break error,
         }
-    })?;
-    Ok(SourceImportGuard { _file: file })
+    };
+    Err(if error.kind() == io::ErrorKind::NotFound {
+        DesktopImportItemError::new(
+            DesktopImportErrorCode::SourceLockMissing,
+            format!(
+                "source writer lock `{}` is missing; source shutdown cannot be proven",
+                lock_path.display()
+            ),
+            true,
+        )
+    } else if is_lock_busy(&error) {
+        DesktopImportItemError::new(
+            DesktopImportErrorCode::SourceBusy,
+            format!("source writer lock `{}` is busy", lock_path.display()),
+            true,
+        )
+    } else {
+        io_item_error("acquire source writer lock", &lock_path, error)
+    })
+}
+
+fn is_lock_busy(error: &io::Error) -> bool {
+    error.kind() == io::ErrorKind::WouldBlock
+        || error.kind() == io::ErrorKind::PermissionDenied
+        || matches!(error.raw_os_error(), Some(16 | 32 | 33))
 }
 
 #[cfg(windows)]
@@ -1315,12 +1331,21 @@ fn acquire_target_import_lock(
     paths: &LiliaDataPaths,
     owner: String,
 ) -> Result<StorageWriterGuard, WriterLeaseError> {
-    StorageWriterGuard::try_acquire_with_file_lock(
-        paths.product_projections_db().display().to_string(),
-        owner,
-        WriterMode::Embedded,
-        paths.db_dir().join("writer.lock"),
-    )
+    let deadline = Instant::now() + LOCK_CONTENTION_BUDGET;
+    loop {
+        let attempt = StorageWriterGuard::try_acquire_with_file_lock(
+            paths.product_projections_db().display().to_string(),
+            owner.clone(),
+            WriterMode::Embedded,
+            paths.db_dir().join("writer.lock"),
+        );
+        match attempt {
+            Err(WriterLeaseError::FileLockBusy { .. }) if Instant::now() < deadline => {
+                std::thread::sleep(LOCK_CONTENTION_PAUSE);
+            }
+            outcome => return outcome,
+        }
+    }
 }
 
 fn validate_sqlite_header(path: &Path) -> Result<(), DesktopImportItemError> {
@@ -2727,7 +2752,11 @@ mod tests {
                 credential_decision: CredentialImportDecision::Confirmed,
             },
         );
-        assert_eq!(report.status, DesktopImportReportStatus::Completed);
+        assert_eq!(
+            report.status,
+            DesktopImportReportStatus::Completed,
+            "{report:#?}"
+        );
         assert_eq!(
             host.actions.lock().unwrap().as_slice(),
             &[DesktopHostAction::Credential(

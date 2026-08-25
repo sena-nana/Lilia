@@ -11,8 +11,8 @@ mod assistant_ai_probe;
 mod attachment;
 mod auto_turn;
 mod automation;
+mod automation_ports;
 mod auxiliary_model;
-mod buffer;
 mod change_feed;
 mod cli;
 mod coding_services;
@@ -41,25 +41,20 @@ mod iab;
 mod import;
 mod language;
 mod language_service;
-mod legacy_database;
 mod mcp_elicitation;
-mod memory;
 mod panel;
 mod plugins;
 mod popup_settings;
 mod product_management;
 mod project;
-mod project_clone;
 mod project_files;
 mod project_settings;
 mod project_tasks;
 mod prompt_optimize;
 mod provider;
 mod provider_ui_settings;
-mod query;
 mod registry_watch;
 mod remote;
-mod roadmap;
 mod session_search;
 mod slash_command;
 mod submission;
@@ -68,7 +63,6 @@ mod timeline_retry;
 mod title_update;
 mod todo;
 mod tool_consent;
-mod turn_queue;
 mod update;
 mod usage;
 mod workspace;
@@ -109,7 +103,7 @@ pub use attachment::{
     LONG_CLIPBOARD_TEXT_ATTACHMENT_THRESHOLD, MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES,
 };
 pub use auto_turn::{preview_automatic_turn_selection, DesktopAutoTurnDecisionError};
-pub use automation::{
+pub use lilia_feature_automation::{
     automation_active_outgoing_edges, automation_initial_active_nodes, automation_json_path,
     automation_selected_output_handles, automation_topological_order, render_automation_template,
     validate_automation_graph, AutomationActiveRunConflict, AutomationAddTodoRequest,
@@ -129,7 +123,7 @@ pub use automation::{
     AutomationWorkflowVersion, DesktopAutomationError, DesktopAutomationService, GraphExecution,
     SqliteAutomationStore,
 };
-pub use buffer::{
+pub use lilia_feature_document::{
     BufferError, BufferId, BufferRevision, BufferSnapshot, BufferStore, TextBuffer, TextEdit,
 };
 pub use change_feed::PRODUCT_CHANGE_FEED_SOURCE;
@@ -143,6 +137,7 @@ pub use coding_services::{
 pub use command::{DesktopCommand, DesktopCommandOutcome};
 pub use composer::{
     DesktopComposerCommand, DesktopComposerError, DesktopComposerState, DesktopComposerSubmission,
+    DesktopComposerTurnRequest,
 };
 pub use config::{DesktopApplicationConfig, DesktopApplicationConfigError};
 pub use context_compaction::DesktopContextCompactionResult;
@@ -219,7 +214,6 @@ pub use language_service::{
     DesktopDocumentDefinitionResult, DesktopDocumentDefinitionTarget,
     DesktopDocumentDiagnosticsSnapshot, DesktopDocumentDiagnosticsState,
 };
-pub use legacy_database::DesktopLegacyDatabaseError;
 pub use lilia_contracts::{
     ChatAttachment, ChatAttachmentDirectoryMeta, ChatAttachmentKind, ChatContextSearchMatch,
     ChatContextSearchResult, ChatContextUsage, ChatConversationReference,
@@ -230,7 +224,7 @@ pub use mcp_elicitation::{
     DesktopMcpElicitationMode, DesktopMcpFormField, DesktopMcpFormFieldKind, DesktopMcpFormOption,
     MCP_ELICITATION_INTERACTION_KIND,
 };
-pub use memory::{
+pub use lilia_feature_memory::{
     DesktopMemory, DesktopMemoryError, DesktopMemoryService, InMemoryMemorySettingsStore,
     MemoryInjectionState, MemoryScope, MemorySettings, MemorySettingsStore, MemoryStore,
     MemoryStoreError, MemoryUpsertInput, SqliteMemoryStore, MEMORY_SETTINGS_KEY,
@@ -245,16 +239,12 @@ pub use popup_settings::{
     DesktopPopupSettingsError, DesktopPopupWindowSettings, POPUP_LAST_PROJECT_KEY,
     POPUP_WINDOW_SETTINGS_KEY,
 };
-pub use product_management::{
+pub use lilia_feature_task::{
     DesktopOptionalTextUpdate, DesktopProjectCreate, DesktopProjectPatch,
     DesktopProjectRemovalPreview, DesktopTaskCreate, DesktopTaskMove, DesktopTaskPatch,
     DesktopTaskRunBlock,
 };
 pub use project::{ProjectContext, ProjectContextError};
-pub use project_clone::{
-    DesktopProjectCloneError, DesktopProjectCloneOperation, DesktopProjectClonePhase,
-    DesktopProjectCloneRequest, DesktopProjectCloneResult, DesktopProjectCloneSnapshot,
-};
 pub use project_files::{
     ProjectFileEntry, ProjectFileKind, ProjectFilesError, ProjectFilesSnapshot,
     ProjectFilesViewState,
@@ -286,7 +276,7 @@ pub use provider_ui_settings::{
     DesktopRouterModeSettings, DesktopRouterModeSettingsUpdate, ASSISTANT_AI_CREDENTIAL_KEY,
     ASSISTANT_AI_SETTINGS_KEY, MODEL_FEATURE_SETTINGS_KEY, ROUTER_MODE_SETTINGS_KEY,
 };
-pub use query::{DesktopTaskScope, ProjectQuery, TaskQuery};
+pub use lilia_feature_task::{DesktopTaskScope, ProjectQuery, TaskQuery};
 pub use registry_watch::REGISTRY_WATCH_SOURCE;
 pub use remote::{
     DesktopRemoteControlError, DesktopRemoteControlService, RemoteCapabilitySet,
@@ -294,7 +284,7 @@ pub use remote::{
     RemotePeerSummary, RemoteRequestEnvelope, REMOTE_ALPN, REMOTE_MIN_PROTOCOL_VERSION,
     REMOTE_PROTOCOL_VERSION,
 };
-pub use roadmap::{
+pub use lilia_feature_roadmap::{
     DesktopRoadmapService, Milestone, MilestoneDueDateUpdate, MilestoneStatus,
     MilestoneUpdatePatch, ProjectRoadmap, RoadmapStore, RoadmapStoreError, SqliteRoadmapStore,
     TaskMilestoneLink,
@@ -315,8 +305,8 @@ pub use timeline_retry::{timeline_retry_context, DesktopTimelineRetryContext};
 pub use title_update::{
     normalize_title, title_event_id, title_system_instruction, DesktopTaskTitleSource,
     DesktopTaskTitleState, DesktopTimelineUpperBound, DesktopTitleUpdateCoordinator,
-    DesktopTitleUpdateDecision, DesktopTitleUpdateJob, DesktopTitleUpdateReview, TITLE_MAX_CHARS,
-    TITLE_MIN_CHARS, TITLE_UPDATE_ACTION_KIND,
+    DesktopTitleUpdateDecision, DesktopTitleUpdateJob, DesktopTitleUpdateReview,
+    DesktopTitleUpdateScheduler, TITLE_MAX_CHARS, TITLE_MIN_CHARS, TITLE_UPDATE_ACTION_KIND,
 };
 pub use todo::{
     DesktopGuideDispatchResult, DesktopGuideDispatchWindow, DesktopTaskTodo, DesktopTodoCreate,
@@ -327,7 +317,7 @@ pub use tool_consent::{
     DesktopToolConsent, DesktopToolConsentDecision, DesktopToolConsentError,
     TOOL_CONSENT_INTERACTION_KIND,
 };
-pub use turn_queue::DesktopTurnQueueError;
+pub use lilia_feature_agent_session::DesktopTurnQueueError;
 pub use usage::{
     DesktopProjectDashboardSummary, DesktopProjectTaskStatusCounts, QuotaUsageBackendSummary,
     QuotaUsageConversationSummary, QuotaUsageCostCoverage, QuotaUsageDailyBucket,

@@ -1,23 +1,70 @@
 use std::sync::atomic::Ordering;
 
-use lilia_agent_integration::{
+use lilia_agent::{
     CredentialDescriptorView, NativeModelRuntimeConfiguration, ProductCredentialBridge,
     ProductCredentialImportInput, ProductCredentialLoginInput, SecretStore,
     SqliteProductCredentialRegistry,
 };
-use lilia_storage::SqliteAgentRuntimeStateStore;
 use mutsuki_agent_contracts::{
-    AgentError, AgentResult, CredentialKind, CredentialRef, CredentialStatus,
+    AgentError, AgentResult, CredentialKind, CredentialRef,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::{DesktopApplication, DesktopApplicationError, DesktopEventKind, DesktopSecret};
 use crate::{
     DesktopCredentialAction, DesktopHost, DesktopHostAction, DesktopHostContext, DesktopHostResult,
 };
 
-const PROVIDER_RUNTIME_SETTINGS_KEY: &str = "provider.runtime.v1";
-const PROVIDER_RUNTIME_SETTINGS_SCHEMA_VERSION: u32 = 1;
+use lilia_feature_provider::normalize_optional;
+
+pub(crate) use lilia_feature_provider::AgentRuntimeSettingsState as DesktopAgentRuntimeSettingsState;
+pub use lilia_feature_provider::{
+    AgentRuntimeSettings as DesktopAgentRuntimeSettings,
+    AgentRuntimeSettingsUpdate as DesktopAgentRuntimeSettingsUpdate,
+    CapabilityLimit as DesktopCapabilityLimit,
+    ProviderCapabilityView as DesktopProviderCapabilityView,
+    ProviderCredentialImportInput as DesktopProviderCredentialImportInput,
+    ProviderCredentialInput as DesktopProviderCredentialInput,
+    ProviderCredentialKind as DesktopCredentialKind,
+    ProviderCredentialStatus as DesktopCredentialStatus,
+    ProviderCredentialView as DesktopCredentialView, ProviderError as DesktopProviderError,
+    ProviderRuntimeState as DesktopProviderRuntimeState, ProviderSnapshot as DesktopProviderSnapshot,
+    ProviderView as DesktopProviderView, RemoteQuotaState as DesktopRemoteQuotaState,
+};
+
+/// The agent runtime owns [`NativeModelRuntimeConfiguration`] and the provider
+/// feature owns the settings, so the desktop crate that depends on both bridges
+/// them here.
+pub(crate) fn runtime_configuration(
+    settings: &DesktopAgentRuntimeSettings,
+) -> NativeModelRuntimeConfiguration {
+    NativeModelRuntimeConfiguration {
+        openai_endpoint_override: settings.openai_endpoint.clone(),
+        anthropic_endpoint_override: settings.anthropic_endpoint.clone(),
+        model_override: settings.model.clone(),
+    }
+}
+
+fn desktop_credential_view(value: CredentialDescriptorView) -> DesktopCredentialView {
+    DesktopCredentialView {
+        credential_id: value.credential_id,
+        revision: value.revision,
+        provider_id: value.provider_id,
+        kind: value.kind.into(),
+        status: value.status.into(),
+        account_label: value.account_label,
+        source: value.source,
+        model_inference: value.model_inference,
+    }
+}
+
+struct ValidatedProviderCredential {
+    provider_id: String,
+    kind: CredentialKind,
+    secret_material: String,
+    account_label: Option<String>,
+    source: Option<String>,
+}
+
 
 pub(crate) fn persistent_credential_bridge(
     config: &crate::DesktopApplicationConfig,
@@ -102,319 +149,6 @@ fn secret_store_error(message: impl Into<String>) -> AgentError {
     AgentError::new("credential.secret_store", message)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopCredentialKind {
-    ApiKey,
-    OAuthGrant,
-    GeneratedApiKey,
-    CloudIdentity,
-}
-
-impl From<CredentialKind> for DesktopCredentialKind {
-    fn from(value: CredentialKind) -> Self {
-        match value {
-            CredentialKind::ApiKey => Self::ApiKey,
-            CredentialKind::OAuthGrant => Self::OAuthGrant,
-            CredentialKind::GeneratedApiKey => Self::GeneratedApiKey,
-            CredentialKind::CloudIdentity => Self::CloudIdentity,
-        }
-    }
-}
-
-impl From<DesktopCredentialKind> for CredentialKind {
-    fn from(value: DesktopCredentialKind) -> Self {
-        match value {
-            DesktopCredentialKind::ApiKey => Self::ApiKey,
-            DesktopCredentialKind::OAuthGrant => Self::OAuthGrant,
-            DesktopCredentialKind::GeneratedApiKey => Self::GeneratedApiKey,
-            DesktopCredentialKind::CloudIdentity => Self::CloudIdentity,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopCredentialStatus {
-    Active,
-    Expired,
-    Revoked,
-    InsufficientScope,
-    AccountDisabled,
-    UnsupportedForCustomRuntime,
-    PendingRefresh,
-}
-
-impl From<CredentialStatus> for DesktopCredentialStatus {
-    fn from(value: CredentialStatus) -> Self {
-        match value {
-            CredentialStatus::Active => Self::Active,
-            CredentialStatus::Expired => Self::Expired,
-            CredentialStatus::Revoked => Self::Revoked,
-            CredentialStatus::InsufficientScope => Self::InsufficientScope,
-            CredentialStatus::AccountDisabled => Self::AccountDisabled,
-            CredentialStatus::UnsupportedForCustomRuntime => Self::UnsupportedForCustomRuntime,
-            CredentialStatus::PendingRefresh => Self::PendingRefresh,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopProviderView {
-    pub provider_id: String,
-    pub display_name: String,
-    pub protocol_families: Vec<String>,
-    pub supported_kinds: Vec<DesktopCredentialKind>,
-    pub supports_browser_login: bool,
-    pub enterprise_identity: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopCredentialView {
-    pub credential_id: String,
-    pub revision: u64,
-    pub provider_id: String,
-    pub kind: DesktopCredentialKind,
-    pub status: DesktopCredentialStatus,
-    pub account_label: Option<String>,
-    pub source: Option<String>,
-    pub model_inference: bool,
-}
-
-impl From<CredentialDescriptorView> for DesktopCredentialView {
-    fn from(value: CredentialDescriptorView) -> Self {
-        Self {
-            credential_id: value.credential_id,
-            revision: value.revision,
-            provider_id: value.provider_id,
-            kind: value.kind.into(),
-            status: value.status.into(),
-            account_label: value.account_label,
-            source: value.source,
-            model_inference: value.model_inference,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopProviderRuntimeState {
-    pub backend: String,
-    pub runtime_ready: bool,
-    pub profile_id: Option<String>,
-    pub profile_has_credential_refs: bool,
-    pub live_model_adapter_drives_turn: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopAgentRuntimeSettings {
-    pub revision: u64,
-    pub openai_endpoint: Option<String>,
-    pub anthropic_endpoint: Option<String>,
-    pub model: Option<String>,
-}
-
-impl Default for DesktopAgentRuntimeSettings {
-    fn default() -> Self {
-        Self {
-            revision: 1,
-            openai_endpoint: None,
-            anthropic_endpoint: None,
-            model: None,
-        }
-    }
-}
-
-impl DesktopAgentRuntimeSettings {
-    pub(crate) fn runtime_configuration(&self) -> NativeModelRuntimeConfiguration {
-        NativeModelRuntimeConfiguration {
-            openai_endpoint_override: self.openai_endpoint.clone(),
-            anthropic_endpoint_override: self.anthropic_endpoint.clone(),
-            model_override: self.model.clone(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopAgentRuntimeSettingsUpdate {
-    pub expected_revision: u64,
-    pub openai_endpoint: Option<String>,
-    pub anthropic_endpoint: Option<String>,
-    pub model: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StoredDesktopAgentRuntimeSettings {
-    schema_version: u32,
-    revision: u64,
-    openai_endpoint: Option<String>,
-    anthropic_endpoint: Option<String>,
-    model: Option<String>,
-}
-
-impl From<DesktopAgentRuntimeSettings> for StoredDesktopAgentRuntimeSettings {
-    fn from(value: DesktopAgentRuntimeSettings) -> Self {
-        Self {
-            schema_version: PROVIDER_RUNTIME_SETTINGS_SCHEMA_VERSION,
-            revision: value.revision,
-            openai_endpoint: value.openai_endpoint,
-            anthropic_endpoint: value.anthropic_endpoint,
-            model: value.model,
-        }
-    }
-}
-
-impl TryFrom<StoredDesktopAgentRuntimeSettings> for DesktopAgentRuntimeSettings {
-    type Error = DesktopProviderError;
-
-    fn try_from(value: StoredDesktopAgentRuntimeSettings) -> Result<Self, Self::Error> {
-        if value.schema_version != PROVIDER_RUNTIME_SETTINGS_SCHEMA_VERSION {
-            return Err(DesktopProviderError::UnsupportedSettingsSchema(
-                value.schema_version,
-            ));
-        }
-        if value.revision == 0 {
-            return Err(DesktopProviderError::CorruptSettings(
-                "revision must be positive".to_owned(),
-            ));
-        }
-        Ok(Self {
-            revision: value.revision,
-            openai_endpoint: validate_endpoint("openaiEndpoint", value.openai_endpoint)?,
-            anthropic_endpoint: validate_endpoint("anthropicEndpoint", value.anthropic_endpoint)?,
-            model: validate_model(value.model)?,
-        })
-    }
-}
-
-pub(crate) struct DesktopAgentRuntimeSettingsState {
-    store: SqliteAgentRuntimeStateStore,
-    current: DesktopAgentRuntimeSettings,
-}
-
-impl DesktopAgentRuntimeSettingsState {
-    pub(crate) fn open(store: SqliteAgentRuntimeStateStore) -> Result<Self, DesktopProviderError> {
-        let current = match store
-            .setting(PROVIDER_RUNTIME_SETTINGS_KEY)
-            .map_err(|error| DesktopProviderError::Persistence(error.to_string()))?
-        {
-            Some(payload) => {
-                let stored: StoredDesktopAgentRuntimeSettings = serde_json::from_value(payload)
-                    .map_err(|error| DesktopProviderError::CorruptSettings(error.to_string()))?;
-                DesktopAgentRuntimeSettings::try_from(stored)?
-            }
-            None => DesktopAgentRuntimeSettings::default(),
-        };
-        Ok(Self { store, current })
-    }
-
-    pub(crate) fn current(&self) -> DesktopAgentRuntimeSettings {
-        self.current.clone()
-    }
-
-    fn prepare_update(
-        &self,
-        update: DesktopAgentRuntimeSettingsUpdate,
-    ) -> Result<DesktopAgentRuntimeSettings, DesktopProviderError> {
-        if update.expected_revision != self.current.revision {
-            return Err(DesktopProviderError::SettingsRevisionConflict {
-                expected: update.expected_revision,
-                actual: self.current.revision,
-            });
-        }
-        Ok(DesktopAgentRuntimeSettings {
-            revision: self
-                .current
-                .revision
-                .checked_add(1)
-                .ok_or(DesktopProviderError::SettingsRevisionOverflow)?,
-            openai_endpoint: validate_endpoint("openaiEndpoint", update.openai_endpoint)?,
-            anthropic_endpoint: validate_endpoint("anthropicEndpoint", update.anthropic_endpoint)?,
-            model: validate_model(update.model)?,
-        })
-    }
-
-    fn persist(&self, settings: &DesktopAgentRuntimeSettings) -> Result<(), DesktopProviderError> {
-        let payload =
-            serde_json::to_value(StoredDesktopAgentRuntimeSettings::from(settings.clone()))
-                .map_err(|error| DesktopProviderError::Persistence(error.to_string()))?;
-        self.store
-            .put_setting(PROVIDER_RUNTIME_SETTINGS_KEY, &payload)
-            .map_err(|error| DesktopProviderError::Persistence(error.to_string()))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "availability", rename_all = "snake_case")]
-pub enum DesktopRemoteQuotaState {
-    Unavailable { note: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopCapabilityLimit {
-    pub kind: String,
-    pub label: String,
-    pub value: Option<u64>,
-    pub note: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopProviderCapabilityView {
-    pub provider_id: String,
-    pub display_name: String,
-    pub adapter_id: Option<String>,
-    pub credential_health: String,
-    pub has_usable_credential: bool,
-    pub known_limits: Vec<DesktopCapabilityLimit>,
-    pub note: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopProviderSnapshot {
-    pub revision: u64,
-    pub providers: Vec<DesktopProviderView>,
-    pub credentials: Vec<DesktopCredentialView>,
-    pub broker_ready: bool,
-    pub broker_degraded: bool,
-    pub credential_recovery_issue_count: usize,
-    pub runtime: DesktopProviderRuntimeState,
-    pub remote_quota: DesktopRemoteQuotaState,
-    pub capability_limits: Vec<DesktopProviderCapabilityView>,
-    pub subscription_not_equated_to_api_quota: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DesktopProviderCredentialInput {
-    pub provider_id: String,
-    pub kind: DesktopCredentialKind,
-    pub secret: DesktopSecret,
-    pub account_label: Option<String>,
-    pub source: Option<String>,
-}
-
-struct ValidatedProviderCredential {
-    provider_id: String,
-    kind: CredentialKind,
-    secret_material: String,
-    account_label: Option<String>,
-    source: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct DesktopProviderCredentialImportInput {
-    pub credential: DesktopProviderCredentialInput,
-    pub permissions_summary: Option<String>,
-    pub independent_revoke_uri: Option<String>,
-}
-
 impl DesktopApplication {
     pub(crate) fn read_host_credential_text_result(
         &self,
@@ -472,7 +206,7 @@ impl DesktopApplication {
         state.persist(&next)?;
         if let Err(error) = runtime
             .inner()
-            .configure_model_runtime(next.runtime_configuration())
+            .configure_model_runtime(runtime_configuration(&next))
         {
             let rollback = state.persist(&previous);
             return Err(DesktopProviderError::RuntimeSettingsApply {
@@ -481,7 +215,7 @@ impl DesktopApplication {
             }
             .into());
         }
-        state.current = next.clone();
+        state.commit(next.clone());
         drop(state);
         let revision = self
             .inner
@@ -524,7 +258,7 @@ impl DesktopApplication {
                 .credential
                 .credentials
                 .into_iter()
-                .map(DesktopCredentialView::from)
+                .map(desktop_credential_view)
                 .collect(),
             broker_ready: diagnostics.credential.broker_ready,
             broker_degraded: diagnostics.credential.broker_degraded,
@@ -711,7 +445,7 @@ impl DesktopApplication {
             .provider_revision
             .fetch_add(1, Ordering::AcqRel)
             .saturating_add(1);
-        let view = DesktopCredentialView::from(descriptor);
+        let view = desktop_credential_view(descriptor);
         self.emit_event(DesktopEventKind::CredentialChanged {
             provider_id: provider_id.clone(),
             credential_id: view.credential_id.clone(),
@@ -725,119 +459,15 @@ impl DesktopApplication {
     }
 }
 
-fn normalize_optional(value: Option<String>) -> Option<String> {
-    value.and_then(|value| {
-        let value = value.trim();
-        (!value.is_empty()).then(|| value.to_owned())
-    })
-}
-
-fn validate_endpoint(
-    field: &'static str,
-    value: Option<String>,
-) -> Result<Option<String>, DesktopProviderError> {
-    let Some(value) = normalize_optional(value) else {
-        return Ok(None);
-    };
-    if value.len() > 2_048 || value.chars().any(char::is_control) {
-        return Err(DesktopProviderError::InvalidEndpoint {
-            field,
-            message: "endpoint is too long or contains control characters".to_owned(),
-        });
-    }
-    let remainder = value
-        .strip_prefix("https://")
-        .or_else(|| value.strip_prefix("http://"))
-        .ok_or_else(|| DesktopProviderError::InvalidEndpoint {
-            field,
-            message: "endpoint must be an absolute HTTP or HTTPS URL".to_owned(),
-        })?;
-    let authority_end = remainder.find(['/', '?']).unwrap_or(remainder.len());
-    let authority = &remainder[..authority_end];
-    if authority.is_empty()
-        || authority.starts_with(':')
-        || authority.contains('@')
-        || value.contains('#')
-        || value.chars().any(char::is_whitespace)
-    {
-        return Err(DesktopProviderError::InvalidEndpoint {
-            field,
-            message: "endpoint must contain a host and no credentials, whitespace, or fragment"
-                .to_owned(),
-        });
-    }
-    Ok(Some(value))
-}
-
-fn validate_model(value: Option<String>) -> Result<Option<String>, DesktopProviderError> {
-    let Some(value) = normalize_optional(value) else {
-        return Ok(None);
-    };
-    if value.len() > 256
-        || value.chars().any(char::is_control)
-        || value.chars().any(char::is_whitespace)
-    {
-        return Err(DesktopProviderError::InvalidModel);
-    }
-    Ok(Some(value))
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum DesktopProviderError {
-    #[error("unknown provider `{0}`")]
-    UnknownProvider(String),
-    #[error("provider `{provider_id}` does not support credential kind `{kind:?}`")]
-    UnsupportedCredentialKind {
-        provider_id: String,
-        kind: DesktopCredentialKind,
-    },
-    #[error("provider secret must not be empty")]
-    EmptySecret,
-    #[error("provider secret must be valid UTF-8 text")]
-    InvalidSecretEncoding,
-    #[error("credential id must not be empty")]
-    InvalidCredentialId,
-    #[error("invalid provider runtime endpoint `{field}`: {message}")]
-    InvalidEndpoint {
-        field: &'static str,
-        message: String,
-    },
-    #[error("provider runtime model must be a non-empty model id without whitespace")]
-    InvalidModel,
-    #[error("provider runtime settings revision conflict: expected {expected}, actual {actual}")]
-    SettingsRevisionConflict { expected: u64, actual: u64 },
-    #[error("provider runtime settings revision overflowed")]
-    SettingsRevisionOverflow,
-    #[error("provider runtime settings state is unavailable")]
-    SettingsStateUnavailable,
-    #[error("provider runtime settings use unsupported schema version {0}")]
-    UnsupportedSettingsSchema(u32),
-    #[error("provider runtime settings are corrupt: {0}")]
-    CorruptSettings(String),
-    #[error(
-        "provider runtime settings could not be applied: {message}{rollback}",
-        rollback = rollback_failed
-            .as_ref()
-            .map(|value| format!("; rollback failed: {value}"))
-            .unwrap_or_default()
-    )]
-    RuntimeSettingsApply {
-        message: String,
-        rollback_failed: Option<String>,
-    },
-    #[error("provider credential persistence failed: {0}")]
-    Persistence(String),
-    #[error("provider runtime operation failed: {0}")]
-    Runtime(String),
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::sync::Arc;
     use std::sync::Mutex;
 
+    use lilia_feature_provider::PROVIDER_RUNTIME_SETTINGS_KEY;
     use lilia_service::ServiceAuthority;
+    use lilia_storage::SqliteAgentRuntimeStateStore;
     use mutsuki_agent_contracts::OPENAI_CREDENTIAL_PROVIDER_ID;
 
     use super::*;

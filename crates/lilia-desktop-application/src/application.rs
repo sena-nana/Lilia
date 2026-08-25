@@ -9,17 +9,15 @@ use lilia_contracts::{
     TimelineProjectionCursor, TimelineProjectionEvent, TimelineProjectionPage, TodoProjection,
 };
 use lilia_service::{ServiceAuthority, ServiceAuthorityError};
+use lilia_storage::Db;
 use serde::{Deserialize, Serialize};
 
 use crate::agent::DesktopAgentRuntime;
 use crate::composer::DesktopComposerStore;
-use crate::legacy_database::{
-    in_memory_shared_legacy_connection, open_shared_legacy_connection, DesktopLegacyDatabaseError,
-};
 use crate::remote::DesktopRemoteControlService;
 use crate::submission::DesktopSubmissionStore;
 use crate::todo::DesktopTodoStore;
-use crate::turn_queue::DesktopTurnQueueStore;
+use lilia_feature_agent_session::DesktopTurnQueueStore;
 use crate::workspace::DesktopWorkspaceState;
 use crate::worktree::DesktopWorktreeStore;
 use crate::{
@@ -29,7 +27,7 @@ use crate::{
 };
 use crate::{
     DesktopArchitectureService, DesktopAutomationService, DesktopMemoryService,
-    DesktopRoadmapService, InMemoryMemorySettingsStore, MemorySettingsStore, SqliteAutomationStore,
+    DesktopRoadmapService, InMemoryMemorySettingsStore, MemorySettingsStore,
     SqliteMemoryStore,
 };
 use crate::{DocumentStore, LanguageRegistry};
@@ -45,10 +43,13 @@ pub(crate) struct DesktopApplicationInner {
     pub(crate) host: Arc<dyn DesktopHost>,
     pub(crate) host_context: DesktopHostContext,
     pub(crate) events: DesktopEventBus,
+    pub(crate) project_tasks: lilia_feature_task::ProjectTaskService,
     pub(crate) workspace: Arc<Mutex<DesktopWorkspaceState>>,
-    pub(crate) composers: Mutex<DesktopComposerStore>,
+    pub(crate) timeline: lilia_feature_timeline::TimelineService,
+    pub(crate) domain_db: Db,
+    pub(crate) composers: DesktopComposerStore,
     pub(crate) submissions: Mutex<DesktopSubmissionStore>,
-    pub(crate) terminals: crate::terminal::DesktopTerminalService,
+    pub(crate) terminals: Arc<crate::terminal::DesktopTerminalService>,
     pub(crate) pending_turns: Mutex<DesktopTurnQueueStore>,
     pub(crate) turn_submission: Mutex<()>,
     pub(crate) turn_claim_epoch: String,
@@ -65,8 +66,8 @@ pub(crate) struct DesktopApplicationInner {
     pub(crate) provider_revision: AtomicU64,
     pub(crate) provider_settings: Mutex<crate::provider::DesktopAgentRuntimeSettingsState>,
     pub(crate) agent_interaction: Mutex<crate::agent_interaction::DesktopAgentInteractionState>,
-    pub(crate) documents: Mutex<DocumentStore>,
-    pub(crate) languages: RwLock<LanguageRegistry>,
+    pub(crate) documents: lilia_feature_document::SharedDocumentStore,
+    pub(crate) languages: lilia_feature_document::SharedLanguageRegistry,
     pub(crate) language_services: Mutex<crate::language_service::DesktopLanguageServiceState>,
     pub(crate) language_service_operations: Mutex<()>,
     pub(crate) project_files_watchers:
@@ -78,6 +79,8 @@ pub(crate) struct DesktopApplicationInner {
     pub(crate) product_change_feed: crate::change_feed::ProductChangeFeed,
     pub(crate) registry_file_watch: crate::registry_watch::RegistryFileWatch,
     pub(crate) title_update: std::sync::Arc<crate::title_update::DesktopTitleUpdateCoordinator>,
+    pub(crate) title_update_scheduler:
+        std::sync::OnceLock<Arc<dyn crate::title_update::DesktopTitleUpdateScheduler>>,
     pub(crate) agent: DesktopAgentRuntime,
     pub(crate) cli_requests: Mutex<()>,
     pub(crate) extension_registry: Mutex<()>,
@@ -153,39 +156,33 @@ impl DesktopApplication {
             }
         }
         let host_context = DesktopHostContext::from(&config);
-        let domain_connection = if authority.data_paths().is_some() {
-            open_shared_legacy_connection(&config.domain_database_path())?
-        } else {
-            in_memory_shared_legacy_connection()?
+        // Desktop domain tables live in the same `product.db` the authority owns,
+        // so they join the authority's handle instead of opening a second writer.
+        let domain_connection = match authority.product_store() {
+            Some(store) => store.db(),
+            None => Db::in_memory()?,
         };
-        let composers = DesktopComposerStore::from_shared(domain_connection.clone())?;
+        let composers = DesktopComposerStore::new(domain_connection.clone())?;
         let todos = DesktopTodoStore::from_shared(domain_connection.clone())?;
         let pending_turns = DesktopTurnQueueStore::from_shared(domain_connection.clone())?;
         let hook_executions =
             crate::hooks::DesktopHookExecutionStore::from_shared(domain_connection.clone())?;
-        let submissions = DesktopSubmissionStore::new(domain_connection);
-        let worktrees = if authority.data_paths().is_some() {
-            DesktopWorktreeStore::open(&config.domain_database_path())?
-        } else {
-            DesktopWorktreeStore::in_memory()?
-        };
+        let submissions = DesktopSubmissionStore::new(domain_connection.clone());
+        let worktrees = DesktopWorktreeStore::from_db(domain_connection.clone())?;
         let events = DesktopEventBus::new();
-        let automation_store = if authority.data_paths().is_some() {
-            SqliteAutomationStore::open(config.domain_database_path())
-                .map_err(crate::DesktopAutomationError::from)?
-        } else {
-            SqliteAutomationStore::in_memory().map_err(crate::DesktopAutomationError::from)?
-        };
-        let automation = DesktopAutomationService::from_store(
-            automation_store,
-            events.clone(),
-            config.instance_identity(),
+        let automation = DesktopAutomationService::from_db(
+            domain_connection.clone(),
+            Arc::new(crate::automation::BroadcastAutomationEvents::new(
+                events.clone(),
+                config.instance_identity(),
+            )),
         )?;
+        // Product `projects` / `tasks` live in the authority store, which owns a
+        // separate database when the authority is in-memory. Memory and roadmap
+        // depend on those tables, so they only join the shared handle when the
+        // authority is durable.
         let memory = if authority.data_paths().is_some() {
-            DesktopMemoryService::open_with_settings(
-                config.domain_database_path(),
-                memory_settings,
-            )?
+            DesktopMemoryService::from_db_with_settings(domain_connection.clone(), memory_settings)?
         } else {
             DesktopMemoryService::from_stores(
                 SqliteMemoryStore::in_memory().map_err(crate::DesktopMemoryError::from)?,
@@ -193,24 +190,16 @@ impl DesktopApplication {
             )
         };
         let roadmap = if authority.data_paths().is_some() {
-            DesktopRoadmapService::open(config.domain_database_path())?
+            DesktopRoadmapService::from_db(domain_connection.clone())?
         } else {
             DesktopRoadmapService::in_memory()?
         };
-        let architecture = if authority.data_paths().is_some() {
-            DesktopArchitectureService::open(config.domain_database_path())?
-        } else {
-            DesktopArchitectureService::in_memory()?
-        };
-        let remote = if authority.data_paths().is_some() {
-            DesktopRemoteControlService::open(
-                config.domain_database_path(),
-                host.clone(),
-                host_context.clone(),
-            )?
-        } else {
-            DesktopRemoteControlService::in_memory(host.clone(), host_context.clone())?
-        };
+        let architecture = DesktopArchitectureService::from_db(domain_connection.clone())?;
+        let remote = DesktopRemoteControlService::from_db(
+            domain_connection.clone(),
+            host.clone(),
+            host_context.clone(),
+        )?;
         let provider_settings_store = if authority.data_paths().is_some() {
             lilia_storage::SqliteAgentRuntimeStateStore::open(
                 config.data_paths().agent_runtime_db(),
@@ -224,7 +213,9 @@ impl DesktopApplication {
         authority
             .shared_runtime()
             .inner()
-            .configure_model_runtime(provider_settings.current().runtime_configuration())
+            .configure_model_runtime(crate::provider::runtime_configuration(
+                &provider_settings.current(),
+            ))
             .map_err(|error| crate::DesktopProviderError::Runtime(error.to_string()))?;
         let agent_interaction_store = if authority.data_paths().is_some() {
             lilia_storage::SqliteAgentRuntimeStateStore::open(
@@ -249,8 +240,16 @@ impl DesktopApplication {
                 message: error.to_string(),
                 rollback_failed: None,
             })?;
+        let project_tasks = lilia_feature_task::ProjectTaskService::new(
+            authority.clone(),
+            Arc::new(crate::product_management::BroadcastProjectTaskEvents::new(
+                events.clone(),
+                config.instance_identity(),
+            )),
+        );
         let contribution_host = crate::contributions::LiliaContributionHost::bootstrap()
             .map_err(|error| DesktopApplicationError::Contribution(error.to_string()))?;
+        let timeline = lilia_feature_timeline::TimelineService::new(authority.clone());
         Ok(Self {
             inner: Arc::new(DesktopApplicationInner {
                 config,
@@ -258,10 +257,13 @@ impl DesktopApplication {
                 host,
                 host_context,
                 events,
+                project_tasks,
                 workspace: Arc::new(Mutex::new(DesktopWorkspaceState::default())),
-                composers: Mutex::new(composers),
+                timeline,
+                domain_db: domain_connection,
+                composers,
                 submissions: Mutex::new(submissions),
-                terminals: crate::terminal::DesktopTerminalService::default(),
+                terminals: Arc::new(crate::terminal::DesktopTerminalService::default()),
                 pending_turns: Mutex::new(pending_turns),
                 turn_submission: Mutex::new(()),
                 turn_claim_epoch: format!("desktop-epoch-{}", uuid::Uuid::new_v4()),
@@ -278,8 +280,8 @@ impl DesktopApplication {
                 provider_revision: AtomicU64::new(1),
                 provider_settings: Mutex::new(provider_settings),
                 agent_interaction: Mutex::new(agent_interaction),
-                documents: Mutex::new(DocumentStore::default()),
-                languages: RwLock::new(LanguageRegistry::with_builtins()),
+                documents: Arc::new(Mutex::new(DocumentStore::default())),
+                languages: Arc::new(RwLock::new(LanguageRegistry::with_builtins())),
                 language_services: Mutex::new(Default::default()),
                 language_service_operations: Mutex::new(()),
                 project_files_watchers: Mutex::new(std::collections::BTreeMap::new()),
@@ -291,6 +293,7 @@ impl DesktopApplication {
                 title_update: std::sync::Arc::new(
                     crate::title_update::DesktopTitleUpdateCoordinator::default(),
                 ),
+                title_update_scheduler: std::sync::OnceLock::new(),
                 agent: DesktopAgentRuntime::default(),
                 cli_requests: Mutex::new(()),
                 extension_registry: Mutex::new(()),
@@ -354,6 +357,26 @@ impl DesktopApplication {
 
     pub fn authority(&self) -> &ServiceAuthority {
         &self.inner.authority
+    }
+
+    /// Handle to the database desktop domain tables share with the authority.
+    pub fn domain_db(&self) -> &Db {
+        &self.inner.domain_db
+    }
+
+    /// Terminal sessions this process owns.
+    pub fn terminal_service(&self) -> &Arc<crate::terminal::DesktopTerminalService> {
+        &self.inner.terminals
+    }
+
+    /// Open documents and the buffers behind them.
+    pub fn document_store(&self) -> &lilia_feature_document::SharedDocumentStore {
+        &self.inner.documents
+    }
+
+    /// Language definitions the editor resolves paths against.
+    pub fn language_registry(&self) -> &lilia_feature_document::SharedLanguageRegistry {
+        &self.inner.languages
     }
 
     pub fn query_projects(
@@ -448,12 +471,7 @@ impl DesktopApplication {
         before: Option<&TimelineProjectionCursor>,
         limit: usize,
     ) -> Result<TimelineProjectionPage, DesktopApplicationError> {
-        Ok(self
-            .inner
-            .authority
-            .shared_runtime()
-            .inner()
-            .product_timeline_page_before(task_id, before, limit.clamp(1, 200))?)
+        Ok(self.inner.timeline.page(task_id, before, limit)?)
     }
 
     pub fn execute_host(
@@ -475,6 +493,31 @@ impl DesktopApplication {
         self.inner
             .events
             .publish(self.inner.config.instance_identity(), kind)
+    }
+}
+
+/// Keeps the feature's error surface identical to the one callers already
+/// match on, so moving the domain out did not reshape any error path.
+impl From<lilia_feature_timeline::TimelineError> for DesktopApplicationError {
+    fn from(error: lilia_feature_timeline::TimelineError) -> Self {
+        match error {
+            lilia_feature_timeline::TimelineError::Product(error) => Self::Product(error),
+            lilia_feature_timeline::TimelineError::InvalidInput { field, message } => {
+                Self::InvalidInput { field, message }
+            }
+        }
+    }
+}
+
+impl From<lilia_feature_task::TaskError> for DesktopApplicationError {
+    fn from(error: lilia_feature_task::TaskError) -> Self {
+        match error {
+            lilia_feature_task::TaskError::Service(error) => Self::Service(error),
+            lilia_feature_task::TaskError::Product(error) => Self::Product(error),
+            lilia_feature_task::TaskError::InvalidInput { field, message } => {
+                Self::InvalidInput { field, message }
+            }
+        }
     }
 }
 
@@ -541,7 +584,7 @@ pub enum DesktopApplicationError {
     #[error(transparent)]
     TurnQueue(#[from] crate::DesktopTurnQueueError),
     #[error(transparent)]
-    LegacyDatabase(#[from] DesktopLegacyDatabaseError),
+    Database(#[from] lilia_storage::DbError),
     #[error(transparent)]
     Submission(#[from] crate::DesktopSubmissionError),
     #[error(transparent)]
@@ -588,7 +631,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::{Duration, Instant};
 
-    use lilia_agent_integration::ProductCredentialLoginInput;
+    use lilia_agent::ProductCredentialLoginInput;
     use lilia_contracts::{
         AgentSessionRef, ArtifactProjection, PendingProjection, PendingProjectionStatus,
         ProductEntity, ProductTask, Project, ProjectId, ProjectionEventId, TaskId,
@@ -1277,7 +1320,7 @@ mod tests {
             assert_eq!(rows.len(), 1);
             assert_eq!(
                 rows[0].state,
-                crate::turn_queue::PersistedDesktopTurnState::Claimed
+                lilia_feature_agent_session::PersistedDesktopTurnState::Claimed
             );
             assert_eq!(rows[0].request.content, "ask before writing");
             rows[0].claim_token.clone().expect("original claim token")
@@ -1313,7 +1356,7 @@ mod tests {
             assert_eq!(rows.len(), 1);
             assert_eq!(
                 rows[0].state,
-                crate::turn_queue::PersistedDesktopTurnState::Claimed
+                lilia_feature_agent_session::PersistedDesktopTurnState::Claimed
             );
             assert_eq!(rows[0].request.content, "ask before writing");
             rows[0].claim_token.clone().expect("recovered claim token")

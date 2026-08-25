@@ -1,0 +1,15 @@
+[package]
+name = "lilia-feature-composer"
+description = "Composer domain feature: durable per-task draft state and its reducer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-contracts = { workspace = true }
+lilia-kernel = { workspace = true }
+lilia-storage = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

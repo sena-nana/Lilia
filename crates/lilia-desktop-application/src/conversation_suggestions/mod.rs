@@ -1,14 +1,11 @@
 mod cache;
-mod generation;
 mod github_activity;
-mod local_git;
 mod model;
 mod scope;
 mod settings;
-mod types;
 
 #[allow(unused_imports)]
-pub use generation::{suggestion_generation_rules, suggestion_system_instruction};
+pub use lilia_feature_suggestions::generation::{suggestion_generation_rules, suggestion_system_instruction};
 #[allow(unused_imports)]
 pub use model::{
     request_model_completion, ConversationSuggestionModelPort,
@@ -18,14 +15,14 @@ pub use settings::{
     DesktopConversationSuggestionError, DesktopConversationSuggestionSettings,
     DesktopConversationSuggestionSource, CONVERSATION_SUGGESTION_SETTINGS_KEY,
 };
-pub use types::{
+pub use lilia_feature_suggestions::types::{
     DesktopSuggestionGitHubActivityRef, DesktopSuggestionItem, DesktopSuggestionItemSource,
     DesktopSuggestionLocalGitContextRef, DesktopSuggestionLocalGitProbe,
     DesktopSuggestionModelRequest, DesktopSuggestionSessionThreadRef, DesktopSuggestionSourceProbe,
 };
 
 use cache::{build_cache_key, cache_scope_key};
-use generation::{build_generation_prompt, materialize_items, parse_model_suggestions};
+use lilia_feature_suggestions::generation::{build_generation_prompt, materialize_items, parse_model_suggestions};
 use scope::summarize_scope_sources;
 
 use crate::{DesktopApplication, DesktopApplicationError, DesktopEventKind};

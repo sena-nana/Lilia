@@ -1,0 +1,14 @@
+[package]
+name = "lilia-feature-document"
+description = "Document domain feature: text buffers, language registry, project roots and document store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-contracts = { workspace = true }
+lilia-kernel = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+thiserror = { workspace = true }

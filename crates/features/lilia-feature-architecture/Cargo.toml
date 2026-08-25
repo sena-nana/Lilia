@@ -1,0 +1,20 @@
+[package]
+name = "lilia-feature-architecture"
+description = "Architecture domain feature: the project graph and agent-proposed changes"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-contracts = { workspace = true }
+lilia-kernel = { workspace = true }
+lilia-storage = { workspace = true }
+mutsuki-agent-contracts = { workspace = true }
+rusqlite = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

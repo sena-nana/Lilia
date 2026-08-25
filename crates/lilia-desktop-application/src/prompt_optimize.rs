@@ -4,9 +4,9 @@ use lilia_contracts::{
     prompt_optimize_request_instruction, prompt_optimize_requirements,
     prompt_optimize_system_instruction, prompt_router_request_instruction,
     prompt_router_requirements, prompt_router_scenarios, prompt_router_system_instruction,
-    ChatAttachment, ChatConversationReference, LiliaAgentWorkflow,
+    LiliaAgentWorkflow,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 
 use crate::auxiliary_model::{request_auxiliary_model_text, DesktopAuxiliaryModelRequest};
@@ -16,36 +16,10 @@ const PROMPT_OPTIMIZE_TIMEOUT: Duration = Duration::from_secs(12);
 const PROMPT_ROUTE_CONFIDENCE_THRESHOLD: f64 = 0.6;
 const GENERAL_TASK_SCENARIO: &str = "general_task_optimize";
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopPromptOptimizeInput {
-    pub prompt: String,
-    #[serde(default)]
-    pub attachments: Vec<ChatAttachment>,
-    #[serde(default)]
-    pub conversation_references: Vec<ChatConversationReference>,
-    #[serde(default)]
-    pub project_cwd: Option<String>,
-    #[serde(default)]
-    pub task_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopPromptOptimizeResult {
-    pub optimized_prompt: String,
-    pub route: DesktopPromptRoute,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopPromptRoute {
-    pub scenario: String,
-    pub workflow: Option<LiliaAgentWorkflow>,
-    pub confidence: f64,
-    pub reason: String,
-    pub signals: Vec<String>,
-}
+pub use lilia_feature_composer::{
+    PromptOptimizeInput as DesktopPromptOptimizeInput,
+    PromptOptimizeResult as DesktopPromptOptimizeResult, PromptRoute as DesktopPromptRoute,
+};
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -2,8 +2,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
 
 use lilia_contracts::{
-    AgentSessionBinding, AgentSessionRef, BindingId, ChatAttachment, ChatConversationReference,
-    LiliaAgentWorkflow, PendingProjection, PendingProjectionStatus, ProductApprovalDecision,
+    AgentSessionBinding, AgentSessionRef, BindingId, LiliaAgentWorkflow, PendingProjection, PendingProjectionStatus, ProductApprovalDecision,
     ProductEntity, ProductEntityKind, ProductRevision, ProductTask, TaskId,
 };
 #[cfg(debug_assertions)]
@@ -17,7 +16,7 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::hooks::DesktopHookEvent;
-use crate::turn_queue::PersistedDesktopTurnState;
+use lilia_feature_agent_session::PersistedDesktopTurnState;
 use crate::{
     ArchitectureBackend, ArchitecturePermission, AutomationCompleteAgentInput, DesktopApplication,
     DesktopApplicationError, DesktopApprovalState, DesktopEventKind, DesktopGuideDispatchWindow,
@@ -27,158 +26,12 @@ use crate::{
     ProjectArchitectureRejectInput,
 };
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopExecutionPermission {
-    Full,
-    #[default]
-    Ask,
-    Readonly,
-}
+pub use lilia_contracts::ExecutionPermission as DesktopExecutionPermission;
 
-impl DesktopExecutionPermission {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Full => "full",
-            Self::Ask => "ask",
-            Self::Readonly => "readonly",
-        }
-    }
-
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "full" => Some(Self::Full),
-            "ask" => Some(Self::Ask),
-            "readonly" => Some(Self::Readonly),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopAutomationTurnCorrelation {
-    pub run_id: String,
-    pub node_id: String,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopSessionBranchMode {
-    Continue,
-    Fork,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopSessionBranchAnchor {
-    pub source_turn_id: String,
-    pub mode: DesktopSessionBranchMode,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopTurnRequest {
-    pub task_id: TaskId,
-    pub content: String,
-    #[serde(default)]
-    pub attachments: Vec<ChatAttachment>,
-    #[serde(default)]
-    pub conversation_references: Vec<ChatConversationReference>,
-    pub workspace_path: Option<String>,
-    pub model: Option<String>,
-    pub reasoning_effort: Option<String>,
-    pub permission: DesktopExecutionPermission,
-    pub plan_mode: bool,
-    pub goal_mode: bool,
-    #[serde(default)]
-    pub allow_auto_turn_decision: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub auto_turn_settings: Option<crate::DesktopAutoTurnDecisionSettings>,
-    #[serde(default)]
-    pub auto_turn_decision_applied: bool,
-    #[serde(default)]
-    pub session_fork: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub session_branch: Option<DesktopSessionBranchAnchor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub automatic_selection: Option<DesktopAutomaticTurnSelection>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub automation: Option<DesktopAutomationTurnCorrelation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub guide_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub workflow: Option<LiliaAgentWorkflow>,
-}
-
-impl DesktopTurnRequest {
-    pub fn new(task_id: TaskId, content: impl Into<String>) -> Self {
-        Self {
-            task_id,
-            content: content.into(),
-            attachments: Vec::new(),
-            conversation_references: Vec::new(),
-            workspace_path: None,
-            model: None,
-            reasoning_effort: None,
-            permission: DesktopExecutionPermission::Ask,
-            plan_mode: false,
-            goal_mode: false,
-            allow_auto_turn_decision: false,
-            auto_turn_settings: None,
-            auto_turn_decision_applied: false,
-            session_fork: false,
-            session_branch: None,
-            automatic_selection: None,
-            automation: None,
-            guide_id: None,
-            workflow: None,
-        }
-    }
-
-    pub fn with_attachments(mut self, attachments: Vec<ChatAttachment>) -> Self {
-        self.attachments = attachments;
-        self
-    }
-
-    pub fn with_conversation_references(
-        mut self,
-        references: Vec<ChatConversationReference>,
-    ) -> Self {
-        self.conversation_references = references;
-        self
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopAutomaticTurnSelection {
-    pub source: String,
-    pub tier: String,
-    pub model: Option<String>,
-    pub reasoning_effort: Option<String>,
-    pub plan_mode: bool,
-    pub goal_mode: bool,
-    pub session_fork: bool,
-    pub summary: Option<String>,
-    pub signals: Vec<String>,
-    pub decision_provider_id: String,
-    pub decision_model: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopTurnDispatchKind {
-    Started,
-    Queued { position: usize },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopTurnDispatch {
-    pub turn_id: String,
-    pub kind: DesktopTurnDispatchKind,
-}
+pub use lilia_feature_agent_session::{
+    DesktopAutomaticTurnSelection, DesktopAutomationTurnCorrelation, DesktopSessionBranchAnchor,
+    DesktopSessionBranchMode, DesktopTurnDispatch, DesktopTurnDispatchKind, DesktopTurnRequest,
+};
 
 struct ObservedTurnPage {
     session_id: String,
@@ -2386,7 +2239,7 @@ impl DesktopApplication {
                             Ok(None)
                         } else {
                             Err(
-                                crate::turn_queue::DesktopTurnQueueError::InvalidTransition {
+                                lilia_feature_agent_session::DesktopTurnQueueError::InvalidTransition {
                                     turn_id: turn_id.clone(),
                                     state: "not_queued".to_owned(),
                                     operation: "discard prepared turn",
@@ -2950,7 +2803,7 @@ impl DesktopApplication {
             let completed = matches!(state, DesktopTurnState::Completed);
             self.finish_turn(task_id.clone(), turn_id.clone(), state);
             if completed {
-                self.spawn_title_update_after_turn(task_id, Some(turn_id));
+                self.request_title_update_after_turn(task_id, Some(turn_id));
             }
         } else {
             self.finish_turn(
@@ -3320,7 +3173,9 @@ mod tests {
         DesktopApplicationConfig, DesktopGoalSnapshot, DesktopGoalStatus, DesktopHost,
         DesktopHostAction, DesktopHostContext, DesktopHostError, DesktopHostResult,
     };
-    use lilia_contracts::{ChatAttachmentKind, ProductEntity};
+    use lilia_contracts::{
+        ChatAttachment, ChatAttachmentKind, ChatConversationReference, ProductEntity,
+    };
     use lilia_service::ServiceAuthority;
 
     static NEXT_AGENT_APPLICATION_ID: AtomicU64 = AtomicU64::new(1);

@@ -1,0 +1,15 @@
+[package]
+name = "lilia-feature-terminal"
+description = "Terminal domain feature: PTY sessions, their screens and lifecycle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-contracts = { workspace = true }
+lilia-kernel = { workspace = true }
+portable-pty = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+vt100 = { workspace = true }

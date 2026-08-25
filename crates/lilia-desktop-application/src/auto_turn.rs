@@ -1,4 +1,4 @@
-use lilia_agent_integration::{NativeControlModelRequest, NativeControlModelResult};
+use lilia_agent::{NativeControlModelRequest, NativeControlModelResult};
 use lilia_contracts::{
     auto_context_thresholds_for_scale, auto_model_for_provider_family_tier,
     auto_preset_for_context_scale, auto_preset_for_workflow_type, auto_reasoning_effort_for_preset,

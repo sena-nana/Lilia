@@ -1,10 +1,10 @@
+use lilia_storage::Db;
 use rusqlite::{Transaction, TransactionBehavior};
 
 use crate::agent::turn_content_with_references;
 use crate::composer::DesktopComposerStore;
-use crate::legacy_database::SharedLegacyConnection;
 use crate::todo::{guide_message, DesktopTodoStore};
-use crate::turn_queue::DesktopTurnQueueStore;
+use lilia_feature_agent_session::DesktopTurnQueueStore;
 use crate::{
     ChatAttachment, DesktopComposerState, DesktopGuideDispatchWindow, DesktopTaskTodo,
     DesktopTodoCreate, DesktopTodoError, DesktopTodoGuideStatus, DesktopTodoSource,
@@ -29,11 +29,11 @@ pub(crate) struct DesktopGuideSubmissionCommit {
 }
 
 pub(crate) struct DesktopSubmissionStore {
-    connection: SharedLegacyConnection,
+    connection: Db,
 }
 
 impl DesktopSubmissionStore {
-    pub(crate) fn new(connection: SharedLegacyConnection) -> Self {
+    pub(crate) fn new(connection: Db) -> Self {
         Self { connection }
     }
 
@@ -45,11 +45,7 @@ impl DesktopSubmissionStore {
     ) -> Result<Option<DesktopComposerState>, DesktopSubmissionError> {
         let mut connection =
             self.connection
-                .lock()
-                .map_err(|_| DesktopSubmissionError::Storage {
-                    operation: "lock direct Composer submission",
-                    message: "connection lock poisoned".to_owned(),
-                })?;
+                .lock();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| DesktopSubmissionError::Storage {
@@ -72,11 +68,7 @@ impl DesktopSubmissionStore {
     ) -> Result<Option<DesktopComposerState>, DesktopSubmissionError> {
         let mut connection =
             self.connection
-                .lock()
-                .map_err(|_| DesktopSubmissionError::Storage {
-                    operation: "lock local Composer submission",
-                    message: "connection lock poisoned".to_owned(),
-                })?;
+                .lock();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| DesktopSubmissionError::Storage {
@@ -101,11 +93,7 @@ impl DesktopSubmissionStore {
     ) -> Result<DesktopGuideSubmissionCommit, DesktopSubmissionError> {
         let mut connection =
             self.connection
-                .lock()
-                .map_err(|_| DesktopSubmissionError::Storage {
-                    operation: "lock Composer Guide submission",
-                    message: "connection lock poisoned".to_owned(),
-                })?;
+                .lock();
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| DesktopSubmissionError::Storage {
@@ -214,16 +202,16 @@ mod tests {
     use rusqlite::Connection;
 
     use super::*;
-    use crate::legacy_database::in_memory_shared_legacy_connection;
-    use crate::{DesktopExecutionPermission, DesktopTodoPriority};
+    use crate::composer::DesktopComposerTurnRequest;
+        use crate::{DesktopExecutionPermission, DesktopTodoPriority};
 
     fn stores() -> (
-        SharedLegacyConnection,
+        Db,
         DesktopSubmissionStore,
         DesktopTurnQueueStore,
     ) {
-        let connection = in_memory_shared_legacy_connection().unwrap();
-        DesktopComposerStore::from_shared(connection.clone()).unwrap();
+        let connection = Db::in_memory().unwrap();
+        DesktopComposerStore::new(connection.clone()).unwrap();
         DesktopTodoStore::from_shared(connection.clone()).unwrap();
         let queue = DesktopTurnQueueStore::from_shared(connection.clone()).unwrap();
         let submissions = DesktopSubmissionStore::new(connection.clone());
@@ -233,17 +221,16 @@ mod tests {
     fn file_stores(
         path: &std::path::Path,
     ) -> (
-        SharedLegacyConnection,
+        Db,
         DesktopSubmissionStore,
         DesktopTurnQueueStore,
     ) {
-        let connection = crate::legacy_database::open_shared_legacy_connection(path).unwrap();
+        let connection = Db::open(path).unwrap();
         connection
             .lock()
-            .unwrap()
             .busy_timeout(Duration::from_millis(25))
             .unwrap();
-        DesktopComposerStore::from_shared(connection.clone()).unwrap();
+        DesktopComposerStore::new(connection.clone()).unwrap();
         DesktopTodoStore::from_shared(connection.clone()).unwrap();
         let queue = DesktopTurnQueueStore::from_shared(connection.clone()).unwrap();
         let submissions = DesktopSubmissionStore::new(connection.clone());
@@ -266,8 +253,8 @@ mod tests {
         }
     }
 
-    fn save(connection: &SharedLegacyConnection, state: &DesktopComposerState) {
-        let connection = connection.lock().unwrap();
+    fn save(connection: &Db, state: &DesktopComposerState) {
+        let connection = connection.lock();
         DesktopComposerStore::save_to(&connection, state).unwrap();
     }
 
@@ -314,7 +301,7 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(error, DesktopSubmissionError::TurnQueue(_)));
-        let connection = connection.lock().unwrap();
+        let connection = connection.lock();
         let restored = DesktopComposerStore::snapshot_from(&connection, &task_id).unwrap();
         assert_eq!(restored, state);
     }
@@ -336,7 +323,7 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("locked") || error.to_string().contains("busy"));
         assert_eq!(
-            DesktopComposerStore::snapshot_from(&connection.lock().unwrap(), &task_id).unwrap(),
+            DesktopComposerStore::snapshot_from(&connection.lock(), &task_id).unwrap(),
             state
         );
         assert!(queue.list(&task_id).unwrap().is_empty());
@@ -359,7 +346,7 @@ mod tests {
         let state = composer(&task_id, "retain after full database", 13);
         save(&connection, &state);
         {
-            let connection = connection.lock().unwrap();
+            let connection = connection.lock();
             connection.execute_batch("VACUUM").unwrap();
             let page_count = connection
                 .query_row("PRAGMA page_count", [], |row| row.get::<_, i64>(0))
@@ -380,14 +367,13 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("full"));
         assert_eq!(
-            DesktopComposerStore::snapshot_from(&connection.lock().unwrap(), &task_id).unwrap(),
+            DesktopComposerStore::snapshot_from(&connection.lock(), &task_id).unwrap(),
             state
         );
         assert!(queue.list(&task_id).unwrap().is_empty());
 
         connection
             .lock()
-            .unwrap()
             .query_row("PRAGMA max_page_count = 1073741823", [], |row| {
                 row.get::<_, i64>(0)
             })
@@ -431,7 +417,7 @@ mod tests {
         assert!(committed.cleared.unwrap().content.is_empty());
         assert!(committed.queued.is_none());
         assert!(queue.list(&task_id).unwrap().is_empty());
-        let connection = connection.lock().unwrap();
+        let connection = connection.lock();
         assert_eq!(
             DesktopTodoStore::get_from(&connection, "guide-atomic")
                 .unwrap()
@@ -447,7 +433,7 @@ mod tests {
         let state = composer(&task_id, "new Guide", 3);
         save(&connection, &state);
         {
-            let connection = connection.lock().unwrap();
+            let connection = connection.lock();
             DesktopTodoStore::create_idempotent_in(
                 &connection,
                 "guide-existing",

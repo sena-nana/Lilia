@@ -1,71 +1,15 @@
 use lilia_storage::SqliteAgentRuntimeStateStore;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
 
 use crate::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
 
-pub const CONVERSATION_SUGGESTION_SETTINGS_KEY: &str =
-    "desktop.conversation-suggestions.settings.v1";
-const CONVERSATION_SUGGESTION_SETTINGS_SCHEMA_VERSION: u32 = 1;
+pub use lilia_feature_suggestions::settings::{
+    DesktopConversationSuggestionError, DesktopConversationSuggestionSettings,
+    DesktopConversationSuggestionSource, StoredConversationSuggestionSettings,
+    CONVERSATION_SUGGESTION_SETTINGS_KEY, CONVERSATION_SUGGESTION_SETTINGS_SCHEMA_VERSION,
+};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum DesktopConversationSuggestionSource {
-    Provider,
-    #[default]
-    #[serde(rename = "assistant-ai")]
-    AssistantAi,
-}
-
-impl DesktopConversationSuggestionSource {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Provider => "provider",
-            Self::AssistantAi => "assistant-ai",
-        }
-    }
-
-    pub fn parse(value: &str) -> Self {
-        match value.trim() {
-            "assistant-ai" => Self::AssistantAi,
-            _ => Self::Provider,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopConversationSuggestionSettings {
-    pub enabled: bool,
-    pub source: DesktopConversationSuggestionSource,
-}
-
-impl Default for DesktopConversationSuggestionSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            source: DesktopConversationSuggestionSource::AssistantAi,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StoredConversationSuggestionSettings {
-    schema_version: u32,
-    settings: DesktopConversationSuggestionSettings,
-}
-
-#[derive(Debug, Error)]
-pub enum DesktopConversationSuggestionError {
-    #[error("conversation suggestion settings persistence failed: {0}")]
-    Persistence(String),
-    #[error("conversation suggestion settings payload is corrupt: {0}")]
-    Corrupt(String),
-    #[error("unsupported conversation suggestion settings schema {0}")]
-    UnsupportedSchema(u32),
-}
-
+/// The suggestions domain reports settings failures as invalid input, which is
+/// what the settings surface already renders.
 impl From<DesktopConversationSuggestionError> for DesktopApplicationError {
     fn from(error: DesktopConversationSuggestionError) -> Self {
         match error {
@@ -81,6 +25,7 @@ impl From<DesktopConversationSuggestionError> for DesktopApplicationError {
         }
     }
 }
+
 
 impl DesktopApplication {
     pub fn conversation_suggestion_settings(

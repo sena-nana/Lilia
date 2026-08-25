@@ -1,7 +1,7 @@
 use serde_json::Value as JsonValue;
 
-use super::generation::{compact_line, truncate_chars};
-use super::types::{
+use lilia_feature_suggestions::generation::{compact_line, truncate_chars};
+use lilia_feature_suggestions::types::{
     GitHubActivitySample, GitHubRepoRef, GITHUB_ACTIVITY_LIMIT, GITHUB_EVENT_FETCH_LIMIT,
     SAMPLE_TEXT_LIMIT,
 };

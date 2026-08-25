@@ -2,262 +2,59 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use lilia_agent_integration::{RegisteredMcpActivation, SharedCodingServicesStatus};
-use lilia_storage::{
-    AgentkitMcpRegistry, AgentkitMcpRegistryEntry, AgentkitSkillPackageRef, AgentkitSkillsRegistry,
+use lilia_agent::{RegisteredMcpActivation, SharedCodingServicesStatus};
+use lilia_feature_extensions::{
+    bump_registry_revision, bump_skills_registry_revision, ensure_mcp_credential_is_configured,
+    ensure_registry_revision, ensure_skills_registry_revision, is_managed_skill,
+    managed_skill_root, mcp_activation_error, mcp_credential_key, mcp_prompts,
+    mcp_resource_contents, mcp_resources, mcp_state_key, mcp_tools, normalized_server_id,
+    normalized_mcp_credential_name, normalized_skill_description, normalized_skill_id,
+    removed_mcp_credentials,
+    required_mcp_value, skill_io_error, validate_mcp_secret, verified_managed_skill_path,
+    write_skill_document, NormalizedMcpServer,
 };
+use lilia_storage::{AgentkitMcpRegistryEntry, AgentkitSkillPackageRef, AgentkitSkillsRegistry};
 use mutsuki_agent_contracts::{
-    McpCatalog, McpServerState, McpServerStatus, SkillDiscoverResult, SkillLoadResult,
-    SkillSourceKind,
+    McpCatalog, McpServerStatus, SkillDiscoverResult, SkillLoadResult, SkillSourceKind,
 };
-use serde::{Deserialize, Serialize};
 
 use crate::{
     DesktopApplication, DesktopApplicationError, DesktopCredentialAction, DesktopHostAction,
-    DesktopHostResult, DesktopPluginPackageView, DesktopSecret,
+    DesktopHostResult, DesktopSecret,
 };
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopSkillPackageView {
-    pub skill_id: String,
-    pub path: String,
-    pub registered_from: String,
-    pub scope: String,
-    pub description: String,
-    pub enabled: bool,
-    pub editable: bool,
-    pub runtime_available: bool,
-}
+/// The extensions domain raises the same failures the desktop surface already
+/// renders, so it keeps the existing error shape instead of nesting one more.
+impl From<lilia_feature_extensions::ExtensionsError> for DesktopApplicationError {
+    fn from(error: lilia_feature_extensions::ExtensionsError) -> Self {
+        use lilia_feature_extensions::ExtensionsError;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopSkillScope {
-    User,
-    Project,
-}
-
-impl DesktopSkillScope {
-    const fn as_registry(self) -> &'static str {
-        match self {
-            Self::User => "user",
-            Self::Project => "project",
+        match error {
+            ExtensionsError::InvalidInput { field, message } => {
+                Self::InvalidInput { field, message }
+            }
+            ExtensionsError::Agent(message) => Self::Agent(message),
+            ExtensionsError::StateUnavailable(state) => Self::StateUnavailable(state),
+            ExtensionsError::StateRevisionOverflow(state) => Self::StateRevisionOverflow(state),
         }
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopSkillCreate {
-    pub expected_registry_revision: u64,
-    pub scope: DesktopSkillScope,
-    pub project_cwd: Option<String>,
-    pub skill_id: String,
-    pub description: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpServerView {
-    pub server_id: String,
-    pub source: String,
-    pub transport: String,
-    pub location: Option<String>,
-    pub registered: bool,
-    pub editable: bool,
-    pub enabled: bool,
-    pub command: Option<String>,
-    pub args: Vec<String>,
-    pub url: Option<String>,
-    pub registered_from: Option<String>,
-    pub runtime_state: Option<String>,
-    pub tool_count: usize,
-    pub resource_count: usize,
-    pub prompt_count: usize,
-    pub restart_count: u64,
-    pub last_error: Option<String>,
-    pub tools: Vec<DesktopMcpToolView>,
-    pub resources: Vec<DesktopMcpResourceView>,
-    pub prompts: Vec<DesktopMcpPromptView>,
-    pub credentials: Vec<DesktopMcpCredentialView>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopMcpCredentialKind {
-    Environment,
-    Header,
-}
-
-impl DesktopMcpCredentialKind {
-    pub const fn key_segment(self) -> &'static str {
-        match self {
-            Self::Environment => "env",
-            Self::Header => "header",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpCredentialView {
-    pub kind: DesktopMcpCredentialKind,
-    pub name: String,
-    pub present: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpToolView {
-    pub name: String,
-    pub namespaced_name: String,
-    pub description: String,
-    pub read_only: Option<bool>,
-    pub destructive: Option<bool>,
-    pub idempotent: Option<bool>,
-    pub open_world: Option<bool>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpResourceView {
-    pub uri: String,
-    pub name: String,
-    pub description: Option<String>,
-    pub mime_type: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpPromptArgumentView {
-    pub name: String,
-    pub description: Option<String>,
-    pub required: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpPromptView {
-    pub name: String,
-    pub namespaced_name: String,
-    pub description: Option<String>,
-    pub arguments: Vec<DesktopMcpPromptArgumentView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpResourceContentView {
-    pub uri: String,
-    pub mime_type: Option<String>,
-    pub text: Option<String>,
-    pub encoded_blob_length: Option<usize>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpResourceReadView {
-    pub server_id: String,
-    pub uri: String,
-    pub summary: String,
-    pub contents: Vec<DesktopMcpResourceContentView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpPromptFragmentView {
-    pub fragment_id: String,
-    pub content: String,
-    pub priority: i32,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpPromptGetView {
-    pub namespaced_name: String,
-    pub description: Option<String>,
-    pub fragments: Vec<DesktopMcpPromptFragmentView>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopRuntimeServiceView {
-    pub service_id: String,
-    pub label: String,
-    pub shared_with_agent: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopExtensionsSnapshot {
-    pub data_source: String,
-    pub shared_identity_ok: bool,
-    pub skills_registry_path: String,
-    pub skills_registry_revision: u64,
-    pub mcp_registry_path: String,
-    pub mcp_registry_revision: u64,
-    pub plugins_registry_path: String,
-    pub plugins_registry_revision: u64,
-    pub skill_roots: Vec<String>,
-    pub skills: Vec<DesktopSkillPackageView>,
-    pub plugins: Vec<DesktopPluginPackageView>,
-    pub mcp_servers: Vec<DesktopMcpServerView>,
-    pub runtime_services: Vec<DesktopRuntimeServiceView>,
-    pub legacy_plugin_manager_available: bool,
-    pub legacy_hooks_manager_available: bool,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum DesktopMcpTransport {
-    Stdio,
-    StreamableHttp,
-    Sse,
-}
-
-impl DesktopMcpTransport {
-    pub const fn as_registry(self) -> &'static str {
-        match self {
-            Self::Stdio => "stdio",
-            Self::StreamableHttp => "streamable_http",
-            Self::Sse => "sse",
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpServerUpsert {
-    pub expected_registry_revision: u64,
-    pub server_id: String,
-    pub transport: DesktopMcpTransport,
-    pub command: Option<String>,
-    #[serde(default)]
-    pub args: Vec<String>,
-    pub url: Option<String>,
-    #[serde(default)]
-    pub env_secret_names: Vec<String>,
-    #[serde(default)]
-    pub header_secret_names: Vec<String>,
-    pub enabled: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpActivationResult {
-    pub server_id: String,
-    pub runtime_state: Option<String>,
-    pub tool_count: usize,
-    pub resource_count: usize,
-    pub prompt_count: usize,
-    pub error: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopMcpActivationReport {
-    pub results: Vec<DesktopMcpActivationResult>,
-    pub snapshot: DesktopExtensionsSnapshot,
-}
+pub use lilia_feature_extensions::{
+    ExtensionsSnapshot as DesktopExtensionsSnapshot,
+    McpActivationReport as DesktopMcpActivationReport,
+    McpActivationResult as DesktopMcpActivationResult,
+    McpCredentialKind as DesktopMcpCredentialKind, McpCredentialView as DesktopMcpCredentialView,
+    McpPromptArgumentView as DesktopMcpPromptArgumentView,
+    McpPromptFragmentView as DesktopMcpPromptFragmentView,
+    McpPromptGetView as DesktopMcpPromptGetView, McpPromptView as DesktopMcpPromptView,
+    McpResourceContentView as DesktopMcpResourceContentView,
+    McpResourceReadView as DesktopMcpResourceReadView, McpResourceView as DesktopMcpResourceView,
+    McpServerUpsert as DesktopMcpServerUpsert, McpServerView as DesktopMcpServerView,
+    McpToolView as DesktopMcpToolView, McpTransport as DesktopMcpTransport,
+    RuntimeServiceView as DesktopRuntimeServiceView, SkillCreate as DesktopSkillCreate,
+    SkillPackageView as DesktopSkillPackageView, SkillScope as DesktopSkillScope,
+};
 
 impl DesktopApplication {
     pub fn extensions_snapshot(
@@ -557,11 +354,11 @@ impl DesktopApplication {
             .map_err(|error| skill_io_error("create Skill staging directory", error))?;
         if let Err(error) = write_skill_document(&staging, &skill_id, &description) {
             let _ = fs::remove_dir_all(&staging);
-            return Err(error);
+            return Err(error.into());
         }
         if let Err(error) = fs::rename(&staging, &package_path) {
             let _ = fs::remove_dir_all(&staging);
-            return Err(skill_io_error("publish Skill directory", error));
+            return Err(skill_io_error("publish Skill directory", error).into());
         }
 
         let previous = registry.clone();
@@ -777,7 +574,7 @@ impl DesktopApplication {
             if let Some(removed) = &removed_credentials {
                 self.restore_mcp_credentials(removed, &removed_credential_backup)?;
             }
-            return Err(error);
+            return Err(error.into());
         }
         if let Err(error) = lilia_storage::save_mcp_registry(&paths, &registry) {
             if let Some(removed) = &removed_credentials {
@@ -855,7 +652,7 @@ impl DesktopApplication {
         }
         if let Err(error) = bump_registry_revision(&mut registry) {
             self.restore_mcp_credentials(&entry, &credential_backup)?;
-            return Err(error);
+            return Err(error.into());
         }
         if let Err(error) = lilia_storage::save_mcp_registry(&paths, &registry) {
             self.restore_mcp_credentials(&entry, &credential_backup)?;
@@ -877,7 +674,7 @@ impl DesktopApplication {
     ) -> Result<DesktopMcpActivationReport, DesktopApplicationError> {
         let server_id = required_mcp_value("server_id", server_id)?.to_owned();
         let name = normalized_mcp_credential_name(kind, name)?;
-        validate_mcp_secret(kind, &secret)?;
+        validate_mcp_secret(kind, secret.expose())?;
         let _guard = self
             .inner
             .extension_registry
@@ -1271,622 +1068,10 @@ impl DesktopApplication {
     }
 }
 
-fn mcp_tools(catalog: &McpCatalog, server_id: &str) -> Vec<DesktopMcpToolView> {
-    catalog
-        .tools
-        .iter()
-        .filter(|tool| tool.server_id == server_id)
-        .map(|tool| DesktopMcpToolView {
-            name: tool.name.clone(),
-            namespaced_name: tool.namespaced_name.clone(),
-            description: tool.description.clone(),
-            read_only: tool.annotations.read_only_hint,
-            destructive: tool.annotations.destructive_hint,
-            idempotent: tool.annotations.idempotent_hint,
-            open_world: tool.annotations.open_world_hint,
-        })
-        .collect()
-}
-
-fn mcp_resources(catalog: &McpCatalog, server_id: &str) -> Vec<DesktopMcpResourceView> {
-    catalog
-        .resources
-        .iter()
-        .filter(|resource| resource.server_id == server_id)
-        .map(|resource| DesktopMcpResourceView {
-            uri: resource.uri.clone(),
-            name: resource.name.clone(),
-            description: resource.description.clone(),
-            mime_type: resource.mime_type.clone(),
-        })
-        .collect()
-}
-
-fn mcp_prompts(catalog: &McpCatalog, server_id: &str) -> Vec<DesktopMcpPromptView> {
-    catalog
-        .prompts
-        .iter()
-        .filter(|prompt| prompt.server_id == server_id)
-        .map(|prompt| DesktopMcpPromptView {
-            name: prompt.name.clone(),
-            namespaced_name: prompt.namespaced_name.clone(),
-            description: prompt.description.clone(),
-            arguments: prompt
-                .arguments
-                .iter()
-                .map(|argument| DesktopMcpPromptArgumentView {
-                    name: argument.name.clone(),
-                    description: argument.description.clone(),
-                    required: argument.required,
-                })
-                .collect(),
-        })
-        .collect()
-}
-
-fn mcp_resource_contents(
-    content: &serde_json::Value,
-) -> Result<Vec<DesktopMcpResourceContentView>, DesktopApplicationError> {
-    let contents = content
-        .get("contents")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| invalid_input("resource", "MCP resource response has no contents"))?;
-    contents
-        .iter()
-        .map(|content| {
-            let uri = content
-                .get("uri")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| invalid_input("resource", "MCP resource content has no URI"))?;
-            Ok(DesktopMcpResourceContentView {
-                uri: uri.to_owned(),
-                mime_type: content
-                    .get("mimeType")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned),
-                text: content
-                    .get("text")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_owned),
-                encoded_blob_length: content
-                    .get("blob")
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::len),
-            })
-        })
-        .collect()
-}
-
-fn required_mcp_value<'a>(
-    field: &'static str,
-    value: &'a str,
-) -> Result<&'a str, DesktopApplicationError> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err(invalid_input(field, format!("MCP {field} is required")));
-    }
-    Ok(value)
-}
-
 #[derive(Default)]
 struct ResolvedMcpCredentials {
     env: Vec<(String, String)>,
     headers: Vec<(String, String)>,
-}
-
-fn ensure_mcp_credential_is_configured(
-    entry: &AgentkitMcpRegistryEntry,
-    kind: DesktopMcpCredentialKind,
-    name: &str,
-) -> Result<(), DesktopApplicationError> {
-    let configured = match kind {
-        DesktopMcpCredentialKind::Environment => entry
-            .env_secret_names
-            .iter()
-            .any(|configured| configured == name),
-        DesktopMcpCredentialKind::Header => entry
-            .header_secret_names
-            .iter()
-            .any(|configured| configured.eq_ignore_ascii_case(name)),
-    };
-    if configured {
-        Ok(())
-    } else {
-        Err(invalid_input(
-            "credential",
-            "MCP credential name is not registered for this server",
-        ))
-    }
-}
-
-fn removed_mcp_credentials(
-    previous: &AgentkitMcpRegistryEntry,
-    next: &AgentkitMcpRegistryEntry,
-) -> AgentkitMcpRegistryEntry {
-    let mut removed = previous.clone();
-    removed.env_secret_names.retain(|name| {
-        !next
-            .env_secret_names
-            .iter()
-            .any(|next_name| next_name == name)
-    });
-    removed.header_secret_names.retain(|name| {
-        !next
-            .header_secret_names
-            .iter()
-            .any(|next_name| next_name.eq_ignore_ascii_case(name))
-    });
-    removed
-}
-
-fn mcp_credential_key(server_id: &str, kind: DesktopMcpCredentialKind, name: &str) -> String {
-    let name = if kind == DesktopMcpCredentialKind::Header {
-        name.to_ascii_lowercase()
-    } else {
-        name.to_owned()
-    };
-    format!("mcp.server.{server_id}.{}.{}", kind.key_segment(), name)
-}
-
-fn validate_mcp_secret(
-    kind: DesktopMcpCredentialKind,
-    secret: &DesktopSecret,
-) -> Result<(), DesktopApplicationError> {
-    let bytes = secret.expose();
-    if bytes.is_empty() || bytes.len() > 65_536 {
-        return Err(invalid_input(
-            "credential",
-            "MCP credential must contain 1-65536 UTF-8 bytes",
-        ));
-    }
-    let value = std::str::from_utf8(bytes)
-        .map_err(|_| invalid_input("credential", "MCP credential must contain UTF-8 text"))?;
-    let unsafe_control = match kind {
-        DesktopMcpCredentialKind::Environment => value.contains('\0'),
-        DesktopMcpCredentialKind::Header => value.chars().any(char::is_control),
-    };
-    if unsafe_control {
-        return Err(invalid_input(
-            "credential",
-            "MCP credential contains characters unsafe for its transport",
-        ));
-    }
-    Ok(())
-}
-
-fn mcp_activation_error(server_id: &str, error: impl Into<String>) -> DesktopMcpActivationResult {
-    DesktopMcpActivationResult {
-        server_id: server_id.to_owned(),
-        runtime_state: None,
-        tool_count: 0,
-        resource_count: 0,
-        prompt_count: 0,
-        error: Some(error.into()),
-    }
-}
-
-struct NormalizedMcpServer {
-    expected_registry_revision: u64,
-    server_id: String,
-    transport: DesktopMcpTransport,
-    command: Option<String>,
-    args: Vec<String>,
-    url: Option<String>,
-    env_secret_names: Vec<String>,
-    header_secret_names: Vec<String>,
-    enabled: bool,
-}
-
-impl NormalizedMcpServer {
-    fn new(input: DesktopMcpServerUpsert) -> Result<Self, DesktopApplicationError> {
-        let server_id = normalized_server_id(&input.server_id)?;
-        if input.args.len() > 64 {
-            return Err(invalid_input(
-                "args",
-                "MCP args may contain at most 64 items",
-            ));
-        }
-        let args = input
-            .args
-            .into_iter()
-            .map(|argument| {
-                normalized_text("args", argument, 4096)?
-                    .ok_or_else(|| invalid_input("args", "MCP args must not be empty"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let command = normalized_text("command", input.command.unwrap_or_default(), 4096)?;
-        let url = normalized_text("url", input.url.unwrap_or_default(), 8192)?;
-        let env_secret_names = normalized_mcp_credential_names(
-            DesktopMcpCredentialKind::Environment,
-            input.env_secret_names,
-        )?;
-        let header_secret_names = normalized_mcp_credential_names(
-            DesktopMcpCredentialKind::Header,
-            input.header_secret_names,
-        )?;
-        match input.transport {
-            DesktopMcpTransport::Stdio => {
-                if command.is_none() {
-                    return Err(invalid_input("command", "stdio MCP requires a command"));
-                }
-                if url.is_some() {
-                    return Err(invalid_input("url", "stdio MCP must not define a URL"));
-                }
-                if !header_secret_names.is_empty() {
-                    return Err(invalid_input(
-                        "header_secret_names",
-                        "stdio MCP must not define HTTP header credentials",
-                    ));
-                }
-            }
-            DesktopMcpTransport::StreamableHttp | DesktopMcpTransport::Sse => {
-                if command.is_some() || !args.is_empty() {
-                    return Err(invalid_input(
-                        "command",
-                        "HTTP MCP must not define a command or args",
-                    ));
-                }
-                let value = url
-                    .as_deref()
-                    .ok_or_else(|| invalid_input("url", "HTTP MCP requires a URL"))?;
-                validate_mcp_url(value)?;
-                if !env_secret_names.is_empty() {
-                    return Err(invalid_input(
-                        "env_secret_names",
-                        "HTTP MCP must not define environment credentials",
-                    ));
-                }
-            }
-        }
-        Ok(Self {
-            expected_registry_revision: input.expected_registry_revision,
-            server_id,
-            transport: input.transport,
-            command,
-            args,
-            url,
-            env_secret_names,
-            header_secret_names,
-            enabled: input.enabled,
-        })
-    }
-
-    fn registry_entry(&self) -> AgentkitMcpRegistryEntry {
-        AgentkitMcpRegistryEntry {
-            server_id: self.server_id.clone(),
-            source: "lilia.desktop".to_owned(),
-            transport: self.transport.as_registry().to_owned(),
-            command: self.command.clone(),
-            args: self.args.clone(),
-            env_allowlist: Vec::new(),
-            env_secret_names: self.env_secret_names.clone(),
-            url: self.url.clone(),
-            header_secret_names: self.header_secret_names.clone(),
-            registered_from: "lilia-native-settings".to_owned(),
-            enabled: self.enabled,
-        }
-    }
-}
-
-fn normalized_mcp_credential_names(
-    kind: DesktopMcpCredentialKind,
-    names: Vec<String>,
-) -> Result<Vec<String>, DesktopApplicationError> {
-    if names.len() > 32 {
-        return Err(invalid_input(
-            "credential_names",
-            "MCP credentials may contain at most 32 names",
-        ));
-    }
-    let mut normalized = names
-        .into_iter()
-        .map(|name| normalized_mcp_credential_name(kind, &name))
-        .collect::<Result<Vec<_>, _>>()?;
-    normalized.sort_by(|left, right| {
-        if kind == DesktopMcpCredentialKind::Header {
-            left.to_ascii_lowercase().cmp(&right.to_ascii_lowercase())
-        } else {
-            left.cmp(right)
-        }
-    });
-    let duplicate = normalized.windows(2).any(|pair| {
-        if kind == DesktopMcpCredentialKind::Header {
-            pair[0].eq_ignore_ascii_case(&pair[1])
-        } else {
-            pair[0] == pair[1]
-        }
-    });
-    if duplicate {
-        return Err(invalid_input(
-            "credential_names",
-            "MCP credential names must be unique",
-        ));
-    }
-    Ok(normalized)
-}
-
-fn normalized_mcp_credential_name(
-    kind: DesktopMcpCredentialKind,
-    name: &str,
-) -> Result<String, DesktopApplicationError> {
-    let name = name.trim();
-    let valid = match kind {
-        DesktopMcpCredentialKind::Environment => {
-            let mut bytes = name.bytes();
-            bytes
-                .next()
-                .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
-                && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
-        }
-        DesktopMcpCredentialKind::Header => {
-            !name.is_empty()
-                && name.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric()
-                        || matches!(
-                            byte,
-                            b'!' | b'#'
-                                | b'$'
-                                | b'%'
-                                | b'&'
-                                | b'\''
-                                | b'*'
-                                | b'+'
-                                | b'-'
-                                | b'.'
-                                | b'^'
-                                | b'_'
-                                | b'`'
-                                | b'|'
-                                | b'~'
-                        )
-                })
-                && !matches!(
-                    name.to_ascii_lowercase().as_str(),
-                    "connection" | "content-length" | "content-type" | "host" | "transfer-encoding"
-                )
-        }
-    };
-    if name.len() > 128 || !valid {
-        return Err(invalid_input(
-            "credential_names",
-            match kind {
-                DesktopMcpCredentialKind::Environment => {
-                    "environment credential names must be valid ASCII environment variables"
-                }
-                DesktopMcpCredentialKind::Header => {
-                    "header credential names must be safe HTTP field names"
-                }
-            },
-        ));
-    }
-    Ok(name.to_owned())
-}
-
-fn ensure_registry_revision(actual: u64, expected: u64) -> Result<(), DesktopApplicationError> {
-    if actual == expected {
-        return Ok(());
-    }
-    Err(invalid_input(
-        "expected_registry_revision",
-        format!("MCP registry changed: expected revision {expected}, actual {actual}"),
-    ))
-}
-
-fn ensure_skills_registry_revision(
-    actual: u64,
-    expected: u64,
-) -> Result<(), DesktopApplicationError> {
-    if actual == expected {
-        return Ok(());
-    }
-    Err(invalid_input(
-        "expected_registry_revision",
-        format!("Skills registry changed: expected revision {expected}, actual {actual}"),
-    ))
-}
-
-fn bump_skills_registry_revision(
-    registry: &mut AgentkitSkillsRegistry,
-) -> Result<(), DesktopApplicationError> {
-    registry.revision =
-        registry
-            .revision
-            .checked_add(1)
-            .ok_or(DesktopApplicationError::StateRevisionOverflow(
-                "Skills registry",
-            ))?;
-    Ok(())
-}
-
-fn normalized_skill_id(value: &str) -> Result<String, DesktopApplicationError> {
-    let value = value.trim();
-    let valid = !value.is_empty()
-        && value.len() <= 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-        && value != "."
-        && value != "..";
-    if !valid {
-        return Err(invalid_input(
-            "skill_id",
-            "Skill ID must use 1-64 ASCII letters, digits, dots, dashes, or underscores",
-        ));
-    }
-    Ok(value.to_owned())
-}
-
-fn normalized_skill_description(value: &str) -> Result<String, DesktopApplicationError> {
-    let value = value.trim();
-    if value.len() > 2_048 || value.chars().any(|character| character == '\0') {
-        return Err(invalid_input(
-            "description",
-            "Skill description must be at most 2048 characters and contain no NUL",
-        ));
-    }
-    Ok(value.to_owned())
-}
-
-fn managed_skill_root(
-    home: &Path,
-    scope: DesktopSkillScope,
-    project_cwd: Option<&str>,
-) -> Result<PathBuf, DesktopApplicationError> {
-    match scope {
-        DesktopSkillScope::User => Ok(home.join("skills")),
-        DesktopSkillScope::Project => {
-            let project_cwd = project_cwd
-                .filter(|value| !value.trim().is_empty())
-                .ok_or_else(|| {
-                    invalid_input("project_cwd", "project Skills require a workspace")
-                })?;
-            let path = PathBuf::from(project_cwd);
-            if !path.is_absolute() || !path.is_dir() {
-                return Err(invalid_input(
-                    "project_cwd",
-                    "project Skill workspace must be an existing absolute directory",
-                ));
-            }
-            Ok(path.join(".lilia").join("skills"))
-        }
-    }
-}
-
-fn write_skill_document(
-    package_path: &Path,
-    skill_id: &str,
-    description: &str,
-) -> Result<(), DesktopApplicationError> {
-    use std::io::Write;
-
-    let quoted_id = serde_json::to_string(skill_id)
-        .map_err(|error| DesktopApplicationError::Agent(error.to_string()))?;
-    let quoted_description = serde_json::to_string(description)
-        .map_err(|error| DesktopApplicationError::Agent(error.to_string()))?;
-    let instructions = if description.is_empty() {
-        format!("Apply the `{skill_id}` skill to the requested task.")
-    } else {
-        description.to_owned()
-    };
-    let document = format!(
-        "---\nid: {quoted_id}\nversion: \"0.1.0\"\ntitle: {quoted_id}\nsummary: {quoted_description}\n---\n\n{instructions}\n"
-    );
-    let path = package_path.join("SKILL.md");
-    let mut file = fs::OpenOptions::new()
-        .create_new(true)
-        .write(true)
-        .open(&path)
-        .map_err(|error| skill_io_error("create SKILL.md", error))?;
-    file.write_all(document.as_bytes())
-        .and_then(|_| file.sync_all())
-        .map_err(|error| skill_io_error("write SKILL.md", error))
-}
-
-fn is_managed_skill(package: &AgentkitSkillPackageRef) -> bool {
-    package.registered_from == "lilia.desktop.skill-manager" && package.scope == "user"
-}
-
-fn verified_managed_skill_path(
-    root: &Path,
-    package_path: &str,
-    skill_id: &str,
-) -> Result<PathBuf, DesktopApplicationError> {
-    let expected = root.join(skill_id);
-    let expected = expected
-        .canonicalize()
-        .map_err(|error| skill_io_error("resolve managed Skill directory", error))?;
-    let registered = PathBuf::from(package_path)
-        .canonicalize()
-        .map_err(|error| skill_io_error("resolve registered Skill directory", error))?;
-    let root = root
-        .canonicalize()
-        .map_err(|error| skill_io_error("resolve managed Skill root", error))?;
-    if registered != expected || registered.parent() != Some(root.as_path()) {
-        return Err(invalid_input(
-            "skill_id",
-            "registered Skill path is outside the managed Skill root",
-        ));
-    }
-    Ok(registered)
-}
-
-fn skill_io_error(action: &str, error: impl std::fmt::Display) -> DesktopApplicationError {
-    DesktopApplicationError::Agent(format!("{action}: {error}"))
-}
-
-fn bump_registry_revision(
-    registry: &mut AgentkitMcpRegistry,
-) -> Result<(), DesktopApplicationError> {
-    registry.revision =
-        registry
-            .revision
-            .checked_add(1)
-            .ok_or(DesktopApplicationError::StateRevisionOverflow(
-                "extension registry",
-            ))?;
-    Ok(())
-}
-
-fn normalized_server_id(value: &str) -> Result<String, DesktopApplicationError> {
-    let value = value.trim();
-    if value.is_empty()
-        || value.len() > 128
-        || value.starts_with("plugin.")
-        || !value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
-    {
-        return Err(invalid_input(
-            "server_id",
-            "MCP server id must use 1-128 ASCII letters, digits, dot, dash, or underscore and cannot use the reserved plugin prefix",
-        ));
-    }
-    Ok(value.to_owned())
-}
-
-fn normalized_text(
-    field: &'static str,
-    value: String,
-    max_bytes: usize,
-) -> Result<Option<String>, DesktopApplicationError> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Ok(None);
-    }
-    if value.len() > max_bytes || value.chars().any(char::is_control) {
-        return Err(invalid_input(
-            field,
-            format!("value must not contain control characters or exceed {max_bytes} bytes"),
-        ));
-    }
-    Ok(Some(value.to_owned()))
-}
-
-fn validate_mcp_url(value: &str) -> Result<(), DesktopApplicationError> {
-    let url = reqwest::Url::parse(value).map_err(|_| invalid_input("url", "MCP URL is invalid"))?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-        return Err(invalid_input(
-            "url",
-            "MCP URL must use http or https and include a host",
-        ));
-    }
-    if !url.username().is_empty() || url.password().is_some() {
-        return Err(invalid_input(
-            "url",
-            "MCP URL must not contain inline credentials",
-        ));
-    }
-    if url.fragment().is_some() {
-        return Err(invalid_input("url", "MCP URL must not contain a fragment"));
-    }
-    Ok(())
-}
-
-fn invalid_input(field: &'static str, message: impl Into<String>) -> DesktopApplicationError {
-    DesktopApplicationError::InvalidInput {
-        field,
-        message: message.into(),
-    }
 }
 
 fn activation_result(result: RegisteredMcpActivation) -> DesktopMcpActivationResult {
@@ -1931,13 +1116,10 @@ fn runtime_services(status: &SharedCodingServicesStatus) -> Vec<DesktopRuntimeSe
     )
     .collect()
 }
-
-fn mcp_state_key(state: &McpServerState) -> &'static str {
-    match state {
-        McpServerState::Connecting => "connecting",
-        McpServerState::Ready => "ready",
-        McpServerState::Failed => "failed",
-        McpServerState::Draining => "draining",
+fn invalid_input(field: &'static str, message: impl Into<String>) -> DesktopApplicationError {
+    DesktopApplicationError::InvalidInput {
+        field,
+        message: message.into(),
     }
 }
 

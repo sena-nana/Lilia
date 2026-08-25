@@ -8,7 +8,6 @@ use lilia_storage::{
     AgentkitPluginsRegistry, LiliaPluginManifest,
 };
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::{DesktopApplication, DesktopApplicationError};
@@ -17,23 +16,7 @@ const PLUGIN_MANAGER_PROVENANCE: &str = "lilia.desktop.plugin-manager";
 const MAX_PLUGIN_FILES: usize = 2_048;
 const MAX_PLUGIN_BYTES: u64 = 64 * 1024 * 1024;
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DesktopPluginPackageView {
-    pub plugin_id: String,
-    pub name: String,
-    pub version: String,
-    pub description: String,
-    pub path: String,
-    pub enabled: bool,
-    pub editable: bool,
-    pub runtime_available: bool,
-    pub package_sha256: String,
-    pub skill_count: usize,
-    pub hook_count: usize,
-    pub mcp_server_count: usize,
-    pub warnings: Vec<String>,
-}
+pub use lilia_feature_extensions::PluginPackageView as DesktopPluginPackageView;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DesktopPluginInstall {

@@ -1,0 +1,11 @@
+[package]
+name = "lilia-feature-import"
+description = "Legacy data import domain feature: planning and executing an import as kernel job protocols"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-kernel = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

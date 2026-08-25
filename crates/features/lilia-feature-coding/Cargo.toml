@@ -1,0 +1,12 @@
+[package]
+name = "lilia-feature-coding"
+description = "Coding domain feature: git status, workspace listing and the code search job protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-contracts = { workspace = true }
+lilia-kernel = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

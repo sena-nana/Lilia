@@ -1,16 +1,15 @@
-#[cfg(test)]
-use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lilia_contracts::{
     ChatAttachment, ChatConversationReference, LiliaAgentWorkflow, TaskId, TodoProjection,
 };
+use lilia_storage::Db;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::legacy_database::SharedLegacyConnection;
+use crate::composer::DesktopComposerTurnRequest;
 use crate::{DesktopApplication, DesktopApplicationError, DesktopEventKind, DesktopTurnDispatch};
 
 const LILIA_GUIDE_PREFIX: &str = "[Lilia 引导]";
@@ -177,32 +176,24 @@ pub struct DesktopTodoUpdate {
 }
 
 pub(crate) struct DesktopTodoStore {
-    connection: SharedLegacyConnection,
+    connection: Db,
 }
 
 impl DesktopTodoStore {
     #[cfg(test)]
     pub(crate) fn in_memory() -> Result<Self, DesktopTodoError> {
         let connection =
-            Connection::open_in_memory().map_err(|error| DesktopTodoError::Storage {
-                operation: "open in-memory todo database",
-                message: error.to_string(),
-            })?;
-        Self::from_connection(connection)
-    }
-
-    #[cfg(test)]
-    fn from_connection(connection: Connection) -> Result<Self, DesktopTodoError> {
-        Self::from_shared(Arc::new(Mutex::new(connection)))
+            Db::in_memory().map_err(|error| DesktopTodoError::Storage {
+            operation: "open in-memory database",
+            message: error.to_string(),
+        })?;
+        Self::from_shared(connection)
     }
 
     pub(crate) fn from_shared(
-        connection: SharedLegacyConnection,
+        connection: Db,
     ) -> Result<Self, DesktopTodoError> {
-        let locked = connection.lock().map_err(|_| DesktopTodoError::Storage {
-            operation: "lock todo database for initialization",
-            message: "connection lock poisoned".to_owned(),
-        })?;
+        let locked = connection.lock();
         locked
             .execute_batch(TODO_SCHEMA)
             .map_err(|error| DesktopTodoError::Storage {
@@ -226,7 +217,7 @@ impl DesktopTodoStore {
     }
 
     fn list(&self, task_id: &TaskId) -> Result<Vec<DesktopTaskTodo>, DesktopTodoError> {
-        let connection = self.connection("list todos")?;
+        let connection = self.connection();
         Self::list_from(&connection, task_id)
     }
 
@@ -276,7 +267,7 @@ impl DesktopTodoStore {
         source: DesktopTodoSource,
         guide_status: Option<DesktopTodoGuideStatus>,
     ) -> Result<(DesktopTaskTodo, bool), DesktopTodoError> {
-        let connection = self.connection("begin idempotent todo creation")?;
+        let connection = self.connection();
         let transaction =
             connection
                 .unchecked_transaction()
@@ -416,7 +407,7 @@ impl DesktopTodoStore {
             todo.guide_status = Some(guide_status);
         }
         todo.updated_at = now_millis();
-        self.connection("update todo")?
+        self.connection()
             .execute(
                 r#"UPDATE task_todos SET text = ?1, done = ?2, "order" = ?3,
                           priority = ?4, guide_status = ?5, updated_at = ?6
@@ -440,7 +431,7 @@ impl DesktopTodoStore {
 
     fn delete(&self, id: &str) -> Result<Option<TaskId>, DesktopTodoError> {
         let task_id = self
-            .connection("find todo before delete")?
+            .connection()
             .query_row(
                 "SELECT task_id FROM task_todos WHERE id = ?1 AND source = 'lilia'",
                 params![id],
@@ -456,7 +447,7 @@ impl DesktopTodoStore {
         if task_id.is_none() {
             return Ok(None);
         }
-        self.connection("delete todo")?
+        self.connection()
             .execute(
                 "DELETE FROM task_todos WHERE id = ?1 AND source = 'lilia'",
                 params![id],
@@ -469,7 +460,7 @@ impl DesktopTodoStore {
     }
 
     fn get_editable(&self, id: &str) -> Result<Option<DesktopTaskTodo>, DesktopTodoError> {
-        self.connection("read editable todo")?
+        self.connection()
             .query_row(
                 r#"SELECT id, task_id, text, done, "order", source, priority,
                           guide_status, attachments_json, created_at, updated_at,
@@ -505,16 +496,8 @@ impl DesktopTodoStore {
             })
     }
 
-    fn connection(
-        &self,
-        operation: &'static str,
-    ) -> Result<std::sync::MutexGuard<'_, Connection>, DesktopTodoError> {
-        self.connection
-            .lock()
-            .map_err(|_| DesktopTodoError::Storage {
-                operation,
-                message: "connection lock poisoned".to_owned(),
-            })
+    fn connection(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.connection.lock()
     }
 
     fn select_pending_guide(
@@ -522,7 +505,7 @@ impl DesktopTodoStore {
         task_id: &TaskId,
         window: DesktopGuideDispatchWindow,
     ) -> Result<Option<DesktopTaskTodo>, DesktopTodoError> {
-        let connection = self.connection("select pending Guide")?;
+        let connection = self.connection();
         Self::select_pending_guide_from(&connection, task_id, window)
     }
 
@@ -1044,8 +1027,9 @@ mod tests {
 
     #[test]
     fn legacy_todo_schema_migrates_optional_context_without_losing_guides() {
-        let connection = Connection::open_in_memory().unwrap();
+        let connection = Db::in_memory().unwrap();
         connection
+            .lock()
             .execute_batch(
                 r#"
                 CREATE TABLE task_todos (
@@ -1066,7 +1050,7 @@ mod tests {
                 "#,
             )
             .unwrap();
-        let store = DesktopTodoStore::from_connection(connection).unwrap();
+        let store = DesktopTodoStore::from_shared(connection).unwrap();
         let task_id = TaskId::new("legacy-task").unwrap();
 
         let guides = store.list(&task_id).unwrap();

@@ -10,8 +10,25 @@ base64 = "0.22.1"
 ignore = "0.4.26"
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 notify = "6.1.1"
-lilia-agent-integration = { workspace = true }
+lilia-agent = { workspace = true }
 lilia-contracts = { workspace = true }
+lilia-feature-agent-session = { workspace = true }
+lilia-feature-architecture = { workspace = true }
+lilia-feature-automation = { workspace = true }
+lilia-feature-coding = { workspace = true }
+lilia-feature-composer = { workspace = true }
+lilia-feature-document = { workspace = true }
+lilia-feature-extensions = { workspace = true }
+lilia-feature-hooks = { workspace = true }
+lilia-feature-memory = { workspace = true }
+lilia-feature-provider = { workspace = true }
+lilia-feature-roadmap = { workspace = true }
+lilia-feature-suggestions = { workspace = true }
+lilia-feature-task = { workspace = true }
+lilia-feature-terminal = { workspace = true }
+lilia-feature-timeline = { workspace = true }
+lilia-feature-usage = { workspace = true }
+lilia-feature-worktree = { workspace = true }
 lilia-service = { workspace = true }
 lilia-storage = { workspace = true }
 mutsuki-agent-contracts = { workspace = true }

@@ -5,7 +5,7 @@ use std::time::Duration;
 use lilia_contracts::{ProjectId, TaskId};
 use serde::{Deserialize, Serialize};
 
-use crate::automation::AutomationRunStatus;
+use lilia_feature_automation::AutomationRunStatus;
 
 const DEFAULT_SUBSCRIBER_CAPACITY: usize = 256;
 

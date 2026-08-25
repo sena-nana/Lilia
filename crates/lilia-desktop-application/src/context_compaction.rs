@@ -1,4 +1,4 @@
-use lilia_agent_integration::{
+use lilia_agent::{
     NativeContextCompactionSource, NativeControlModelRequest, NativeControlModelResult,
 };
 use lilia_contracts::{
@@ -181,7 +181,7 @@ mod tests {
     use std::net::TcpListener;
     use std::sync::Arc;
 
-    use lilia_agent_integration::ProductCredentialLoginInput;
+    use lilia_agent::ProductCredentialLoginInput;
     use lilia_contracts::{AgentSessionRef, ProductEntity, ProductTask};
     use lilia_service::ServiceAuthority;
     use mutsuki_agent_contracts::{AgentMessage, CredentialKind, OPENAI_CREDENTIAL_PROVIDER_ID};

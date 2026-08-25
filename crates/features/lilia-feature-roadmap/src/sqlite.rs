@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
-use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use lilia_storage::Db;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use uuid::Uuid;
 
@@ -65,54 +65,45 @@ CREATE INDEX IF NOT EXISTS idx_task_milestone_links_milestone
 "#;
 
 pub struct SqliteRoadmapStore {
-    connection: Connection,
+    connection: Db,
 }
 
 impl SqliteRoadmapStore {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, RoadmapStoreError> {
-        let path = path.as_ref();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| RoadmapStoreError::storage("create database directory", error))?;
-        }
-        let connection = Connection::open(path)
+    #[cfg(test)]
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, RoadmapStoreError> {
+        let connection = Db::open(path)
             .map_err(|error| RoadmapStoreError::storage("open database", error))?;
-        Self::from_connection(connection)
+        Self::from_db(connection)
     }
 
     pub fn in_memory() -> Result<Self, RoadmapStoreError> {
-        let connection = Connection::open_in_memory()
+        let connection = Db::in_memory()
             .map_err(|error| RoadmapStoreError::storage("open in-memory database", error))?;
-        Self::from_connection(connection)
+        Self::from_db(connection)
     }
 
-    pub fn from_connection(connection: Connection) -> Result<Self, RoadmapStoreError> {
+    pub fn from_db(connection: Db) -> Result<Self, RoadmapStoreError> {
         connection
-            .busy_timeout(Duration::from_secs(5))
-            .map_err(|error| RoadmapStoreError::storage("configure busy timeout", error))?;
-        connection
-            .pragma_update(None, "foreign_keys", "ON")
-            .map_err(|error| RoadmapStoreError::storage("enable foreign keys", error))?;
-        connection
+            .lock()
             .execute_batch(SCHEMA)
             .map_err(|error| RoadmapStoreError::storage("initialize schema", error))?;
         Ok(Self { connection })
     }
 
-    pub fn into_connection(self) -> Connection {
-        self.connection
+    pub fn db(&self) -> Db {
+        self.connection.clone()
     }
 }
 
 impl RoadmapStore for SqliteRoadmapStore {
     fn list(&self, project_id: &str) -> Result<ProjectRoadmap, RoadmapStoreError> {
-        list_roadmap(&self.connection, project_id)
+        list_roadmap(&self.connection.lock(), project_id)
     }
 
     fn create(&mut self, project_id: &str, title: &str) -> Result<Milestone, RoadmapStoreError> {
         let title = normalized_title(title)?;
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| RoadmapStoreError::storage("begin milestone create", error))?;
         ensure_project_exists(&transaction, project_id)?;
@@ -167,8 +158,8 @@ impl RoadmapStore for SqliteRoadmapStore {
             .as_deref()
             .map(str::trim)
             .map(str::to_owned);
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| RoadmapStoreError::storage("begin milestone update", error))?;
         let mut milestone = milestone_by_id(&transaction, milestone_id)?.ok_or_else(|| {
@@ -213,8 +204,8 @@ impl RoadmapStore for SqliteRoadmapStore {
     }
 
     fn delete(&mut self, milestone_id: &str) -> Result<bool, RoadmapStoreError> {
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| RoadmapStoreError::storage("begin milestone delete", error))?;
         let deleted = transaction
@@ -234,8 +225,8 @@ impl RoadmapStore for SqliteRoadmapStore {
         project_id: &str,
         ordered_ids: Vec<String>,
     ) -> Result<Vec<Milestone>, RoadmapStoreError> {
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| RoadmapStoreError::storage("begin milestone reorder", error))?;
         ensure_project_exists(&transaction, project_id)?;
@@ -251,7 +242,8 @@ impl RoadmapStore for SqliteRoadmapStore {
         transaction
             .commit()
             .map_err(|error| RoadmapStoreError::storage("commit milestone reorder", error))?;
-        Ok(list_roadmap(&self.connection, project_id)?.milestones)
+        drop(connection);
+        Ok(list_roadmap(&self.connection.lock(), project_id)?.milestones)
     }
 
     fn set_tasks(
@@ -260,8 +252,8 @@ impl RoadmapStore for SqliteRoadmapStore {
         task_ids: Vec<String>,
     ) -> Result<Vec<TaskMilestoneLink>, RoadmapStoreError> {
         let task_ids = deduplicate(task_ids);
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| RoadmapStoreError::storage("begin milestone task update", error))?;
         let project_id = transaction
@@ -511,6 +503,7 @@ mod tests {
         let store = SqliteRoadmapStore::in_memory().unwrap();
         store
             .connection
+            .lock()
             .execute_batch(
                 r#"
                 INSERT INTO projects (id, name, created_at)
@@ -703,6 +696,7 @@ mod tests {
         let mut store = store();
         store
             .connection
+            .lock()
             .execute_batch(
                 r#"
                 INSERT INTO task_milestone_links (task_id, milestone_id)
@@ -718,10 +712,12 @@ mod tests {
         assert!(!store.delete("m1").unwrap());
         let task_count: i64 = store
             .connection
+            .lock()
             .query_row("SELECT COUNT(*) FROM tasks", [], |row| row.get(0))
             .unwrap();
         let link_count: i64 = store
             .connection
+            .lock()
             .query_row("SELECT COUNT(*) FROM task_milestone_links", [], |row| {
                 row.get(0)
             })
@@ -749,8 +745,9 @@ mod tests {
 
     #[test]
     fn corrupt_legacy_status_is_reported_instead_of_normalized() {
-        let connection = Connection::open_in_memory().unwrap();
+        let connection = Db::in_memory().unwrap();
         connection
+            .lock()
             .execute_batch(
                 r#"
                 CREATE TABLE milestones (
@@ -766,9 +763,10 @@ mod tests {
                 "#,
             )
             .unwrap();
-        let store = SqliteRoadmapStore::from_connection(connection).unwrap();
+        let store = SqliteRoadmapStore::from_db(connection).unwrap();
         store
             .connection
+            .lock()
             .execute(
                 r#"INSERT INTO milestones
                    (id, project_id, title, status, sort_order, created_at)
@@ -791,8 +789,9 @@ mod tests {
     fn file_store_reopens_the_existing_roadmap_schema_and_data() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("lilia.db");
-        let connection = SqliteRoadmapStore::open(&path).unwrap().into_connection();
+        let connection = SqliteRoadmapStore::open(&path).unwrap().db();
         connection
+            .lock()
             .execute(
                 "INSERT INTO projects (id, name, created_at) VALUES ('p1', 'P1', 1)",
                 [],

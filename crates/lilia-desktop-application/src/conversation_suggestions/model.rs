@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-use lilia_agent_integration::NativeControlModelRequest;
+use lilia_agent::NativeControlModelRequest;
 use reqwest::blocking::Client;
 use serde_json::{json, Value as JsonValue};
 
-use super::generation::suggestion_system_instruction;
+use lilia_feature_suggestions::generation::suggestion_system_instruction;
 use super::settings::DesktopConversationSuggestionSource;
-use super::types::DesktopSuggestionModelRequest;
+use lilia_feature_suggestions::types::DesktopSuggestionModelRequest;
 use crate::{DesktopApplication, ASSISTANT_AI_CREDENTIAL_KEY};
 
 const AGENTKIT_CONTROL_MODEL_ENDPOINT: &str = "agentkit://control-model";

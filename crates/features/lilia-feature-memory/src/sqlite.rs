@@ -1,7 +1,7 @@
 use std::collections::HashSet;
-use std::path::Path;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use lilia_storage::Db;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use uuid::Uuid;
 
@@ -42,20 +42,22 @@ CREATE TABLE IF NOT EXISTS memory_injection_states (
 "#;
 
 pub struct SqliteMemoryStore {
-    connection: Connection,
+    connection: Db,
 }
 
 impl SqliteMemoryStore {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, MemoryStoreError> {
-        let connection = Connection::open(path)
+    #[cfg(test)]
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, MemoryStoreError> {
+        let connection = Db::open(path)
             .map_err(|error| MemoryStoreError::storage("open database", error))?;
-        Self::from_connection(connection)
+        Self::from_db(connection)
     }
 
     pub fn in_memory() -> Result<Self, MemoryStoreError> {
-        let connection = Connection::open_in_memory()
+        let connection = Db::in_memory()
             .map_err(|error| MemoryStoreError::storage("open in-memory database", error))?;
         connection
+            .lock()
             .execute_batch(
                 r#"CREATE TABLE projects (
                      id TEXT PRIMARY KEY,
@@ -67,17 +69,12 @@ impl SqliteMemoryStore {
                    );"#,
             )
             .map_err(|error| MemoryStoreError::storage("create in-memory project schema", error))?;
-        Self::from_connection(connection)
+        Self::from_db(connection)
     }
 
-    fn from_connection(connection: Connection) -> Result<Self, MemoryStoreError> {
-        connection
-            .busy_timeout(Duration::from_secs(5))
-            .map_err(|error| MemoryStoreError::storage("configure busy timeout", error))?;
-        connection
-            .execute_batch("PRAGMA foreign_keys = ON;")
-            .map_err(|error| MemoryStoreError::storage("enable foreign keys", error))?;
-        let has_projects = connection
+    pub fn from_db(connection: Db) -> Result<Self, MemoryStoreError> {
+        let locked = connection.lock();
+        let has_projects = locked
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projects')",
                 [],
@@ -87,7 +84,7 @@ impl SqliteMemoryStore {
         if !has_projects {
             return Err(MemoryStoreError::ProjectsSchemaRequired);
         }
-        let has_tasks = connection
+        let has_tasks = locked
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'tasks')",
                 [],
@@ -97,15 +94,16 @@ impl SqliteMemoryStore {
         if !has_tasks {
             return Err(MemoryStoreError::TasksSchemaRequired);
         }
-        connection
+        locked
             .execute_batch(SCHEMA)
             .map_err(|error| MemoryStoreError::storage("create schema", error))?;
+        drop(locked);
         Ok(Self { connection })
     }
 
     #[cfg(test)]
     fn insert_project(&self, project_id: &str) {
-        self.connection
+        self.connection.lock()
             .execute(
                 "INSERT INTO projects (id, name, created_at) VALUES (?1, ?1, 1)",
                 params![project_id],
@@ -115,7 +113,7 @@ impl SqliteMemoryStore {
 
     #[cfg(test)]
     fn insert_task(&self, task_id: &str) {
-        self.connection
+        self.connection.lock()
             .execute("INSERT INTO tasks (id) VALUES (?1)", params![task_id])
             .unwrap();
     }
@@ -123,10 +121,10 @@ impl SqliteMemoryStore {
 
 impl MemoryStore for SqliteMemoryStore {
     fn list(&self, project_id: Option<&str>) -> Result<Vec<DesktopMemory>, MemoryStoreError> {
-        let mut memories = list_scope(&self.connection, MemoryScope::User, None)?;
+        let mut memories = list_scope(&self.connection.lock(), MemoryScope::User, None)?;
         if let Some(project_id) = normalized_optional(project_id) {
             memories.extend(list_scope(
-                &self.connection,
+                &self.connection.lock(),
                 MemoryScope::Project,
                 Some(project_id),
             )?);
@@ -135,13 +133,13 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     fn memory(&self, memory_id: &str) -> Result<Option<DesktopMemory>, MemoryStoreError> {
-        memory_on(&self.connection, memory_id)
+        memory_on(&self.connection.lock(), memory_id)
     }
 
     fn save(&mut self, input: MemoryUpsertInput) -> Result<DesktopMemory, MemoryStoreError> {
         let normalized = NormalizedMemoryInput::new(input)?;
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| MemoryStoreError::storage("begin save transaction", error))?;
 
@@ -212,8 +210,8 @@ impl MemoryStore for SqliteMemoryStore {
         enabled: bool,
         expected_updated_at: Option<i64>,
     ) -> Result<DesktopMemory, MemoryStoreError> {
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| MemoryStoreError::storage("begin enable transaction", error))?;
         let existing = raw_memory_on(&transaction, memory_id)?.ok_or_else(|| {
@@ -246,8 +244,8 @@ impl MemoryStore for SqliteMemoryStore {
         memory_id: &str,
         expected_updated_at: Option<i64>,
     ) -> Result<bool, MemoryStoreError> {
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| MemoryStoreError::storage("begin delete transaction", error))?;
         let existing = raw_memory_on(&transaction, memory_id)?;
@@ -273,7 +271,7 @@ impl MemoryStore for SqliteMemoryStore {
     }
 
     fn injection_state(&self, task_id: &str) -> Result<MemoryInjectionState, MemoryStoreError> {
-        injection_state_on(&self.connection, task_id)
+        injection_state_on(&self.connection.lock(), task_id)
     }
 
     fn set_task_enabled(
@@ -282,8 +280,8 @@ impl MemoryStore for SqliteMemoryStore {
         enabled: bool,
         expected_updated_at: Option<i64>,
     ) -> Result<MemoryInjectionState, MemoryStoreError> {
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| {
                 MemoryStoreError::storage("begin task memory enable transaction", error)
@@ -319,8 +317,8 @@ impl MemoryStore for SqliteMemoryStore {
         task_id: &str,
         expected_updated_at: Option<i64>,
     ) -> Result<MemoryInjectionState, MemoryStoreError> {
-        let transaction = self
-            .connection
+        let mut connection = self.connection.lock();
+        let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| {
                 MemoryStoreError::storage("begin task memory cooldown transaction", error)
@@ -847,6 +845,7 @@ mod tests {
             .unwrap();
         store
             .connection
+            .lock()
             .execute(
                 "UPDATE memories SET tags_json = '{' WHERE id = 'memory-1'",
                 [],
@@ -873,8 +872,9 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("memory.sqlite3");
         {
-            let connection = Connection::open(&path).unwrap();
+            let connection = Db::open(&path).unwrap();
             connection
+                .lock()
                 .execute_batch(
                     r#"PRAGMA foreign_keys = ON;
                        CREATE TABLE projects (
@@ -982,6 +982,7 @@ mod tests {
         assert!(!disabled.enabled);
         store
             .connection
+            .lock()
             .execute(
                 "UPDATE memory_injection_states SET last_injected_turn_seq = 9 WHERE task_id = 'task-1'",
                 [],
@@ -995,6 +996,7 @@ mod tests {
 
         store
             .connection
+            .lock()
             .execute(
                 "UPDATE memory_injection_states SET enabled = 0, last_injected_turn_seq = 10 WHERE task_id = 'task-1'",
                 [],
@@ -1017,6 +1019,7 @@ mod tests {
         ));
         assert!(!store
             .connection
+            .lock()
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM memory_injection_states WHERE task_id = 'missing')",
                 [],
@@ -1042,10 +1045,12 @@ mod tests {
         store.set_task_enabled("task-1", true, None).unwrap();
         store
             .connection
+            .lock()
             .execute_batch("PRAGMA ignore_check_constraints = ON;")
             .unwrap();
         store
             .connection
+            .lock()
             .execute(
                 "UPDATE memory_injection_states SET enabled = 2 WHERE task_id = 'task-1'",
                 [],
@@ -1053,6 +1058,7 @@ mod tests {
             .unwrap();
         store
             .connection
+            .lock()
             .execute_batch("PRAGMA ignore_check_constraints = OFF;")
             .unwrap();
         assert!(matches!(
@@ -1068,6 +1074,7 @@ mod tests {
         let previous = store.set_task_enabled("task-1", false, Some(0)).unwrap();
         store
             .connection
+            .lock()
             .execute_batch(
                 r#"CREATE TRIGGER reject_memory_injection_update
                    BEFORE UPDATE ON memory_injection_states

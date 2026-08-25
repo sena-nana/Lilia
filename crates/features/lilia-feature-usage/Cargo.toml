@@ -1,0 +1,12 @@
+[package]
+name = "lilia-feature-usage"
+description = "Usage domain feature: dashboard and quota projections over timeline facts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-contracts = { workspace = true }
+lilia-kernel = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
