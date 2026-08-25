@@ -6,7 +6,7 @@ use lilia_contracts::{
     AgentSessionRef, ProductTaskPriority, ProductTaskStatus, ProjectId, ProjectionEventId, TaskId,
     TimelineProjectionCommand, TimelineProjectionEvent,
 };
-use lilia_desktop_application::{
+use liliacode_host::application::{
     DesktopApplication, DesktopApplicationConfig, DesktopHookDocumentUpdate,
     DesktopHookHandlerUpdate, DesktopHookScope, DesktopHost, DesktopHostAction, DesktopHostContext,
     DesktopHostError, DesktopHostResult, DesktopMcpServerUpsert, DesktopMcpTransport,

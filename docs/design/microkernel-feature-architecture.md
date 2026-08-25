@@ -229,10 +229,10 @@ feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate �
 
 ### 尚未开始的两件事
 
-长操作与域拆分已经收口，剩下的是重构目标里最大的两块，都还没动：
+长操作与域拆分已经收口。回合权威与壳层入口已经落地，剩下的是解散应用层：
 
-- `agent.rs` 的自建回合状态机（`ActiveTurnPhase` 七态与约 515 行迁移逻辑，外加约 2200 行 worker 编排）仍在。`docs/design/agent-authority-gap.md` 记了哪些该交给 AgentKit、哪些是产品编排必须留下，也记了动手前的硬前提：`turn_claim_epoch` + `claim_token` 不能在没有 AgentKit `SessionVersion` ack 校验替代前拆掉，否则重启后的陈旧 worker 会 ack 掉别人的队列行。
-- `DesktopProgram` 换成 `LiliaShell`：`apps/desktop/src/desktop.rs` 仍是三万余行，`Message` 巨型枚举与 `lilia-desktop-application` 的解散都未开始。后者还有 63 个文件是实现而非薄壳，`agent.rs`、`import.rs`、`remote.rs`、`workspace.rs` 四个就占了近万行。
+- `ActiveTurnPhase` 七态已删。`DesktopAgentRuntime` 只做队列协调；`turn_claim_epoch` + `claim_token` 仍在，直到 AgentKit 有 `SessionVersion` ack 替代。壳层经 `QueuedTurnExecutor` 把 `lilia.agent/turn@1` / `approval@1` / `interaction@1` 交给内核。对照与取舍见 `docs/design/agent-authority-gap.md`。
+- 入口已改名 `LiliaShell`。`Message` 按域拆成子枚举，`update_message` 只分发给 `apply_*`。`crates/lilia-desktop-application` 已从 workspace 移除，实现暂收在 `apps/desktop/src/application`，继续按域迁入 feature crate。
 
 ## 硬约束
 

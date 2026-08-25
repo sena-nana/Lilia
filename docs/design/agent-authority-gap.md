@@ -71,3 +71,19 @@ AgentKit **没有**的都不是回合状态机，而是回合之外的产品编�
 ## 硬约束
 
 不得保留第二套 turn 状态机。任何"AgentKit 缺这个能力"的结论，只能落在**队列、重试触发、标题、auto-turn 决策、automation 关联、载荷适配**六处；其余一律改为 Agent 插件或直接删除。
+
+## 壳层已接线
+
+`LiliaShell` 按标题调度器同一模式接入回合 job，application 不持有 kernel。
+
+1. **安装回合执行器**  
+   `install_title_update_scheduler` 之后、`restore_persisted_turn_queue` 之前安装 `QueuedTurnExecutor`。它只发顶层 `Message::RequestTurnJob` / `RequestApprovalJob` / `RequestInteractionJob`；壳层再 `jobs().submit` 到 `lilia.agent/turn@1` / `approval@1` / `interaction@1`，槽位 `lilia.agent.turn.{task_id}`。`DesktopTurnPort` 在 job 线程回调 `execute_*_job`。未安装执行器时 application 仍会自建私有 `LiliaJobRuntime`，仅测试路径使用。
+
+2. **快照相位不再出现 resolving / finishing**  
+   `task_runtime_snapshot().phase` 只投影 `idle` / `starting` / `running` / `waiting_approval` / `waiting_interaction`。`restored_turn_state` 已去掉 `resolving_*` 分支。`DesktopTurnState::Resolving*` 事件仍会发出，UI 继续用事件而不是 snapshot 相位。
+
+3. **时间线改为增量 cursor**  
+   回合主路径不再在 `handle_turn_page` 里发 `TimelineChanged { cursor: None }`。观察者按 `AgentEventEnvelope.sequence` 推增量。整片 refresh 只留在取消、隔离恢复等没有增量流的路径。
+
+4. **壳层不再 spawn 回合 / 审批 / 交互线程**  
+   `lilia-native-turn-*` / `lilia-native-approval-*` / `lilia-native-interaction-*` 已从 `agent.rs` 删除。生产路径只走内核 job。

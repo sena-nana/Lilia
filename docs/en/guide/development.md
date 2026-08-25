@@ -11,7 +11,6 @@ LiliaCode/
 │   ├── service/                 # Service entry
 │   └── android/                 # Android companion (Gradle/Kotlin)
 ├── crates/
-│   ├── lilia-desktop-application/ # Host-independent application services
 │   ├── lilia-agent/ # Mutsuki AgentKit anticorruption layer
 │   ├── lilia-storage/           # Product storage and paths
 │   └── lilia-contracts/         # Rust API and canonical JSON contracts
@@ -30,7 +29,7 @@ The Linux desktop also requires the GTK 3 and AppIndicator development libraries
 ```bash
 cargo run
 cargo check --locked -p lilia-desktop
-cargo test --locked -p lilia-desktop-application -p lilia-desktop
+cargo test --locked -p lilia-desktop
 cargo xtask verify
 ```
 

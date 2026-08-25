@@ -53,7 +53,7 @@ impl Session {
                     "--locked",
                     "--quiet",
                     "-p",
-                    "lilia-desktop-application",
+                    "lilia-desktop",
                     "--example",
                     "equivalence_fixture",
                     "--",

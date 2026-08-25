@@ -11,7 +11,6 @@ LiliaCode/
 │   ├── service/                 # Service 入口
 │   └── android/                 # Android remote companion（Gradle/Kotlin）
 ├── crates/
-│   ├── lilia-desktop-application/ # 宿主无关的桌面应用服务
 │   ├── lilia-agent/ # Mutsuki AgentKit 防腐层
 │   ├── lilia-storage/           # 产品存储与路径
 │   └── lilia-contracts/         # Rust API 与 canonical JSON contracts
@@ -30,7 +29,7 @@ Linux 桌面还需要 GTK 3 与 AppIndicator 开发库；Debian/Ubuntu 可安装
 ```bash
 cargo run
 cargo check --locked -p lilia-desktop
-cargo test --locked -p lilia-desktop-application -p lilia-desktop
+cargo test --locked -p lilia-desktop
 ```
 
 仓库级验证使用：

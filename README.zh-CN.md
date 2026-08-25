@@ -15,7 +15,6 @@ LiliaCode 以 Lilia 产品协议与 Mutsuki AgentKit 为 Agent 核心。唯一�
 - `apps/desktop`：唯一正式桌面应用，使用 Rust、NanaUI 与 WGPU
 - `apps/service`：共享 Service 入口
 - `apps/android`：实验性 Android 远控 companion；平台构建继续使用 Gradle
-- `crates/lilia-desktop-application`：与宿主无关的桌面应用服务
 - `crates/lilia-contracts/contracts`：Rust 消费的产品契约事实源
 - `xtask`：仓库验证、调试、性能、Android 与发布编排
 - `docs`：Markdown 设计与产品文档，不构建或发布文档站
