@@ -55,7 +55,6 @@ pub(crate) struct DesktopApplicationInner {
     pub(crate) terminals: Arc<crate::application::terminal::DesktopTerminalService>,
     pub(crate) pending_turns: Mutex<DesktopTurnQueueStore>,
     pub(crate) turn_submission: Mutex<()>,
-    pub(crate) turn_claim_epoch: String,
     pub(crate) guide_dispatch: Mutex<()>,
     pub(crate) todos: Mutex<DesktopTodoStore>,
     pub(crate) worktrees: Mutex<DesktopWorktreeStore>,
@@ -284,7 +283,6 @@ impl DesktopApplication {
                 terminals: Arc::new(crate::application::terminal::DesktopTerminalService::default()),
                 pending_turns: Mutex::new(pending_turns),
                 turn_submission: Mutex::new(()),
-                turn_claim_epoch: format!("desktop-epoch-{}", uuid::Uuid::new_v4()),
                 guide_dispatch: Mutex::new(()),
                 todos: Mutex::new(todos),
                 worktrees: Mutex::new(worktrees),
@@ -468,7 +466,10 @@ impl DesktopApplication {
             todos: runtime.inner().product_todos_for_task(task_id),
             task_todos: self.list_task_todos(task_id)?,
             worktree: self.task_worktree(task_id)?,
-            pending: runtime.inner().product_pending_for_task(task_id),
+            pending: self.merge_task_pending(
+                task_id,
+                runtime.inner().product_pending_for_task(task_id),
+            ),
         })
     }
 
@@ -1401,7 +1402,7 @@ mod tests {
                     &task_id,
                     recovered_turn_id.as_str(),
                     original_claim.as_str(),
-                    &restarted.inner.turn_claim_epoch,
+                    None,
                 ),
             Err(lilia_feature_agent_session::DesktopTurnQueueError::ClaimOwnership { .. })
         ));

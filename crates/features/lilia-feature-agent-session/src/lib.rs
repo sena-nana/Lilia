@@ -1,7 +1,7 @@
 //! Agent session domain feature.
 //!
 //! Owns turn vocabulary ([`turn`]), the durable pending-turn queue ([`queue`]),
-//! the in-memory coordinator that still holds `claim_token` ([`runtime`]),
+//! the in-memory FIFO coordinator that still holds `claim_token` ([`runtime`]),
 //! task todos ([`todo`]), title HTTP/persist ([`title_apply`]), and the
 //! prepared-turn sequence ([`turn_run`]). AgentKit and Jobs stay behind ports;
 //! this crate never holds `Jobs`.
@@ -71,9 +71,9 @@ pub use queue::{
     QuarantinedDesktopTurn,
 };
 pub use runtime::{
-    ActiveTurnSnapshot, ActiveWait, CancelSnapshot, DesktopAgentRuntime, DesktopApprovalResponse,
+    ActiveTurnSnapshot, CancelSnapshot, DesktopAgentRuntime, DesktopApprovalResponse,
     DesktopInteractionResponse, DesktopInterruptResult, DesktopTaskRuntimeSnapshot, QueuedTurn,
-    TurnCancellationMode, WaitingApprovalSnapshot,
+    TurnCancellationMode,
 };
 #[cfg(debug_assertions)]
 pub use runtime::{DesktopDurableTurnDebugSnapshot, DesktopQuarantinedTurnDebugSnapshot};

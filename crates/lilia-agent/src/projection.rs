@@ -10,9 +10,106 @@ use lilia_contracts::{
     PRODUCT_TIMELINE_STORE_ID,
 };
 use mutsuki_agent_contracts::{
-    AgentEvent, AgentEventEnvelope, AgentPermissionMode, InteractionKind, InteractionRequest,
+    AgentEvent, AgentEventEnvelope, AgentPermissionMode, AgentSession, InteractionKind,
+    InteractionRequest,
 };
 use serde_json::{json, Value as JsonValue};
+
+/// Open AgentKit turn state used as the resume / pending authority.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AgentTurnCheckpoint {
+    pub session_id: String,
+    pub version: u64,
+    pub turn_id: Option<String>,
+    pub waiting_approval: bool,
+    pub waiting_interaction: bool,
+    pub pending: Vec<PendingProjection>,
+}
+
+impl AgentTurnCheckpoint {
+    pub fn is_waiting(&self) -> bool {
+        self.waiting_approval || self.waiting_interaction
+    }
+
+    pub fn waiting_phase(&self) -> Option<&'static str> {
+        if self.waiting_approval {
+            Some("waiting_approval")
+        } else if self.waiting_interaction {
+            Some("waiting_interaction")
+        } else {
+            None
+        }
+    }
+}
+
+/// Pending kinds whose open rows are AgentKit facts, not product-owned cache.
+pub fn agent_owned_pending_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "permission_approval"
+            | "ask_user"
+            | "plan_approval"
+            | "tool_consent"
+            | "mcp_elicitation"
+            | "architecture_change"
+    )
+}
+
+/// Rebuild open approvals / interactions from the AgentKit session transcript.
+pub fn checkpoint_from_session(task_id: &TaskId, session: &AgentSession) -> AgentTurnCheckpoint {
+    checkpoint_from_events(
+        task_id,
+        &session.session_id,
+        session.turn_count,
+        &session.events,
+    )
+}
+
+fn checkpoint_from_events(
+    task_id: &TaskId,
+    session_id: &str,
+    turn_count: u64,
+    events: &[AgentEventEnvelope],
+) -> AgentTurnCheckpoint {
+    let mut turn_id = None;
+    let mut status = None;
+    let mut pending_by_id = std::collections::BTreeMap::<String, PendingProjection>::new();
+    for envelope in events {
+        if let AgentEvent::TurnState {
+            turn_id: id,
+            status: next,
+        } = &envelope.event
+        {
+            turn_id = Some(id.clone());
+            status = Some(next.as_str());
+        }
+        for command in project_agent_event(task_id, envelope) {
+            match command {
+                TimelineProjectionCommand::UpsertPending { pending } => {
+                    pending_by_id.insert(pending.request_id.clone(), pending);
+                }
+                TimelineProjectionCommand::ResolvePending { request_id, .. } => {
+                    pending_by_id.remove(&request_id);
+                }
+                _ => {}
+            }
+        }
+    }
+    let waiting_approval = status == Some("waiting_approval");
+    let waiting_interaction = status == Some("waiting_interaction");
+    let pending = pending_by_id
+        .into_values()
+        .filter(|pending| turn_id.as_deref() == pending.turn_id.as_deref())
+        .collect();
+    AgentTurnCheckpoint {
+        session_id: session_id.to_owned(),
+        version: turn_count.saturating_add(1),
+        turn_id,
+        waiting_approval,
+        waiting_interaction,
+        pending,
+    }
+}
 
 /// Convert one AgentKit envelope into product projection command(s).
 pub fn project_agent_event(
@@ -1261,5 +1358,119 @@ mod tests {
         assert_eq!(timeline.payload["interaction"], "mcp_elicitation");
         assert_eq!(timeline.payload["requestId"], "mcp-1");
         assert_eq!(timeline.payload["serverName"], "linear");
+    }
+
+    #[test]
+    fn checkpoint_keeps_open_interaction_and_drops_resolved_rows() {
+        let task = TaskId::new("task-checkpoint").unwrap();
+        let waiting = checkpoint_from_events(
+            &task,
+            "sess-checkpoint",
+            1,
+            &[
+                AgentEventEnvelope {
+                    session_id: "sess-checkpoint".into(),
+                    sequence: 1,
+                    meta: AgentEventMeta::new("evt-turn", "turn"),
+                    event: AgentEvent::TurnState {
+                        turn_id: "turn-wait".into(),
+                        status: "waiting_interaction".into(),
+                    },
+                },
+                AgentEventEnvelope {
+                    session_id: "sess-checkpoint".into(),
+                    sequence: 2,
+                    meta: AgentEventMeta::new("evt-int", "interaction"),
+                    event: AgentEvent::InteractionRequested {
+                        turn_id: "turn-wait".into(),
+                        interaction: InteractionRequest {
+                            session_id: "sess-checkpoint".into(),
+                            turn_id: "turn-wait".into(),
+                            version: 3,
+                            interaction_id: "ask-1".into(),
+                            kind: InteractionKind::Clarification,
+                            source_tool: Some("ask_user_question".into()),
+                            permission_mode: AgentPermissionMode::Ask,
+                            prompt: "which?".into(),
+                            options: json!(["a"]),
+                            context: None,
+                            details: None,
+                        },
+                    },
+                },
+            ],
+        );
+        assert!(waiting.waiting_interaction);
+        assert!(!waiting.waiting_approval);
+        assert_eq!(waiting.version, 2);
+        assert_eq!(waiting.turn_id.as_deref(), Some("turn-wait"));
+        assert_eq!(waiting.pending.len(), 1);
+        assert_eq!(waiting.pending[0].request_id, "ask-1");
+        assert_eq!(waiting.pending[0].action_revision, Some(3));
+
+        let resolved = checkpoint_from_events(
+            &task,
+            "sess-checkpoint",
+            1,
+            &[
+                AgentEventEnvelope {
+                    session_id: "sess-checkpoint".into(),
+                    sequence: 1,
+                    meta: AgentEventMeta::new("evt-turn", "turn"),
+                    event: AgentEvent::TurnState {
+                        turn_id: "turn-wait".into(),
+                        status: "waiting_interaction".into(),
+                    },
+                },
+                AgentEventEnvelope {
+                    session_id: "sess-checkpoint".into(),
+                    sequence: 2,
+                    meta: AgentEventMeta::new("evt-int", "interaction"),
+                    event: AgentEvent::InteractionRequested {
+                        turn_id: "turn-wait".into(),
+                        interaction: InteractionRequest {
+                            session_id: "sess-checkpoint".into(),
+                            turn_id: "turn-wait".into(),
+                            version: 3,
+                            interaction_id: "ask-1".into(),
+                            kind: InteractionKind::Clarification,
+                            source_tool: Some("ask_user_question".into()),
+                            permission_mode: AgentPermissionMode::Ask,
+                            prompt: "which?".into(),
+                            options: json!(["a"]),
+                            context: None,
+                            details: None,
+                        },
+                    },
+                },
+                AgentEventEnvelope {
+                    session_id: "sess-checkpoint".into(),
+                    sequence: 3,
+                    meta: AgentEventMeta::new("evt-res", "interaction"),
+                    event: AgentEvent::InteractionResolved {
+                        turn_id: "turn-wait".into(),
+                        resolution: InteractionResolution {
+                            session_id: "sess-checkpoint".into(),
+                            turn_id: "turn-wait".into(),
+                            version: 3,
+                            interaction_id: "ask-1".into(),
+                            accepted: true,
+                            response: json!({ "choice": "a" }),
+                        },
+                    },
+                },
+                AgentEventEnvelope {
+                    session_id: "sess-checkpoint".into(),
+                    sequence: 4,
+                    meta: AgentEventMeta::new("evt-done", "turn"),
+                    event: AgentEvent::TurnState {
+                        turn_id: "turn-wait".into(),
+                        status: "completed".into(),
+                    },
+                },
+            ],
+        );
+        assert!(!resolved.waiting_interaction);
+        assert!(resolved.pending.is_empty());
     }
 }

@@ -30,8 +30,6 @@ pub trait TurnResumeHost: TurnPageHost {
     ) -> Result<ObservedTurnOutcome, AgentTurnError>;
     fn emit_approval_changed(&self, task_id: &TaskId, request_id: &str, approved: bool);
     fn emit_interaction_changed(&self, task_id: &TaskId, request_id: &str, accepted: bool);
-    fn restore_waiting_approval(&self, task_id: &TaskId, turn_id: &str);
-    fn restore_waiting_interaction(&self, task_id: &TaskId, turn_id: &str);
     fn emit_waiting_approval_error(
         &self,
         task_id: TaskId,
@@ -74,7 +72,6 @@ pub fn run_approval_resume(
             }
         }
         Err(error) => {
-            host.restore_waiting_approval(&task_id, &turn_id);
             host.emit_waiting_approval_error(task_id, turn_id, request_id, error.to_string());
         }
     }
@@ -106,7 +103,6 @@ pub fn run_interaction_resume(
             }
         }
         Err(error) => {
-            host.restore_waiting_interaction(&task_id, &turn_id);
             host.emit_waiting_interaction_error(task_id, turn_id, request_id, error.to_string());
         }
     }

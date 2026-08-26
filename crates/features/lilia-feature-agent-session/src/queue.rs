@@ -390,7 +390,6 @@ impl DesktopTurnQueueStore {
     pub fn claim(
         &mut self,
         turn_id: &str,
-        claim_epoch: &str,
     ) -> Result<Option<PersistedDesktopTurn>, DesktopTurnQueueError> {
         let mut connection = self.connection();
         let transaction = connection
@@ -445,9 +444,9 @@ impl DesktopTurnQueueStore {
             .execute(
                 r#"UPDATE desktop_pending_turns
                    SET state = 'claimed', claimed_at = ?2, claim_token = ?3,
-                       claim_epoch = ?4, claim_attempts = claim_attempts + 1
+                       claim_epoch = NULL, claim_attempts = claim_attempts + 1
                    WHERE id = ?1 AND state = 'queued'"#,
-                params![id, now_millis(), claim_token.as_str(), claim_epoch],
+                params![id, now_millis(), claim_token.as_str()],
             )
             .map_err(|error| storage_error("claim pending turn", error))?;
         if changed != 1 {
@@ -465,7 +464,7 @@ impl DesktopTurnQueueStore {
             request,
             state: PersistedDesktopTurnState::Claimed,
             claim_token: Some(claim_token),
-            claim_epoch: Some(claim_epoch.to_owned()),
+            claim_epoch: None,
             claim_attempts: claim_attempts.saturating_add(1),
         }))
     }
@@ -576,17 +575,62 @@ impl DesktopTurnQueueStore {
             })
     }
 
+    pub fn bind_session_version(
+        &self,
+        turn_id: &str,
+        version: u64,
+    ) -> Result<bool, DesktopTurnQueueError> {
+        if version == 0 {
+            return Ok(false);
+        }
+        self.connection()
+            .execute(
+                r#"UPDATE desktop_pending_turns
+                   SET claim_epoch = ?2
+                   WHERE turn_id = ?1 AND state = 'claimed'"#,
+                params![turn_id, session_version_epoch(version)],
+            )
+            .map(|changed| changed == 1)
+            .map_err(|error| DesktopTurnQueueError::Storage {
+                operation: "bind AgentKit session version",
+                message: error.to_string(),
+            })
+    }
+
     pub fn ack_and_claim_next(
         &mut self,
         task_id: &TaskId,
         turn_id: &str,
         claim_token: &str,
-        claim_epoch: &str,
+        expected_session_version: Option<u64>,
     ) -> Result<Option<PersistedDesktopTurn>, DesktopTurnQueueError> {
         let mut connection = self.connection();
         let transaction = connection
             .transaction()
             .map_err(|error| storage_error("begin pending turn acknowledgement", error))?;
+        let stored_epoch = transaction
+            .query_row(
+                r#"SELECT claim_epoch FROM desktop_pending_turns
+                   WHERE task_id = ?1 AND turn_id = ?2 AND state = 'claimed' AND claim_token = ?3"#,
+                params![task_id.as_str(), turn_id, claim_token],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .optional()
+            .map_err(|error| storage_error("read pending turn session version", error))?;
+        let Some(stored_epoch) = stored_epoch else {
+            return Err(DesktopTurnQueueError::ClaimOwnership {
+                turn_id: turn_id.to_owned(),
+            });
+        };
+        if let Some(expected) = expected_session_version {
+            if let Some(stored) = parse_session_version_epoch(stored_epoch.as_deref()) {
+                if stored != expected {
+                    return Err(DesktopTurnQueueError::ClaimOwnership {
+                        turn_id: turn_id.to_owned(),
+                    });
+                }
+            }
+        }
         let changed = transaction
             .execute(
                 r#"DELETE FROM desktop_pending_turns
@@ -600,7 +644,7 @@ impl DesktopTurnQueueStore {
                 turn_id: turn_id.to_owned(),
             });
         }
-        let next = claim_first_in_transaction(&transaction, task_id, claim_epoch)?;
+        let next = claim_first_in_transaction(&transaction, task_id)?;
         transaction
             .commit()
             .map_err(|error| storage_error("commit pending turn acknowledgement", error))?;
@@ -610,13 +654,12 @@ impl DesktopTurnQueueStore {
     pub fn claim_first(
         &mut self,
         task_id: &TaskId,
-        claim_epoch: &str,
     ) -> Result<Option<PersistedDesktopTurn>, DesktopTurnQueueError> {
         let mut connection = self.connection();
         let transaction = connection
             .transaction()
             .map_err(|error| storage_error("begin first pending turn claim", error))?;
-        let next = claim_first_in_transaction(&transaction, task_id, claim_epoch)?;
+        let next = claim_first_in_transaction(&transaction, task_id)?;
         transaction
             .commit()
             .map_err(|error| storage_error("commit first pending turn claim", error))?;
@@ -627,7 +670,6 @@ impl DesktopTurnQueueStore {
         &mut self,
         task_id: &TaskId,
         turn_id: &str,
-        claim_epoch: &str,
     ) -> Result<Option<PersistedDesktopTurn>, DesktopTurnQueueError> {
         let mut connection = self.connection();
         let transaction = connection
@@ -647,7 +689,7 @@ impl DesktopTurnQueueStore {
                 operation: "discard prepared turn",
             });
         }
-        let next = claim_first_in_transaction(&transaction, task_id, claim_epoch)?;
+        let next = claim_first_in_transaction(&transaction, task_id)?;
         transaction
             .commit()
             .map_err(|error| storage_error("commit prepared turn discard", error))?;
@@ -658,7 +700,6 @@ impl DesktopTurnQueueStore {
         &mut self,
         task_id: &TaskId,
         active_turn_id: Option<&str>,
-        claim_epoch: &str,
     ) -> Result<Option<String>, DesktopTurnQueueError> {
         let mut connection = self.connection();
         let transaction = connection
@@ -689,7 +730,7 @@ impl DesktopTurnQueueStore {
         transaction
             .execute(
                 r#"UPDATE desktop_pending_turns
-                   SET state = 'queued', claimed_at = NULL, claim_token = NULL, claim_epoch = NULL
+                   SET state = 'queued', claimed_at = NULL, claim_token = NULL
                    WHERE task_id = ?1 AND state = 'claimed'"#,
                 params![task_id.as_str()],
             )
@@ -701,14 +742,13 @@ impl DesktopTurnQueueStore {
                 .execute(
                     r#"UPDATE desktop_pending_turns
                        SET state = 'claimed', claimed_at = ?3, claim_token = ?4,
-                           claim_epoch = ?5, claim_attempts = claim_attempts + 1
+                           claim_attempts = claim_attempts + 1
                        WHERE task_id = ?1 AND turn_id = ?2"#,
                     params![
                         task_id.as_str(),
                         active_turn_id,
                         now_millis(),
                         claim_token.as_str(),
-                        claim_epoch
                     ],
                 )
                 .map_err(|error| storage_error("retain active pending turn claim", error))?;
@@ -1142,10 +1182,17 @@ fn quarantine_raw_turn(
     })
 }
 
+fn session_version_epoch(version: u64) -> String {
+    format!("sv:{version}")
+}
+
+fn parse_session_version_epoch(value: Option<&str>) -> Option<u64> {
+    value?.strip_prefix("sv:")?.parse().ok()
+}
+
 fn claim_first_in_transaction(
     transaction: &Transaction<'_>,
     task_id: &TaskId,
-    claim_epoch: &str,
 ) -> Result<Option<PersistedDesktopTurn>, DesktopTurnQueueError> {
     let Some(mut next) = read_first_turn(transaction, task_id)? else {
         return Ok(None);
@@ -1162,14 +1209,9 @@ fn claim_first_in_transaction(
         .execute(
             r#"UPDATE desktop_pending_turns
                SET state = 'claimed', claimed_at = ?2, claim_token = ?3,
-                   claim_epoch = ?4, claim_attempts = claim_attempts + 1
+                   claim_epoch = NULL, claim_attempts = claim_attempts + 1
                WHERE turn_id = ?1 AND state = 'queued'"#,
-            params![
-                next.turn_id.as_str(),
-                now_millis(),
-                claim_token.as_str(),
-                claim_epoch
-            ],
+            params![next.turn_id.as_str(), now_millis(), claim_token.as_str()],
         )
         .map_err(|error| storage_error("claim next pending turn", error))?;
     if changed != 1 {
@@ -1181,7 +1223,7 @@ fn claim_first_in_transaction(
     }
     next.state = PersistedDesktopTurnState::Claimed;
     next.claim_token = Some(claim_token);
-    next.claim_epoch = Some(claim_epoch.to_owned());
+    next.claim_epoch = None;
     next.claim_attempts = next.claim_attempts.saturating_add(1);
     Ok(Some(next))
 }
@@ -1378,7 +1420,7 @@ mod tests {
         );
 
         let first = store
-            .claim_first(&task_id, "quarantine-epoch")
+            .claim_first(&task_id)
             .unwrap()
             .expect("first remaining turn");
         assert_eq!(first.turn_id, "turn-valid-1");
@@ -1387,7 +1429,7 @@ mod tests {
                 &task_id,
                 first.turn_id.as_str(),
                 first.claim_token.as_deref().unwrap(),
-                "quarantine-epoch",
+                None,
             )
             .unwrap()
             .expect("second remaining turn");
@@ -1425,7 +1467,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            store.claim("turn-corrupt", "claim-validation-epoch"),
+            store.claim("turn-corrupt"),
             Err(DesktopTurnQueueError::InvalidStoredValue {
                 field: "request_json",
                 ..
@@ -1465,7 +1507,7 @@ mod tests {
         let task_id = TaskId::new("refined-queue-task").unwrap();
         let request = DesktopTurnRequest::new(task_id.clone(), "original");
         store.enqueue("turn-refined", &request).unwrap();
-        store.claim("turn-refined", "epoch-1").unwrap().unwrap();
+        store.claim("turn-refined").unwrap().unwrap();
 
         let mut refined = request;
         refined.model = Some("gpt-5.5".into());
@@ -1492,17 +1534,24 @@ mod tests {
             )
             .unwrap();
 
-        assert!(store.claim("turn-2", "epoch-1").unwrap().is_none());
-        let first = store
-            .claim("turn-1", "epoch-1")
-            .unwrap()
-            .expect("first claim");
+        assert!(store.claim("turn-2").unwrap().is_none());
+        let first = store.claim("turn-1").unwrap().expect("first claim");
         assert_eq!(first.state, PersistedDesktopTurnState::Claimed);
-        assert_eq!(first.claim_epoch.as_deref(), Some("epoch-1"));
+        assert_eq!(first.claim_epoch, None);
         assert_eq!(first.claim_attempts, 1);
-        assert!(store.claim("turn-1", "epoch-1").unwrap().is_none());
+        store.bind_session_version("turn-1", 2).unwrap();
+        assert!(store.claim("turn-1").unwrap().is_none());
         assert!(matches!(
-            store.ack_and_claim_next(&task_id, "turn-1", "wrong-token", "epoch-1"),
+            store.ack_and_claim_next(&task_id, "turn-1", "wrong-token", Some(2)),
+            Err(DesktopTurnQueueError::ClaimOwnership { .. })
+        ));
+        assert!(matches!(
+            store.ack_and_claim_next(
+                &task_id,
+                "turn-1",
+                first.claim_token.as_deref().unwrap(),
+                Some(3),
+            ),
             Err(DesktopTurnQueueError::ClaimOwnership { .. })
         ));
 
@@ -1511,7 +1560,7 @@ mod tests {
                 &task_id,
                 "turn-1",
                 first.claim_token.as_deref().unwrap(),
-                "epoch-1",
+                Some(2),
             )
             .unwrap()
             .expect("second claim");
@@ -1524,7 +1573,7 @@ mod tests {
                 &task_id,
                 "turn-2",
                 second.claim_token.as_deref().unwrap(),
-                "epoch-1",
+                None,
             )
             .unwrap()
             .is_none());
@@ -1545,7 +1594,7 @@ mod tests {
                 )
                 .unwrap();
             store
-                .claim("turn-before-crash", "epoch-before-crash")
+                .claim("turn-before-crash")
                 .unwrap()
                 .unwrap()
                 .claim_token
@@ -1553,16 +1602,11 @@ mod tests {
         };
 
         let mut restarted = DesktopTurnQueueStore::open(&path).unwrap();
-        restarted
-            .prepare_recovery(&task_id, None, "epoch-after-crash")
-            .unwrap();
+        restarted.prepare_recovery(&task_id, None).unwrap();
         let released = restarted.list(&task_id).unwrap();
         assert_eq!(released[0].state, PersistedDesktopTurnState::Queued);
         assert!(released[0].claim_token.is_none());
-        let replay = restarted
-            .claim("turn-before-crash", "epoch-after-crash")
-            .unwrap()
-            .unwrap();
+        let replay = restarted.claim("turn-before-crash").unwrap().unwrap();
         assert_eq!(replay.turn_id, "turn-before-crash");
         assert_eq!(replay.claim_attempts, 2);
         assert_ne!(
@@ -1574,7 +1618,7 @@ mod tests {
                 &task_id,
                 "turn-before-crash",
                 first_claim_token.as_str(),
-                "epoch-after-crash",
+                None,
             ),
             Err(DesktopTurnQueueError::ClaimOwnership { .. })
         ));
@@ -1582,17 +1626,17 @@ mod tests {
         assert_eq!(still_claimed[0].state, PersistedDesktopTurnState::Claimed);
         assert_eq!(still_claimed[0].claim_token, replay.claim_token);
 
+        restarted
+            .bind_session_version("turn-before-crash", 4)
+            .unwrap();
         let rebound = restarted
-            .prepare_recovery(&task_id, Some("turn-before-crash"), "epoch-projected-wait")
+            .prepare_recovery(&task_id, Some("turn-before-crash"))
             .unwrap()
             .expect("projected wait claim");
         let projected = restarted.list(&task_id).unwrap();
         assert_eq!(projected[0].state, PersistedDesktopTurnState::Claimed);
         assert_eq!(projected[0].claim_token.as_deref(), Some(rebound.as_str()));
-        assert_eq!(
-            projected[0].claim_epoch.as_deref(),
-            Some("epoch-projected-wait")
-        );
+        assert_eq!(projected[0].claim_epoch.as_deref(), Some("sv:4"));
         assert_eq!(projected[0].claim_attempts, 3);
     }
 
@@ -1614,11 +1658,7 @@ mod tests {
             .unwrap();
 
         assert!(matches!(
-            store.prepare_recovery(
-                &task_id,
-                Some("turn-projected-active"),
-                "invalid-order-epoch"
-            ),
+            store.prepare_recovery(&task_id, Some("turn-projected-active")),
             Err(DesktopTurnQueueError::InvalidStoredValue {
                 field: "active_turn_id",
                 ..
@@ -1640,7 +1680,7 @@ mod tests {
                 .enqueue(turn_id, &DesktopTurnRequest::new(task_id.clone(), content))
                 .unwrap();
         }
-        let active = store.claim("turn-active", "cancel-epoch").unwrap().unwrap();
+        let active = store.claim("turn-active").unwrap().unwrap();
         assert!(matches!(
             store.cancel_claim_and_clear_task(&task_id, "turn-active", Some("wrong-claim-token")),
             Err(DesktopTurnQueueError::ClaimOwnership { .. })

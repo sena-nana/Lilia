@@ -34,6 +34,7 @@ pub enum AgentTurnError {
 #[derive(Clone, Debug)]
 pub struct ObservedTurnOutcome {
     pub session_id: String,
+    pub session_version: u64,
     pub waiting_approval: bool,
     pub waiting_interaction: bool,
     pub completed: bool,

@@ -237,6 +237,8 @@ pub struct NativeTurnStreamPage {
     pub turn_id: String,
     pub events: Vec<AgentEventEnvelope>,
     pub next_sequence: u64,
+    #[serde(default)]
+    pub session_version: u64,
     pub waiting_approval: bool,
     pub waiting_interaction: bool,
     pub completed: bool,
@@ -1004,6 +1006,7 @@ impl NativeAgentKitRuntime {
             turn_id: turn_id.to_owned(),
             events,
             next_sequence: session.next_event_sequence,
+            session_version: session.turn_count.saturating_add(1),
             waiting_approval: status == "waiting_approval",
             waiting_interaction: status == "waiting_interaction",
             completed: status == "completed",
@@ -1328,24 +1331,40 @@ impl NativeAgentKitRuntime {
             }
             Err(error) => return Err(error),
         }
-        if let Some(existing) =
-            self.session_snapshot(session_id)?
-                .events
-                .into_iter()
-                .find(|event| {
-                    matches!(
-                        &event.event,
-                        AgentEvent::InteractionRequested {
-                            turn_id: event_turn_id,
-                            interaction: existing,
-                        } if event_turn_id == turn_id
-                            && existing.interaction_id == interaction.interaction_id
-                    )
-                })
-        {
+        let host = self.host_for_plan(None, false)?;
+        let snapshot = self.session_snapshot_on_host(&host, session_id)?;
+        if !snapshot.events.iter().any(|event| {
+            matches!(
+                &event.event,
+                AgentEvent::TurnState {
+                    turn_id: event_turn_id,
+                    status,
+                } if event_turn_id == turn_id && status == "waiting_interaction"
+            )
+        }) {
+            self.append_interaction_event(
+                &host,
+                session_id,
+                turn_id,
+                "debug turn waiting",
+                AgentEvent::TurnState {
+                    turn_id: turn_id.to_owned(),
+                    status: "waiting_interaction".into(),
+                },
+            )?;
+        }
+        if let Some(existing) = snapshot.events.into_iter().find(|event| {
+            matches!(
+                &event.event,
+                AgentEvent::InteractionRequested {
+                    turn_id: event_turn_id,
+                    interaction: existing,
+                } if event_turn_id == turn_id
+                    && existing.interaction_id == interaction.interaction_id
+            )
+        }) {
             return Ok(existing);
         }
-        let host = self.host_for_plan(None, false)?;
         self.append_interaction_event(
             &host,
             session_id,
@@ -1644,6 +1663,19 @@ impl NativeAgentKitRuntime {
             .get(session_id)
             .cloned()
             .ok_or_else(|| AgentKitPortError::NotFound(session_id.to_string()))
+    }
+
+    pub fn session_ids_for_task(&self, task_id: &TaskId) -> Vec<String> {
+        self.bindings
+            .lock()
+            .map(|bindings| {
+                bindings
+                    .iter()
+                    .filter(|(_, binding)| binding.task_id == task_id.as_str())
+                    .map(|(session_id, _)| session_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn session_snapshot(&self, session_id: &str) -> Result<AgentSession, AgentKitPortError> {
@@ -2151,6 +2183,10 @@ impl NativeAgentKitRuntime {
             turn_id: turn_id.to_string(),
             events: result.events,
             next_sequence,
+            session_version: self
+                .session_snapshot(session_id)
+                .map(|session| session.turn_count.saturating_add(1))
+                .unwrap_or_default(),
             waiting_approval: result.status == AgentRunStatus::WaitingApproval,
             waiting_interaction: result.status == AgentRunStatus::WaitingInteraction,
             completed: result.status == AgentRunStatus::Completed,
@@ -3101,6 +3137,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(first.sequence, repeated.sequence);
+        let snapshot = runtime.session_snapshot("session-debug-mcp-seed").unwrap();
+        assert!(snapshot.events.iter().any(|event| matches!(
+            &event.event,
+            AgentEvent::TurnState {
+                turn_id,
+                status,
+            } if turn_id == "turn-debug-mcp-seed" && status == "waiting_interaction"
+        )));
         assert!(runtime
             .product_pending_for_task(&task)
             .iter()

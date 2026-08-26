@@ -1,7 +1,7 @@
 //! In-memory turn queue coordinator for one desktop session.
 //!
-//! Owns `claim_token` and FIFO promotion. Turn execution stays with AgentKit;
-//! this type never holds Jobs.
+//! Owns FIFO promotion and `claim_token`. Turn wait / approval state is an
+//! AgentKit `TurnState` projection, not a local phase. This type never holds Jobs.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Mutex;
@@ -92,23 +92,15 @@ pub struct ActiveTurn {
     request: DesktopTurnRequest,
     claim_token: Option<String>,
     session_id: Option<String>,
-    wait: Option<ActiveWait>,
     cancellation_mode: Option<TurnCancellationMode>,
     submitted: bool,
     acked: bool,
-    resolution_inflight: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TurnCancellationMode {
     User,
     AutomationRun,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ActiveWait {
-    Approval,
-    Interaction,
 }
 
 impl Default for DesktopAgentRuntime {
@@ -178,11 +170,9 @@ impl DesktopAgentRuntime {
             request,
             claim_token: None,
             session_id: None,
-            wait: None,
             cancellation_mode: None,
             submitted: false,
             acked: false,
-            resolution_inflight: false,
         });
         (
             DesktopTurnDispatch {
@@ -254,11 +244,9 @@ impl DesktopAgentRuntime {
             request: next.request,
             claim_token: None,
             session_id: None,
-            wait: None,
             cancellation_mode: None,
             submitted: false,
             acked: false,
-            resolution_inflight: false,
         });
         true
     }
@@ -274,94 +262,10 @@ impl DesktopAgentRuntime {
             return false;
         };
         active.session_id = Some(session_id);
-        active.wait = None;
         active.cancellation_mode.is_some()
     }
 
-    pub fn wait_for_approval(&self, task_id: &TaskId, turn_id: &str) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(active) = state
-            .tasks
-            .get_mut(task_id.as_str())
-            .and_then(|task| task.active.as_mut())
-            .filter(|active| active.turn_id == turn_id)
-        else {
-            return false;
-        };
-        active.wait = Some(ActiveWait::Approval);
-        true
-    }
-
-    pub fn begin_approval(&self, task_id: &TaskId, turn_id: &str) -> bool {
-        self.begin_resolution(task_id, turn_id, ActiveWait::Approval)
-    }
-
-    pub fn wait_for_interaction(&self, task_id: &TaskId, turn_id: &str) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(active) = state
-            .tasks
-            .get_mut(task_id.as_str())
-            .and_then(|task| task.active.as_mut())
-            .filter(|active| active.turn_id == turn_id)
-        else {
-            return false;
-        };
-        active.wait = Some(ActiveWait::Interaction);
-        true
-    }
-
-    pub fn begin_interaction(&self, task_id: &TaskId, turn_id: &str) -> bool {
-        self.begin_resolution(task_id, turn_id, ActiveWait::Interaction)
-    }
-
-    pub fn begin_resolution(&self, task_id: &TaskId, turn_id: &str, wait: ActiveWait) -> bool {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let Some(active) = state
-            .tasks
-            .get_mut(task_id.as_str())
-            .and_then(|task| task.active.as_mut())
-            .filter(|active| {
-                active.turn_id == turn_id
-                    && active.wait == Some(wait)
-                    && !active.resolution_inflight
-                    && !active.acked
-            })
-        else {
-            return false;
-        };
-        active.resolution_inflight = true;
-        true
-    }
-
-    pub fn waiting_approval(&self, task_id: &TaskId) -> Option<WaitingApprovalSnapshot> {
-        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let active = state.tasks.get(task_id.as_str())?.active.as_ref()?;
-        (active.wait == Some(ActiveWait::Approval) && !active.resolution_inflight && !active.acked)
-            .then(|| WaitingApprovalSnapshot {
-                turn_id: active.turn_id.clone(),
-                session_id: active.session_id.clone(),
-            })
-    }
-
-    pub fn waiting_interaction(&self, task_id: &TaskId) -> Option<WaitingApprovalSnapshot> {
-        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        let active = state.tasks.get(task_id.as_str())?.active.as_ref()?;
-        (active.wait == Some(ActiveWait::Interaction)
-            && !active.resolution_inflight
-            && !active.acked)
-            .then(|| WaitingApprovalSnapshot {
-                turn_id: active.turn_id.clone(),
-                session_id: active.session_id.clone(),
-            })
-    }
-
-    pub fn restore_projected_wait(
-        &self,
-        task_id: &TaskId,
-        turn_id: &str,
-        session_id: &str,
-        wait: ActiveWait,
-    ) -> bool {
+    pub fn restore_active_slot(&self, task_id: &TaskId, turn_id: &str, session_id: &str) -> bool {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let task = state.tasks.entry(task_id.as_str().to_owned()).or_default();
         if task.active.is_some() {
@@ -372,34 +276,11 @@ impl DesktopAgentRuntime {
             request: DesktopTurnRequest::new(task_id.clone(), ""),
             claim_token: None,
             session_id: Some(session_id.to_owned()),
-            wait: Some(wait),
             cancellation_mode: None,
             submitted: true,
             acked: false,
-            resolution_inflight: false,
         });
         true
-    }
-
-    pub fn restore_waiting_approval(&self, task_id: &TaskId, turn_id: &str) {
-        self.restore_wait(task_id, turn_id, ActiveWait::Approval);
-    }
-
-    pub fn restore_waiting_interaction(&self, task_id: &TaskId, turn_id: &str) {
-        self.restore_wait(task_id, turn_id, ActiveWait::Interaction);
-    }
-
-    pub fn restore_wait(&self, task_id: &TaskId, turn_id: &str, wait: ActiveWait) {
-        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if let Some(active) = state
-            .tasks
-            .get_mut(task_id.as_str())
-            .and_then(|task| task.active.as_mut())
-            .filter(|active| active.turn_id == turn_id)
-        {
-            active.wait = Some(wait);
-            active.resolution_inflight = false;
-        }
     }
 
     pub fn request_cancel(&self, task_id: &TaskId) -> Option<CancelSnapshot> {
@@ -409,7 +290,6 @@ impl DesktopAgentRuntime {
         Some(CancelSnapshot {
             turn_id: active.turn_id.clone(),
             session_id: active.session_id.clone(),
-            wait: active.wait,
         })
     }
 
@@ -429,7 +309,6 @@ impl DesktopAgentRuntime {
         Some(CancelSnapshot {
             turn_id: active.turn_id.clone(),
             session_id: active.session_id.clone(),
-            wait: active.wait,
         })
     }
 
@@ -627,11 +506,10 @@ impl DesktopAgentRuntime {
 
 impl ActiveTurn {
     pub fn projected_phase(&self) -> &'static str {
-        match self.wait {
-            Some(ActiveWait::Approval) => "waiting_approval",
-            Some(ActiveWait::Interaction) => "waiting_interaction",
-            None if !self.submitted => "starting",
-            None => "running",
+        if !self.submitted {
+            "starting"
+        } else {
+            "running"
         }
     }
 }
@@ -642,11 +520,9 @@ fn prepared_active_turn(next: QueuedTurn) -> ActiveTurn {
         request: next.request,
         claim_token: None,
         session_id: None,
-        wait: None,
         cancellation_mode: None,
         submitted: false,
         acked: false,
-        resolution_inflight: false,
     }
 }
 
@@ -657,12 +533,6 @@ pub struct ActiveTurnSnapshot {
 }
 
 pub struct CancelSnapshot {
-    pub turn_id: String,
-    pub session_id: Option<String>,
-    pub wait: Option<ActiveWait>,
-}
-
-pub struct WaitingApprovalSnapshot {
     pub turn_id: String,
     pub session_id: Option<String>,
 }
@@ -715,19 +585,14 @@ mod tests {
     }
 
     #[test]
-    fn projected_wait_restores_a_worker_owned_interaction_runtime() {
+    fn restored_active_slot_occupies_fifo_without_a_local_wait_phase() {
         let runtime = DesktopAgentRuntime::default();
         let task_id = TaskId::new("restored-interaction-task").unwrap();
 
-        assert!(runtime.restore_projected_wait(
-            &task_id,
-            "turn-restored",
-            "session-restored",
-            ActiveWait::Interaction,
-        ));
+        assert!(runtime.restore_active_slot(&task_id, "turn-restored", "session-restored",));
 
         let snapshot = runtime.snapshot(&task_id);
-        assert_eq!(snapshot.phase, "waiting_interaction");
+        assert_eq!(snapshot.phase, "running");
         assert_eq!(snapshot.turn_id.as_deref(), Some("turn-restored"));
         assert_eq!(snapshot.session_id.as_deref(), Some("session-restored"));
         assert!(!runtime.claim_worker_start(
@@ -738,7 +603,7 @@ mod tests {
     }
 
     #[test]
-    fn projected_wait_never_replaces_a_live_turn() {
+    fn restored_active_slot_never_replaces_a_live_turn() {
         let runtime = DesktopAgentRuntime::default();
         let task_id = TaskId::new("live-turn-task").unwrap();
         let (dispatch, _, _) = runtime.enqueue_idempotent(
@@ -746,12 +611,7 @@ mod tests {
             "live-turn".to_owned(),
         );
 
-        assert!(!runtime.restore_projected_wait(
-            &task_id,
-            "stale-turn",
-            "stale-session",
-            ActiveWait::Approval,
-        ));
+        assert!(!runtime.restore_active_slot(&task_id, "stale-turn", "stale-session",));
 
         let snapshot = runtime.snapshot(&task_id);
         assert_eq!(snapshot.phase, "starting");
@@ -760,15 +620,10 @@ mod tests {
     }
 
     #[test]
-    fn restored_wait_keeps_persisted_turns_in_original_fifo_order() {
+    fn restored_active_slot_keeps_persisted_turns_in_original_fifo_order() {
         let runtime = DesktopAgentRuntime::default();
         let task_id = TaskId::new("restored-queue-task").unwrap();
-        assert!(runtime.restore_projected_wait(
-            &task_id,
-            "turn-active",
-            "session-active",
-            ActiveWait::Approval,
-        ));
+        assert!(runtime.restore_active_slot(&task_id, "turn-active", "session-active",));
 
         let (first, first_should_start, first_inserted) = runtime.enqueue_idempotent(
             DesktopTurnRequest::new(task_id.clone(), "first queued"),

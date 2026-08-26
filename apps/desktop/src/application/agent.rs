@@ -24,13 +24,14 @@ use crate::application::{
     DesktopTodoGuideStatus, DesktopTurnState,
 };
 use crate::application::{TimelineChanged, TurnRecoveryIssue, TurnStateChanged};
+use lilia_agent::{agent_owned_pending_kind, checkpoint_from_session, AgentTurnCheckpoint};
 use lilia_feature_agent_session::PersistedDesktopTurnState;
 
 pub use lilia_contracts::ExecutionPermission as DesktopExecutionPermission;
 
 use lilia_feature_agent_session::{
     accept_persisted_turn, prepare_turn_request, run_approval_resume, run_interaction_resume,
-    ActiveWait, InteractionResumeSpec, TurnCancellationMode,
+    InteractionResumeSpec, TurnCancellationMode,
 };
 pub use lilia_feature_agent_session::{
     DesktopAgentRuntime, DesktopApprovalResponse, DesktopAutomaticTurnSelection,
@@ -206,7 +207,97 @@ impl DesktopApplication {
     }
 
     pub fn task_runtime_snapshot(&self, task_id: &TaskId) -> DesktopTaskRuntimeSnapshot {
-        self.inner.agent.snapshot(task_id)
+        let mut snapshot = self.inner.agent.snapshot(task_id);
+        let Ok(Some(checkpoint)) = self.task_turn_checkpoint(task_id) else {
+            return snapshot;
+        };
+        if snapshot.session_id.is_none() {
+            snapshot.session_id = Some(checkpoint.session_id.clone());
+        }
+        let matches_turn = snapshot.turn_id.as_deref() == checkpoint.turn_id.as_deref()
+            || (snapshot.turn_id.is_none() && checkpoint.is_waiting());
+        if matches_turn {
+            if snapshot.turn_id.is_none() {
+                snapshot.turn_id = checkpoint.turn_id.clone();
+            }
+            if let Some(phase) = checkpoint.waiting_phase() {
+                snapshot.phase = phase.to_owned();
+            }
+        }
+        snapshot
+    }
+
+    pub(crate) fn task_turn_checkpoint(
+        &self,
+        task_id: &TaskId,
+    ) -> Result<Option<AgentTurnCheckpoint>, DesktopApplicationError> {
+        let runtime = self.authority().shared_runtime();
+        let active_session = self.inner.agent.snapshot(task_id).session_id;
+        if let Some(session_id) = active_session.as_deref() {
+            if let Ok(session) = runtime.inner().session_snapshot(session_id) {
+                return Ok(Some(checkpoint_from_session(task_id, &session)));
+            }
+        }
+        let mut session_ids = runtime.inner().session_ids_for_task(task_id);
+        for binding in self.authority().list_session_bindings(task_id)? {
+            let session_id = binding.agent_session.as_str().to_owned();
+            if !session_ids.iter().any(|id| id == &session_id) {
+                session_ids.push(session_id);
+            }
+        }
+        let mut latest = None;
+        for session_id in session_ids {
+            let Ok(session) = runtime.inner().session_snapshot(&session_id) else {
+                continue;
+            };
+            let checkpoint = checkpoint_from_session(task_id, &session);
+            if latest
+                .as_ref()
+                .is_none_or(|current: &AgentTurnCheckpoint| checkpoint.version >= current.version)
+            {
+                latest = Some(checkpoint);
+            }
+        }
+        Ok(latest)
+    }
+
+    pub(crate) fn merge_task_pending(
+        &self,
+        task_id: &TaskId,
+        product: Vec<PendingProjection>,
+    ) -> Vec<PendingProjection> {
+        let Ok(Some(checkpoint)) = self.task_turn_checkpoint(task_id) else {
+            return product;
+        };
+        let mut merged = product
+            .into_iter()
+            .filter(|pending| {
+                !agent_owned_pending_kind(&pending.kind)
+                    || pending.status != PendingProjectionStatus::Open
+            })
+            .collect::<Vec<_>>();
+        merged.extend(checkpoint.pending);
+        merged
+    }
+
+    pub(crate) fn bind_turn_session_version(&self, turn_id: &str, version: u64) {
+        if version == 0 {
+            return;
+        }
+        if let Ok(pending_turns) = self.inner.pending_turns.lock() {
+            if let Err(error) = pending_turns.bind_session_version(turn_id, version) {
+                eprintln!("failed to bind AgentKit session version: {error}");
+            }
+        }
+    }
+
+    fn turn_is_waiting_in_checkpoint(&self, task_id: &TaskId, turn_id: &str) -> bool {
+        self.task_turn_checkpoint(task_id)
+            .ok()
+            .flatten()
+            .is_some_and(|checkpoint| {
+                checkpoint.turn_id.as_deref() == Some(turn_id) && checkpoint.is_waiting()
+            })
     }
 
     #[cfg(debug_assertions)]
@@ -220,14 +311,21 @@ impl DesktopApplication {
             .map_err(|_| DesktopApplicationError::StateUnavailable("pending turns"))?
             .list_debug(task_id)
             .map(|turns| {
+                let epoch = self
+                    .task_turn_checkpoint(task_id)
+                    .ok()
+                    .flatten()
+                    .map(|checkpoint| format!("sv:{}", checkpoint.version));
                 turns
                     .into_iter()
                     .map(|turn| DesktopDurableTurnDebugSnapshot {
                         turn_id: turn.turn_id,
                         state: turn.state,
                         claim_attempts: turn.claim_attempts,
-                        owned_by_current_epoch: turn.claim_epoch.as_deref()
-                            == Some(self.inner.turn_claim_epoch.as_str()),
+                        owned_by_current_epoch: epoch
+                            .as_deref()
+                            .zip(turn.claim_epoch.as_deref())
+                            .is_some_and(|(epoch, stored)| stored == epoch),
                     })
                     .collect()
             })
@@ -352,49 +450,32 @@ impl DesktopApplication {
     ) -> Result<DesktopTaskRuntimeSnapshot, DesktopApplicationError> {
         let current = self.inner.agent.snapshot(task_id);
         if current.phase != "idle" {
-            return Ok(current);
+            return Ok(self.task_runtime_snapshot(task_id));
         }
-        let pending = self
-            .task_session_snapshot(task_id)?
-            .pending
-            .into_iter()
-            .rev()
-            .find(|pending| {
-                pending.status == PendingProjectionStatus::Open
-                    && matches!(
-                        pending.kind.as_str(),
-                        "permission_approval"
-                            | "ask_user"
-                            | "plan_approval"
-                            | "mcp_elicitation"
-                            | "architecture_change"
-                    )
-            });
-        let Some(pending) = pending else {
-            return Ok(self.inner.agent.snapshot(task_id));
+        let Some(checkpoint) = self
+            .task_turn_checkpoint(task_id)?
+            .filter(|checkpoint| checkpoint.is_waiting())
+        else {
+            return Ok(self.task_runtime_snapshot(task_id));
         };
-        let turn_id = pending.turn_id.as_deref().ok_or_else(|| {
+        let turn_id = checkpoint.turn_id.clone().ok_or_else(|| {
             DesktopApplicationError::InvalidPendingInteraction {
-                request_id: pending.request_id.clone(),
-                message: "interaction is missing its turn id".to_owned(),
+                request_id: String::new(),
+                message: "checkpoint is missing its turn id".to_owned(),
             }
         })?;
-        let wait = if pending.kind == "permission_approval" {
-            ActiveWait::Approval
-        } else {
-            ActiveWait::Interaction
-        };
-        self.inner.agent.restore_projected_wait(
-            task_id,
-            turn_id,
-            pending.agent_session.as_str(),
-            wait,
-        );
-        if pending.kind == "architecture_change" {
+        self.inner
+            .agent
+            .restore_active_slot(task_id, &turn_id, &checkpoint.session_id);
+        if let Some(pending) = checkpoint
+            .pending
+            .iter()
+            .find(|pending| pending.kind == "architecture_change")
+        {
             let payload: DesktopArchitectureInteractionPayload =
-                serde_json::from_value(pending.payload).map_err(|error| {
+                serde_json::from_value(pending.payload.clone()).map_err(|error| {
                     DesktopApplicationError::InvalidPendingInteraction {
-                        request_id: pending.request_id,
+                        request_id: pending.request_id.clone(),
                         message: format!("invalid restored architecture payload: {error}"),
                     }
                 })?;
@@ -406,9 +487,9 @@ impl DesktopApplication {
             };
             self.inner
                 .agent
-                .replace_active_request(task_id, turn_id, request);
+                .replace_active_request(task_id, &turn_id, request);
         }
-        Ok(self.inner.agent.snapshot(task_id))
+        Ok(self.task_runtime_snapshot(task_id))
     }
 
     pub fn open_task_agent_wire_session(
@@ -831,11 +912,7 @@ impl DesktopApplication {
                 .pending_turns
                 .lock()
                 .map_err(|_| DesktopApplicationError::StateUnavailable("pending turns"))?
-                .prepare_recovery(
-                    &task_id,
-                    active_turn_id.as_deref(),
-                    &self.inner.turn_claim_epoch,
-                )?;
+                .prepare_recovery(&task_id, active_turn_id.as_deref())?;
             let turns = self
                 .inner
                 .pending_turns
@@ -1060,7 +1137,7 @@ impl DesktopApplication {
             task_id: task_id.clone(),
             cursor: None,
         });
-        if cancel.wait.is_some() {
+        if self.turn_is_waiting_in_checkpoint(task_id, &cancel.turn_id) {
             self.finish_turn(task_id.clone(), cancel.turn_id, DesktopTurnState::Cancelled);
         }
         Ok(())
@@ -1086,7 +1163,7 @@ impl DesktopApplication {
             task_id: task_id.clone(),
             cursor: None,
         });
-        if cancel.wait.is_some() {
+        if self.turn_is_waiting_in_checkpoint(task_id, &cancel.turn_id) {
             self.finish_turn(
                 task_id.clone(),
                 cancel.turn_id.clone(),
@@ -1105,37 +1182,25 @@ impl DesktopApplication {
         request_id: &str,
         approved: bool,
     ) -> Result<DesktopApprovalResponse, DesktopApplicationError> {
-        let active = self
-            .inner
-            .agent
-            .waiting_approval(task_id)
+        let checkpoint = self
+            .task_turn_checkpoint(task_id)?
             .ok_or_else(|| DesktopApplicationError::NoActiveTurn(task_id.clone()))?;
-        let active_session = active.session_id.ok_or_else(|| {
-            DesktopApplicationError::InvalidPendingInteraction {
-                request_id: request_id.to_owned(),
-                message: "the active turn is missing its Agent session".to_owned(),
-            }
-        })?;
-        let pending = self
-            .task_session_snapshot(task_id)?
+        if !checkpoint.waiting_approval {
+            return Err(DesktopApplicationError::TurnNotWaitingApproval {
+                task_id: task_id.clone(),
+                turn_id: checkpoint.turn_id.unwrap_or_default(),
+            });
+        }
+        let pending = checkpoint
             .pending
             .into_iter()
             .find(|pending| {
-                pending.request_id == request_id
-                    && pending.status == PendingProjectionStatus::Open
-                    && pending.agent_session.as_str() == active_session
-                    && pending.turn_id.as_deref() == Some(active.turn_id.as_str())
+                pending.request_id == request_id && pending.kind == "permission_approval"
             })
             .ok_or_else(|| DesktopApplicationError::PendingInteractionNotFound {
                 task_id: task_id.clone(),
                 request_id: request_id.to_owned(),
             })?;
-        if pending.kind != "permission_approval" {
-            return Err(DesktopApplicationError::UnsupportedPendingInteraction {
-                request_id: request_id.to_owned(),
-                kind: pending.kind,
-            });
-        }
         let turn_id = pending.turn_id.clone().ok_or_else(|| {
             DesktopApplicationError::InvalidPendingInteraction {
                 request_id: request_id.to_owned(),
@@ -1148,7 +1213,7 @@ impl DesktopApplication {
                 message: "approval is missing its action revision".to_owned(),
             }
         })?;
-        if !self.inner.agent.begin_approval(task_id, &turn_id) {
+        if self.inner.agent.active(task_id, &turn_id).is_none() {
             return Err(DesktopApplicationError::TurnNotWaitingApproval {
                 task_id: task_id.clone(),
                 turn_id,
@@ -1181,13 +1246,22 @@ impl DesktopApplication {
         accepted: bool,
         response: Value,
     ) -> Result<DesktopInteractionResponse, DesktopApplicationError> {
-        let pending = self
-            .task_session_snapshot(task_id)?
+        let checkpoint = self.task_turn_checkpoint(task_id)?.ok_or_else(|| {
+            DesktopApplicationError::TurnNotWaitingInteraction {
+                task_id: task_id.clone(),
+                turn_id: String::new(),
+            }
+        })?;
+        if !checkpoint.waiting_interaction {
+            return Err(DesktopApplicationError::TurnNotWaitingInteraction {
+                task_id: task_id.clone(),
+                turn_id: checkpoint.turn_id.unwrap_or_default(),
+            });
+        }
+        let pending = checkpoint
             .pending
             .into_iter()
-            .find(|pending| {
-                pending.request_id == request_id && pending.status == PendingProjectionStatus::Open
-            })
+            .find(|pending| pending.request_id == request_id)
             .ok_or_else(|| DesktopApplicationError::PendingInteractionNotFound {
                 task_id: task_id.clone(),
                 request_id: request_id.to_owned(),
@@ -1212,23 +1286,15 @@ impl DesktopApplication {
         })?;
         let (accepted, response) =
             normalized_pending_interaction_response(&pending, accepted, response)?;
-        let active = self
-            .inner
-            .agent
-            .waiting_interaction(task_id)
-            .ok_or_else(|| DesktopApplicationError::TurnNotWaitingInteraction {
-                task_id: task_id.clone(),
-                turn_id: turn_id.clone(),
-            })?;
-        if active.turn_id != turn_id
-            || active.session_id.as_deref() != Some(pending.agent_session.as_str())
+        if checkpoint.turn_id.as_deref() != pending.turn_id.as_deref()
+            || checkpoint.session_id != pending.agent_session.as_str()
         {
             return Err(DesktopApplicationError::InvalidPendingInteraction {
                 request_id: request_id.to_owned(),
                 message: "interaction does not belong to the active turn".to_owned(),
             });
         }
-        if !self.inner.agent.begin_interaction(task_id, &turn_id) {
+        if self.inner.agent.active(task_id, &turn_id).is_none() {
             return Err(DesktopApplicationError::TurnNotWaitingInteraction {
                 task_id: task_id.clone(),
                 turn_id,
@@ -1329,7 +1395,6 @@ impl DesktopApplication {
                 &self.inner.agent,
                 &task_id,
                 &turn_id,
-                &self.inner.turn_claim_epoch,
             )?
         };
         match outcome {
@@ -1432,13 +1497,9 @@ impl DesktopApplication {
             let persisted = pending_turns.contains(&turn_id)?;
             let result = if prepared_active {
                 if persisted {
-                    pending_turns.discard_queued_and_claim_next(
-                        &task_id,
-                        &turn_id,
-                        &self.inner.turn_claim_epoch,
-                    )
+                    pending_turns.discard_queued_and_claim_next(&task_id, &turn_id)
                 } else {
-                    pending_turns.claim_first(&task_id, &self.inner.turn_claim_epoch)
+                    pending_turns.claim_first(&task_id)
                 }
             } else if persisted {
                 pending_turns
@@ -1565,13 +1626,9 @@ impl DesktopApplication {
         task_id: TaskId,
         decision: ProductApprovalDecision,
     ) -> Result<(), DesktopApplicationError> {
-        let turn_id = decision.turn_id.clone();
         self.turn_executor()?
-            .execute_approval(task_id.clone(), decision)
+            .execute_approval(task_id, decision)
             .map_err(|error| {
-                self.inner
-                    .agent
-                    .restore_waiting_approval(&task_id, &turn_id);
                 DesktopApplicationError::Agent(format!("start Native approval response: {error}"))
             })
     }
@@ -1585,13 +1642,9 @@ impl DesktopApplication {
         task_id: TaskId,
         resolution: InteractionResolution,
     ) -> Result<(), DesktopApplicationError> {
-        let turn_id = resolution.turn_id.clone();
         self.turn_executor()?
-            .execute_interaction(task_id.clone(), resolution)
+            .execute_interaction(task_id, resolution)
             .map_err(|error| {
-                self.inner
-                    .agent
-                    .restore_waiting_interaction(&task_id, &turn_id);
                 DesktopApplicationError::Agent(format!(
                     "start Native interaction response: {error}"
                 ))
@@ -1730,14 +1783,9 @@ impl DesktopApplication {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner());
             let result = if let Some(claim_token) = claim_token.as_deref() {
-                pending_turns.ack_and_claim_next(
-                    &task_id,
-                    &turn_id,
-                    claim_token,
-                    &self.inner.turn_claim_epoch,
-                )
+                pending_turns.ack_and_claim_next(&task_id, &turn_id, claim_token, None)
             } else {
-                pending_turns.claim_first(&task_id, &self.inner.turn_claim_epoch)
+                pending_turns.claim_first(&task_id)
             };
             match result {
                 Ok(next) => next,

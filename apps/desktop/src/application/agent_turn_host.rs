@@ -83,6 +83,10 @@ impl TurnStartHost for DesktopApplication {
 }
 
 impl TurnPageHost for DesktopApplication {
+    fn bind_session_version(&self, turn_id: &str, version: u64) {
+        self.bind_turn_session_version(turn_id, version);
+    }
+
     fn pending_projections(
         &self,
         task_id: &TaskId,
@@ -196,6 +200,7 @@ impl TurnResumeHost for DesktopApplication {
             })?;
         Ok(ObservedTurnOutcome {
             session_id: page.session_id,
+            session_version: page.session_version,
             waiting_approval: page.waiting_approval,
             waiting_interaction: page.waiting_interaction,
             completed: page.completed,
@@ -233,6 +238,7 @@ impl TurnResumeHost for DesktopApplication {
             })?;
         Ok(ObservedTurnOutcome {
             session_id: page.session_id,
+            session_version: page.session_version,
             waiting_approval: page.waiting_approval,
             waiting_interaction: page.waiting_interaction,
             completed: page.completed,
@@ -262,16 +268,6 @@ impl TurnResumeHost for DesktopApplication {
                 DesktopInteractionState::Declined
             },
         });
-    }
-
-    fn restore_waiting_approval(&self, task_id: &TaskId, turn_id: &str) {
-        self.inner.agent.restore_waiting_approval(task_id, turn_id);
-    }
-
-    fn restore_waiting_interaction(&self, task_id: &TaskId, turn_id: &str) {
-        self.inner
-            .agent
-            .restore_waiting_interaction(task_id, turn_id);
     }
 
     fn emit_waiting_approval_error(
@@ -511,6 +507,7 @@ impl AgentTurnHost for DesktopApplication {
             })?;
         Ok(ObservedTurnOutcome {
             session_id: page.session_id,
+            session_version: page.session_version,
             waiting_approval: page.waiting_approval,
             waiting_interaction: page.waiting_interaction,
             completed: page.completed,

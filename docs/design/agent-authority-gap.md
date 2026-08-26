@@ -64,9 +64,7 @@ AgentKit **没有**的都不是回合状态机，而是回合之外的产品编�
 
 ## 拆除顺序上的一个正确性约束
 
-`turn_claim_epoch`（进程启动时生成，`application.rs:267`）与 `claim_token` 共同保证：重启后残留的旧 worker 不能 ack 队列行。删除 `DesktopAgentRuntime` 时如果顺手删掉这对字段，陈旧 worker 就能确认一条已经被新进程重投的回合。
-
-拆除时二选一：要么保留队列侧的 epoch 栅栏，要么改用 AgentKit 的 `SessionVersion` 做 ack 前置校验。不能两个都不留。
+队列 ack 用 `claim_token` 保证所有权：重启后 `prepare_recovery` 会换新 token，陈旧 worker 不能确认已被新进程重投的回合。AgentKit `SessionVersion` 在 claim 之后写入 `claim_epoch = sv:{n}`，ack 可带 `expected_session_version` 做前置校验。不得同时删掉 token 与版本绑定。
 
 ## 硬约束
 

@@ -79,16 +79,15 @@ impl DesktopApplication {
                 message: "architecture interaction is missing its turn id".to_owned(),
             }
         })?;
-        let waiting = self
-            .inner
-            .agent
-            .waiting_interaction(task_id)
+        let checkpoint = self
+            .task_turn_checkpoint(task_id)?
+            .filter(|checkpoint| checkpoint.waiting_interaction)
             .ok_or_else(|| DesktopApplicationError::TurnNotWaitingInteraction {
                 task_id: task_id.clone(),
                 turn_id: turn_id.clone(),
             })?;
-        if waiting.turn_id != turn_id
-            || waiting.session_id.as_deref() != Some(pending.agent_session.as_str())
+        if checkpoint.turn_id.as_deref() != Some(turn_id.as_str())
+            || checkpoint.session_id != pending.agent_session.as_str()
         {
             return Err(DesktopApplicationError::InvalidPendingInteraction {
                 request_id: request_id.to_owned(),

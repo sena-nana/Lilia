@@ -21,6 +21,7 @@ pub enum TurnFinishKind {
 
 /// Host I/O for [`handle_observed_page`].
 pub trait TurnPageHost {
+    fn bind_session_version(&self, turn_id: &str, version: u64);
     fn pending_projections(
         &self,
         task_id: &TaskId,
@@ -59,10 +60,11 @@ pub fn handle_observed_page(
     turn_id: &str,
     page: ObservedTurnOutcome,
 ) -> Result<(), AgentTurnError> {
+    if runtime.active(task_id, turn_id).is_none() {
+        return Err(AgentTurnError::NoActiveTurn(task_id.clone()));
+    }
+    host.bind_session_version(turn_id, page.session_version);
     if page.waiting_approval {
-        if !runtime.wait_for_approval(task_id, turn_id) {
-            return Err(AgentTurnError::NoActiveTurn(task_id.clone()));
-        }
         let request_id = host
             .pending_projections(task_id)?
             .into_iter()
@@ -79,9 +81,6 @@ pub fn handle_observed_page(
         return Ok(());
     }
     if page.waiting_interaction {
-        if !runtime.wait_for_interaction(task_id, turn_id) {
-            return Err(AgentTurnError::NoActiveTurn(task_id.clone()));
-        }
         let pending = host
             .pending_projections(task_id)?
             .into_iter()
@@ -178,6 +177,8 @@ mod tests {
     }
 
     impl TurnPageHost for RecordingHost {
+        fn bind_session_version(&self, _turn_id: &str, _version: u64) {}
+
         fn pending_projections(
             &self,
             _task_id: &TaskId,
@@ -250,6 +251,7 @@ mod tests {
     ) -> ObservedTurnOutcome {
         ObservedTurnOutcome {
             session_id: "session-1".to_owned(),
+            session_version: 0,
             waiting_approval,
             waiting_interaction,
             completed,

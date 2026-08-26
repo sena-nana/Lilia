@@ -413,10 +413,7 @@ impl NativeAgentWireService {
         let (version, output) =
             self.authority
                 .submit(session_id, expected, turn_id, messages, idempotency_key)?;
-        Ok(NativeWireTurnResult {
-            version,
-            page: output_page(output)?,
-        })
+        wire_result(version, output)
     }
 
     pub fn fork_task_session(
@@ -483,10 +480,7 @@ impl NativeAgentWireService {
                 PermissionDecisionKind::Rejected
             },
         })?;
-        Ok(NativeWireTurnResult {
-            version,
-            page: output_page(output)?,
-        })
+        wire_result(version, output)
     }
 
     pub fn respond_task_approval_observed<O>(
@@ -521,10 +515,7 @@ impl NativeAgentWireService {
         runtime
             .with_turn_event_observer(&session_id, &turn_id, observer, || {
                 let (version, output) = self.authority.apply_interaction(resolution)?;
-                Ok(NativeWireTurnResult {
-                    version,
-                    page: output_page(output)?,
-                })
+                wire_result(version, output)
             })
             .map_err(port_error)?
     }
@@ -546,6 +537,15 @@ fn page_output(page: NativeTurnStreamPage) -> Result<AgentWireTurnOutput, AgentW
         payload: serde_json::to_value(page)
             .map_err(|error| wire_error("agent.turn.page_encode", error.to_string(), false))?,
     })
+}
+
+fn wire_result(
+    version: SessionVersion,
+    output: AgentWireTurnOutput,
+) -> Result<NativeWireTurnResult, AgentWireError> {
+    let mut page = output_page(output)?;
+    page.session_version = version.0;
+    Ok(NativeWireTurnResult { version, page })
 }
 
 fn output_page(output: AgentWireTurnOutput) -> Result<NativeTurnStreamPage, AgentWireError> {

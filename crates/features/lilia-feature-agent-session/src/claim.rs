@@ -1,7 +1,8 @@
-//! Claim-token fence used until AgentKit grows a SessionVersion ack.
+//! Claim-token fence for durable queue ownership.
 //!
-//! The durable queue mints `claim_token` against `turn_claim_epoch`. The
-//! in-memory runtime must accept that token before a worker may start.
+//! The queue mints `claim_token`. After claim, AgentKit `SessionVersion` is
+//! stored as `claim_epoch = sv:{n}`. The in-memory runtime must accept the
+//! token before a worker may start.
 
 use lilia_contracts::TaskId;
 
@@ -14,7 +15,7 @@ use crate::{
 pub enum ClaimWorkerOutcome {
     /// The caller owns the turn and must submit the worker.
     Submit { claim_token: String },
-    /// Another worker on this epoch already owns the turn.
+    /// Another worker already owns the turn.
     AlreadyOwned,
 }
 
@@ -23,9 +24,8 @@ pub fn claim_turn_for_worker(
     runtime: &DesktopAgentRuntime,
     task_id: &TaskId,
     turn_id: &str,
-    epoch: &str,
 ) -> Result<Option<ClaimWorkerOutcome>, DesktopTurnQueueError> {
-    let claimed = queue.claim(turn_id, epoch)?;
+    let claimed = queue.claim(turn_id)?;
     let Some(claimed) = claimed else {
         if runtime
             .active(task_id, turn_id)
@@ -42,9 +42,8 @@ pub fn claim_first_for_worker(
     queue: &mut DesktopTurnQueueStore,
     runtime: &DesktopAgentRuntime,
     task_id: &TaskId,
-    epoch: &str,
 ) -> Result<Option<(String, ClaimWorkerOutcome)>, DesktopTurnQueueError> {
-    let claimed = queue.claim_first(task_id, epoch)?;
+    let claimed = queue.claim_first(task_id)?;
     let Some(claimed) = claimed else {
         return Ok(None);
     };
