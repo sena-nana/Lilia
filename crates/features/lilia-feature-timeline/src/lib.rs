@@ -11,10 +11,27 @@ use std::sync::Arc;
 use lilia_contracts::{
     ProductError, TaskId, TimelineProjectionCursor, TimelineProjectionEvent, TimelineProjectionPage,
 };
-use lilia_kernel::{Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef};
+use lilia_kernel::{
+    Event, Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef,
+};
 use lilia_service::ServiceAuthority;
 
 pub use retry::{timeline_retry_context, TimelineRetryContext};
+
+/// A task's timeline projection advanced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TimelineChanged {
+    pub task_id: TaskId,
+    pub cursor: Option<u64>,
+}
+
+impl Event for TimelineChanged {
+    const NAME: &'static str = "lilia.timeline.changed";
+
+    fn subject(&self) -> Option<String> {
+        Some(self.task_id.as_str().to_owned())
+    }
+}
 
 /// Largest page a caller may request in one read.
 const MAX_PAGE: usize = 200;

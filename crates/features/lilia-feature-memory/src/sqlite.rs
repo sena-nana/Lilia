@@ -48,8 +48,8 @@ pub struct SqliteMemoryStore {
 impl SqliteMemoryStore {
     #[cfg(test)]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, MemoryStoreError> {
-        let connection = Db::open(path)
-            .map_err(|error| MemoryStoreError::storage("open database", error))?;
+        let connection =
+            Db::open(path).map_err(|error| MemoryStoreError::storage("open database", error))?;
         Self::from_db(connection)
     }
 
@@ -103,7 +103,8 @@ impl SqliteMemoryStore {
 
     #[cfg(test)]
     fn insert_project(&self, project_id: &str) {
-        self.connection.lock()
+        self.connection
+            .lock()
             .execute(
                 "INSERT INTO projects (id, name, created_at) VALUES (?1, ?1, 1)",
                 params![project_id],
@@ -113,7 +114,8 @@ impl SqliteMemoryStore {
 
     #[cfg(test)]
     fn insert_task(&self, task_id: &str) {
-        self.connection.lock()
+        self.connection
+            .lock()
             .execute("INSERT INTO tasks (id) VALUES (?1)", params![task_id])
             .unwrap();
     }

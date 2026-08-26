@@ -43,7 +43,7 @@ pub use types::{
     AutomationWorkflowVersion, GraphExecution,
 };
 
-use lilia_kernel::{Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef};
+use lilia_kernel::{Event, Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef};
 
 /// Where the automation service reports that a workflow or run changed.
 pub trait AutomationEvents: Send + Sync + 'static {
@@ -149,5 +149,62 @@ impl Feature for AutomationFeature {
 
     fn mount(&self, cx: &mut FeatureContext<'_>) -> Result<(), KernelError> {
         cx.provide::<AutomationServiceKey>(self.service.clone())
+    }
+}
+
+/// A workflow was created, saved, published or deleted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutomationChanged {
+    pub automation_id: Option<String>,
+}
+
+impl Event for AutomationChanged {
+    const NAME: &'static str = "lilia.automation.changed";
+
+    fn subject(&self) -> Option<String> {
+        self.automation_id.clone()
+    }
+}
+
+/// A run advanced to a new status.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AutomationRunChanged {
+    pub automation_id: String,
+    pub run_id: String,
+    pub status: AutomationRunStatus,
+}
+
+impl Event for AutomationRunChanged {
+    const NAME: &'static str = "lilia.automation.run_changed";
+
+    fn subject(&self) -> Option<String> {
+        Some(self.run_id.clone())
+    }
+}
+
+/// Publishes automation notifications onto the kernel bus.
+pub struct KernelAutomationEvents {
+    events: lilia_kernel::EventBus,
+}
+
+impl KernelAutomationEvents {
+    pub fn new(events: lilia_kernel::EventBus) -> Self {
+        Self { events }
+    }
+}
+
+impl AutomationEvents for KernelAutomationEvents {
+    fn workflow_changed(&self, automation_id: Option<&str>) {
+        self.events.publish(AutomationChanged {
+            automation_id: automation_id.map(str::to_owned),
+        });
+    }
+
+    fn run_changed(&self, automation_id: &str, run_id: &str, status: AutomationRunStatus) {
+        self.events.publish(AutomationRunChanged {
+            automation_id: automation_id.to_owned(),
+            run_id: run_id.to_owned(),
+            status,
+        });
     }
 }

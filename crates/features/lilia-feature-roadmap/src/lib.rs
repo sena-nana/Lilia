@@ -15,7 +15,25 @@ pub use types::{
     TaskMilestoneLink,
 };
 
-use lilia_kernel::{Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef};
+use lilia_contracts::ProjectId;
+use lilia_kernel::{
+    Event, Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef,
+};
+
+/// A project's milestones or their task links changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoadmapChanged {
+    pub project_id: ProjectId,
+    pub milestone_id: Option<String>,
+}
+
+impl Event for RoadmapChanged {
+    const NAME: &'static str = "lilia.roadmap.changed";
+
+    fn subject(&self) -> Option<String> {
+        Some(self.project_id.as_str().to_owned())
+    }
+}
 
 /// Service slot for [`DesktopRoadmapService`].
 pub enum RoadmapServiceKey {}

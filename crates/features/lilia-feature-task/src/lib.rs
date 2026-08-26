@@ -49,21 +49,17 @@ impl ServiceKey for ProjectTaskServiceKey {
     const NAME: &'static str = "lilia.project.tasks";
 }
 
-/// Publishes the host-owned [`ProjectTaskService`] into the service registry and
-/// adds the kernel event leg to its fanout.
+/// Publishes the host-owned [`ProjectTaskService`] into the service registry.
 ///
-/// The service is constructed by the host rather than here because the host
-/// bootstraps its persistence before the kernel starts; building a second
-/// instance at mount time would give the two halves separate event sinks over
-/// the same rows.
+/// The host installs [`KernelProjectTaskEvents`] onto the shared bus when it
+/// builds the session, so this feature does not add a second sink at mount.
 pub struct TaskFeature {
     service: ProjectTaskService,
-    events: Arc<ProjectTaskEventFanout>,
 }
 
 impl TaskFeature {
-    pub fn new(service: ProjectTaskService, events: Arc<ProjectTaskEventFanout>) -> Self {
-        Self { service, events }
+    pub fn new(service: ProjectTaskService, _events: Arc<ProjectTaskEventFanout>) -> Self {
+        Self { service }
     }
 }
 
@@ -77,8 +73,6 @@ impl Feature for TaskFeature {
     }
 
     fn mount(&self, cx: &mut FeatureContext<'_>) -> Result<(), KernelError> {
-        self.events
-            .install(Arc::new(KernelProjectTaskEvents::new(cx.events().clone())));
         cx.provide::<ProjectTaskServiceKey>(self.service.clone())
     }
 }

@@ -17,7 +17,7 @@ NanaUI 内部用 `bevy_ecs` 做存储引擎，但对外只暴露 `RuntimeProgram
 | 异步手工作坊 | 35 处裸 `thread::spawn` + `*_operation_sequence` / `active_*_operation` / `*_busy` / `*_error` 四件套 | `Jobs` 门面 + `JobSlot` 单飞（四件套已清零，`*_busy` 改为从 `active_*_job` 派生的方法） |
 | Agent 双权威 | `agent.rs` 3,824 行自建 turn FSM | 见 [agent-authority-gap.md](agent-authority-gap.md) |
 | 持久化分裂 | 同一 `product.db` 被多模块各开连接 | `lilia_storage::Db` 单句柄 + 迁移 runner |
-| UI 缓存二次事实 | 字段镜像应用状态，粗粒度 `DesktopEventKind` 整片 refresh | 类型化 `EventBus` + `snapshot` 直读权威 |
+| UI 缓存二次事实 | 字段镜像应用状态，粗粒度整片 refresh | 类型化 `EventBus` + 模块 `invalidate` 精确失效 |
 
 ## 结构
 
@@ -66,7 +66,7 @@ pub trait ServiceKey: 'static {
 - `on::<E>(handler)` — 同步处理，在 publish 线程上执行，用于 Feature 内部的精确失效。
 - `observe(observer)` — 通用观察者，拿到 `EventEnvelope`，用于跨线程投递给 UI。
 
-取代 30 变体的 `DesktopEventKind` 广播。事件说明"什么事实变了"，消费者据此**精确**重读，不再整片 refresh。
+取代已删除的 `DesktopEventKind` 枚举广播。事件说明"什么事实变了"，消费者据此**精确**重读，不再整片 refresh。
 
 ### Journal
 
@@ -147,14 +147,11 @@ pub trait Feature: Send + Sync + 'static {
 
 `apps/desktop` 里已经没有任何 `*_operation_sequence` / `active_*_operation` 字段。
 
-尚未清零的两项：`DesktopProgram` 仍有 11 个 `*_busy` 与 16 个 `active_*_job` 并存，这些 `*_busy` 要等 UI 侧按域拆分时一起删；`AtomicBool` 仍在 `change_feed.rs`、`project_files.rs`、`registry_watch.rs`、`title_update.rs`、`single_instance.rs`，但它们都是常驻监视线程的停机旗标，不是长操作的取消旗标——常驻监视不是 Job，不该套单飞车道。
+`*_busy` 镜像已删，忙碌态从 job 句柄派生。`AtomicBool` 仍在 `change_feed.rs`、`project_files.rs`、`registry_watch.rs`、`title_update.rs`、`single_instance.rs`，但它们都是常驻监视线程的停机旗标，不是长操作的取消旗标——常驻监视不是 Job，不该套单飞车道。
 
 `lilia.document/*` 而不是 `lilia.lsp/*`：这两条查询由 `lilia-feature-document` 拥有，协议命名跟着拥有它的 Feature 走，方便从协议名反查该改哪个 crate。
 
-`desktop.rs` 里只剩两处线程，都不是长操作：
-
-- `lilia-desktop-events` 是常驻的事件桥，一个订阅一个循环，本来就该是线程。
-- markdown 图片加载有自己的 LRU 准入策略（同时限制在飞 worker 数与常驻缓存条目数，按最近使用排序决定先读哪张），需要的是并发预算而不是单飞车道；它的结果是原始图片字节，进 payload 就等于把几 MB 二进制写进 Journal。它属于视图层资源加载，不是产品操作。
+`desktop.rs` 里不再有 `lilia-desktop-events` 桥线程：应用与内核共享同一条 `EventBus`，壳层在 `application.event_bus().observe` 上把非 `JobEvent` 的信封转成 `Message::KernelEvent`。markdown 图片加载仍有自己的 LRU 准入策略（同时限制在飞 worker 数与常驻缓存条目数，按最近使用排序决定先读哪张），需要的是并发预算而不是单飞车道；它的结果是原始图片字节，进 payload 就等于把几 MB 二进制写进 Journal。它属于视图层资源加载，不是产品操作。
 
 ### 应用层要发起 Job 时，经壳层队列而不是自己持有内核
 
@@ -223,9 +220,9 @@ pub trait Feature: Send + Sync + 'static {
 
 ### 过渡期的 shim 约定
 
-已迁出的域由 feature crate 拥有类型与 store。`apps/desktop/src/application` 只保留组合（bootstrap、跨域编排）与对 feature service 的转发，随调用点改为 `KernelHost` 的 service 槽位而删除。`Broadcast*` 适配器与壳层同时删除。
+已迁出的域由 feature crate 拥有类型与 store。`apps/desktop/src/application` 只保留组合（bootstrap、跨域编排）与对 feature service 的转发，随调用点改为 `KernelHost` 的 service 槽位而删除。`Broadcast*` 适配器已删：`KernelProjectTaskEvents` / `KernelAutomationEvents` / `KernelTerminalEvents` 直接往类型化 `EventBus` 发。
 
-feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate 里定义事件 trait（`TerminalEvents`、`AutomationEvents`、`ProjectTaskEvents`），宿主提供 `Broadcast*` 适配器桥到 `DesktopEventKind`，直到壳层改读类型化事件。
+feature crate 不认识宿主的 `DesktopEventBus` 包装。需要广播的域在自己 crate 里定义 typed `Event`（`ProjectsChanged`、`AutomationChanged`、`TerminalChanged` 等）或事件 trait；宿主在应用构造时把 kernel 同总线的 sink install 上去，壳层按 `EventEnvelope` downcast 精确失效。
 
 ### 壳层与组合根
 
@@ -236,8 +233,8 @@ feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate �
 长操作已经收口，域**类型**已经下沉。回合权威与壳层入口已经落地。剩下三件：
 
 - `ActiveTurnPhase` 七态已删。`DesktopAgentRuntime` 只做队列协调；`turn_claim_epoch` + `claim_token` 仍在，直到 AgentKit 有 `SessionVersion` ack 替代。壳层经 `QueuedTurnExecutor` 把 `lilia.agent/turn@1` / `approval@1` / `interaction@1` 交给内核。对照与取舍见 `docs/design/agent-authority-gap.md`。
-- 入口已改名 `LiliaShell`，`Message` 已按域拆成 17 个子枚举。但**这只是把变体搬了位置**：变体总数仍约 430，`update_message` 与全部 `apply_*` 仍在 `apps/desktop/src/desktop.rs` 的同一个 28,000 行 `impl DesktopProgram` 里。`DesktopProgram` 不持有 `DesktopApplication`：session 在 `KernelHost`，Job 只经 `kernel.jobs()`。`UiModule` 契约已落地在 `apps/desktop/src/ui_module.rs`，architecture / roadmap / memory 三个域已迁入 `apps/desktop/src/module/`。
-- `crates/lilia-desktop-application` 已从 workspace 移除，实现暂收在 `apps/desktop/src/application`。其中 `agent.rs`、`import.rs`、`remote.rs`、`workspace.rs`、`extensions.rs`、`todo.rs` 仍是实现本体而非转发壳。
+- 入口已改名 `LiliaShell`，`Message` 已按域拆成子枚举。`update_message` 与大量 `apply_*` 仍在 `apps/desktop/src/desktop.rs` 的同一个 `impl DesktopProgram` 里。`DesktopProgram` 不持有 `DesktopApplication`：session 在 `KernelHost`，Job 只经 `kernel.jobs()`。`UiModule` 契约在 `apps/desktop/src/ui_module.rs`；`ShellUiFeature` 贡献 architecture / roadmap / memory / composer / extensions / task / timeline / settings 八个工厂，每窗口一份 `UiModuleHost`。Composer 只迁输入面（草稿、编辑器、slash / mention / 引用）；Submit、Todo、Goal、`pending_session_branch` 与 `TaskSessionView` 仍在壳层。工作区选择/列表的权威写入者仍是 `DesktopWorkspaceSession`（`lilia.shell.workspace_sessions`），写入只经 `execute_workspace_command` / session，不进 ComposerModule。
+- `crates/lilia-desktop-application` 已从 workspace 移除，实现暂收在 `apps/desktop/src/application`。todo 类型与 store、title HTTP/persist/投影、claim 栅栏、回合准备/accept（`prepare_turn_request` / `accept_persisted_turn`）、回合执行（`run_prepared_turn`）、page 状态机（`handle_observed_page`）与审批/交互 resume（`run_approval_resume` / `run_interaction_resume`）已在 `lilia-feature-agent-session`；宿主实现 `TitleHost` / `TurnStartHost` / `TurnPageHost` / `TurnResumeHost` / `AgentTurnHost`。工作区 session / panel / command / item 类型在 `lilia-feature-workspace`；宿主只实现 `WorkspaceCatalog` 与 item restore。远程控制服务、dispatch、HTTP 解析/路由与 process-session 编排在 `lilia-feature-remote`；宿主实现 `RemoteHost` / `RemoteWakeHost` 并只负责 bind listener。`github` / `import` 执行留在 `apps/desktop/src/ports/`。extensions 的 snapshot/mutate 在 `lilia-feature-extensions`；宿主实现 `ExtensionsHost`（AgentKit / keyring / 插件）。`turn_claim_epoch` 仍在 `DesktopApplicationInner`，token 由 crate 队列铸造。
 
 ### `DesktopProgram` 的字段分三类，只有一类能在拆分前处理
 
@@ -261,15 +258,15 @@ feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate �
 - contribution 交的是**工厂**而不是实例：每个工作区窗口要自己的一份，两个窗口编同一个项目不能共享编辑态。`UiModuleRegistry` 持工厂，`host()` 给一个窗口配一套。
 - `UiModuleContext` 带上 `WindowId` 与当前 active page，模块 resolve「我这个窗口的」session、并自己判断要不要投影。这没有违背只给 `&Kernel` 的约束——窗口身份不是事实，是问哪一份事实；可见性是壳层的合成决策，模块无从推导。
 
-寄存器已经删除：`ProjectWorkspaceEditorState` 与它的 capture / apply 两个函数不再存在，工作区窗口的项目页从 `WorkspaceItem` 自己读 project 与 surface，不再由壳层旁边存一份。`with_workspace_window_project_state` 只剩下两件事——把壳层自有 handler 读的选择态临时指向那个窗口，以及记下这次 dispatch 属于哪个窗口。后者不能省：debug 目标 id 命名的是控件而不是窗口，所以必须由壳层说明，`route_to_module` 与 `dispatch_module` 都按它取窗口。等 `task` 域也迁成模块，选择态换入换出会一并消失。
+寄存器已经删除：`ProjectWorkspaceEditorState` 与它的 capture / apply 两个函数不再存在，工作区窗口的项目页从 `WorkspaceItem` 自己读 project 与 surface，不再由壳层旁边存一份。`with_workspace_window_project_state` 不再 swap 工作区选择：它只临时指向那个窗口的 `project_surface` 与 `module_dispatch`。选择权威仍在该窗口的 `DesktopWorkspaceSession`。`task` 域已迁成模块，列表从 session snapshot 投影，不镜像到模块字段。
 
 ### 内核机制的消费者缺口
 
 内核五个机制里 `Jobs` 与 `Journal` 已接满消费者，另外三个的状态要如实记着，否则后来者会以为它们在工作：
 
-- `ServiceRegistry`：13 个 `ServiceKey` 全部 provide。`lilia.shell.workspace_sessions` 是第一个有产品 `resolve` 的槽位：`DesktopWorkspaceSession` 本来就是 `Arc<Mutex<..>>` 背书的可克隆句柄，持有 projects / tasks / 选择 / 面板布局的唯一写入权，所以它是共享事实下沉成 service 的自然形状，而不需要为此新造一层。`DesktopProgram` 现在从槽位读它而不是私藏句柄；工作区窗口开关时同步 install / remove，关窗即移除，避免平台回收的窗口号继承上一个窗口的会话。`ProjectTaskService` 的双实例已消除——壳层在 bootstrap 时建实例，`TaskFeature::mount` 把同一实例 provide 进槽位，事件经 `ProjectTaskEventFanout` 同时进 `DesktopEventKind` 与 `EventBus`。方向是壳层给内核而不是内核给壳层，因为壳层先于内核起，持久化在 bootstrap 阶段就要能写。其余槽位的产品消费者仍是壳层直接持句柄，`resolve` 只在装配测试里用；22 个 feature 之间没有任何跨 crate 依赖，所以 `requires()` 全为空是当前依赖图的实情，不是遗漏——`mount_all` 的 Kahn 排序在真实图上就是一层。
-- `ContributionRegistry`：`apps/desktop/src/ui_module.rs` 定义了宿主专有的 `UiModules` 集合，`UiModuleRegistry::from_kernel` 在 `DesktopProgram::initialize` 里 `take_contributions` 取走工厂，主窗口与每个工作区窗口各配一套 `UiModuleHost`，投影汇合点已在 `primary_shell_snapshot` 上线。`ShellUiFeature` 目前贡献 architecture / roadmap / memory 三个工厂，`reduce` 按 `FeatureId` 路由，`Message::Architecture` / `Roadmap` / `Memory` 三支已全部落到模块。
-- `EventBus`：唯一产品订阅是 `kernel_host.rs` 的 `JobEvent`。feature crate 零订阅，UI 仍走 39 变体的 `DesktopEventKind` + `refresh_*`。
+- `ServiceRegistry`：槽位已 provide。`lilia.shell.workspace_sessions` 是第一个有产品 `resolve` 的槽位：`DesktopWorkspaceSession` 本来就是 `Arc<Mutex<..>>` 背书的可克隆句柄，持有 projects / tasks / 选择 / 面板布局的唯一写入权。`DesktopProgram` 从槽位读它而不是私藏句柄；工作区窗口开关时同步 install / remove。`lilia.shell.task_sessions` 是 Composer 锁定检查的读取面：壳层在 `refresh_task_session` 之后 `install` 一份 `Arc<TaskSessionView>`，模块经 `UiModuleContext::task_session()` 读，热路径只 clone `Arc`，写路径 copy-on-write。`lilia.shell.application` 与 `lilia.shell.provider_staging` 同样由壳层 provide。`ProjectTaskService` 的双实例已消除——壳层在 bootstrap 时建实例，`TaskFeature::mount` 把同一实例 provide 进槽位，事件经 `ProjectTaskEventFanout` 进 typed `EventBus`（`KernelProjectTaskEvents` 在应用构造时 install，mount 不再装第二份）。方向是壳层给内核而不是内核给壳层，因为壳层先于内核起。22 个 feature 之间没有任何跨 crate 依赖，所以 `requires()` 全为空是当前依赖图的实情。
+- `ContributionRegistry`：`apps/desktop/src/ui_module.rs` 定义了宿主专有的 `UiModules` 集合，`UiModuleRegistry::from_kernel` 在 `DesktopProgram::initialize` 里 `take_contributions` 取走工厂，主窗口与每个工作区窗口各配一套 `UiModuleHost`，投影汇合点已在 `primary_shell_snapshot` 上线。`ShellUiFeature` 贡献 architecture / roadmap / memory / composer / extensions / task / timeline / settings 八个工厂，`reduce` 按 `FeatureId` 路由。Composer 的公开 `Message::Composer` 仍在壳层（Submit / Todo / Goal / 交互），输入变体转发到模块消息。
+- `EventBus`：应用与内核共用 `Kernel::with_events`。壳层 `observe` 跳过 `JobEvent`，其余按类型 downcast；各 `UiModule::invalidate` 只重读自己的域。测试仍可通过 `subscribe_events()` 收到 `DesktopEvent` 再 `.is::<T>()` / `.downcast::<T>()`。
 - `Journal`：4096 条环形缓冲。四类 `RecordKind` 都有产品写入点——lifecycle 与 job 由内核写，`Event` 由 `EventBus::publish` 写（`JobEvent` 以 `JOURNALED = false` 退出，避免与 `Jobs` 自己的 job 记录重复），`Mutation` 由 `ProjectTaskService` 在每次写入后写，记的是操作名与幂等键是否命中——事件只说"行动了"，说不出这次是新写还是重放。`apps/desktop/src/journal_export.rs` 是 `JournalSink` 的产品实现：`LILIA_JOURNAL_PATH` 指向文件时，记录经专用线程逐条落盘（UI 线程与 job worker 上不做文件系统调用），`cargo xtask agent-debug` 把它设为 `journal.jsonl` 并校验序号单调与 feature 挂载记录齐全。
 
 ### UI 渲染路径上的性能约束

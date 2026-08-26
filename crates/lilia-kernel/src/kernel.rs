@@ -40,6 +40,15 @@ impl Kernel {
     /// builds the journal first and hands it in, so one ordered log covers both.
     pub fn with_journal(journal: Journal) -> Self {
         let events = EventBus::with_journal(journal.clone());
+        Self::with_events(journal, events)
+    }
+
+    /// Shares both the journal and the event bus the host already started.
+    ///
+    /// The desktop session publishes typed topics before the kernel mounts, so
+    /// the same bus has to carry bootstrap writes and later feature publishes;
+    /// two buses would split one operation across two sequences.
+    pub fn with_events(journal: Journal, events: EventBus) -> Self {
         let jobs = Jobs::new(events.clone(), journal.clone());
         Self {
             services: RwLock::new(ServiceRegistry::new()),

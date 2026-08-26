@@ -71,8 +71,8 @@ pub struct SqliteRoadmapStore {
 impl SqliteRoadmapStore {
     #[cfg(test)]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, RoadmapStoreError> {
-        let connection = Db::open(path)
-            .map_err(|error| RoadmapStoreError::storage("open database", error))?;
+        let connection =
+            Db::open(path).map_err(|error| RoadmapStoreError::storage("open database", error))?;
         Self::from_db(connection)
     }
 

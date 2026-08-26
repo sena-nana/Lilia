@@ -94,7 +94,25 @@ impl DesktopArchitectureError {
     }
 }
 
-use lilia_kernel::{Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef};
+use lilia_contracts::ProjectId;
+use lilia_kernel::{
+    Event, Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef,
+};
+
+/// A project's architecture graph or its proposed changes advanced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArchitectureChanged {
+    pub project_id: ProjectId,
+    pub version: i64,
+}
+
+impl Event for ArchitectureChanged {
+    const NAME: &'static str = "lilia.architecture.changed";
+
+    fn subject(&self) -> Option<String> {
+        Some(self.project_id.as_str().to_owned())
+    }
+}
 
 /// Service slot for [`DesktopArchitectureService`].
 pub enum ArchitectureServiceKey {}
