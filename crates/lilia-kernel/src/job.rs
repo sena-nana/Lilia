@@ -196,6 +196,10 @@ pub struct JobEvent {
 
 impl Event for JobEvent {
     const NAME: &'static str = "lilia.kernel.job";
+
+    /// [`Jobs::announce`] writes the richer `RecordKind::Job` record just before
+    /// publishing, so journaling the publish too would duplicate every line.
+    const JOURNALED: bool = false;
 }
 
 #[derive(Clone, Debug, PartialEq)]

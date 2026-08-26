@@ -1045,9 +1045,12 @@ mod tests {
         assert_eq!(first.kind.as_str(), DOCUMENT_WORKSPACE_ITEM_KIND);
         assert_eq!(first.resource_id, second.resource_id);
         assert_ne!(first.id, second.id);
+        // Windows 的资源键按大小写不敏感规范化，所以取回的路径不会逐字节等于原路径；
+        // 真正要守的是它仍指向同一个文档。
+        let recovered = first.document_path().unwrap().unwrap();
         assert_eq!(
-            first.document_path().unwrap(),
-            Some(snapshot.canonical_path.clone())
+            document_resource_key(&recovered).unwrap(),
+            document_resource_key(&snapshot.canonical_path).unwrap()
         );
         assert_eq!(first.serialized_state, None);
         assert!(first.capabilities.persistent);

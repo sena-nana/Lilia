@@ -1,6 +1,6 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
@@ -18,6 +18,10 @@ const DESCRIPTOR_WAIT: Duration = Duration::from_secs(15);
 const DESCRIPTOR_WAIT: Duration = Duration::from_millis(500);
 const HANDLER_WAIT: Duration = Duration::from_secs(15);
 const IO_TIMEOUT: Duration = Duration::from_secs(20);
+/// 端点始终是 loopback，连得上就是即时的。给单次连接设上界，否则一个已死的
+/// 端点会把整个 `DESCRIPTOR_WAIT` 预算吃光——Windows 对被拒绝的连接要重试约
+/// 一秒才返回，重试循环就一次都轮不到新写入的描述符。
+const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 
 type RequestHandler = dyn Fn(DesktopCliRequest) -> DesktopCliResult + Send + Sync;
@@ -323,7 +327,7 @@ fn forward_to_primary(
                     && descriptor.version == PROTOCOL_VERSION
                     && descriptor.instance_identity == instance_identity
                 {
-                    match TcpStream::connect(&descriptor.address) {
+                    match connect_to_endpoint(&descriptor.address) {
                         Ok(mut stream) => {
                             stream.set_read_timeout(Some(IO_TIMEOUT)).map_err(|error| {
                                 format!("failed to configure Native IPC read timeout: {error}")
@@ -345,10 +349,7 @@ fn forward_to_primary(
                             return read_json_line(&mut stream);
                         }
                         Err(error) => {
-                            endpoint_error = Some(format!(
-                                "failed to connect to {}: {error}",
-                                descriptor.address
-                            ));
+                            endpoint_error = Some(error);
                         }
                     }
                 }
@@ -364,6 +365,20 @@ fn forward_to_primary(
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+}
+
+fn connect_to_endpoint(address: &str) -> Result<TcpStream, String> {
+    let sockets = address
+        .to_socket_addrs()
+        .map_err(|error| format!("failed to resolve {address}: {error}"))?;
+    let mut last_error = None;
+    for socket in sockets {
+        match TcpStream::connect_timeout(&socket, CONNECT_TIMEOUT) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last_error = Some(format!("failed to connect to {socket}: {error}")),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| format!("{address} resolved to no reachable endpoint")))
 }
 
 fn write_descriptor(path: &Path, descriptor: &InstanceDescriptor) -> Result<(), String> {
@@ -431,7 +446,7 @@ mod tests {
 
     #[test]
     fn forwarding_reloads_a_replacement_primary_descriptor() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let home = std::env::temp_dir().join(format!(
             "lilia-native-single-instance-descriptor-replacement-{}-{}",
             std::process::id(),
@@ -509,7 +524,7 @@ mod tests {
 
     #[test]
     fn request_takes_over_when_the_primary_dies_before_ipc_is_available() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let home = std::env::temp_dir().join(format!(
             "lilia-native-single-instance-recovery-{}-{}",
             std::process::id(),
@@ -559,7 +574,7 @@ mod tests {
 
     #[test]
     fn second_instance_forwards_authenticated_cli_request_to_primary() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
         let home = std::env::temp_dir().join(format!(
             "lilia-native-single-instance-{}-{}",
             std::process::id(),

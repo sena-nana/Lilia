@@ -68,6 +68,8 @@ impl Session {
             )?;
         }
 
+        // 调试 socket 只在 debug_assertions 下存在，所以门禁只能测 dev profile。
+        // 这意味着帧阈值判定的是未优化构建的成本。
         run_command(
             crate::command("cargo").current_dir(&root).args([
                 "build",
@@ -93,6 +95,9 @@ impl Session {
             .env("LILIA_AGENT_DEBUG_ADDR", "127.0.0.1:0")
             .env("LILIA_AGENT_DEBUG_READY", &ready)
             .env("LILIA_AGENT_DEBUG_SEED", "1")
+            // Persists the kernel journal so a failed run leaves the ordered
+            // record of mutations, events and mounts behind, not just logs.
+            .env("LILIA_JOURNAL_PATH", run_dir.join("journal.jsonl"))
             // Seeding requires a model endpoint override. Pointing it at the
             // discard port means a stray turn fails fast instead of reaching a
             // real provider.
@@ -177,6 +182,7 @@ pub fn run() -> Result {
             ));
         }
     }
+    let journal = read_journal(&session.run_dir.join("journal.jsonl"))?;
     write_json(&session.run_dir.join("observe.json"), &observation)?;
     write_json(&session.run_dir.join("action.json"), &action)?;
     write_json(&session.run_dir.join("replay.json"), &replay)?;
@@ -188,6 +194,7 @@ pub fn run() -> Result {
             "ok": true,
             "protocol": "lilia-agent-debug-v1",
             "artifacts": session.run_dir,
+            "journalRecords": journal,
         }),
     )?;
     println!("agent-debug: ok ({})", session.run_dir.display());
@@ -309,6 +316,53 @@ pub(crate) fn require_ok(response: &Value, command: &str) -> Result {
             format!("{command}: {response}"),
         ))
     }
+}
+
+/// Checks that the exported journal is a usable post-mortem log and returns how
+/// many records it holds.
+///
+/// An export that silently produces nothing, or loses ordering, is worse than no
+/// export at all: a later investigation would read the gap as "nothing
+/// happened". Feature mounts are the one class of record every run must contain,
+/// so their absence is what proves the pipeline broke.
+fn read_journal(path: &Path) -> Result<usize> {
+    let exported = fs::read_to_string(path).map_err(|error| {
+        XtaskError::io(
+            "journal_export_missing",
+            &format!("read the exported kernel journal at {}", path.display()),
+            error,
+        )
+    })?;
+    let mut previous = 0_u64;
+    let mut mounted = 0_usize;
+    let mut records = 0_usize;
+    for line in exported.lines().filter(|line| !line.trim().is_empty()) {
+        let record: Value = serde_json::from_str(line).map_err(|error| {
+            XtaskError::failure(
+                "journal_export_malformed",
+                format!("the exported journal holds a line that is not a record: {error}"),
+            )
+        })?;
+        let sequence = record["sequence"].as_u64().unwrap_or_default();
+        if sequence <= previous {
+            return Err(XtaskError::failure(
+                "journal_export_unordered",
+                format!("record {sequence} does not follow {previous}"),
+            ));
+        }
+        previous = sequence;
+        records += 1;
+        if record["topic"] == "feature.mounted" {
+            mounted += 1;
+        }
+    }
+    if mounted == 0 {
+        return Err(XtaskError::failure(
+            "journal_export_empty",
+            "the exported journal records no feature mount, so the sink never received the log",
+        ));
+    }
+    Ok(records)
 }
 
 /// A readiness timeout on its own hides the reason the desktop never came up, so

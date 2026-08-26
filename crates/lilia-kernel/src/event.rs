@@ -3,12 +3,31 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use crate::FeatureId;
+use serde_json::Value;
+
+use crate::{FeatureId, Journal, RecordKind};
 
 /// Declares one typed topic. Topics replace a single coarse enum so a consumer
 /// reacting to project changes is never woken by terminal output.
 pub trait Event: Clone + Send + Sync + 'static {
     const NAME: &'static str;
+
+    /// Whether a publish is recorded in the journal. [`crate::JobEvent`] opts
+    /// out because [`crate::Jobs`] already writes a richer `RecordKind::Job`
+    /// record for the same state change.
+    const JOURNALED: bool = true;
+
+    /// Row this event concerns, recorded as the journal subject so a reader can
+    /// follow one project or task through the log.
+    fn subject(&self) -> Option<String> {
+        None
+    }
+
+    /// Detail recorded beside the topic. Defaults to nothing so a topic can be
+    /// journaled without forcing every event to be serialisable.
+    fn detail(&self) -> Value {
+        Value::Null
+    }
 }
 
 /// Identity of a subscription, used to detach a handler.
@@ -81,6 +100,7 @@ struct EventBusInner {
     state: Mutex<EventBusState>,
     next_sequence: AtomicU64,
     next_subscription: AtomicU64,
+    journal: Option<Journal>,
 }
 
 impl EventBus {
@@ -88,7 +108,28 @@ impl EventBus {
         Self::default()
     }
 
+    /// Records every journaled publish in `journal`, so the ordered log covers
+    /// topic fan-out and not just job and lifecycle transitions.
+    pub fn with_journal(journal: Journal) -> Self {
+        Self {
+            inner: Arc::new(EventBusInner {
+                journal: Some(journal),
+                ..EventBusInner::default()
+            }),
+        }
+    }
+
     pub fn publish<E: Event>(&self, event: E) -> EventEnvelope {
+        if E::JOURNALED {
+            if let Some(journal) = &self.inner.journal {
+                journal.append(
+                    RecordKind::Event,
+                    E::NAME,
+                    event.subject(),
+                    event.detail(),
+                );
+            }
+        }
         let envelope = EventEnvelope {
             sequence: self.inner.next_sequence.fetch_add(1, Ordering::Relaxed) + 1,
             name: E::NAME,

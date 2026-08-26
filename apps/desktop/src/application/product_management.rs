@@ -4,6 +4,8 @@
 //! while the shell still calls through `DesktopApplication`, and disappear with
 //! it once every caller resolves the service from the kernel.
 
+use std::sync::Arc;
+
 use lilia_contracts::{
     ProductProjectArchiveOutcome, ProductProjectRemovalOutcome, ProductTask,
     ProductTaskArchiveOutcome, ProjectId, TaskId,
@@ -51,6 +53,26 @@ impl lilia_feature_task::ProjectTaskEvents for BroadcastProjectTaskEvents {
 impl DesktopApplication {
     pub(crate) fn project_tasks(&self) -> &ProjectTaskService {
         &self.inner.project_tasks
+    }
+
+    /// Hands the one project/task service and its event fanout to the kernel so
+    /// `TaskFeature` publishes this instance instead of building a second one.
+    pub fn project_task_services(
+        &self,
+    ) -> (
+        ProjectTaskService,
+        Arc<lilia_feature_task::ProjectTaskEventFanout>,
+    ) {
+        (
+            self.inner.project_tasks.clone(),
+            self.inner.project_task_events.clone(),
+        )
+    }
+
+    /// The log the application already writes to. Handed to the kernel so
+    /// lifecycle, job, event and mutation records share one sequence.
+    pub fn journal(&self) -> lilia_kernel::Journal {
+        self.inner.journal.clone()
     }
 
     pub fn task_run_block(

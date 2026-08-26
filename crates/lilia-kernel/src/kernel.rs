@@ -32,8 +32,14 @@ impl Default for Kernel {
 
 impl Kernel {
     pub fn new() -> Self {
-        let events = EventBus::new();
-        let journal = Journal::new();
+        Self::with_journal(Journal::new())
+    }
+
+    /// Shares `journal` with the caller. A host that must journal writes made
+    /// before the kernel exists — services it bootstraps alongside its storage —
+    /// builds the journal first and hands it in, so one ordered log covers both.
+    pub fn with_journal(journal: Journal) -> Self {
+        let events = EventBus::with_journal(journal.clone());
         let jobs = Jobs::new(events.clone(), journal.clone());
         Self {
             services: RwLock::new(ServiceRegistry::new()),

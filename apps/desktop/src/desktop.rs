@@ -1,37 +1,24 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 #[cfg(debug_assertions)]
-use std::{sync::mpsc, time::Instant};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use crate::iab_panel::HostedBrowserId;
-use crate::runtime_compat::{
-    tool_window_settings, window_event_id, HostedProgramContext, HostedProgramUpdate,
-    HostedUiCommand, HostedUpdateExt, HostedWindowAction, HostedWindowCaptureId,
-    HostedWindowCommand, HostedWindowEvent, HostedWindowGeometry, HostedWindowId,
-    HostedWindowSettings,
-};
-use crate::text_editor_state::TextEditorState;
-use lilia_contracts::{
-    LiliaAgentWorkflow, LiliaReviewTarget, PendingProjectionStatus, ProductApprovalDecision,
-    ProductTask, ProductTaskPriority, ProductTaskStatus, Project, ProjectArchiveState, ProjectId,
-    SidebarNavigationIcon, SidebarNavigationTarget, TaskId,
-};
 use crate::application::DesktopComposerTurnRequest;
 use crate::application::DesktopTodoGuideStatus;
 use crate::application::{
     clipboard_text_should_be_attachment, default_panel_states, describe_attachment_paths,
-    preview_automatic_turn_selection, ApplicationWorkspaceSurface, ArchitectureBackend,
-    ArchitectureChangeStatus, ArchitecturePermission, AutomationBeginRunInput, AutomationNode,
-    AutomationNodePosition, AutomationResumeRunInput, AutomationRunDetail, AutomationRunStatus,
-    AutomationRunSummary, AutomationSaveDraftInput, AutomationScopeFilter,
-    AutomationSignalEnvelope, AutomationWorkflow, ChatAttachment, ChatAttachmentKind,
-    ChatContextSearchResult, ChatContextUsage, ChatConversationReference, CredentialImportDecision,
-    DesktopAgentInteractionError, DesktopAgentInteractionSettings,
-    DesktopAgentInteractionSettingsUpdate, DesktopAgentRuntimeSettings,
-    DesktopAgentRuntimeSettingsUpdate, DesktopApplication, DesktopApplicationConfig,
-    DesktopApplicationError, DesktopApplicationSuggestionModelPort,
+    preview_automatic_turn_selection, ApplicationWorkspaceSurface, ArchitectureChangeStatus,
+    ArchitecturePermission, AutomationBeginRunInput, AutomationNode, AutomationNodePosition,
+    AutomationResumeRunInput, AutomationRunDetail, AutomationRunStatus, AutomationRunSummary,
+    AutomationSaveDraftInput, AutomationScopeFilter, AutomationSignalEnvelope, AutomationWorkflow,
+    ChatAttachment, ChatAttachmentKind, ChatContextSearchResult, ChatContextUsage,
+    ChatConversationReference, CredentialImportDecision, DesktopAgentInteractionError,
+    DesktopAgentInteractionSettings, DesktopAgentInteractionSettingsUpdate,
+    DesktopAgentRuntimeSettings, DesktopAgentRuntimeSettingsUpdate, DesktopApplication,
+    DesktopApplicationConfig, DesktopApplicationError, DesktopApplicationSuggestionModelPort,
     DesktopArchitectureInteractionDecision, DesktopAssistantAiModelsResult,
     DesktopAssistantAiProbeInput, DesktopAssistantAiTestResult, DesktopAutomaticTurnSelection,
     DesktopCodeSearchMode, DesktopCodeSearchScope, DesktopCodingServicesSnapshot, DesktopCommand,
@@ -66,15 +53,27 @@ use crate::application::{
     DesktopUpdateState, DesktopWorkspaceCodeSearchHit, DesktopWorkspaceCodeSearchResult,
     DesktopWorkspaceListing, DesktopWorkspaceProject, DesktopWorkspaceSession,
     DesktopWorkspaceSessionId, DesktopWorkspaceSnapshot, DesktopWorkspaceTask,
-    DesktopWorktreeSelectionMode, DiagnosticSeverity, DockSlot, DocumentSnapshot,
-    MemoryInjectionState, MemoryScope, MemorySettings, MemoryUpsertInput, MilestoneDueDateUpdate,
-    MilestoneStatus, MilestoneUpdatePatch, PaneId, PaneNode, PanelId, PanelLayoutSnapshot,
-    PanelState, ProjectArchitectureChange, ProjectArchitectureChangeRecord,
-    ProjectArchitectureGraph, ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery,
-    ProjectRoadmap, ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput,
-    RemoteControlStatus, SplitAxis, TaskQuery, WorkspaceItem, WorkspaceItemId,
-    CODING_TOOLS_PANEL_ID, IAB_PANEL_ID, MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES,
-    TASK_INSPECTOR_PANEL_ID, TASK_WORKSPACE_ITEM_KIND, TITLE_UPDATE_ACTION_KIND,
+    DesktopWorktreeSelectionMode, DiagnosticSeverity, DockSlot, DocumentSnapshot, MemoryScope,
+    MemoryUpsertInput, MilestoneDueDateUpdate, MilestoneStatus, PaneId, PaneNode, PanelId,
+    PanelLayoutSnapshot, PanelState, ProjectArchitectureChange, ProjectArchitectureGraph,
+    ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery, ProjectRoadmap,
+    ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput, RemoteControlStatus, SplitAxis,
+    TaskQuery, WorkspaceItem, WorkspaceItemId, CODING_TOOLS_PANEL_ID, IAB_PANEL_ID,
+    MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES, TASK_INSPECTOR_PANEL_ID, TASK_WORKSPACE_ITEM_KIND,
+    TITLE_UPDATE_ACTION_KIND,
+};
+use crate::iab_panel::HostedBrowserId;
+use crate::runtime_compat::{
+    tool_window_settings, window_event_id, HostedProgramContext, HostedProgramUpdate,
+    HostedUiCommand, HostedUpdateExt, HostedWindowAction, HostedWindowCaptureId,
+    HostedWindowCommand, HostedWindowEvent, HostedWindowGeometry, HostedWindowId,
+    HostedWindowSettings,
+};
+use crate::text_editor_state::TextEditorState;
+use lilia_contracts::{
+    LiliaAgentWorkflow, LiliaReviewTarget, PendingProjectionStatus, ProductApprovalDecision,
+    ProductTask, ProductTaskPriority, ProductTaskStatus, Project, ProjectArchiveState, ProjectId,
+    SidebarNavigationIcon, SidebarNavigationTarget, TaskId,
 };
 use lilia_feature_project::{CloneJobRequest, CloneProgress, CloneRequest, CloneResult};
 use lilia_feature_provider::CredentialRequest;
@@ -123,8 +122,7 @@ use crate::provider_ai_settings::ProviderAiSettingsState;
 use crate::shell::{
     DocumentMessage, ExtensionsMessage, GitHubMessage, HookHandlerDraftField, ImportMessage,
     ProjectCloneMessage, ProjectMessage, PromptOptimizeMessage, ProviderMessage, QuotaMessage,
-    RemoteMessage, SidebarMessage, SuggestionsMessage, TaskMessage, UpdateMessage,
-    WorktreeMessage,
+    RemoteMessage, SidebarMessage, SuggestionsMessage, TaskMessage, UpdateMessage, WorktreeMessage,
 };
 use crate::shell_integration::{NativeShellIntegration, ShellCommand};
 use crate::storage::{
@@ -367,34 +365,6 @@ enum ProjectWorkspacePreview {
     Architecture(ProjectArchitectureGraph),
     Files { entry_count: usize, revision: u64 },
     Error(String),
-}
-
-#[derive(Clone)]
-struct ProjectWorkspaceEditorState {
-    project_id: ProjectId,
-    surface: ProjectWorkspaceSurface,
-    tasks: Vec<DesktopWorkspaceTask>,
-    roadmap: ProjectRoadmap,
-    selected_milestone: Option<String>,
-    milestone_title: String,
-    milestone_description: String,
-    milestone_due_date: String,
-    roadmap_error: Option<String>,
-    memories: Vec<DesktopMemory>,
-    selected_memory: Option<String>,
-    memory_title: String,
-    memory_body: TextEditorState,
-    memory_tags: String,
-    memory_scope: MemoryScope,
-    memory_updated_at: Option<i64>,
-    memory_error: Option<String>,
-    architecture: ProjectArchitectureGraph,
-    architecture_history: Vec<ProjectArchitectureChangeRecord>,
-    architecture_quarantine_count: usize,
-    architecture_graph: GraphModel,
-    architecture_viewport: GraphViewport,
-    architecture_selection: Option<GraphSelection>,
-    architecture_error: Option<String>,
 }
 
 const ARCHITECTURE_WORKSPACE_LAYOUT_SCHEMA_VERSION: u32 = 1;
@@ -893,7 +863,6 @@ struct TaskPopupWindow {
     surface_position: Option<(i32, i32)>,
     scale_factor: f32,
     workspace_splits: BTreeMap<WorkspaceSplitKey, WorkspaceSplitState>,
-    project_states: BTreeMap<WorkspaceItemId, ProjectWorkspaceEditorState>,
 }
 
 struct MainConversationDraft {
@@ -1196,16 +1165,10 @@ pub enum AutomationMessage {
     AddAutomationNode(String),
     DeleteAutomationSelection,
     ToggleAutomationScopeInbox,
-    ToggleAutomationScopeValue {
-        field: String,
-        value: String,
-    },
+    ToggleAutomationScopeValue { field: String, value: String },
     AutomationNodeTitleChanged(String),
     AutomationNodeConfigChanged(String),
-    AutomationNodeConfigFieldChanged {
-        field: String,
-        value: String,
-    },
+    AutomationNodeConfigFieldChanged { field: String, value: String },
     CycleAutomationNodeConfig(String),
     ToggleAutomationNodeConfigBoolean(String),
     SaveAutomationNodeInspector,
@@ -1220,53 +1183,11 @@ pub enum AutomationMessage {
     AutomationGraph(GraphCanvasEvent),
 }
 
-#[derive(Debug, Clone)]
-pub enum RoadmapMessage {
-    OpenRoadmap,
-    RefreshRoadmap,
-    SelectMilestone(String),
-    MilestoneTitleChanged(String),
-    MilestoneDescriptionChanged(String),
-    MilestoneDueDateChanged(String),
-    CreateMilestone,
-    SaveMilestone,
-    CycleMilestoneStatus,
-    MoveMilestoneUp,
-    MoveMilestoneDown,
-    DeleteMilestone,
-    ToggleMilestoneTask(String),
-}
+pub use crate::module::roadmap::RoadmapMessage;
 
-#[derive(Debug, Clone)]
-pub enum MemoryMessage {
-    OpenMemory,
-    RefreshMemory,
-    SelectMemory(String),
-    NewMemory,
-    MemoryTitleChanged(String),
-    MemoryBodyEdited(String),
-    MemoryBodyReplaced(String),
-    MemoryTagsChanged(String),
-    ToggleMemoryScope,
-    SaveMemory,
-    ToggleMemoryEnabled,
-    DeleteMemory,
-    ToggleMemoryGlobal,
-    ToggleMemoryBaseline,
-    CycleMemoryCooldown,
-    MemoryCooldownChanged(String),
-    SaveMemoryCooldown,
-    ToggleTaskMemory,
-    ResetTaskMemoryCooldown,
-}
+pub use crate::module::memory::MemoryMessage;
 
-#[derive(Debug, Clone)]
-pub enum ArchitectureMessage {
-    OpenArchitecture,
-    RefreshArchitecture,
-    RollbackArchitecture,
-    ArchitectureGraph(GraphCanvasEvent),
-}
+pub use crate::module::architecture::ArchitectureMessage;
 
 #[derive(Debug, Clone)]
 pub enum CodingMessage {
@@ -1808,7 +1729,6 @@ pub struct DesktopProgram {
     project_archive_confirmation: Option<ProjectArchiveConfirmation>,
     project_clone_repository: String,
     project_clone_parent: String,
-    project_clone_busy: bool,
     project_clone_outcome: ProjectCloneOutcome,
     project_clone_phase: Option<String>,
     project_clone_percent: Option<u8>,
@@ -1816,13 +1736,31 @@ pub struct DesktopProgram {
     project_clone_detail: Option<String>,
     active_project_clone_job: Option<JobId>,
     kernel: crate::kernel_host::KernelHost,
+    /// Domains that have moved out of this struct, for the primary window.
+    /// Empty until the first one does; the assembly point in
+    /// `primary_shell_snapshot` is already live so a migration adds a module
+    /// instead of editing the shell.
+    ui_modules: crate::ui_module::UiModuleHost,
+    /// The same domains for each workspace window. Separate instances rather
+    /// than one set the shell swaps state into: two windows editing the same
+    /// project must not share an editor.
+    ui_module_hosts: HashMap<HostedWindowId, crate::ui_module::UiModuleHost>,
+    /// Which window's modules a dispatch reaches, when it is not the primary
+    /// one. Set only while the shell acts on a workspace window's project page:
+    /// a debug target names a widget rather than a window, so the window has to
+    /// come from the shell instead of the message.
+    module_dispatch: Option<(HostedWindowId, crate::runtime_shell::ShellProjectPage)>,
+    /// Builds a fresh module set per window. Workspace windows open long after
+    /// mount, and contributions can only be drained once.
+    ui_module_registry: crate::ui_module::UiModuleRegistry,
+    /// Every window's session, so a module resolves its own instead of the shell
+    /// swapping one in around it.
+    workspace_sessions: std::sync::Arc<crate::shell_service::WorkspaceSessions>,
     github_binding: DesktopGitHubBindingStatus,
     github_device_flow: Option<DesktopGitHubDeviceFlowStart>,
-    github_binding_busy: bool,
     active_github_binding_job: Option<JobId>,
     github_repositories: Vec<DesktopGitHubRepoSummary>,
     github_repositories_next_page: Option<u32>,
-    github_repositories_busy: bool,
     /// The paging job and whether its page appends to the list or replaces it.
     /// The flag is shell state, not part of the request GitHub sees.
     active_github_repository_job: Option<(JobId, bool)>,
@@ -1869,8 +1807,9 @@ pub struct DesktopProgram {
     todo_draft: String,
     editing_todo: Option<String>,
     goal_draft: String,
-    worktree_busy: bool,
-    active_worktree_job: Option<JobId>,
+    /// The task the in-flight worktree operation belongs to. Its slot is
+    /// per-task, so the surface it blocks is the one showing that task.
+    active_worktree_job: Option<(JobId, TaskId)>,
     worktree_confirmation: Option<WorktreeDangerAction>,
     pending_initial_worktrees: BTreeMap<TaskId, DesktopInitialWorktreeSelection>,
     interaction_drafts: BTreeMap<String, String>,
@@ -1912,30 +1851,6 @@ pub struct DesktopProgram {
     automation_selection: Option<GraphSelection>,
     automation_node_inspector: AutomationNodeInspectorDraft,
     automation_error: Option<String>,
-    roadmap: ProjectRoadmap,
-    selected_milestone: Option<String>,
-    milestone_title: String,
-    milestone_description: String,
-    milestone_due_date: String,
-    roadmap_error: Option<String>,
-    architecture: ProjectArchitectureGraph,
-    architecture_history: Vec<ProjectArchitectureChangeRecord>,
-    architecture_quarantine_count: usize,
-    architecture_graph: GraphModel,
-    architecture_viewport: GraphViewport,
-    architecture_selection: Option<GraphSelection>,
-    architecture_error: Option<String>,
-    memories: Vec<DesktopMemory>,
-    selected_memory: Option<String>,
-    memory_title: String,
-    memory_body: TextEditorState,
-    memory_tags: String,
-    memory_scope: MemoryScope,
-    memory_updated_at: Option<i64>,
-    memory_error: Option<String>,
-    memory_settings: MemorySettings,
-    memory_cooldown_input: String,
-    memory_injection: Option<MemoryInjectionState>,
     coding_tools: Option<DesktopCodingServicesSnapshot>,
     coding_git: Option<DesktopGitStatus>,
     coding_git_diff: Option<DesktopGitDiff>,
@@ -1947,7 +1862,6 @@ pub struct DesktopProgram {
     coding_search: Option<DesktopWorkspaceCodeSearchResult>,
     coding_search_all_projects: bool,
     coding_notice: Option<String>,
-    coding_busy: bool,
     coding_exchange: Arc<CodingExchange>,
     active_coding_job: Option<(JobId, u64)>,
     active_coding_search_job: Option<JobId>,
@@ -1965,7 +1879,6 @@ pub struct DesktopProgram {
     provider_ai_settings: ProviderAiSettingsState,
     assistant_ai_new_model_id: String,
     assistant_ai_new_model_label: String,
-    assistant_ai_probe_busy: bool,
     /// Draft endpoint configurations parked for a probe job to claim. The API
     /// key in one is unsaved, so it stays here rather than in the payload.
     /// The prepared import step a job ticket names. It holds an application
@@ -1986,14 +1899,12 @@ pub struct DesktopProgram {
     agent_interaction_error: Option<String>,
     selected_provider: Option<String>,
     provider_secret: String,
-    provider_busy: bool,
     provider_secrets: Arc<StagedProviderSecret>,
     active_provider_job: Option<JobId>,
     provider_error: Option<String>,
     quota_usage: Option<QuotaUsageStats>,
     quota_days: i64,
     quota_backend: String,
-    quota_busy: bool,
     active_quota_job: Option<JobId>,
     quota_error: Option<String>,
     extensions: Option<DesktopExtensionsSnapshot>,
@@ -2012,14 +1923,12 @@ pub struct DesktopProgram {
     mcp_credential_drafts: BTreeMap<String, String>,
     mcp_prompt_argument_drafts: BTreeMap<String, String>,
     mcp_content_preview: Option<McpContentPreview>,
-    extensions_busy: bool,
     extensions_activation_pending: bool,
     extensions_exchange: Arc<ExtensionsExchange>,
     active_extensions_job: Option<ExtensionsJob>,
     extensions_error: Option<String>,
     remote: Option<RemoteControlStatus>,
     remote_pc_name: String,
-    remote_busy: bool,
     active_remote_job: Option<JobId>,
     remote_error: Option<String>,
     shell: NativeShellIntegration,
@@ -2030,7 +1939,6 @@ pub struct DesktopProgram {
     dismissed_update_versions: BTreeSet<String>,
     update_failure_dismissed: bool,
     update_configured: bool,
-    update_busy: bool,
     active_update_job: Option<JobId>,
     update_error: Option<String>,
     exit_requested: bool,
@@ -2099,17 +2007,81 @@ impl DesktopProgram {
         Message::Chrome(ChromeMessage::FromShell(intent))
     }
 
+    // A surface is busy exactly while its job is in flight. Mirroring that into a
+    // `bool` gave every lane two sources of truth that had to be cleared in
+    // lockstep from every terminal, cancel and reset path; each miss left a
+    // surface disabled with no job behind it.
+
+    fn project_clone_busy(&self) -> bool {
+        self.active_project_clone_job.is_some()
+    }
+
+    fn github_binding_busy(&self) -> bool {
+        self.active_github_binding_job.is_some()
+    }
+
+    fn github_repositories_busy(&self) -> bool {
+        self.active_github_repository_job.is_some()
+    }
+
+    fn assistant_ai_probe_busy(&self) -> bool {
+        self.active_assistant_probe_job.is_some()
+    }
+
+    fn provider_busy(&self) -> bool {
+        self.active_provider_job.is_some()
+    }
+
+    fn quota_busy(&self) -> bool {
+        self.active_quota_job.is_some()
+    }
+
+    fn extensions_busy(&self) -> bool {
+        self.active_extensions_job.is_some()
+    }
+
+    fn remote_busy(&self) -> bool {
+        self.active_remote_job.is_some()
+    }
+
+    fn update_busy(&self) -> bool {
+        self.active_update_job.is_some()
+    }
+
+    /// The refresh and the search share one gate: a search must not start while
+    /// the workspace snapshot it reads is being rebuilt.
+    fn coding_busy(&self) -> bool {
+        self.active_coding_job.is_some() || self.active_coding_search_job.is_some()
+    }
+
+    /// A worktree job runs in the slot of one task, so the surface is busy only
+    /// while the selected task's own operation is in flight. Switching tasks
+    /// releases the surface without cancelling the job that is still running.
+    fn worktree_busy(&self) -> bool {
+        self.active_worktree_job
+            .as_ref()
+            .is_some_and(|(_, task_id)| self.selected_task.as_ref() == Some(task_id))
+    }
+
     fn apply_shell_intent(
         &mut self,
         intent: crate::runtime_shell::ShellIntent,
     ) -> Option<HostedWindowAction> {
         let message = match intent {
             crate::runtime_shell::ShellIntent::ToggleSidebar => {
-                Message::WorkspaceLayout(WorkspaceLayoutMessage::Workspace(WorkspaceAction::ToggleRegion(RegionId::Resources)))
+                Message::WorkspaceLayout(WorkspaceLayoutMessage::Workspace(
+                    WorkspaceAction::ToggleRegion(RegionId::Resources),
+                ))
             }
-            crate::runtime_shell::ShellIntent::NewConversation => Message::Sidebar(SidebarMessage::OpenSidebarInboxDraft),
-            crate::runtime_shell::ShellIntent::SelectTask(task_id) => Message::Task(TaskMessage::SelectTask(task_id)),
-            crate::runtime_shell::ShellIntent::ToggleSidebarSearch => Message::Sidebar(SidebarMessage::ToggleSidebarSearch),
+            crate::runtime_shell::ShellIntent::NewConversation => {
+                Message::Sidebar(SidebarMessage::OpenSidebarInboxDraft)
+            }
+            crate::runtime_shell::ShellIntent::SelectTask(task_id) => {
+                Message::Task(TaskMessage::SelectTask(task_id))
+            }
+            crate::runtime_shell::ShellIntent::ToggleSidebarSearch => {
+                Message::Sidebar(SidebarMessage::ToggleSidebarSearch)
+            }
             crate::runtime_shell::ShellIntent::SidebarSearchChanged(value) => {
                 Message::Sidebar(SidebarMessage::SidebarSearchChanged(value))
             }
@@ -2120,11 +2092,15 @@ impl DesktopProgram {
                     .find(|project| project.id.as_str() == id)
                     .map(|project| project.id.clone())
                 {
-                    Some(project_id) => Message::Sidebar(SidebarMessage::ToggleSidebarProject(project_id)),
+                    Some(project_id) => {
+                        Message::Sidebar(SidebarMessage::ToggleSidebarProject(project_id))
+                    }
                     None => return None,
                 }
             }
-            crate::runtime_shell::ShellIntent::ToggleSidebarInbox => Message::Sidebar(SidebarMessage::ToggleSidebarInbox),
+            crate::runtime_shell::ShellIntent::ToggleSidebarInbox => {
+                Message::Sidebar(SidebarMessage::ToggleSidebarInbox)
+            }
             crate::runtime_shell::ShellIntent::RevealSidebarProject(id) => {
                 match self
                     .projects
@@ -2132,7 +2108,9 @@ impl DesktopProgram {
                     .find(|project| project.id.as_str() == id)
                     .map(|project| project.id.clone())
                 {
-                    Some(project_id) => Message::Sidebar(SidebarMessage::RevealSidebarProjectTasks(project_id)),
+                    Some(project_id) => {
+                        Message::Sidebar(SidebarMessage::RevealSidebarProjectTasks(project_id))
+                    }
                     None => return None,
                 }
             }
@@ -2142,10 +2120,12 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::OpenProjectsOverview => {
                 Message::Project(ProjectMessage::OpenProjectsOverview)
             }
-            crate::runtime_shell::ShellIntent::OpenAddProjectMenu => Message::Sidebar(SidebarMessage::OpenSidebarMenu {
-                target: SidebarMenuTarget::AddProject,
-                anchor_y: 96.0,
-            }),
+            crate::runtime_shell::ShellIntent::OpenAddProjectMenu => {
+                Message::Sidebar(SidebarMessage::OpenSidebarMenu {
+                    target: SidebarMenuTarget::AddProject,
+                    anchor_y: 96.0,
+                })
+            }
             crate::runtime_shell::ShellIntent::OpenProjectMenu(id) => {
                 match self
                     .projects
@@ -2174,7 +2154,9 @@ impl DesktopProgram {
                     .find(|project| project.id.as_str() == id)
                     .map(|project| project.id.clone())
                 {
-                    Some(project_id) => Message::Sidebar(SidebarMessage::OpenSidebarProjectDraft(project_id)),
+                    Some(project_id) => {
+                        Message::Sidebar(SidebarMessage::OpenSidebarProjectDraft(project_id))
+                    }
                     None => return None,
                 }
             }
@@ -2185,7 +2167,9 @@ impl DesktopProgram {
                     .find(|project| project.id.as_str() == id)
                     .map(|project| project.id.clone())
                 {
-                    Some(project_id) => Message::Project(ProjectMessage::RestoreProject(project_id)),
+                    Some(project_id) => {
+                        Message::Project(ProjectMessage::RestoreProject(project_id))
+                    }
                     None => return None,
                 }
             }
@@ -2205,7 +2189,7 @@ impl DesktopProgram {
             }
             crate::runtime_shell::ShellIntent::SidebarMenuAction(id) => {
                 let Some((_, action)) = self
-                    .sidebar_menu_debug_targets()
+                    .sidebar_menu_actions()
                     .into_iter()
                     .find(|(target, _)| target == &id)
                 else {
@@ -2214,8 +2198,12 @@ impl DesktopProgram {
                 self.update_sidebar_menu(HostedContextMenuEvent::Select(action));
                 return None;
             }
-            crate::runtime_shell::ShellIntent::OpenAutomations => Message::Automation(AutomationMessage::OpenAutomations),
-            crate::runtime_shell::ShellIntent::CloseAutomations => Message::Automation(AutomationMessage::CloseAutomations),
+            crate::runtime_shell::ShellIntent::OpenAutomations => {
+                Message::Automation(AutomationMessage::OpenAutomations)
+            }
+            crate::runtime_shell::ShellIntent::CloseAutomations => {
+                Message::Automation(AutomationMessage::CloseAutomations)
+            }
             crate::runtime_shell::ShellIntent::ConfirmDestructive => {
                 if self.project_archive_confirmation.is_some() {
                     Message::Project(ProjectMessage::ConfirmProjectConversationArchive)
@@ -2242,10 +2230,12 @@ impl DesktopProgram {
                     .and_then(|id| WorkspaceItemId::new(id).ok())
                     .or_else(|| self.conversation_workspace_item_id());
                 let Some(item_id) = item_id else {
-                    return self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::SelectWorkspacePaneTab {
-                        pane_id: self.panel_layout.active_pane().clone(),
-                        item_id: None,
-                    }));
+                    return self.update_message(Message::WorkspaceLayout(
+                        WorkspaceLayoutMessage::SelectWorkspacePaneTab {
+                            pane_id: self.panel_layout.active_pane().clone(),
+                            item_id: None,
+                        },
+                    ));
                 };
                 let pane_id = if pane_id == "active" {
                     self.panel_layout
@@ -2271,17 +2261,23 @@ impl DesktopProgram {
                     PaneId::new(pane_id).unwrap_or_else(|_| self.panel_layout.active_pane().clone())
                 };
                 match WorkspaceItemId::new(item_id) {
-                    Ok(item_id) => Message::WorkspaceLayout(WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
+                    Ok(item_id) => {
+                        Message::WorkspaceLayout(WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
+                            pane_id,
+                            item_id,
+                            before: before.and_then(|id| WorkspaceItemId::new(id).ok()),
+                        })
+                    }
+                    Err(_) => Message::WorkspaceLayout(WorkspaceLayoutMessage::FocusWorkspacePane(
                         pane_id,
-                        item_id,
-                        before: before.and_then(|id| WorkspaceItemId::new(id).ok()),
-                    }),
-                    Err(_) => Message::WorkspaceLayout(WorkspaceLayoutMessage::FocusWorkspacePane(pane_id)),
+                    )),
                 }
             }
             crate::runtime_shell::ShellIntent::ClosePaneTab { item_id, .. } => {
                 match WorkspaceItemId::new(item_id) {
-                    Ok(item_id) => Message::WorkspaceLayout(WorkspaceLayoutMessage::CloseWorkspaceItem(item_id)),
+                    Ok(item_id) => Message::WorkspaceLayout(
+                        WorkspaceLayoutMessage::CloseWorkspaceItem(item_id),
+                    ),
                     Err(_) => return None,
                 }
             }
@@ -2291,12 +2287,14 @@ impl DesktopProgram {
                 item_id,
                 before,
             } => match WorkspaceItemId::new(item_id) {
-                Ok(item_id) => Message::WorkspaceLayout(WorkspaceLayoutMessage::TransferWorkspaceTab {
-                    source_strip,
-                    target_strip,
-                    item_id,
-                    before: before.and_then(|id| WorkspaceItemId::new(id).ok()),
-                }),
+                Ok(item_id) => {
+                    Message::WorkspaceLayout(WorkspaceLayoutMessage::TransferWorkspaceTab {
+                        source_strip,
+                        target_strip,
+                        item_id,
+                        before: before.and_then(|id| WorkspaceItemId::new(id).ok()),
+                    })
+                }
                 Err(_) => return None,
             },
             crate::runtime_shell::ShellIntent::CloseMarkdownPreview => {
@@ -2318,9 +2316,9 @@ impl DesktopProgram {
                 self.open_iab();
                 return None;
             }
-            crate::runtime_shell::ShellIntent::ToggleComposerPlus => {
-                Message::Composer(ComposerMessage::ToggleComposerActionMenu(HostedWindowId::PRIMARY))
-            }
+            crate::runtime_shell::ShellIntent::ToggleComposerPlus => Message::Composer(
+                ComposerMessage::ToggleComposerActionMenu(HostedWindowId::PRIMARY),
+            ),
             crate::runtime_shell::ShellIntent::ComposerPlus(action) => {
                 let action = match action.as_str() {
                     "add-file" => ComposerAction::AddFile,
@@ -2338,7 +2336,9 @@ impl DesktopProgram {
                     action,
                 })
             }
-            crate::runtime_shell::ShellIntent::CyclePermission => Message::Composer(ComposerMessage::CyclePermission),
+            crate::runtime_shell::ShellIntent::CyclePermission => {
+                Message::Composer(ComposerMessage::CyclePermission)
+            }
             crate::runtime_shell::ShellIntent::CycleWorktree => {
                 Message::Composer(ComposerMessage::CycleDraftWorktree(HostedWindowId::PRIMARY))
             }
@@ -2352,7 +2352,9 @@ impl DesktopProgram {
                     .find(|item| item.command.name == name)
                     .map(|item| item.command.clone())
                 {
-                    Some(command) => Message::Composer(ComposerMessage::SelectSlashCommand(command)),
+                    Some(command) => {
+                        Message::Composer(ComposerMessage::SelectSlashCommand(command))
+                    }
                     None => return None,
                 }
             }
@@ -2371,14 +2373,24 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::BeginShortcutCapture => {
                 Message::Settings(SettingsMessage::BeginShellShortcutCapture)
             }
-            crate::runtime_shell::ShellIntent::SaveShortcut => Message::Settings(SettingsMessage::SaveShellShortcut),
-            crate::runtime_shell::ShellIntent::ClearShortcut => Message::Settings(SettingsMessage::ClearShellShortcut),
+            crate::runtime_shell::ShellIntent::SaveShortcut => {
+                Message::Settings(SettingsMessage::SaveShellShortcut)
+            }
+            crate::runtime_shell::ShellIntent::ClearShortcut => {
+                Message::Settings(SettingsMessage::ClearShellShortcut)
+            }
             crate::runtime_shell::ShellIntent::CodingQueryChanged(value) => {
                 Message::Coding(CodingMessage::CodingQueryChanged(value))
             }
-            crate::runtime_shell::ShellIntent::SearchCoding => Message::Coding(CodingMessage::SearchCodingTools),
-            crate::runtime_shell::ShellIntent::RefreshCoding => Message::Coding(CodingMessage::RefreshCodingTools),
-            crate::runtime_shell::ShellIntent::CycleCodingMode => Message::Coding(CodingMessage::CycleCodingSearchMode),
+            crate::runtime_shell::ShellIntent::SearchCoding => {
+                Message::Coding(CodingMessage::SearchCodingTools)
+            }
+            crate::runtime_shell::ShellIntent::RefreshCoding => {
+                Message::Coding(CodingMessage::RefreshCodingTools)
+            }
+            crate::runtime_shell::ShellIntent::CycleCodingMode => {
+                Message::Coding(CodingMessage::CycleCodingSearchMode)
+            }
             crate::runtime_shell::ShellIntent::ToggleCodingScope => {
                 Message::Coding(CodingMessage::ToggleCodingSearchScope)
             }
@@ -2394,19 +2406,23 @@ impl DesktopProgram {
                     None => Message::Coding(CodingMessage::SearchCodingTools),
                 }
             }
-            crate::runtime_shell::ShellIntent::OpenCodingWorkspace => Message::Project(ProjectMessage::OpenProjectWorkspace),
+            crate::runtime_shell::ShellIntent::OpenCodingWorkspace => {
+                Message::Project(ProjectMessage::OpenProjectWorkspace)
+            }
             crate::runtime_shell::ShellIntent::OpenCodingTerminal => {
                 Message::Project(ProjectMessage::OpenNativeProjectTerminal)
             }
             crate::runtime_shell::ShellIntent::SelectRoadmapMilestone(id) => {
-                Message::Roadmap(RoadmapMessage::SelectMilestone(id))
+                Message::Roadmap(RoadmapMessage::Select(id))
             }
-            crate::runtime_shell::ShellIntent::RefreshArchitecture => Message::Architecture(ArchitectureMessage::RefreshArchitecture),
+            crate::runtime_shell::ShellIntent::RefreshArchitecture => {
+                Message::Architecture(ArchitectureMessage::Refresh)
+            }
             crate::runtime_shell::ShellIntent::RollbackArchitecture => {
-                Message::Architecture(ArchitectureMessage::RollbackArchitecture)
+                Message::Architecture(ArchitectureMessage::Rollback)
             }
             crate::runtime_shell::ShellIntent::ArchitectureGraph(event) => {
-                Message::Architecture(ArchitectureMessage::ArchitectureGraph(event))
+                Message::Architecture(ArchitectureMessage::Graph(event))
             }
             crate::runtime_shell::ShellIntent::RespondApproval {
                 request_id,
@@ -2501,7 +2517,10 @@ impl DesktopProgram {
                             action: AskUserAction::SetFreeform(value),
                         })
                     }
-                    _ => Message::Composer(ComposerMessage::InteractionDraftChanged { request_id, value }),
+                    _ => Message::Composer(ComposerMessage::InteractionDraftChanged {
+                        request_id,
+                        value,
+                    }),
                 }
             }
             crate::runtime_shell::ShellIntent::SelectPendingOption {
@@ -2529,11 +2548,13 @@ impl DesktopProgram {
                         self.mcp_elicitation_drafts.get(&request_id),
                     );
                     match mcp_elicitation_response(pending, &draft, mcp_action) {
-                        Ok((accepted, response)) => Message::Composer(ComposerMessage::RespondInteraction {
-                            request_id,
-                            accepted,
-                            response,
-                        }),
+                        Ok((accepted, response)) => {
+                            Message::Composer(ComposerMessage::RespondInteraction {
+                                request_id,
+                                accepted,
+                                response,
+                            })
+                        }
                         Err(_) => Message::Composer(ComposerMessage::RespondInteraction {
                             request_id,
                             accepted: false,
@@ -2601,11 +2622,17 @@ impl DesktopProgram {
                 Message::ProjectClone(ProjectCloneMessage::Cancel)
             }
             crate::runtime_shell::ShellIntent::MilestoneTitleChanged(value) => {
-                Message::Roadmap(RoadmapMessage::MilestoneTitleChanged(value))
+                Message::Roadmap(RoadmapMessage::TitleChanged(value))
             }
-            crate::runtime_shell::ShellIntent::CreateMilestone => Message::Roadmap(RoadmapMessage::CreateMilestone),
-            crate::runtime_shell::ShellIntent::SaveMilestone => Message::Roadmap(RoadmapMessage::SaveMilestone),
-            crate::runtime_shell::ShellIntent::LoadEarlierTimeline => Message::Timeline(TimelineMessage::LoadEarlierTimeline),
+            crate::runtime_shell::ShellIntent::CreateMilestone => {
+                Message::Roadmap(RoadmapMessage::Create)
+            }
+            crate::runtime_shell::ShellIntent::SaveMilestone => {
+                Message::Roadmap(RoadmapMessage::Save)
+            }
+            crate::runtime_shell::ShellIntent::LoadEarlierTimeline => {
+                Message::Timeline(TimelineMessage::LoadEarlierTimeline)
+            }
             crate::runtime_shell::ShellIntent::CopyTimeline(event_id) => {
                 let text = self
                     .task_session
@@ -2630,19 +2657,33 @@ impl DesktopProgram {
                 })
             }
             crate::runtime_shell::ShellIntent::MovePaneToWindow => {
-                Message::WorkspaceWindow(WorkspaceWindowMessage::MoveWorkspaceItemToNewWindow(self.require_movable_workspace_item_id()))
+                Message::WorkspaceWindow(WorkspaceWindowMessage::MoveWorkspaceItemToNewWindow(
+                    self.require_movable_workspace_item_id(),
+                ))
             }
             crate::runtime_shell::ShellIntent::MovePaneToNext => {
-                Message::WorkspaceLayout(WorkspaceLayoutMessage::MoveWorkspaceItemToNextPane(self.require_movable_workspace_item_id()))
+                Message::WorkspaceLayout(WorkspaceLayoutMessage::MoveWorkspaceItemToNextPane(
+                    self.require_movable_workspace_item_id(),
+                ))
             }
-            crate::runtime_shell::ShellIntent::OpenSettings => Message::Settings(SettingsMessage::OpenSettings),
-            crate::runtime_shell::ShellIntent::CloseSettings => Message::Settings(SettingsMessage::CloseSettings),
+            crate::runtime_shell::ShellIntent::OpenSettings => {
+                Message::Settings(SettingsMessage::OpenSettings)
+            }
+            crate::runtime_shell::ShellIntent::CloseSettings => {
+                Message::Settings(SettingsMessage::CloseSettings)
+            }
             crate::runtime_shell::ShellIntent::ComposerChanged(value) => {
                 Message::Composer(ComposerMessage::ComposerChanged(value))
             }
-            crate::runtime_shell::ShellIntent::SubmitTurn => Message::Composer(ComposerMessage::SubmitTurn),
-            crate::runtime_shell::ShellIntent::InterruptTurn => Message::Composer(ComposerMessage::InterruptTurn),
-            crate::runtime_shell::ShellIntent::WindowChrome(event) => Message::Chrome(ChromeMessage::WindowChrome(event)),
+            crate::runtime_shell::ShellIntent::SubmitTurn => {
+                Message::Composer(ComposerMessage::SubmitTurn)
+            }
+            crate::runtime_shell::ShellIntent::InterruptTurn => {
+                Message::Composer(ComposerMessage::InterruptTurn)
+            }
+            crate::runtime_shell::ShellIntent::WindowChrome(event) => {
+                Message::Chrome(ChromeMessage::WindowChrome(event))
+            }
             crate::runtime_shell::ShellIntent::ToggleCommandPalette => {
                 Message::Chrome(ChromeMessage::ToggleCommandPalette)
             }
@@ -2652,11 +2693,15 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::SelectSettingsTab(tab) => {
                 Message::Settings(SettingsMessage::SelectSettingsTab(tab))
             }
-            crate::runtime_shell::ShellIntent::Appearance(event) => Message::Settings(SettingsMessage::Appearance(event)),
+            crate::runtime_shell::ShellIntent::Appearance(event) => {
+                Message::Settings(SettingsMessage::Appearance(event))
+            }
             crate::runtime_shell::ShellIntent::ProjectNameChanged(value) => {
                 Message::Project(ProjectMessage::ProjectNameChanged(value))
             }
-            crate::runtime_shell::ShellIntent::SaveProjectSettings => Message::Project(ProjectMessage::SaveProjectSettings),
+            crate::runtime_shell::ShellIntent::SaveProjectSettings => {
+                Message::Project(ProjectMessage::SaveProjectSettings)
+            }
             crate::runtime_shell::ShellIntent::PickProjectWorkspace => {
                 Message::Project(ProjectMessage::PickProjectWorkspace)
             }
@@ -2763,7 +2808,9 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::OpenProjectFile(path) => {
                 Message::Project(ProjectMessage::OpenProjectFile(path))
             }
-            crate::runtime_shell::ShellIntent::RefreshProjectFiles => Message::Project(ProjectMessage::RefreshProjectFiles),
+            crate::runtime_shell::ShellIntent::RefreshProjectFiles => {
+                Message::Project(ProjectMessage::RefreshProjectFiles)
+            }
             crate::runtime_shell::ShellIntent::ProviderSecretChanged(value) => {
                 Message::Provider(ProviderMessage::SecretChanged(value))
             }
@@ -2801,9 +2848,15 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::AgentInstructionChanged(value) => {
                 Message::Settings(SettingsMessage::AgentInstructionEdited(value))
             }
-            crate::runtime_shell::ShellIntent::NewCustomAgent => Message::Settings(SettingsMessage::NewCustomAgent),
-            crate::runtime_shell::ShellIntent::EditCustomAgent(id) => Message::Settings(SettingsMessage::EditCustomAgent(id)),
-            crate::runtime_shell::ShellIntent::SaveCustomAgent => Message::Settings(SettingsMessage::SaveCustomAgent),
+            crate::runtime_shell::ShellIntent::NewCustomAgent => {
+                Message::Settings(SettingsMessage::NewCustomAgent)
+            }
+            crate::runtime_shell::ShellIntent::EditCustomAgent(id) => {
+                Message::Settings(SettingsMessage::EditCustomAgent(id))
+            }
+            crate::runtime_shell::ShellIntent::SaveCustomAgent => {
+                Message::Settings(SettingsMessage::SaveCustomAgent)
+            }
             crate::runtime_shell::ShellIntent::CancelCustomAgentEdit => {
                 Message::Settings(SettingsMessage::CancelCustomAgentEdit)
             }
@@ -2861,7 +2914,9 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::ToggleMcpServer(id) => {
                 Message::Extensions(ExtensionsMessage::ToggleMcpServer(id))
             }
-            crate::runtime_shell::ShellIntent::ToggleTitlebarMenu => Message::Chrome(ChromeMessage::ToggleTitlebarMenu),
+            crate::runtime_shell::ShellIntent::ToggleTitlebarMenu => {
+                Message::Chrome(ChromeMessage::ToggleTitlebarMenu)
+            }
             crate::runtime_shell::ShellIntent::BackToTaskList => {
                 self.update_titlebar_menu(HostedContextMenuEvent::Select(
                     TitlebarMenuAction::BackToTaskList,
@@ -2911,17 +2966,23 @@ impl DesktopProgram {
                 Message::ConversationStatus(ConversationStatusMessage::CloseConversationStatus)
             }
             crate::runtime_shell::ShellIntent::ToggleConversationStatusPin => {
-                Message::ConversationStatus(ConversationStatusMessage::ToggleConversationStatusAlwaysOnTop)
+                Message::ConversationStatus(
+                    ConversationStatusMessage::ToggleConversationStatusAlwaysOnTop,
+                )
             }
             crate::runtime_shell::ShellIntent::OpenConversationStatusNewChat => {
-                Message::ConversationStatus(ConversationStatusMessage::OpenConversationStatusNewChat)
+                Message::ConversationStatus(
+                    ConversationStatusMessage::OpenConversationStatusNewChat,
+                )
             }
             crate::runtime_shell::ShellIntent::OpenStatusTask(task_id) => {
                 self.open_task_popup_with_transfer(task_id, false);
                 return None;
             }
             crate::runtime_shell::ShellIntent::StopStatusTask(task_id) => {
-                Message::ConversationStatus(ConversationStatusMessage::StopConversationStatusTask(task_id))
+                Message::ConversationStatus(ConversationStatusMessage::StopConversationStatusTask(
+                    task_id,
+                ))
             }
             crate::runtime_shell::ShellIntent::ActivateWorkspaceItem(id) => {
                 if let Ok(item_id) = WorkspaceItemId::new(id) {
@@ -2943,10 +3004,18 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::SelectAutomation(id) => {
                 Message::Automation(AutomationMessage::SelectAutomation(id))
             }
-            crate::runtime_shell::ShellIntent::CreateAutomation => Message::Automation(AutomationMessage::CreateAutomation),
-            crate::runtime_shell::ShellIntent::SaveAutomationDraft => Message::Automation(AutomationMessage::SaveAutomationDraft),
-            crate::runtime_shell::ShellIntent::RunAutomation => Message::Automation(AutomationMessage::RunAutomation),
-            crate::runtime_shell::ShellIntent::RefreshAutomations => Message::Automation(AutomationMessage::RefreshAutomations),
+            crate::runtime_shell::ShellIntent::CreateAutomation => {
+                Message::Automation(AutomationMessage::CreateAutomation)
+            }
+            crate::runtime_shell::ShellIntent::SaveAutomationDraft => {
+                Message::Automation(AutomationMessage::SaveAutomationDraft)
+            }
+            crate::runtime_shell::ShellIntent::RunAutomation => {
+                Message::Automation(AutomationMessage::RunAutomation)
+            }
+            crate::runtime_shell::ShellIntent::RefreshAutomations => {
+                Message::Automation(AutomationMessage::RefreshAutomations)
+            }
             crate::runtime_shell::ShellIntent::AutomationGraph(event) => {
                 Message::Automation(AutomationMessage::AutomationGraph(event))
             }
@@ -3205,6 +3274,7 @@ impl DesktopProgram {
                 can_draft: false,
             });
         }
+        let task_groups = self.sidebar_task_groups();
         for pinned in [true, false] {
             for project in self
                 .projects
@@ -3230,7 +3300,7 @@ impl DesktopProgram {
                 if !expanded {
                     continue;
                 }
-                let tasks = self.sidebar_project_tasks(Some(&project.id));
+                let tasks = sidebar_grouped_tasks(&task_groups, Some(&project.id));
                 let visible = self.sidebar_visible_project_tasks(&project.id, &tasks);
                 for (task, depth) in visible {
                     rows.push(ShellSidebarRow {
@@ -3296,7 +3366,7 @@ impl DesktopProgram {
             can_draft: false,
         });
         if self.sidebar_inbox_expanded() {
-            let tasks = self.sidebar_project_tasks(None);
+            let tasks = sidebar_grouped_tasks(&task_groups, None);
             let visible = self.sidebar_visible_tasks(&tasks, self.sidebar_inbox_revealed);
             for (task, depth) in visible {
                 rows.push(ShellSidebarRow {
@@ -3565,8 +3635,7 @@ impl DesktopProgram {
             let stored = self.mcp_elicitation_drafts.get(&pending.request_id);
             let draft = mcp_elicitation_draft(pending, stored);
             let elicitation =
-                crate::application::DesktopMcpElicitation::from_payload(&pending.payload)
-                    .ok();
+                crate::application::DesktopMcpElicitation::from_payload(&pending.payload).ok();
             let can_accept =
                 mcp_elicitation_response(pending, &draft, DesktopMcpElicitationAction::Accept)
                     .is_ok();
@@ -3760,26 +3829,6 @@ impl DesktopProgram {
             Some(crate::runtime_shell::ShellProjectPage::Clone) => {
                 self.project_clone_detail.clone().unwrap_or_default()
             }
-            Some(crate::runtime_shell::ShellProjectPage::Roadmap) => {
-                self.roadmap_error.clone().unwrap_or_else(|| {
-                    self.roadmap
-                        .milestones
-                        .iter()
-                        .map(|milestone| milestone.title.clone())
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-            }
-            Some(crate::runtime_shell::ShellProjectPage::Memory) => self
-                .memories
-                .iter()
-                .map(|memory| memory.title.clone())
-                .collect::<Vec<_>>()
-                .join("\n"),
-            Some(crate::runtime_shell::ShellProjectPage::Architecture) => self
-                .architecture_error
-                .clone()
-                .unwrap_or_else(|| self.architecture.summary.clone()),
             Some(crate::runtime_shell::ShellProjectPage::Settings) => {
                 self.project_settings_error.clone().unwrap_or_default()
             }
@@ -3854,7 +3903,7 @@ impl DesktopProgram {
             } else {
                 "当前项目".to_owned()
             },
-            busy: self.coding_busy,
+            busy: self.coding_busy(),
             git: self
                 .coding_git
                 .as_ref()
@@ -3936,7 +3985,8 @@ impl DesktopProgram {
     }
 
     fn shell_nav_items(&self) -> Vec<crate::runtime_shell::ShellNavItem> {
-        self.kernel.session()
+        self.kernel
+            .session()
             .sidebar_navigation_contributions()
             .into_iter()
             .map(|contribution| crate::runtime_shell::ShellNavItem {
@@ -3953,7 +4003,7 @@ impl DesktopProgram {
     }
 
     fn shell_sidebar_menu_items(&self) -> Vec<crate::runtime_shell::ShellMenuItem> {
-        self.sidebar_menu_debug_targets()
+        self.sidebar_menu_actions()
             .into_iter()
             .map(|(id, action)| crate::runtime_shell::ShellMenuItem {
                 id,
@@ -3963,6 +4013,124 @@ impl DesktopProgram {
     }
 
     fn primary_shell_snapshot(&self) -> crate::runtime_shell::PrimaryShellSnapshot {
+        let mut snapshot = self.shell_owned_snapshot();
+        // Modules fold their own fields last, so a migrated domain overrides the
+        // shell's value for exactly the fields it claims and nothing else.
+        let cx = self.primary_module_context();
+        self.ui_modules.project(&cx, &mut snapshot);
+        snapshot
+    }
+
+    /// The primary window's module for a domain that has moved out of the shell.
+    ///
+    /// Every window is furnished from the same registry, so a missing module is a
+    /// composition bug rather than a state the shell has to render around.
+    fn primary_module<M: crate::ui_module::UiModule>(
+        &self,
+        feature: &lilia_kernel::FeatureId,
+    ) -> &M {
+        self.ui_modules
+            .get(feature)
+            .expect("every window is furnished with the same modules")
+    }
+
+    fn primary_module_mut<M: crate::ui_module::UiModule>(
+        &mut self,
+        feature: &lilia_kernel::FeatureId,
+    ) -> &mut M {
+        self.ui_modules
+            .get_mut(feature)
+            .expect("every window is furnished with the same modules")
+    }
+
+    /// The window the shell is currently acting on.
+    fn dispatch_window(&self) -> HostedWindowId {
+        self.module_dispatch
+            .map_or(HostedWindowId::PRIMARY, |(window_id, _)| window_id)
+    }
+
+    /// The module owning a domain in the window the shell is acting on.
+    ///
+    /// Reading through the dispatch window is what lets the shell's own guards —
+    /// "is a milestone selected", "is the graph rollable" — stay written once
+    /// while answering for whichever window the message came from.
+    fn dispatch_module<M: crate::ui_module::UiModule>(
+        &self,
+        feature: &lilia_kernel::FeatureId,
+    ) -> &M {
+        match self.module_dispatch {
+            Some((window_id, _)) => self
+                .window_module(window_id, feature)
+                .expect("a window the shell dispatches to is furnished with modules"),
+            None => self.primary_module(feature),
+        }
+    }
+
+    fn architecture_module(&self) -> &crate::module::architecture::ArchitectureModule {
+        self.dispatch_module(&crate::module::architecture::ArchitectureModule::feature_id())
+    }
+
+    fn architecture_module_mut(&mut self) -> &mut crate::module::architecture::ArchitectureModule {
+        self.primary_module_mut(&crate::module::architecture::ArchitectureModule::feature_id())
+    }
+
+    fn roadmap_module(&self) -> &crate::module::roadmap::RoadmapModule {
+        self.dispatch_module(&crate::module::roadmap::RoadmapModule::feature_id())
+    }
+
+    /// The module context for the primary window.
+    fn primary_module_context(&self) -> crate::ui_module::UiModuleContext<'_> {
+        crate::ui_module::UiModuleContext::new(self.kernel.kernel(), WindowId::PRIMARY)
+            .showing(self.shell_project_page())
+    }
+
+    /// A workspace window's module for a domain, if that window has opened yet.
+    fn window_module<M: crate::ui_module::UiModule>(
+        &self,
+        window_id: HostedWindowId,
+        feature: &lilia_kernel::FeatureId,
+    ) -> Option<&M> {
+        self.ui_module_hosts.get(&window_id)?.get(feature)
+    }
+
+    fn window_architecture_module(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<&crate::module::architecture::ArchitectureModule> {
+        self.window_module(
+            window_id,
+            &crate::module::architecture::ArchitectureModule::feature_id(),
+        )
+    }
+
+    fn window_roadmap_module(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<&crate::module::roadmap::RoadmapModule> {
+        self.window_module(
+            window_id,
+            &crate::module::roadmap::RoadmapModule::feature_id(),
+        )
+    }
+
+    /// This window's modules, furnished on first use.
+    ///
+    /// The same registry already built the primary window's set at startup, so a
+    /// failure here would mean a factory answered differently the second time.
+    fn window_ui_modules(
+        &mut self,
+        window_id: HostedWindowId,
+    ) -> &mut crate::ui_module::UiModuleHost {
+        let registry = &self.ui_module_registry;
+        self.ui_module_hosts.entry(window_id).or_insert_with(|| {
+            registry
+                .host()
+                .expect("the UI module registry answers consistently")
+        })
+    }
+
+    /// The projection for every domain the shell still owns itself.
+    fn shell_owned_snapshot(&self) -> crate::runtime_shell::PrimaryShellSnapshot {
         let selected = self.selected_task.as_ref();
         let tasks = self
             .tasks
@@ -4042,6 +4210,7 @@ impl DesktopProgram {
             .draft_worktree_context(HostedWindowId::PRIMARY)
             .map(|(_, selection)| selection);
         let (provider_badge, _, _) = self.provider_runtime_badge(self.theme_tokens().colors);
+        let project_page = self.shell_project_page();
         crate::runtime_shell::PrimaryShellSnapshot {
             theme: self.theme,
             title: PRODUCT_NAME.to_owned(),
@@ -4079,7 +4248,7 @@ impl DesktopProgram {
             pending_blocks_send,
             clone_repository: self.project_clone_repository.clone(),
             clone_parent: self.project_clone_parent.clone(),
-            milestone_title: self.milestone_title.clone(),
+            milestone_title: String::new(),
             attachments: composer_state
                 .map(|composer| {
                     composer
@@ -4116,7 +4285,11 @@ impl DesktopProgram {
             command_palette_open: self.command_picker.is_open(),
             command_palette_query: self.command_picker.query().to_owned(),
             command_palette_selected: self.command_picker.selected(),
-            command_palette_items: self.command_palette_items(),
+            command_palette_items: if self.command_picker.is_open() {
+                self.command_palette_items()
+            } else {
+                Vec::new()
+            },
             settings: self.settings_shell_snapshot(),
             document: self.active_document_shell_snapshot(),
             files: self.project_files_shell_snapshot(),
@@ -4144,22 +4317,33 @@ impl DesktopProgram {
                     })
                 }),
             automations_open: self.automations_open,
-            automations: self
-                .automations
-                .iter()
-                .map(|workflow| crate::runtime_shell::ShellAutomationRow {
-                    selected: self.selected_automation.as_deref() == Some(workflow.id.as_str()),
-                    id: workflow.id.clone(),
-                    label: if workflow.name.trim().is_empty() {
-                        "未命名自动化".to_owned()
-                    } else {
-                        workflow.name.clone()
-                    },
-                })
-                .collect(),
-            automation_graph: self.automation_graph.clone(),
+            automations: if self.automations_open {
+                self.automations
+                    .iter()
+                    .map(|workflow| crate::runtime_shell::ShellAutomationRow {
+                        selected: self.selected_automation.as_deref() == Some(workflow.id.as_str()),
+                        id: workflow.id.clone(),
+                        label: if workflow.name.trim().is_empty() {
+                            "未命名自动化".to_owned()
+                        } else {
+                            workflow.name.clone()
+                        },
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            automation_graph: if self.automations_open {
+                self.automation_graph.clone()
+            } else {
+                nana_ui::GraphModel::default()
+            },
             automation_viewport: self.automation_viewport,
-            automation_selection: self.automation_selection.clone(),
+            automation_selection: if self.automations_open {
+                self.automation_selection.clone()
+            } else {
+                None
+            },
             panes: {
                 let mut panes = Vec::new();
                 for pane_id in self.panel_layout.pane_ids() {
@@ -4221,57 +4405,39 @@ impl DesktopProgram {
                 .as_ref()
                 .is_some_and(|session| session.timeline_has_more_before),
             composer_plus_open: self.composer_action_menu_window == Some(HostedWindowId::PRIMARY),
-            project_page: self.shell_project_page(),
-            project_page_title: self.shell_project_page_title(),
-            project_page_body: self.shell_project_page_body(),
-            project_cards: self
-                .projects
-                .iter()
-                .map(|project| crate::runtime_shell::ShellProjectCard {
-                    id: project.id.as_str().to_owned(),
-                    title: project.name.clone(),
-                    subtitle: project
-                        .workspace_path
-                        .clone()
-                        .unwrap_or_else(|| "未设置工作区".to_owned()),
-                })
-                .collect(),
-            roadmap_cards: self
-                .roadmap
-                .milestones
-                .iter()
-                .map(|milestone| crate::runtime_shell::ShellRoadmapCard {
-                    id: milestone.id.clone(),
-                    title: milestone.title.clone(),
-                    status: milestone_status_label(milestone.status).to_owned(),
-                    date: milestone
-                        .due_date
-                        .map(|due| due.to_string())
-                        .unwrap_or_else(|| "无截止日期".to_owned()),
-                })
-                .collect(),
-            architecture_records: self
-                .architecture_history
-                .iter()
-                .map(|record| crate::runtime_shell::ShellArchitectureRecord {
-                    id: record
-                        .event
-                        .id
-                        .clone()
-                        .unwrap_or_else(|| record.event.created_at.unwrap_or_default().to_string()),
-                    title: record
-                        .event
-                        .changes
-                        .iter()
-                        .map(architecture_change_label)
-                        .collect::<Vec<_>>()
-                        .join(" · "),
-                    status: architecture_status_label(record.event.status).to_owned(),
-                })
-                .collect(),
-            architecture_graph: self.architecture_graph.clone(),
-            architecture_viewport: self.architecture_viewport,
-            architecture_selection: self.architecture_selection.clone(),
+            project_page,
+            project_page_title: if project_page.is_some() {
+                self.shell_project_page_title()
+            } else {
+                String::new()
+            },
+            project_page_body: if project_page.is_some() {
+                self.shell_project_page_body()
+            } else {
+                String::new()
+            },
+            project_cards: if project_page == Some(crate::runtime_shell::ShellProjectPage::Overview)
+            {
+                self.projects
+                    .iter()
+                    .map(|project| crate::runtime_shell::ShellProjectCard {
+                        id: project.id.as_str().to_owned(),
+                        title: project.name.clone(),
+                        subtitle: project
+                            .workspace_path
+                            .clone()
+                            .unwrap_or_else(|| "未设置工作区".to_owned()),
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            roadmap_cards: Vec::new(),
+            // Written by the architecture module's own projection.
+            architecture_records: Vec::new(),
+            architecture_graph: nana_ui::GraphModel::default(),
+            architecture_viewport: nana_ui::GraphViewport::default(),
+            architecture_selection: None,
             inspector_kind: if self.inspector_region_is_visible() {
                 match self.inspector_surface {
                     InspectorSurface::CodingTools => "coding".to_owned(),
@@ -4290,7 +4456,72 @@ impl DesktopProgram {
         }
     }
 
+    /// 设置页关闭时只投影项目页仍要读的少量字段。其余集合与格式化字符串留空，
+    /// 由 `sync_settings_content` 在页面打开时补齐。
     fn settings_shell_snapshot(&self) -> crate::runtime_shell::SettingsSnapshot {
+        if !self.settings_open {
+            return crate::runtime_shell::SettingsSnapshot {
+                project_name: self.project_name_edit.clone(),
+                project_workspace: self.project_workspace_edit.clone(),
+                project_error: self.project_settings_error.clone(),
+                ..self.settings_shell_shape()
+            };
+        }
+        self.settings_shell_detail()
+    }
+
+    /// 设置页的骨架：只带 NanaUI 渲染结构必需的 model / state / appearance。
+    fn settings_shell_shape(&self) -> crate::runtime_shell::SettingsSnapshot {
+        crate::runtime_shell::SettingsSnapshot {
+            model: self.settings_model.clone(),
+            state: self.settings_state.clone(),
+            appearance: self.appearance,
+            material_status: String::new(),
+            project_name: String::new(),
+            project_workspace: String::new(),
+            project_error: None,
+            providers: Vec::new(),
+            provider_status: String::new(),
+            agent_actions: Vec::new(),
+            quota_status: String::new(),
+            extensions_status: String::new(),
+            remote_status: String::new(),
+            remote_host_enabled: false,
+            remote_keep_awake: false,
+            desktop_status: String::new(),
+            data_status: String::new(),
+            data_can_import: false,
+            provider_secret: String::new(),
+            provider_model: String::new(),
+            provider_openai_endpoint: String::new(),
+            provider_anthropic_endpoint: String::new(),
+            can_save_credential: false,
+            credentials: Vec::new(),
+            custom_agents: Vec::new(),
+            custom_agent_editor_open: false,
+            custom_agent_name: String::new(),
+            custom_agent_description: String::new(),
+            custom_agent_instruction: String::new(),
+            quota_days_label: String::new(),
+            quota_backend_label: String::new(),
+            quota_values: Vec::new(),
+            skills: Vec::new(),
+            skill_id: String::new(),
+            skill_description: String::new(),
+            can_create_skill: false,
+            mcp_servers: Vec::new(),
+            mcp_editor: None,
+            github_state: String::new(),
+            github_login: String::new(),
+            github_busy: false,
+            github_can_bind: false,
+            shortcut: String::new(),
+            shortcut_capturing: false,
+            shortcut_registered: false,
+        }
+    }
+
+    fn settings_shell_detail(&self) -> crate::runtime_shell::SettingsSnapshot {
         let auto = &self.agent_interaction_settings.auto_turn_decision;
         crate::runtime_shell::SettingsSnapshot {
             model: self.settings_model.clone(),
@@ -4431,7 +4662,7 @@ impl DesktopProgram {
             provider_model: self.provider_model.clone(),
             provider_openai_endpoint: self.provider_openai_endpoint.clone(),
             provider_anthropic_endpoint: self.provider_anthropic_endpoint.clone(),
-            can_save_credential: !self.provider_busy && !self.provider_secret.trim().is_empty(),
+            can_save_credential: !self.provider_busy() && !self.provider_secret.trim().is_empty(),
             credentials: self
                 .provider
                 .credentials
@@ -4502,7 +4733,7 @@ impl DesktopProgram {
                 .unwrap_or_default(),
             skill_id: self.skill_id_input.clone(),
             skill_description: self.skill_description_input.clone(),
-            can_create_skill: !self.extensions_busy && !self.skill_id_input.trim().is_empty(),
+            can_create_skill: !self.extensions_busy() && !self.skill_id_input.trim().is_empty(),
             mcp_servers: self
                 .extensions
                 .as_ref()
@@ -4534,8 +4765,8 @@ impl DesktopProgram {
                 .as_ref()
                 .map(|binding| binding.login.clone())
                 .unwrap_or_default(),
-            github_busy: self.github_binding_busy,
-            github_can_bind: !self.github_binding_busy
+            github_busy: self.github_binding_busy(),
+            github_can_bind: !self.github_binding_busy()
                 && self.github_binding.state == "unbound"
                 && self.github_binding.client_id_configured,
             shortcut: self.shell_shortcut_edit.clone(),
@@ -4997,9 +5228,9 @@ impl DesktopProgram {
                 self.update_message(Message::Settings(SettingsMessage::OpenSettings));
             }
             TOGGLE_RESOURCES_ACTION if self.command_source_window == HostedWindowId::PRIMARY => {
-                self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::Workspace(WorkspaceAction::ToggleRegion(
-                    RegionId::Resources,
-                ))));
+                self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::Workspace(
+                    WorkspaceAction::ToggleRegion(RegionId::Resources),
+                )));
             }
             SAVE_DOCUMENT_ACTION => {
                 if let Some(item_id) = source_item {
@@ -5069,7 +5300,8 @@ impl DesktopProgram {
             multiple: false,
         };
         let path = match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => paths.into_iter().next(),
@@ -5503,8 +5735,8 @@ impl DesktopProgram {
         targets
     }
 
-    #[cfg(debug_assertions)]
-    fn sidebar_menu_debug_targets(&self) -> Vec<(String, SidebarMenuAction)> {
+    /// 侧栏上下文菜单的动作模型。这不是调试设施：可见菜单项与意图分派都读它。
+    fn sidebar_menu_actions(&self) -> Vec<(String, SidebarMenuAction)> {
         let Some(menu) = self.sidebar_menu.as_ref() else {
             return Vec::new();
         };
@@ -5532,7 +5764,8 @@ impl DesktopProgram {
                     SidebarMenuAction::ArchiveTask,
                 ];
                 if self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .task_worktree(task_id)
                     .is_ok_and(|worktree| worktree.is_some())
                 {
@@ -5620,7 +5853,8 @@ impl DesktopProgram {
                         .unwrap_or(ordered.len());
                     ordered.insert(insert_at, task_id.clone());
                     if let Err(error) = self
-                        .kernel.session()
+                        .kernel
+                        .session()
                         .reorder_tasks(target_project_id.clone(), &ordered)
                     {
                         self.error_message = Some(format!("对话已移动，但无法调整顺序：{error}"));
@@ -5635,7 +5869,7 @@ impl DesktopProgram {
 
     fn open_project_clone(&mut self) {
         self.project_surface = ProjectSurface::Clone;
-        if !self.project_clone_busy {
+        if !self.project_clone_busy() {
             self.project_action_error = None;
         }
         self.refresh_github_binding_status();
@@ -5644,7 +5878,7 @@ impl DesktopProgram {
 
     fn close_project_clone(&mut self) {
         self.project_surface = ProjectSurface::Tasks;
-        if !self.project_clone_busy {
+        if !self.project_clone_busy() {
             self.project_action_error = None;
         }
     }
@@ -5655,7 +5889,8 @@ impl DesktopProgram {
                 let bound = status.state == "bound";
                 self.github_binding = status;
                 self.github_error = None;
-                if bound && self.github_repositories.is_empty() && !self.github_repositories_busy {
+                if bound && self.github_repositories.is_empty() && !self.github_repositories_busy()
+                {
                     self.load_github_repositories(false);
                 }
             }
@@ -5666,10 +5901,9 @@ impl DesktopProgram {
     }
 
     fn start_github_binding(&mut self) {
-        if self.github_binding_busy || !self.github_binding.client_id_configured {
+        if self.github_binding_busy() || !self.github_binding.client_id_configured {
             return;
         }
-        self.github_binding_busy = true;
         self.github_device_flow = None;
         self.github_error = None;
         let request = JobRequest::new(lilia_feature_github::BIND_PROTOCOL, Value::Null)
@@ -5678,7 +5912,6 @@ impl DesktopProgram {
             Ok(handle) => self.active_github_binding_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode GitHub binding job: {error}");
-                self.github_binding_busy = false;
                 self.github_error = Some("无法启动 GitHub 绑定任务。".to_owned());
             }
         }
@@ -5697,7 +5930,6 @@ impl DesktopProgram {
             }
             JobState::Completed { output } => {
                 self.active_github_binding_job = None;
-                self.github_binding_busy = false;
                 self.github_device_flow = None;
                 match serde_json::from_value::<DesktopGitHubDeviceFlowPollResult>(output) {
                     Ok(result) => self.apply_github_device_flow_result(result),
@@ -5708,7 +5940,6 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_github_binding_job = None;
-                self.github_binding_busy = false;
                 self.github_device_flow = None;
                 self.github_error = Some(message);
             }
@@ -5716,7 +5947,6 @@ impl DesktopProgram {
             // account and reset the surface.
             _ => {
                 self.active_github_binding_job = None;
-                self.github_binding_busy = false;
                 self.github_device_flow = None;
             }
         }
@@ -5750,7 +5980,6 @@ impl DesktopProgram {
         } else {
             self.github_error = None;
         }
-        self.github_binding_busy = false;
         self.github_device_flow = None;
         self.github_binding = DesktopGitHubBindingStatus {
             state: "unbound".to_owned(),
@@ -5768,7 +5997,8 @@ impl DesktopProgram {
             return;
         };
         if let Err(error) = self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::OpenExternal(
                 flow.verification_uri.clone(),
             ))
@@ -5781,18 +6011,19 @@ impl DesktopProgram {
         let Some(flow) = self.github_device_flow.as_ref() else {
             return;
         };
-        if let Err(error) = self
-            .kernel.session()
-            .execute_host(DesktopHostAction::WriteClipboardText(
-                flow.user_code.clone(),
-            ))
+        if let Err(error) =
+            self.kernel
+                .session()
+                .execute_host(DesktopHostAction::WriteClipboardText(
+                    flow.user_code.clone(),
+                ))
         {
             self.github_error = Some(format!("无法复制 GitHub 授权码：{error}"));
         }
     }
 
     fn unbind_github(&mut self) {
-        if self.github_binding_busy {
+        if self.github_binding_busy() {
             return;
         }
         match self.kernel.session().unbind_github() {
@@ -5809,7 +6040,7 @@ impl DesktopProgram {
     }
 
     fn load_github_repositories(&mut self, append: bool) {
-        if self.github_binding.state != "bound" || self.github_repositories_busy {
+        if self.github_binding.state != "bound" || self.github_repositories_busy() {
             return;
         }
         let page = if append {
@@ -5820,7 +6051,6 @@ impl DesktopProgram {
         } else {
             1
         };
-        self.github_repositories_busy = true;
         self.github_error = None;
         let request = JobRequest::new(
             lilia_feature_github::REPOSITORIES_PROTOCOL,
@@ -5832,7 +6062,6 @@ impl DesktopProgram {
             Ok(handle) => self.active_github_repository_job = Some((handle.id(), append)),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode GitHub repositories job: {error}");
-                self.github_repositories_busy = false;
                 self.github_error = Some("无法启动 GitHub 仓库读取任务。".to_owned());
             }
         }
@@ -5848,12 +6077,10 @@ impl DesktopProgram {
             JobState::Failed { message } => Err(message),
             _ => {
                 self.active_github_repository_job = None;
-                self.github_repositories_busy = false;
                 return;
             }
         };
         self.active_github_repository_job = None;
-        self.github_repositories_busy = false;
         match result {
             Ok(page) => {
                 if !append {
@@ -5970,7 +6197,8 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -5991,7 +6219,7 @@ impl DesktopProgram {
     }
 
     fn pick_project_clone_parent(&mut self) {
-        if self.project_clone_busy {
+        if self.project_clone_busy() {
             return;
         }
         let project_settings_visible =
@@ -6007,7 +6235,8 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -6042,7 +6271,7 @@ impl DesktopProgram {
     }
 
     fn start_project_clone(&mut self) {
-        if self.project_clone_busy
+        if self.project_clone_busy()
             || self.project_clone_repository.trim().is_empty()
             || self.project_clone_parent.trim().is_empty()
         {
@@ -6052,7 +6281,8 @@ impl DesktopProgram {
             == Some(self.project_clone_repository.trim());
         let repository = if use_github_binding {
             match self
-                .kernel.session()
+                .kernel
+                .session()
                 .github_clone_repository(self.project_clone_repository.trim())
             {
                 Ok(repository) => repository,
@@ -6080,7 +6310,6 @@ impl DesktopProgram {
             }
         };
 
-        self.project_clone_busy = true;
         self.project_clone_outcome = ProjectCloneOutcome::Running;
         self.project_clone_phase = Some("preparing".to_owned());
         self.project_clone_percent = None;
@@ -6101,7 +6330,6 @@ impl DesktopProgram {
     }
 
     fn fail_project_clone(&mut self, message: String) {
-        self.project_clone_busy = false;
         self.project_clone_outcome = ProjectCloneOutcome::Failed;
         self.project_clone_phase = Some("failed".to_owned());
         self.project_clone_detail = None;
@@ -6113,7 +6341,7 @@ impl DesktopProgram {
         let Some(job_id) = self.active_project_clone_job else {
             return;
         };
-        if !self.project_clone_busy {
+        if !self.project_clone_busy() {
             return;
         }
         self.kernel.jobs().cancel(job_id);
@@ -6154,7 +6382,10 @@ impl DesktopProgram {
                 self.apply_quota_job(event.state)
             }
             lilia_feature_worktree::OPERATE_PROTOCOL
-                if self.active_worktree_job == Some(event.job_id) =>
+                if self
+                    .active_worktree_job
+                    .as_ref()
+                    .is_some_and(|(id, _)| *id == event.job_id) =>
             {
                 self.apply_worktree_job(event.state)
             }
@@ -6243,7 +6474,6 @@ impl DesktopProgram {
             }
             JobState::Completed { output } => {
                 self.active_project_clone_job = None;
-                self.project_clone_busy = false;
                 match serde_json::from_value::<CloneResult>(output) {
                     Ok(cloned) => self.adopt_cloned_repository(cloned),
                     Err(error) => {
@@ -6258,7 +6488,6 @@ impl DesktopProgram {
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_project_clone_job = None;
-                self.project_clone_busy = false;
                 self.project_clone_outcome = ProjectCloneOutcome::Cancelled;
                 self.project_clone_phase = Some("cancelled".to_owned());
                 self.project_clone_percent = None;
@@ -6342,7 +6571,8 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -6495,7 +6725,8 @@ impl DesktopProgram {
             }
         };
         let active_task_count = match self
-            .kernel.session()
+            .kernel
+            .session()
             .query_tasks(TaskQuery::for_project(project_id.clone()))
         {
             Ok(tasks) => tasks.len(),
@@ -6520,7 +6751,8 @@ impl DesktopProgram {
             return;
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .archive_project_conversations(&confirmation.project_id)
         {
             Ok(_) => {
@@ -6650,7 +6882,8 @@ impl DesktopProgram {
             return;
         };
         let initial_directory = self
-            .kernel.session()
+            .kernel
+            .session()
             .project_context(&project_id)
             .ok()
             .map(|context| context.active_root().to_path_buf());
@@ -6663,7 +6896,8 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -6753,7 +6987,8 @@ impl DesktopProgram {
         };
         if let Some(project_id) = &project_id {
             let valid = self
-                .kernel.session()
+                .kernel
+                .session()
                 .get_project(project_id)
                 .is_ok_and(|project| project.archive == ProjectArchiveState::Active);
             if !valid {
@@ -6795,7 +7030,8 @@ impl DesktopProgram {
     fn select_main_conversation_draft_project(&mut self, project_id: Option<ProjectId>) {
         if let Some(project_id) = &project_id {
             let valid = self
-                .kernel.session()
+                .kernel
+                .session()
                 .get_project(project_id)
                 .is_ok_and(|project| project.archive == ProjectArchiveState::Active);
             if !valid {
@@ -6838,7 +7074,8 @@ impl DesktopProgram {
             .draft_worktree_intent(&worktree)
             .expect("incomplete existing worktree selections are rejected above");
         if let Err(error) = self
-            .kernel.session()
+            .kernel
+            .session()
             .set_initial_worktree_intent(&input.id, worktree_intent.as_ref())
         {
             eprintln!("failed to persist Native main draft worktree intent: {error}");
@@ -6848,11 +7085,16 @@ impl DesktopProgram {
             return false;
         }
         let reserved_task_id = input.id.clone();
-        let task = match self.kernel.session().materialize_task_draft(input, composer) {
+        let task = match self
+            .kernel
+            .session()
+            .materialize_task_draft(input, composer)
+        {
             Ok(task) => task,
             Err(error) => {
                 if let Err(clear_error) = self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .set_initial_worktree_intent(&reserved_task_id, None)
                 {
                     eprintln!(
@@ -6957,7 +7199,8 @@ impl DesktopProgram {
         };
         let target_id = target.id;
         let mut dependencies = self
-            .kernel.session()
+            .kernel
+            .session()
             .get_task(&task_id)
             .map(|task| task.depends_on)
             .unwrap_or_default();
@@ -6967,7 +7210,8 @@ impl DesktopProgram {
             dependencies.push(target_id);
         }
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .update_task_dependencies(&task_id, dependencies)
         {
             Ok(_) => {
@@ -7051,7 +7295,11 @@ impl DesktopProgram {
         let Some(ordered_ids) = self.reordered_selected_task_ids(offset) else {
             return;
         };
-        match self.kernel.session().reorder_tasks(project_id, &ordered_ids) {
+        match self
+            .kernel
+            .session()
+            .reorder_tasks(project_id, &ordered_ids)
+        {
             Ok(_) => {
                 self.task_action_error = None;
                 self.refresh_tasks();
@@ -7089,7 +7337,11 @@ impl DesktopProgram {
         let Some(ordered_ids) = self.reordered_task_ids(&task_id, before_task_id.as_ref()) else {
             return;
         };
-        match self.kernel.session().reorder_tasks(project_id, &ordered_ids) {
+        match self
+            .kernel
+            .session()
+            .reorder_tasks(project_id, &ordered_ids)
+        {
             Ok(_) => {
                 self.task_action_error = None;
                 self.refresh_tasks();
@@ -7458,7 +7710,8 @@ impl DesktopProgram {
             return;
         };
         let item = match self
-            .kernel.session()
+            .kernel
+            .session()
             .project_workspace_item(&project_id, surface)
         {
             Ok(item) => item,
@@ -7536,9 +7789,16 @@ impl DesktopProgram {
             return;
         }
         let view = self.project_files_view_state(&project_id);
-        match self.kernel.session().project_files_snapshot(&project_id, view) {
+        match self
+            .kernel
+            .session()
+            .project_files_snapshot(&project_id, view)
+        {
             Ok(snapshot) => {
-                let _ = self.kernel.session().ensure_project_files_watcher(&project_id);
+                let _ = self
+                    .kernel
+                    .session()
+                    .ensure_project_files_watcher(&project_id);
                 self.project_files_error = None;
                 self.project_files = Some(snapshot);
             }
@@ -7567,7 +7827,11 @@ impl DesktopProgram {
         if let Some(snapshot) = self.project_files.as_mut() {
             snapshot.view = view.clone();
         }
-        match self.kernel.session().project_files_snapshot(&project_id, view) {
+        match self
+            .kernel
+            .session()
+            .project_files_snapshot(&project_id, view)
+        {
             Ok(snapshot) => {
                 self.project_files_error = None;
                 self.project_files = Some(snapshot);
@@ -7584,14 +7848,19 @@ impl DesktopProgram {
         view.selected_path = Some(relative_path.clone());
         self.persist_project_files_view(&project_id, &view);
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .open_project_document_workspace_item(&project_id, &relative_path)
         {
             Ok((document, item)) => {
                 let document_id = document.id;
                 self.opened_project_document = Some(document.clone());
                 self.project_files_error = None;
-                if let Ok(snapshot) = self.kernel.session().project_files_snapshot(&project_id, view) {
+                if let Ok(snapshot) = self
+                    .kernel
+                    .session()
+                    .project_files_snapshot(&project_id, view)
+                {
                     self.project_files = Some(snapshot);
                 }
                 self.ensure_document_editor_state(&item, &document);
@@ -7839,412 +8108,51 @@ impl DesktopProgram {
     }
 
     fn refresh_roadmap(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            self.roadmap = ProjectRoadmap::default();
-            self.selected_milestone = None;
-            return;
-        };
-        match self.kernel.session().project_roadmap(&project_id) {
-            Ok(roadmap) => {
-                self.roadmap = roadmap;
-                if !self.roadmap.milestones.iter().any(|milestone| {
-                    self.selected_milestone.as_deref() == Some(milestone.id.as_str())
-                }) {
-                    self.selected_milestone = self
-                        .roadmap
-                        .milestones
-                        .first()
-                        .map(|milestone| milestone.id.clone());
-                }
-                self.load_selected_milestone();
-                self.roadmap_error = None;
-            }
-            Err(error) => self.roadmap_error = Some(format!("无法读取路线图：{error}")),
-        }
+        self.route_roadmap_message(RoadmapMessage::Refresh);
     }
 
-    fn select_milestone(&mut self, milestone_id: String) {
-        if self
-            .roadmap
-            .milestones
-            .iter()
-            .any(|milestone| milestone.id == milestone_id)
-        {
-            self.selected_milestone = Some(milestone_id);
-            self.load_selected_milestone();
-        }
-    }
-
-    fn load_selected_milestone(&mut self) {
-        let milestone = self.selected_milestone.as_deref().and_then(|selected| {
-            self.roadmap
-                .milestones
-                .iter()
-                .find(|milestone| milestone.id == selected)
-        });
-        if let Some(milestone) = milestone {
-            self.milestone_title = milestone.title.clone();
-            self.milestone_description = milestone.description.clone();
-            self.milestone_due_date = milestone
-                .due_date
-                .map(format_civil_date)
-                .unwrap_or_default();
-        } else {
-            self.milestone_title.clear();
-            self.milestone_description.clear();
-            self.milestone_due_date.clear();
-        }
-    }
-
-    fn create_milestone(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            return;
-        };
-        match self.kernel.session().create_milestone(&project_id, "新里程碑") {
-            Ok(milestone) => {
-                self.refresh_roadmap();
-                self.select_milestone(milestone.id);
-            }
-            Err(error) => self.roadmap_error = Some(format!("无法创建里程碑：{error}")),
-        }
-    }
-
-    fn save_milestone(&mut self) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        let due_date = match parse_civil_date_update(&self.milestone_due_date) {
-            Ok(due_date) => due_date,
-            Err(error) => {
-                self.roadmap_error = Some(error);
-                return;
-            }
-        };
-        let patch = MilestoneUpdatePatch {
-            title: Some(self.milestone_title.clone()),
-            description: Some(self.milestone_description.clone()),
-            status: None,
-            due_date,
-        };
-        match self
-            .kernel.session()
-            .update_milestone(&project_id, &milestone_id, patch)
-        {
-            Ok(_) => self.refresh_roadmap(),
-            Err(error) => self.roadmap_error = Some(format!("无法保存里程碑：{error}")),
-        }
-    }
-
-    fn cycle_milestone_status(&mut self) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        let Some(status) = self
-            .roadmap
-            .milestones
-            .iter()
-            .find(|milestone| milestone.id == milestone_id)
-            .map(|milestone| next_milestone_status(milestone.status))
-        else {
-            return;
-        };
-        let patch = MilestoneUpdatePatch {
-            status: Some(status),
-            ..MilestoneUpdatePatch::default()
-        };
-        match self
-            .kernel.session()
-            .update_milestone(&project_id, &milestone_id, patch)
-        {
-            Ok(_) => self.refresh_roadmap(),
-            Err(error) => self.roadmap_error = Some(format!("无法更新里程碑状态：{error}")),
-        }
-    }
-
-    fn move_milestone(&mut self, offset: isize) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        let Some(index) = self
-            .roadmap
-            .milestones
-            .iter()
-            .position(|milestone| milestone.id == milestone_id)
-        else {
-            return;
-        };
-        let target = index as isize + offset;
-        if target < 0 || target >= self.roadmap.milestones.len() as isize {
-            return;
-        }
-        let mut ids = self
-            .roadmap
-            .milestones
-            .iter()
-            .map(|milestone| milestone.id.clone())
-            .collect::<Vec<_>>();
-        ids.swap(index, target as usize);
-        match self.kernel.session().reorder_milestones(&project_id, ids) {
-            Ok(_) => self.refresh_roadmap(),
-            Err(error) => self.roadmap_error = Some(format!("无法调整里程碑顺序：{error}")),
-        }
-    }
-
-    fn delete_milestone(&mut self) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        match self
-            .kernel.session()
-            .delete_milestone(&project_id, &milestone_id)
-        {
-            Ok(_) => {
-                self.selected_milestone = None;
-                self.refresh_roadmap();
-            }
-            Err(error) => self.roadmap_error = Some(format!("无法删除里程碑：{error}")),
-        }
-    }
-
-    fn toggle_milestone_task(&mut self, task_id: String) {
-        let (Some(project_id), Some(milestone_id)) = (
-            self.selected_project.clone(),
-            self.selected_milestone.clone(),
-        ) else {
-            return;
-        };
-        let mut task_ids = self
-            .roadmap
-            .links
-            .iter()
-            .filter(|link| link.milestone_id == milestone_id)
-            .map(|link| link.task_id.clone())
-            .collect::<BTreeSet<_>>();
-        if !task_ids.remove(&task_id) {
-            task_ids.insert(task_id);
-        }
-        match self.kernel.session().set_milestone_tasks(
-            &project_id,
-            &milestone_id,
-            task_ids.into_iter().collect(),
-        ) {
-            Ok(_) => self.refresh_roadmap(),
-            Err(error) => self.roadmap_error = Some(format!("无法更新关联任务：{error}")),
+    /// Routes a roadmap message to the module owning the domain.
+    fn route_roadmap_message(&mut self, message: RoadmapMessage) {
+        let outcome = self.route_to_module(
+            &crate::module::roadmap::RoadmapModule::feature_id(),
+            Box::new(message),
+        );
+        if let Some(outcome) = outcome {
+            self.apply_ui_module_outcome(outcome);
         }
     }
 
     fn refresh_memories(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            self.memories.clear();
-            self.selected_memory = None;
-            return;
-        };
-        match self.kernel.session().list_memories(Some(&project_id)) {
-            Ok(memories) => {
-                self.memories = memories;
-                if !self
-                    .memories
-                    .iter()
-                    .any(|memory| self.selected_memory.as_deref() == Some(memory.id.as_str()))
-                {
-                    self.selected_memory = self.memories.first().map(|memory| memory.id.clone());
-                }
-                self.load_selected_memory();
-                self.memory_error = None;
-            }
-            Err(error) => self.memory_error = Some(format!("无法读取 Memory：{error}")),
-        }
-    }
-
-    fn select_memory(&mut self, memory_id: String) {
-        if self.memories.iter().any(|memory| memory.id == memory_id) {
-            self.selected_memory = Some(memory_id);
-            self.load_selected_memory();
-        }
-    }
-
-    fn new_memory(&mut self) {
-        self.selected_memory = None;
-        self.memory_title.clear();
-        self.memory_body.clear();
-        self.memory_tags.clear();
-        self.memory_scope = MemoryScope::Project;
-        self.memory_updated_at = None;
-        self.memory_error = None;
-    }
-
-    fn load_selected_memory(&mut self) {
-        let memory = self
-            .selected_memory
-            .as_deref()
-            .and_then(|selected| self.memories.iter().find(|memory| memory.id == selected));
-        if let Some(memory) = memory {
-            self.memory_title = memory.title.clone();
-            self.memory_body.set_text(&memory.body);
-            self.memory_tags = memory.tags.join(", ");
-            self.memory_scope = memory.scope;
-            self.memory_updated_at = Some(memory.updated_at);
-        } else {
-            self.new_memory();
-        }
-    }
-
-    fn save_memory(&mut self) {
-        let project_id = match self.memory_scope {
-            MemoryScope::User => None,
-            MemoryScope::Project => self
-                .selected_project
-                .as_ref()
-                .map(|project_id| project_id.as_str().to_owned()),
-        };
-        let input = MemoryUpsertInput {
-            id: self.selected_memory.clone(),
-            scope: self.memory_scope,
-            project_id,
-            title: self.memory_title.clone(),
-            body: self.memory_body.text(),
-            tags: parse_memory_tags(&self.memory_tags),
-            enabled: self
-                .selected_memory
-                .as_deref()
-                .and_then(|selected| self.memories.iter().find(|memory| memory.id == selected))
-                .is_none_or(|memory| memory.enabled),
-            source_task_id: None,
-            expected_updated_at: self.memory_updated_at,
-        };
-        match self.kernel.session().save_memory(input) {
-            Ok(memory) => {
-                self.selected_memory = Some(memory.id);
-                self.refresh_memories();
-            }
-            Err(error) => self.memory_error = Some(format!("无法保存 Memory：{error}")),
-        }
-    }
-
-    fn toggle_memory_enabled(&mut self) {
-        let Some(memory) = self
-            .selected_memory
-            .as_deref()
-            .and_then(|selected| self.memories.iter().find(|memory| memory.id == selected))
-        else {
-            return;
-        };
-        let memory_id = memory.id.clone();
-        let enabled = !memory.enabled;
-        let expected_updated_at = Some(memory.updated_at);
-        match self
-            .kernel.session()
-            .set_memory_enabled(&memory_id, enabled, expected_updated_at)
-        {
-            Ok(_) => self.refresh_memories(),
-            Err(error) => self.memory_error = Some(format!("无法更新 Memory 状态：{error}")),
-        }
-    }
-
-    fn delete_memory(&mut self) {
-        let Some(memory_id) = self.selected_memory.clone() else {
-            return;
-        };
-        match self
-            .kernel.session()
-            .delete_memory(&memory_id, self.memory_updated_at)
-        {
-            Ok(_) => {
-                self.selected_memory = None;
-                self.refresh_memories();
-            }
-            Err(error) => self.memory_error = Some(format!("无法删除 Memory：{error}")),
-        }
-    }
-
-    fn update_memory_settings(&mut self, settings: MemorySettings) {
-        let cooldown_changed = settings.cooldown_turns != self.memory_settings.cooldown_turns;
-        match self.kernel.session().save_memory_settings(settings) {
-            Ok(settings) => {
-                if cooldown_changed {
-                    self.memory_cooldown_input = settings.cooldown_turns.to_string();
-                }
-                self.memory_settings = settings;
-                self.memory_error = None;
-            }
-            Err(error) => self.memory_error = Some(format!("无法保存 Memory 设置：{error}")),
-        }
-    }
-
-    fn save_memory_cooldown(&mut self) {
-        match parse_memory_cooldown(&self.memory_cooldown_input) {
-            Ok(cooldown_turns) => {
-                let mut settings = self.memory_settings.clone();
-                settings.cooldown_turns = cooldown_turns;
-                self.update_memory_settings(settings);
-            }
-            Err(error) => self.memory_error = Some(error.to_owned()),
-        }
+        self.route_memory_message(MemoryMessage::Refresh);
     }
 
     fn refresh_memory_injection(&mut self) {
-        let Some(task_id) = self.selected_task.clone() else {
-            self.memory_injection = None;
-            return;
-        };
-        match self.kernel.session().memory_injection_state(&task_id) {
-            Ok(state) => self.memory_injection = Some(state),
-            Err(error) => {
-                self.task_action_error = Some(format!("无法读取 Memory 注入状态：{error}"))
-            }
+        self.route_memory_message(MemoryMessage::Refresh);
+    }
+
+    /// Routes a memory message to the module owning the domain.
+    fn route_memory_message(&mut self, message: MemoryMessage) {
+        let outcome = self.route_to_module(
+            &crate::module::memory::MemoryModule::feature_id(),
+            Box::new(message),
+        );
+        if let Some(outcome) = outcome {
+            self.apply_ui_module_outcome(outcome);
         }
     }
 
-    fn toggle_task_memory(&mut self) {
-        let (Some(task_id), Some(state)) =
-            (self.selected_task.clone(), self.memory_injection.clone())
-        else {
-            return;
-        };
-        match self.kernel.session().set_task_memory_enabled(
-            &task_id,
-            !state.enabled,
-            Some(state.updated_at),
-        ) {
-            Ok(state) => {
-                self.memory_injection = Some(state);
-                self.task_action_error = None;
-            }
-            Err(error) => {
-                self.task_action_error = Some(format!("无法更新 Memory 注入状态：{error}"))
-            }
-        }
-        self.refresh_memory_injection();
+    fn memory_module(&self) -> &crate::module::memory::MemoryModule {
+        self.dispatch_module(&crate::module::memory::MemoryModule::feature_id())
     }
 
-    fn reset_task_memory_cooldown(&mut self) {
-        let (Some(task_id), Some(state)) =
-            (self.selected_task.clone(), self.memory_injection.clone())
-        else {
-            return;
-        };
-        match self
-            .kernel.session()
-            .reset_task_memory_cooldown(&task_id, Some(state.updated_at))
-        {
-            Ok(state) => {
-                self.memory_injection = Some(state);
-                self.task_action_error = None;
-            }
-            Err(error) => self.task_action_error = Some(format!("无法重置 Memory 冷却：{error}")),
-        }
+    fn window_memory_module(
+        &self,
+        window_id: HostedWindowId,
+    ) -> Option<&crate::module::memory::MemoryModule> {
+        self.window_module(
+            window_id,
+            &crate::module::memory::MemoryModule::feature_id(),
+        )
     }
 
     fn active_inspector_panel(&self) -> Option<&PanelState> {
@@ -8513,116 +8421,178 @@ impl DesktopProgram {
         self.iab.set_panel_visible(visible, HostedWindowId::PRIMARY);
     }
 
-    fn open_architecture(&mut self) {
-        self.open_project_surface(ProjectWorkspaceSurface::Architecture);
+    /// Routes an architecture message to the module owning the domain and
+    /// performs whatever it asks the shell to do.
+    fn route_architecture_message(&mut self, message: ArchitectureMessage) {
+        let outcome = self.route_to_module(
+            &crate::module::architecture::ArchitectureModule::feature_id(),
+            Box::new(message),
+        );
+        if let Some(outcome) = outcome {
+            self.apply_ui_module_outcome(outcome);
+        }
+    }
+
+    /// Hands a message to the module for `feature` in whichever window the shell
+    /// is currently acting on.
+    fn route_to_module(
+        &mut self,
+        feature: &lilia_kernel::FeatureId,
+        message: Box<dyn std::any::Any>,
+    ) -> Option<crate::ui_module::UiModuleOutcome> {
+        match self.module_dispatch {
+            Some((window_id, page)) => {
+                self.route_to_window_module(window_id, feature, message, Some(page))
+            }
+            None => self.route_to_primary_module(feature, message),
+        }
+    }
+
+    /// Hands a message to the primary window's module for `feature`.
+    ///
+    /// The host is moved out for the call because building the context borrows
+    /// the shell, and a module reducing must be able to mutate itself.
+    fn route_to_primary_module(
+        &mut self,
+        feature: &lilia_kernel::FeatureId,
+        message: Box<dyn std::any::Any>,
+    ) -> Option<crate::ui_module::UiModuleOutcome> {
+        let page = self.shell_project_page();
+        let mut host = std::mem::take(&mut self.ui_modules);
+        let outcome = {
+            let cx =
+                crate::ui_module::UiModuleContext::new(self.kernel.kernel(), WindowId::PRIMARY)
+                    .showing(page);
+            host.reduce(feature, message, &cx)
+        };
+        self.ui_modules = host;
+        outcome
+    }
+
+    /// Hands a message to a workspace window's module for `feature`.
+    fn route_to_window_module(
+        &mut self,
+        window_id: HostedWindowId,
+        feature: &lilia_kernel::FeatureId,
+        message: Box<dyn std::any::Any>,
+        page: Option<crate::runtime_shell::ShellProjectPage>,
+    ) -> Option<crate::ui_module::UiModuleOutcome> {
+        let mut host = std::mem::take(self.window_ui_modules(window_id));
+        let outcome = {
+            let cx = crate::ui_module::UiModuleContext::new(self.kernel.kernel(), window_id)
+                .showing(page);
+            host.reduce(feature, message, &cx)
+        };
+        *self.window_ui_modules(window_id) = host;
+        outcome
+    }
+
+    fn apply_ui_module_outcome(&mut self, outcome: crate::ui_module::UiModuleOutcome) {
+        if let Some(error) = outcome.error {
+            self.error_message = Some(error);
+        }
+        for effect in outcome.effects {
+            match effect {
+                crate::ui_module::ShellEffect::RevealProjectSurface(surface) => {
+                    self.open_project_surface(surface);
+                }
+            }
+        }
     }
 
     fn refresh_architecture(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            return;
-        };
-        match (
-            self.kernel.session().project_architecture(&project_id),
-            self.kernel.session()
-                .project_architecture_changes(&project_id, 40),
-            self.kernel.session()
-                .project_architecture_quarantine(&project_id),
-        ) {
-            (Ok(graph), Ok(history), Ok(quarantine)) => {
-                let reset_viewport = self.architecture.project_id != graph.project_id
-                    || self.architecture.nodes.is_empty();
-                self.architecture = graph;
-                self.architecture_history = history;
-                self.architecture_quarantine_count = quarantine.len();
-                self.architecture_error = None;
-                self.rebuild_architecture_graph(reset_viewport);
-            }
-            (graph, history, quarantine) => {
-                self.architecture_error = Some(format!(
-                    "无法读取架构快照：{}",
-                    graph
-                        .err()
-                        .or_else(|| history.err())
-                        .or_else(|| quarantine.err())
-                        .map(|error| error.to_string())
-                        .unwrap_or_else(|| "未知错误".to_owned())
-                ));
-            }
-        }
+        self.route_architecture_message(ArchitectureMessage::Refresh);
     }
 
-    fn rollback_architecture(&mut self) {
-        let Some(project_id) = self.selected_project.clone() else {
-            return;
-        };
-        let Some(task_id) = self.tasks.first().map(|task| task.id.clone()) else {
-            self.architecture_error = Some("当前项目没有可记录回滚来源的任务。".to_owned());
-            return;
-        };
-        match self.kernel.session().rollback_project_architecture(
-            &project_id,
-            &task_id,
-            ArchitectureBackend::NativeAgentkit,
-        ) {
-            Ok(result) => {
-                let rolled_back = result.event.is_some();
-                self.refresh_architecture();
-                if !rolled_back {
-                    self.architecture_error = Some("当前没有可回滚的已应用版本。".to_owned());
-                }
-            }
+    /// Applies a workspace item's saved graph layout to the primary window's
+    /// module. A layout that no longer matches the graph version is discarded
+    /// rather than drawn against the wrong nodes.
+    fn restore_primary_architecture_layout(&mut self, saved: Option<&Value>) {
+        let module = self.architecture_module();
+        let mut model = module.model().clone();
+        let mut viewport = module.viewport();
+        let version = module.graph().version;
+        match restore_architecture_workspace_layout(saved, version, &mut model, &mut viewport) {
+            Ok(()) => self
+                .architecture_module_mut()
+                .restore_layout(model, viewport),
             Err(error) => {
-                self.architecture_error = Some(format!("无法回滚架构：{error}"));
+                self.error_message = Some(format!("架构图布局已重置，保存的布局无法恢复：{error}"));
             }
         }
     }
 
-    fn rebuild_architecture_graph(&mut self, reset_viewport: bool) {
-        let previous_positions = self
-            .architecture_graph
-            .nodes()
-            .iter()
-            .map(|node| (node.id.clone(), node.position))
-            .collect::<Vec<_>>();
-        let had_previous_nodes = !previous_positions.is_empty();
-        match architecture_graph_model(&self.architecture) {
-            Ok(mut graph) => {
-                if !reset_viewport {
-                    for (node_id, position) in previous_positions {
-                        if graph.node(&node_id).is_some() {
-                            let _ = graph.set_node_position(&node_id, position);
-                        }
-                    }
-                }
-                self.architecture_graph = graph;
-                if reset_viewport || !had_previous_nodes {
-                    self.architecture_viewport =
-                        architecture_default_viewport(&self.architecture_graph);
-                    self.architecture_selection = None;
-                }
-            }
-            Err(error) => {
-                self.architecture_graph = GraphModel::empty();
-                self.architecture_selection = None;
-                self.architecture_error = Some(format!("架构图无法显示：{error}"));
-            }
-        }
+    /// The primary window's architecture layout, as stored on its workspace item.
+    fn architecture_layout_value(&self) -> Value {
+        let module = self.architecture_module();
+        architecture_workspace_layout_value(
+            module.graph().version,
+            module.model(),
+            module.viewport(),
+        )
     }
 
-    fn update_architecture_graph(&mut self, event: GraphCanvasEvent) {
-        match event {
-            GraphCanvasEvent::SelectionChanged(selection) => {
-                self.architecture_selection = selection;
-            }
-            GraphCanvasEvent::ViewportInput(viewport)
-            | GraphCanvasEvent::ViewportChanged(viewport) => {
-                self.architecture_viewport = viewport;
-            }
-            GraphCanvasEvent::NodePositionInput { node, position }
-            | GraphCanvasEvent::NodePositionChanged { node, position } => {
-                let _ = self.architecture_graph.set_node_position(&node, position);
-            }
-            GraphCanvasEvent::ConnectionRequested { .. } => {}
+    /// Whether the rendered graph matches an applied version, which is what
+    /// makes a rollback meaningful.
+    fn architecture_can_roll_back(&self) -> bool {
+        architecture_module_can_roll_back(self.architecture_module())
+    }
+
+    /// What a workspace window persists on its project item: each module-owned
+    /// page answers for its own slice.
+    fn workspace_window_item_state(&mut self, window_id: HostedWindowId) -> Value {
+        let host = self.window_ui_modules(window_id);
+        let milestone = host
+            .get::<crate::module::roadmap::RoadmapModule>(
+                &crate::module::roadmap::RoadmapModule::feature_id(),
+            )
+            .expect("every window is furnished with the same modules")
+            .selected()
+            .map(str::to_owned);
+        let selected_memory = host
+            .get::<crate::module::memory::MemoryModule>(
+                &crate::module::memory::MemoryModule::feature_id(),
+            )
+            .expect("every window is furnished with the same modules")
+            .selected()
+            .map(str::to_owned);
+        let architecture = host
+            .get::<crate::module::architecture::ArchitectureModule>(
+                &crate::module::architecture::ArchitectureModule::feature_id(),
+            )
+            .expect("every window is furnished with the same modules");
+        let layout = architecture_workspace_layout_value(
+            architecture.graph().version,
+            architecture.model(),
+            architecture.viewport(),
+        );
+        json!({
+            "selectedMilestoneId": milestone,
+            "selectedMemoryId": selected_memory,
+            "architectureLayout": layout,
+        })
+    }
+
+    /// Routes a message to a workspace window's own module for `feature`.
+    ///
+    /// The old register swapped the domain into the primary window's fields for
+    /// the call; a per-window module makes that unnecessary, so the window's
+    /// editor state never passes through the primary window's.
+    fn route_workspace_window_module(
+        &mut self,
+        window_id: HostedWindowId,
+        item_id: WorkspaceItemId,
+        feature: &lilia_kernel::FeatureId,
+        message: Box<dyn std::any::Any>,
+        page: crate::runtime_shell::ShellProjectPage,
+        persist_item_state: bool,
+    ) {
+        let outcome = self.route_to_window_module(window_id, feature, message, Some(page));
+        if let Some(error) = outcome.and_then(|outcome| outcome.error) {
+            self.error_message = Some(error);
+        }
+        if persist_item_state {
+            self.persist_workspace_window_item_state(window_id, item_id);
         }
     }
 
@@ -8660,11 +8630,7 @@ impl DesktopProgram {
         };
         serialized_state.insert(
             "architectureLayout".to_owned(),
-            architecture_workspace_layout_value(
-                self.architecture.version,
-                &self.architecture_graph,
-                self.architecture_viewport,
-            ),
+            self.architecture_layout_value(),
         );
         self.execute_workspace_command(DesktopCommand::UpdateWorkspaceItemState {
             item_id,
@@ -8692,7 +8658,7 @@ impl DesktopProgram {
     }
 
     fn refresh_coding_tools(&mut self) {
-        if self.coding_busy {
+        if self.coding_busy() {
             return;
         }
         let ticket = self.coding_exchange.park(CodingRefreshCommand {
@@ -8707,7 +8673,6 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_coding::refresh_slot());
 
-        self.coding_busy = true;
         self.coding_error = None;
         self.coding_notice = None;
         match self.kernel.jobs().submit(request) {
@@ -8715,7 +8680,6 @@ impl DesktopProgram {
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode coding refresh job: {error}");
                 self.coding_exchange.discard(ticket);
-                self.coding_busy = false;
                 self.coding_error = Some("无法启动工作区工具刷新。".to_owned());
             }
         }
@@ -8729,7 +8693,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => {}
             JobState::Completed { .. } => {
                 self.active_coding_job = None;
-                self.coding_busy = false;
                 match self.coding_exchange.take(ticket) {
                     Some(result) => self.apply_coding_tools_refresh(result),
                     None => self.coding_error = Some("工作区工具刷新没有返回结果。".to_owned()),
@@ -8737,13 +8700,11 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_coding_job = None;
-                self.coding_busy = false;
                 self.coding_exchange.discard(ticket);
                 self.coding_error = Some(message);
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_coding_job = None;
-                self.coding_busy = false;
                 self.coding_exchange.discard(ticket);
             }
         }
@@ -8801,7 +8762,7 @@ impl DesktopProgram {
     }
 
     fn search_coding_tools(&mut self) {
-        if self.coding_busy || self.coding_query.trim().is_empty() {
+        if self.coding_busy() || self.coding_query.trim().is_empty() {
             return;
         }
         let scope = if self.coding_search_all_projects {
@@ -8831,7 +8792,6 @@ impl DesktopProgram {
             }
         };
 
-        self.coding_busy = true;
         self.coding_error = None;
         self.coding_notice = None;
         match self.kernel.jobs().submit(
@@ -8841,7 +8801,6 @@ impl DesktopProgram {
             Ok(handle) => self.active_coding_search_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the Native code search job: {error}");
-                self.coding_busy = false;
                 self.coding_error = Some("无法启动代码搜索。".to_owned());
             }
         }
@@ -8852,7 +8811,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => return,
             JobState::Cancelled | JobState::Superseded => {
                 self.active_coding_search_job = None;
-                self.coding_busy = false;
                 return;
             }
             JobState::Failed { message } => Err(message),
@@ -8860,7 +8818,6 @@ impl DesktopProgram {
                 .map_err(|error| format!("code search result is unreadable: {error}")),
         };
         self.active_coding_search_job = None;
-        self.coding_busy = false;
         self.finish_coding_search(result);
     }
 
@@ -8942,9 +8899,11 @@ impl DesktopProgram {
     }
 
     fn open_native_terminal(&mut self, scope: DesktopTerminalScope) {
-        match self.kernel.session().launch_terminal(
-            crate::application::DesktopTerminalLaunch::shell(scope),
-        ) {
+        match self
+            .kernel
+            .session()
+            .launch_terminal(crate::application::DesktopTerminalLaunch::shell(scope))
+        {
             Ok(snapshot) => match self.kernel.session().terminal_workspace_item(&snapshot) {
                 Ok(item) => {
                     self.terminal_inputs.entry(snapshot.id.clone()).or_default();
@@ -8976,15 +8935,23 @@ impl DesktopProgram {
     }
 
     fn run_project_task(&mut self, task_id: String) {
-        if self.coding_busy {
+        if self.coding_busy() {
             return;
         }
         let Some(project_id) = self.selected_project.clone() else {
             self.coding_error = Some("请先选择项目。".to_owned());
             return;
         };
-        match self.kernel.session().launch_project_task(&project_id, &task_id) {
-            Ok(launch) => match self.kernel.session().terminal_workspace_item(&launch.terminal) {
+        match self
+            .kernel
+            .session()
+            .launch_project_task(&project_id, &task_id)
+        {
+            Ok(launch) => match self
+                .kernel
+                .session()
+                .terminal_workspace_item(&launch.terminal)
+            {
                 Ok(item) => {
                     let session_id = launch.terminal.id.clone();
                     self.terminal_inputs.entry(session_id.clone()).or_default();
@@ -9037,7 +9004,11 @@ impl DesktopProgram {
             .get(session_id)
             .copied()
             .unwrap_or_default();
-        match self.kernel.session().terminal_snapshot(session_id, scrollback) {
+        match self
+            .kernel
+            .session()
+            .terminal_snapshot(session_id, scrollback)
+        {
             Ok(snapshot) => {
                 self.terminal_scrollback
                     .insert(session_id.clone(), snapshot.scrollback_position);
@@ -9100,7 +9071,8 @@ impl DesktopProgram {
                     return;
                 }
                 match self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .execute_host(DesktopHostAction::WriteClipboardText(output))
                 {
                     Ok(DesktopHostResult::Completed) => {
@@ -9117,7 +9089,11 @@ impl DesktopProgram {
                 }
             }
             TerminalViewMessage::Resize(session_id, rows, columns) => {
-                match self.kernel.session().resize_terminal(&session_id, rows, columns) {
+                match self
+                    .kernel
+                    .session()
+                    .resize_terminal(&session_id, rows, columns)
+                {
                     Ok(snapshot) => {
                         self.terminal_snapshots.insert(session_id, snapshot);
                     }
@@ -9266,7 +9242,11 @@ impl DesktopProgram {
             self.automation_human_response.clear();
             return;
         };
-        match self.kernel.session().list_automation_runs(Some(workflow_id)) {
+        match self
+            .kernel
+            .session()
+            .list_automation_runs(Some(workflow_id))
+        {
             Ok(runs) => {
                 self.automation_runs = runs;
                 if !self
@@ -9339,7 +9319,8 @@ impl DesktopProgram {
             created_at: now,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .begin_automation_run(AutomationBeginRunInput {
                 workflow_id,
                 trigger: signal,
@@ -9771,7 +9752,8 @@ impl DesktopProgram {
         let workflow_id = workflow.id.clone();
         let enabled = !workflow.enabled;
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .set_automation_enabled(&workflow_id, enabled)
         {
             Ok(_) => self.refresh_automations(),
@@ -10188,7 +10170,8 @@ impl DesktopProgram {
                 self.pending_initial_worktrees = tasks
                     .iter()
                     .filter_map(|task| {
-                        self.kernel.session()
+                        self.kernel
+                            .session()
                             .initial_worktree_intent(&task.id)
                             .ok()
                             .flatten()
@@ -10259,7 +10242,6 @@ impl DesktopProgram {
             self.todo_draft.clear();
             self.editing_todo = None;
             self.goal_draft.clear();
-            self.worktree_busy = false;
             self.worktree_confirmation = None;
             self.interaction_drafts.clear();
             self.ask_user_drafts.clear();
@@ -10287,15 +10269,9 @@ impl DesktopProgram {
                 ProjectSurface::Memory => self.refresh_memories(),
                 ProjectSurface::Architecture => {
                     self.refresh_architecture();
-                    if let Err(error) = restore_architecture_workspace_layout(
+                    self.restore_primary_architecture_layout(
                         next_architecture_workspace_state.as_ref(),
-                        self.architecture.version,
-                        &mut self.architecture_graph,
-                        &mut self.architecture_viewport,
-                    ) {
-                        self.architecture_error =
-                            Some(format!("架构图布局已重置，保存的布局无法恢复：{error}"));
-                    }
+                    );
                 }
                 ProjectSurface::Files => self.refresh_project_files(),
                 ProjectSurface::Tasks | ProjectSurface::Settings | ProjectSurface::Clone => {}
@@ -10349,11 +10325,12 @@ impl DesktopProgram {
             let Some(path) = item.document_path().ok().flatten() else {
                 continue;
             };
-            let snapshot = match self
-                .document_editors
-                .get(&item.id)
-                .and_then(|state| self.kernel.session().document_snapshot(state.document_id).ok())
-            {
+            let snapshot = match self.document_editors.get(&item.id).and_then(|state| {
+                self.kernel
+                    .session()
+                    .document_snapshot(state.document_id)
+                    .ok()
+            }) {
                 Some(snapshot) => snapshot,
                 None => match self.kernel.session().open_document_at_path(&path) {
                     Ok((snapshot, _)) => snapshot,
@@ -10658,7 +10635,11 @@ impl DesktopProgram {
                 return;
             }
         };
-        let item = match self.kernel.session().document_workspace_item(target.document_id) {
+        let item = match self
+            .kernel
+            .session()
+            .document_workspace_item(target.document_id)
+        {
             Ok(item) => item,
             Err(error) => {
                 eprintln!("failed to create Native definition item: {error}");
@@ -10755,7 +10736,8 @@ impl DesktopProgram {
         }
         let text = state.editor.text();
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .replace_document_text(document_id, expected, text)
         {
             Ok(revision) => {
@@ -10854,7 +10836,8 @@ impl DesktopProgram {
 
     fn refresh_archived_records(&mut self) {
         self.archived_projects = self
-            .kernel.session()
+            .kernel
+            .session()
             .query_projects(ProjectQuery {
                 include_archived: true,
             })
@@ -10887,12 +10870,18 @@ impl DesktopProgram {
             Message::Memory(message) => return self.apply_memory_message(message),
             Message::Architecture(message) => return self.apply_architecture_message(message),
             Message::Coding(message) => return self.apply_coding_message(message),
-            Message::ConversationStatus(message) => return self.apply_conversation_status_message(message),
-            Message::WorkspaceWindow(message) => return self.apply_workspace_window_message(message),
+            Message::ConversationStatus(message) => {
+                return self.apply_conversation_status_message(message)
+            }
+            Message::WorkspaceWindow(message) => {
+                return self.apply_workspace_window_message(message)
+            }
             Message::Composer(message) => return self.apply_composer_message(message),
             Message::Timeline(message) => return self.apply_timeline_message(message),
             Message::Settings(message) => return self.apply_settings_message(message),
-            Message::WorkspaceLayout(message) => return self.apply_workspace_layout_message(message),
+            Message::WorkspaceLayout(message) => {
+                return self.apply_workspace_layout_message(message)
+            }
             Message::Chrome(message) => return self.apply_chrome_message(message),
             Message::ProjectClone(message) => return self.apply_project_clone_message(message),
             Message::Project(message) => return self.apply_project_message(message),
@@ -10913,11 +10902,11 @@ impl DesktopProgram {
             Message::KernelJob(event) => self.apply_kernel_job(event),
             Message::RequestTitleUpdate { task_id, turn_id } => {
                 self.start_title_update(task_id, turn_id)
-            },
+            }
             Message::RequestTurnJob { task_id, turn_id } => self.start_turn_job(task_id, turn_id),
             Message::RequestApprovalJob { task_id, decision } => {
                 self.start_approval_job(task_id, decision)
-            },
+            }
             Message::RequestInteractionJob {
                 task_id,
                 resolution,
@@ -10927,20 +10916,26 @@ impl DesktopProgram {
         None
     }
 
-    fn apply_terminal_message(&mut self, message: TerminalViewMessage) -> Option<HostedWindowAction> {
+    fn apply_terminal_message(
+        &mut self,
+        message: TerminalViewMessage,
+    ) -> Option<HostedWindowAction> {
         self.update_terminal(message);
         None
     }
 
-    fn apply_automation_message(&mut self, message: AutomationMessage) -> Option<HostedWindowAction> {
+    fn apply_automation_message(
+        &mut self,
+        message: AutomationMessage,
+    ) -> Option<HostedWindowAction> {
         match message {
             AutomationMessage::OpenAutomations => {
                 self.settings_open = false;
                 self.open_application_surface(ApplicationWorkspaceSurface::Automations);
-            },
+            }
             AutomationMessage::CloseAutomations => {
                 self.close_application_surface(ApplicationWorkspaceSurface::Automations)
-            },
+            }
             AutomationMessage::RefreshAutomations => self.refresh_automations(),
             AutomationMessage::SelectAutomation(workflow_id) => self.select_automation(workflow_id),
             AutomationMessage::CreateAutomation => self.create_automation(),
@@ -10955,31 +10950,31 @@ impl DesktopProgram {
                         self.automation_error = None;
                     }
                 }
-            },
+            }
             AutomationMessage::SaveAutomationDraft => self.persist_selected_automation_draft(),
             AutomationMessage::AddAutomationNode(kind) => self.add_automation_node(&kind),
             AutomationMessage::DeleteAutomationSelection => self.delete_automation_selection(),
             AutomationMessage::ToggleAutomationScopeInbox => self.toggle_automation_scope_inbox(),
             AutomationMessage::ToggleAutomationScopeValue { field, value } => {
                 self.toggle_automation_scope_value(&field, &value);
-            },
+            }
             AutomationMessage::AutomationNodeTitleChanged(value) => {
                 self.automation_node_inspector.title = value;
                 self.automation_error = None;
-            },
+            }
             AutomationMessage::AutomationNodeConfigChanged(value) => {
                 self.automation_node_inspector.config = value;
                 self.automation_error = None;
-            },
+            }
             AutomationMessage::AutomationNodeConfigFieldChanged { field, value } => {
                 self.update_automation_node_config_field(field, json!(value));
-            },
+            }
             AutomationMessage::CycleAutomationNodeConfig(field) => {
                 self.cycle_automation_node_config(&field);
-            },
+            }
             AutomationMessage::ToggleAutomationNodeConfigBoolean(field) => {
                 self.toggle_automation_node_config_boolean(&field);
-            },
+            }
             AutomationMessage::SaveAutomationNodeInspector => self.save_automation_node_inspector(),
             AutomationMessage::PublishAutomation => self.publish_automation(),
             AutomationMessage::ToggleAutomation => self.toggle_automation(),
@@ -10990,7 +10985,7 @@ impl DesktopProgram {
             AutomationMessage::AutomationHumanResponseChanged(value) => {
                 self.automation_human_response = value;
                 self.automation_error = None;
-            },
+            }
             AutomationMessage::ResumeAutomation => self.resume_automation(),
             AutomationMessage::AutomationGraph(event) => self.update_automation_graph(event),
         }
@@ -10998,102 +10993,28 @@ impl DesktopProgram {
     }
 
     fn apply_roadmap_message(&mut self, message: RoadmapMessage) -> Option<HostedWindowAction> {
-        match message {
-            RoadmapMessage::OpenRoadmap => self.open_project_surface(ProjectWorkspaceSurface::Roadmap),
-            RoadmapMessage::RefreshRoadmap => self.refresh_roadmap(),
-            RoadmapMessage::SelectMilestone(milestone_id) => self.select_milestone(milestone_id),
-            RoadmapMessage::MilestoneTitleChanged(value) => {
-                self.milestone_title = value;
-                self.roadmap_error = None;
-            },
-            RoadmapMessage::MilestoneDescriptionChanged(value) => {
-                self.milestone_description = value;
-                self.roadmap_error = None;
-            },
-            RoadmapMessage::MilestoneDueDateChanged(value) => {
-                self.milestone_due_date = value;
-                self.roadmap_error = None;
-            },
-            RoadmapMessage::CreateMilestone => self.create_milestone(),
-            RoadmapMessage::SaveMilestone => self.save_milestone(),
-            RoadmapMessage::CycleMilestoneStatus => self.cycle_milestone_status(),
-            RoadmapMessage::MoveMilestoneUp => self.move_milestone(-1),
-            RoadmapMessage::MoveMilestoneDown => self.move_milestone(1),
-            RoadmapMessage::DeleteMilestone => self.delete_milestone(),
-            RoadmapMessage::ToggleMilestoneTask(task_id) => self.toggle_milestone_task(task_id),
-        }
+        self.route_roadmap_message(message);
         None
     }
 
     fn apply_memory_message(&mut self, message: MemoryMessage) -> Option<HostedWindowAction> {
-        match message {
-            MemoryMessage::OpenMemory => self.open_project_surface(ProjectWorkspaceSurface::Memory),
-            MemoryMessage::RefreshMemory => self.refresh_memories(),
-            MemoryMessage::SelectMemory(memory_id) => self.select_memory(memory_id),
-            MemoryMessage::NewMemory => self.new_memory(),
-            MemoryMessage::MemoryTitleChanged(value) => {
-                self.memory_title = value;
-                self.memory_error = None;
-            },
-            MemoryMessage::MemoryBodyEdited(action) => {
-                self.memory_body.perform(action);
-                self.memory_error = None;
-            },
-            MemoryMessage::MemoryBodyReplaced(value) => {
-                self.memory_body.set_text(&value);
-                self.memory_error = None;
-            },
-            MemoryMessage::MemoryTagsChanged(value) => {
-                self.memory_tags = value;
-                self.memory_error = None;
-            },
-            MemoryMessage::ToggleMemoryScope => {
-                self.memory_scope = match self.memory_scope {
-                    MemoryScope::User => MemoryScope::Project,
-                    MemoryScope::Project => MemoryScope::User,
-                };
-            },
-            MemoryMessage::SaveMemory => self.save_memory(),
-            MemoryMessage::ToggleMemoryEnabled => self.toggle_memory_enabled(),
-            MemoryMessage::DeleteMemory => self.delete_memory(),
-            MemoryMessage::ToggleMemoryGlobal => {
-                let mut settings = self.memory_settings.clone();
-                settings.enabled = !settings.enabled;
-                self.update_memory_settings(settings);
-            },
-            MemoryMessage::ToggleMemoryBaseline => {
-                let mut settings = self.memory_settings.clone();
-                settings.baseline_injection_enabled = !settings.baseline_injection_enabled;
-                self.update_memory_settings(settings);
-            },
-            MemoryMessage::CycleMemoryCooldown => {
-                let mut settings = self.memory_settings.clone();
-                settings.cooldown_turns = next_memory_cooldown(settings.cooldown_turns);
-                self.update_memory_settings(settings);
-            },
-            MemoryMessage::MemoryCooldownChanged(value) => {
-                self.memory_cooldown_input = value;
-                self.memory_error = None;
-            },
-            MemoryMessage::SaveMemoryCooldown => self.save_memory_cooldown(),
-            MemoryMessage::ToggleTaskMemory => self.toggle_task_memory(),
-            MemoryMessage::ResetTaskMemoryCooldown => self.reset_task_memory_cooldown(),
-        }
+        self.route_memory_message(message);
         None
     }
 
-    fn apply_architecture_message(&mut self, message: ArchitectureMessage) -> Option<HostedWindowAction> {
-        match message {
-            ArchitectureMessage::OpenArchitecture => self.open_architecture(),
-            ArchitectureMessage::RefreshArchitecture => self.refresh_architecture(),
-            ArchitectureMessage::RollbackArchitecture => self.rollback_architecture(),
-            ArchitectureMessage::ArchitectureGraph(event) => {
-                let layout_changed = architecture_layout_event_committed(&event);
-                self.update_architecture_graph(event);
-                if layout_changed {
-                    self.persist_main_architecture_layout();
-                }
-            },
+    fn apply_architecture_message(
+        &mut self,
+        message: ArchitectureMessage,
+    ) -> Option<HostedWindowAction> {
+        // Layout is persisted by the shell, not the module: which workspace item
+        // stores it is the shell's pane bookkeeping, not the domain's business.
+        let layout_changed = match &message {
+            ArchitectureMessage::Graph(event) => architecture_layout_event_committed(event),
+            _ => false,
+        };
+        self.route_architecture_message(message);
+        if layout_changed {
+            self.persist_main_architecture_layout();
         }
         None
     }
@@ -11106,7 +11027,7 @@ impl DesktopProgram {
                 self.coding_query = value;
                 self.coding_error = None;
                 self.coding_notice = None;
-            },
+            }
             CodingMessage::CycleCodingSearchMode => {
                 self.coding_search_mode = match self.coding_search_mode {
                     DesktopCodeSearchMode::Text => DesktopCodeSearchMode::Symbol,
@@ -11115,15 +11036,15 @@ impl DesktopProgram {
                 self.coding_search = None;
                 self.coding_error = None;
                 self.coding_notice = None;
-            },
+            }
             CodingMessage::ToggleCodingSearchScope => {
                 self.coding_search_all_projects = !self.coding_search_all_projects;
                 self.coding_search = None;
                 self.coding_error = None;
                 self.coding_notice = None;
-            },
+            }
             CodingMessage::CycleCodingGitDiffScope => {
-                if !self.coding_busy {
+                if !self.coding_busy() {
                     self.coding_git_diff_scope = match self.coding_git_diff_scope {
                         DesktopGitDiffScope::WorkingTree => DesktopGitDiffScope::Staged,
                         DesktopGitDiffScope::Staged => DesktopGitDiffScope::WorkingTree,
@@ -11131,7 +11052,7 @@ impl DesktopProgram {
                     self.coding_git_diff = None;
                     self.refresh_coding_tools();
                 }
-            },
+            }
             CodingMessage::SearchCodingTools => self.search_coding_tools(),
             CodingMessage::OpenCodingSearchHit(hit) => self.open_coding_search_hit(hit),
             CodingMessage::SaveCodingSearchToMemory => self.save_coding_search_to_memory(),
@@ -11139,14 +11060,17 @@ impl DesktopProgram {
         None
     }
 
-    fn apply_conversation_status_message(&mut self, message: ConversationStatusMessage) -> Option<HostedWindowAction> {
+    fn apply_conversation_status_message(
+        &mut self,
+        message: ConversationStatusMessage,
+    ) -> Option<HostedWindowAction> {
         match message {
             ConversationStatusMessage::OpenConversationStatus => self.refresh_conversation_status(),
             ConversationStatusMessage::CloseConversationStatus => {
                 self.conversation_status_open = false;
                 self.conversation_status_ready = false;
                 self.conversation_status_opacity_panel_open = false;
-            },
+            }
             ConversationStatusMessage::ToggleConversationStatusAlwaysOnTop => {
                 self.conversation_status_window.always_on_top =
                     !self.conversation_status_window.always_on_top;
@@ -11161,11 +11085,11 @@ impl DesktopProgram {
                         id: CONVERSATION_STATUS_WINDOW_ID,
                         always_on_top: self.conversation_status_window.always_on_top,
                     });
-            },
+            }
             ConversationStatusMessage::ToggleConversationStatusOpacityPanel => {
                 self.conversation_status_opacity_panel_open =
                     !self.conversation_status_opacity_panel_open;
-            },
+            }
             ConversationStatusMessage::ConversationStatusOpacityChanged(opacity) => {
                 self.conversation_status_window.opacity =
                     normalize_conversation_status_opacity(opacity);
@@ -11175,7 +11099,7 @@ impl DesktopProgram {
                 {
                     eprintln!("failed to persist Native conversation-status opacity: {error}");
                 }
-            },
+            }
             ConversationStatusMessage::OpenConversationStatusNewChat => {
                 let project_id = self.preferred_popup_project();
                 match self.open_conversation_draft_popup(project_id, None, String::new()) {
@@ -11186,36 +11110,45 @@ impl DesktopProgram {
                             Some("无法打开新对话，请稍后重试。".to_owned());
                     }
                 }
-            },
+            }
             ConversationStatusMessage::DismissConversationStatusError => {
                 self.conversation_status_error = None;
-            },
+            }
             ConversationStatusMessage::OpenConversationStatusTask(task_id) => {
                 self.open_task_popup_with_transfer(task_id, false);
-            },
+            }
             ConversationStatusMessage::StopConversationStatusTask(task_id) => {
                 self.stop_conversation_status_task(task_id);
-            },
+            }
         }
         None
     }
 
-    fn apply_workspace_window_message(&mut self, message: WorkspaceWindowMessage) -> Option<HostedWindowAction> {
+    fn apply_workspace_window_message(
+        &mut self,
+        message: WorkspaceWindowMessage,
+    ) -> Option<HostedWindowAction> {
         match message {
-            WorkspaceWindowMessage::IabWindow { window_id, message } => self.update_iab_window(window_id, message),
+            WorkspaceWindowMessage::IabWindow { window_id, message } => {
+                self.update_iab_window(window_id, message)
+            }
             WorkspaceWindowMessage::OpenChildQuestionPopup {
                 source_window,
                 parent_task_id,
             } => self.open_child_question_popup(source_window, parent_task_id),
             WorkspaceWindowMessage::MoveWorkspaceItemToNewWindow(item_id) => {
                 self.move_workspace_item_to_new_window(item_id)
-            },
-            WorkspaceWindowMessage::RestoreTaskPopupWindows => {},
+            }
+            WorkspaceWindowMessage::RestoreTaskPopupWindows => {}
             WorkspaceWindowMessage::CloseTaskPopup(window_id) => {
                 self.close_task_popup(window_id);
-            },
-            WorkspaceWindowMessage::FocusTaskPopupMain(window_id) => self.focus_task_popup_main(window_id),
-            WorkspaceWindowMessage::OpenTaskPopupNewChat(window_id) => self.open_task_popup_new_chat(window_id),
+            }
+            WorkspaceWindowMessage::FocusTaskPopupMain(window_id) => {
+                self.focus_task_popup_main(window_id)
+            }
+            WorkspaceWindowMessage::OpenTaskPopupNewChat(window_id) => {
+                self.open_task_popup_new_chat(window_id)
+            }
             WorkspaceWindowMessage::SelectWorkspaceWindowTab {
                 window_id,
                 pane_id,
@@ -11232,7 +11165,7 @@ impl DesktopProgram {
                     window_id,
                     DesktopCommand::FocusPane(pane_id),
                 );
-            },
+            }
             WorkspaceWindowMessage::SplitWorkspaceWindowPane {
                 window_id,
                 pane_id,
@@ -11243,13 +11176,13 @@ impl DesktopProgram {
                     window_id,
                     DesktopCommand::ClosePane { pane_id },
                 );
-            },
+            }
             WorkspaceWindowMessage::MoveWorkspaceWindowItemToNextPane { window_id, item_id } => {
                 self.move_workspace_window_item_to_next_pane(window_id, item_id);
-            },
+            }
             WorkspaceWindowMessage::CloseWorkspaceWindowItem { window_id, item_id } => {
                 self.close_workspace_window_item(window_id, item_id);
-            },
+            }
             WorkspaceWindowMessage::WorkspaceWindowSplitAction {
                 window_id,
                 key,
@@ -11259,7 +11192,7 @@ impl DesktopProgram {
                 if self.task_popups.contains_key(&window_id) {
                     return self.update_message(*message);
                 }
-            },
+            }
             WorkspaceWindowMessage::WorkspaceWindowProjectAction {
                 window_id,
                 item_id,
@@ -11274,7 +11207,7 @@ impl DesktopProgram {
             ComposerMessage::ToggleComposerActionMenu(window_id) => {
                 self.composer_action_menu_window =
                     (self.composer_action_menu_window != Some(window_id)).then_some(window_id);
-            },
+            }
             ComposerMessage::CloseComposerActionMenu => self.composer_action_menu_window = None,
             ComposerMessage::ComposerAction { window_id, action } => {
                 self.composer_action_menu_window = None;
@@ -11282,13 +11215,15 @@ impl DesktopProgram {
                     ComposerAction::AddFile if window_id == HostedWindowId::PRIMARY => {
                         Message::Composer(ComposerMessage::PickAttachmentFiles)
                     }
-                    ComposerAction::AddFile => Message::Composer(ComposerMessage::TaskPopupPickAttachmentFiles(window_id)),
+                    ComposerAction::AddFile => {
+                        Message::Composer(ComposerMessage::TaskPopupPickAttachmentFiles(window_id))
+                    }
                     ComposerAction::AddDirectory if window_id == HostedWindowId::PRIMARY => {
                         Message::Composer(ComposerMessage::PickAttachmentDirectories)
                     }
-                    ComposerAction::AddDirectory => {
-                        Message::Composer(ComposerMessage::TaskPopupPickAttachmentDirectories(window_id))
-                    }
+                    ComposerAction::AddDirectory => Message::Composer(
+                        ComposerMessage::TaskPopupPickAttachmentDirectories(window_id),
+                    ),
                     ComposerAction::ReferenceConversation => {
                         self.open_composer_conversation_reference(window_id);
                         return None;
@@ -11296,29 +11231,39 @@ impl DesktopProgram {
                     ComposerAction::PasteText if window_id == HostedWindowId::PRIMARY => {
                         Message::Composer(ComposerMessage::PasteClipboardText)
                     }
-                    ComposerAction::PasteText => Message::Composer(ComposerMessage::TaskPopupPasteClipboardText(window_id)),
+                    ComposerAction::PasteText => {
+                        Message::Composer(ComposerMessage::TaskPopupPasteClipboardText(window_id))
+                    }
                     ComposerAction::PasteImage if window_id == HostedWindowId::PRIMARY => {
                         Message::Composer(ComposerMessage::PasteClipboardImage)
                     }
-                    ComposerAction::PasteImage => Message::Composer(ComposerMessage::TaskPopupPasteClipboardImage(window_id)),
-                    ComposerAction::PasteFiles => Message::Composer(ComposerMessage::PasteClipboardFiles(window_id)),
+                    ComposerAction::PasteImage => {
+                        Message::Composer(ComposerMessage::TaskPopupPasteClipboardImage(window_id))
+                    }
+                    ComposerAction::PasteFiles => {
+                        Message::Composer(ComposerMessage::PasteClipboardFiles(window_id))
+                    }
                     ComposerAction::TogglePlanMode if window_id == HostedWindowId::PRIMARY => {
                         Message::Composer(ComposerMessage::TogglePlanMode)
                     }
-                    ComposerAction::TogglePlanMode => Message::Composer(ComposerMessage::TaskPopupTogglePlanMode(window_id)),
+                    ComposerAction::TogglePlanMode => {
+                        Message::Composer(ComposerMessage::TaskPopupTogglePlanMode(window_id))
+                    }
                     ComposerAction::ToggleGoalMode if window_id == HostedWindowId::PRIMARY => {
                         Message::Composer(ComposerMessage::ToggleGoalMode)
                     }
-                    ComposerAction::ToggleGoalMode => Message::Composer(ComposerMessage::TaskPopupToggleGoalMode(window_id)),
+                    ComposerAction::ToggleGoalMode => {
+                        Message::Composer(ComposerMessage::TaskPopupToggleGoalMode(window_id))
+                    }
                 };
                 self.update_message(message);
-            },
+            }
             ComposerMessage::ComposerModelSelection { window_id, event } => {
                 self.update_composer_model_selection(window_id, event);
-            },
+            }
             ComposerMessage::ComposerReasoningSelection { window_id, event } => {
                 self.update_composer_reasoning_selection(window_id, event);
-            },
+            }
             ComposerMessage::TaskPopupComposerChanged { window_id, value } => {
                 if let Some(popup) = self.task_popups.get(&window_id) {
                     sync_hosted_textarea(&popup.composer_editor, &value);
@@ -11332,16 +11277,18 @@ impl DesktopProgram {
                 ) {
                     self.refresh_task_popup_composer_suggestions(window_id);
                 }
-            },
+            }
             ComposerMessage::TaskPopupComposerEdited { window_id, action } => {
                 if let Some(popup) = self.task_popups.get(&window_id) {
                     popup.composer_editor.perform(action);
-                    self.update_message(Message::Composer(ComposerMessage::TaskPopupComposerChanged {
-                        window_id,
-                        value: popup.composer_editor.text(),
-                    }));
+                    self.update_message(Message::Composer(
+                        ComposerMessage::TaskPopupComposerChanged {
+                            window_id,
+                            value: popup.composer_editor.text(),
+                        },
+                    ));
                 }
-            },
+            }
             ComposerMessage::TaskPopupDraftProjectSelection { window_id, event } => {
                 if let DropdownEvent::Select(project_id) | DropdownEvent::Toggle(project_id) = event
                 {
@@ -11351,37 +11298,39 @@ impl DesktopProgram {
                         self.select_task_popup_draft_project(window_id, project_id);
                     }
                 }
-            },
+            }
             ComposerMessage::CycleDraftWorktree(window_id) => self.cycle_draft_worktree(window_id),
             ComposerMessage::PickDraftWorktree(window_id) => self.pick_draft_worktree(window_id),
-            ComposerMessage::RetryInitialWorktree(window_id) => self.retry_initial_worktree(window_id),
+            ComposerMessage::RetryInitialWorktree(window_id) => {
+                self.retry_initial_worktree(window_id)
+            }
             ComposerMessage::TaskPopupSelectSlashCommand { window_id, command } => {
                 self.select_slash_command(window_id, command)
-            },
+            }
             ComposerMessage::TaskPopupSelectConversationReference { window_id, task_id } => {
                 self.select_task_popup_conversation_reference(window_id, &task_id);
-            },
+            }
             ComposerMessage::TaskPopupSelectContextAttachment {
                 window_id,
                 relative_path,
             } => {
                 self.select_task_popup_context_attachment(window_id, &relative_path);
-            },
+            }
             ComposerMessage::TaskPopupPickAttachmentFiles(window_id) => {
                 self.pick_task_popup_attachments(window_id, false);
-            },
+            }
             ComposerMessage::TaskPopupPickAttachmentDirectories(window_id) => {
                 self.pick_task_popup_attachments(window_id, true);
-            },
+            }
             ComposerMessage::TaskPopupPasteClipboardText(window_id) => {
                 self.paste_clipboard_into_task_popup(window_id);
-            },
+            }
             ComposerMessage::TaskPopupPasteClipboardImage(window_id) => {
                 self.paste_clipboard_image_into_task_popup(window_id);
-            },
+            }
             ComposerMessage::PasteClipboardFiles(window_id) => {
                 self.paste_clipboard_files(window_id);
-            },
+            }
             ComposerMessage::TaskPopupRemoveAttachment {
                 window_id,
                 attachment_id,
@@ -11392,22 +11341,22 @@ impl DesktopProgram {
                 ) {
                     self.refresh_conversation_suggestions(window_id, false);
                 }
-            },
+            }
             ComposerMessage::TaskPopupRemoveConversationReference { window_id, task_id } => {
                 self.task_popup_composer_command(
                     window_id,
                     DesktopComposerCommand::RemoveConversationReference(task_id),
                 );
-            },
+            }
             ComposerMessage::TaskPopupSubmitTurn(window_id) => {
                 self.submit_task_popup_turn(window_id);
-            },
+            }
             ComposerMessage::TaskPopupCompactContext(window_id) => {
                 self.compact_task_popup_context(window_id);
-            },
+            }
             ComposerMessage::TaskPopupInterruptTurn(window_id) => {
                 self.interrupt_task_popup_turn(window_id);
-            },
+            }
             ComposerMessage::TaskPopupTogglePlanMode(window_id) => {
                 let enabled = !self
                     .task_popups
@@ -11418,7 +11367,7 @@ impl DesktopProgram {
                     window_id,
                     DesktopComposerCommand::SetPlanMode(enabled),
                 );
-            },
+            }
             ComposerMessage::TaskPopupToggleGoalMode(window_id) => {
                 let enabled = !self
                     .task_popups
@@ -11429,7 +11378,7 @@ impl DesktopProgram {
                     window_id,
                     DesktopComposerCommand::SetGoalMode(enabled),
                 );
-            },
+            }
             ComposerMessage::TaskPopupCyclePermission(window_id) => {
                 let permission = self
                     .task_popups
@@ -11441,7 +11390,7 @@ impl DesktopProgram {
                     window_id,
                     DesktopComposerCommand::SetPermission(next_permission(permission)),
                 );
-            },
+            }
             ComposerMessage::TaskPopupRespondApproval {
                 window_id,
                 request_id,
@@ -11461,7 +11410,7 @@ impl DesktopProgram {
                     popup.interaction_drafts.insert(request_id, value);
                     popup.error = None;
                 }
-            },
+            }
             ComposerMessage::AskUserDraftAction {
                 window_id,
                 request_id,
@@ -11487,7 +11436,7 @@ impl DesktopProgram {
                     popup.tool_consent_drafts.insert(request_id, draft);
                     popup.error = None;
                 }
-            },
+            }
             ComposerMessage::RespondToolConsent {
                 window_id,
                 request_id,
@@ -11522,7 +11471,7 @@ impl DesktopProgram {
                 value,
             } => self.update_mcp_field(
                 window_id,
-            request_id,
+                request_id,
                 MCP_RAW_JSON_DRAFT_KEY.to_owned(),
                 Value::String(value),
             ),
@@ -11541,7 +11490,7 @@ impl DesktopProgram {
                         self.refresh_composer_suggestions();
                     }
                 }
-            },
+            }
             ComposerMessage::ComposerEdited(action) => {
                 let editor = self
                     .main_conversation_draft
@@ -11549,27 +11498,31 @@ impl DesktopProgram {
                     .map(|draft| &draft.composer_editor)
                     .unwrap_or(&self.composer_editor);
                 editor.perform(action);
-                self.update_message(Message::Composer(ComposerMessage::ComposerChanged(editor.text())));
-            },
+                self.update_message(Message::Composer(ComposerMessage::ComposerChanged(
+                    editor.text(),
+                )));
+            }
             ComposerMessage::SelectSlashCommand(command) => {
                 self.select_slash_command(HostedWindowId::PRIMARY, command)
-            },
+            }
             ComposerMessage::SelectReviewWorkflowTarget { window_id, kind } => {
                 self.select_review_workflow_target(window_id, kind)
-            },
+            }
             ComposerMessage::ReviewWorkflowTargetChanged { window_id, value } => {
                 self.update_review_workflow_target(window_id, value)
-            },
+            }
             ComposerMessage::SubmitReviewWorkflow(window_id) => {
                 self.submit_review_slash_workflow(window_id)
-            },
-            ComposerMessage::CancelReviewWorkflow(window_id) => self.clear_review_slash_workflow(window_id),
+            }
+            ComposerMessage::CancelReviewWorkflow(window_id) => {
+                self.clear_review_slash_workflow(window_id)
+            }
             ComposerMessage::SelectConversationReference(task_id) => {
                 self.select_conversation_reference(&task_id);
-            },
+            }
             ComposerMessage::SelectContextAttachment(relative_path) => {
                 self.select_context_attachment(&relative_path);
-            },
+            }
             ComposerMessage::PasteClipboardText => self.paste_clipboard_into_composer(),
             ComposerMessage::PasteClipboardImage => self.paste_clipboard_image_into_composer(),
             ComposerMessage::PickAttachmentFiles => self.pick_attachments(false),
@@ -11580,10 +11533,10 @@ impl DesktopProgram {
             } => self.open_attachment_preview(window_id, attachment),
             ComposerMessage::CloseAttachmentPreview(window_id) => {
                 self.attachment_previews.remove(&window_id);
-            },
+            }
             ComposerMessage::OpenAttachmentPreviewPath(window_id) => {
                 self.open_attachment_preview_path(window_id);
-            },
+            }
             ComposerMessage::RemoveAttachment(attachment_id) => {
                 if self.execute_composer_command(DesktopComposerCommand::RemoveAttachment(
                     attachment_id,
@@ -11591,33 +11544,33 @@ impl DesktopProgram {
                 {
                     self.refresh_conversation_suggestions(HostedWindowId::PRIMARY, false);
                 }
-            },
+            }
             ComposerMessage::RemoveConversationReference(task_id) => {
                 self.execute_composer_command(DesktopComposerCommand::RemoveConversationReference(
                     task_id,
                 ));
-            },
+            }
             ComposerMessage::TodoDraftChanged(value) => {
                 self.todo_draft = value;
                 self.task_action_error = None;
-            },
+            }
             ComposerMessage::SaveTodo => self.save_todo(),
             ComposerMessage::CancelTodoEdit => {
                 self.todo_draft.clear();
                 self.editing_todo = None;
                 self.task_action_error = None;
-            },
+            }
             ComposerMessage::EditTodo(todo_id) => self.edit_todo(&todo_id),
             ComposerMessage::ToggleTodo(todo_id, done) => self.update_todo(
                 &todo_id,
-            DesktopTodoUpdate {
+                DesktopTodoUpdate {
                     done: Some(done),
                     ..DesktopTodoUpdate::default()
                 },
             ),
             ComposerMessage::CycleTodoPriority(todo_id, priority) => self.update_todo(
                 &todo_id,
-            DesktopTodoUpdate {
+                DesktopTodoUpdate {
                     priority: Some(next_todo_priority(priority)),
                     ..DesktopTodoUpdate::default()
                 },
@@ -11627,7 +11580,7 @@ impl DesktopProgram {
             ComposerMessage::GoalDraftChanged(value) => {
                 self.goal_draft = value;
                 self.task_action_error = None;
-            },
+            }
             ComposerMessage::SetGoal => self.set_goal(),
             ComposerMessage::RefreshGoal => self.refresh_goal(),
             ComposerMessage::ClearGoal => self.clear_goal(),
@@ -11636,13 +11589,13 @@ impl DesktopProgram {
                     .main_surface_composer()
                     .is_some_and(|composer| composer.plan_mode);
                 self.execute_composer_command(DesktopComposerCommand::SetPlanMode(enabled));
-            },
+            }
             ComposerMessage::ToggleGoalMode => {
                 let enabled = !self
                     .main_surface_composer()
                     .is_some_and(|composer| composer.goal_mode);
                 self.execute_composer_command(DesktopComposerCommand::SetGoalMode(enabled));
-            },
+            }
             ComposerMessage::CyclePermission => {
                 let permission = self
                     .main_surface_composer()
@@ -11651,10 +11604,10 @@ impl DesktopProgram {
                 self.execute_composer_command(DesktopComposerCommand::SetPermission(
                     next_permission(permission),
                 ));
-            },
+            }
             ComposerMessage::SetComposerPermission(permission) => {
                 self.execute_composer_command(DesktopComposerCommand::SetPermission(permission));
-            },
+            }
             ComposerMessage::SubmitTurn => self.submit_turn(),
             ComposerMessage::CompactContext => self.compact_context(),
             ComposerMessage::InterruptTurn => self.interrupt_turn(),
@@ -11665,12 +11618,11 @@ impl DesktopProgram {
             ComposerMessage::RespondTitleUpdate {
                 request_id,
                 accepted,
-            } => self.respond_title_update_review(HostedWindowId::PRIMARY,
-            request_id, accepted),
+            } => self.respond_title_update_review(HostedWindowId::PRIMARY, request_id, accepted),
             ComposerMessage::InteractionDraftChanged { request_id, value } => {
                 self.interaction_drafts.insert(request_id, value);
                 self.task_action_error = None;
-            },
+            }
             ComposerMessage::RespondInteraction {
                 request_id,
                 accepted,
@@ -11690,12 +11642,12 @@ impl DesktopProgram {
                 if !self.timeline_toggled_events.remove(&event_id) {
                     self.timeline_toggled_events.insert(event_id);
                 }
-            },
+            }
             TimelineMessage::TimelineEventHover(event_id) => self.timeline_hovered_event = event_id,
             TimelineMessage::LoadEarlierTimeline => self.load_earlier_timeline(),
             TimelineMessage::TaskPopupLoadEarlierTimeline(window_id) => {
                 self.load_earlier_task_popup_timeline(window_id);
-            },
+            }
             TimelineMessage::TimelineScrolled {
                 surface,
                 offset,
@@ -11714,10 +11666,11 @@ impl DesktopProgram {
                 if let Some(content_extent) = content_extent {
                     self.queue_timeline_to_end(surface, content_extent);
                 }
-            },
+            }
             TimelineMessage::OpenMarkdownLink(uri) => {
                 match self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .execute_host(DesktopHostAction::OpenExternal(uri))
                 {
                     Ok(DesktopHostResult::Completed) => self.task_action_error = None,
@@ -11727,11 +11680,12 @@ impl DesktopProgram {
                     }
                     Err(error) => self.task_action_error = Some(error.to_string()),
                 }
-            },
+            }
             TimelineMessage::CopyTimelineMarkdown { event_id, text } => {
                 let byte_count = text.len();
                 match self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .execute_host(DesktopHostAction::WriteClipboardText(text))
                 {
                     Ok(DesktopHostResult::Completed) => {
@@ -11744,7 +11698,7 @@ impl DesktopProgram {
                     }
                     Err(error) => self.task_action_error = Some(error.to_string()),
                 }
-            },
+            }
             TimelineMessage::TimelineTextSelectionChanged {
                 window_id,
                 event_id,
@@ -11766,20 +11720,22 @@ impl DesktopProgram {
                 {
                     self.timeline_text_selections.remove(&window_id);
                 }
-            },
-            TimelineMessage::CopyTimelineSelection { window_id } => self.copy_timeline_selection(window_id),
+            }
+            TimelineMessage::CopyTimelineSelection { window_id } => {
+                self.copy_timeline_selection(window_id)
+            }
             TimelineMessage::QuoteTimelineSelection { window_id } => {
                 self.quote_timeline_selection(window_id)
-            },
+            }
             TimelineMessage::AskTimelineSelectionInPopup { window_id } => {
                 self.ask_timeline_selection_in_popup(window_id)
-            },
+            }
             TimelineMessage::MarkdownImageLoaded { source, result } => {
                 self.complete_markdown_image_load(source, result);
-            },
+            }
             TimelineMessage::RetryMarkdownImage(source) => {
                 self.request_markdown_image_load(&source);
-            },
+            }
             TimelineMessage::OpenMarkdownImage { window_id, image } => {
                 let ready = matches!(
                     self.markdown_images.get(&image.source),
@@ -11795,11 +11751,11 @@ impl DesktopProgram {
                         },
                     );
                 }
-            },
+            }
             TimelineMessage::CloseMarkdownImage(window_id) => {
                 self.markdown_image_previews.remove(&window_id);
-            },
-            TimelineMessage::MarkdownImageViewerInteraction => {},
+            }
+            TimelineMessage::MarkdownImageViewerInteraction => {}
             TimelineMessage::RetryTimelineEvent {
                 window_id,
                 event_id,
@@ -11839,11 +11795,11 @@ impl DesktopProgram {
                         return_item_id.map(|item_id| json!(item_id.as_str())),
                     );
                 }
-            },
+            }
             SettingsMessage::CloseSettings => {
                 self.shell_shortcut_capturing = false;
                 self.close_application_surface(ApplicationWorkspaceSurface::Settings)
-            },
+            }
             SettingsMessage::SelectSettingsTab(tab) => {
                 if tab.as_str() != "desktop" {
                     self.shell_shortcut_capturing = false;
@@ -11855,7 +11811,7 @@ impl DesktopProgram {
                     Some(json!(tab.as_str())),
                 );
                 self.refresh_active_settings_tab();
-            },
+            }
             SettingsMessage::Appearance(event) => self.update_appearance(event),
             SettingsMessage::SetSidebarDisplayMode(mode) => {
                 if self.sidebar_display_mode != mode {
@@ -11867,28 +11823,28 @@ impl DesktopProgram {
                         self.error_message = None;
                     }
                 }
-            },
+            }
             SettingsMessage::InjectDebugTimeline { window_id, action } => {
                 self.inject_debug_timeline(window_id, action)
-            },
+            }
             SettingsMessage::SetConversationSuggestionsEnabled(enabled) => {
                 self.set_conversation_suggestions_enabled(enabled)
-            },
+            }
             SettingsMessage::ToggleAgentInteraction(toggle) => {
                 self.toggle_agent_interaction_setting(toggle)
-            },
+            }
             SettingsMessage::AgentNameChanged(value) => {
                 self.custom_agent_name = value;
                 self.agent_interaction_error = None;
-            },
+            }
             SettingsMessage::AgentDescriptionChanged(value) => {
                 self.custom_agent_description = value;
                 self.agent_interaction_error = None;
-            },
+            }
             SettingsMessage::AgentInstructionEdited(action) => {
                 self.custom_agent_instruction.perform(action);
                 self.agent_interaction_error = None;
-            },
+            }
             SettingsMessage::EditCustomAgent(agent_id) => self.edit_custom_agent(&agent_id),
             SettingsMessage::NewCustomAgent => self.begin_new_custom_agent(),
             SettingsMessage::SaveCustomAgent => self.save_custom_agent(),
@@ -11899,11 +11855,11 @@ impl DesktopProgram {
                 self.shell_shortcut_edit = value;
                 self.shell_shortcut_capturing = false;
                 self.shell_error = None;
-            },
+            }
             SettingsMessage::BeginShellShortcutCapture => {
                 self.shell_shortcut_capturing = true;
                 self.shell_error = None;
-            },
+            }
             SettingsMessage::ShellShortcutCaptured(event) => {
                 match event {
                     KeyCaptureEvent::Captured(stroke) => {
@@ -11914,20 +11870,20 @@ impl DesktopProgram {
                 }
                 self.shell_shortcut_capturing = false;
                 self.shell_error = None;
-            },
+            }
             SettingsMessage::SaveShellShortcut => {
                 self.shell_shortcut_capturing = false;
-                match self
-                    .shell
-                    .set_shortcut(self.kernel.session(), Some(self.shell_shortcut_edit.clone()))
-                {
+                match self.shell.set_shortcut(
+                    self.kernel.session(),
+                    Some(self.shell_shortcut_edit.clone()),
+                ) {
                     Ok(shortcut) => {
                         self.shell_shortcut_edit = shortcut.unwrap_or_default();
                         self.shell_error = None;
                     }
                     Err(error) => self.shell_error = Some(error),
                 }
-            },
+            }
             SettingsMessage::ClearShellShortcut => {
                 self.shell_shortcut_capturing = false;
                 match self.shell.set_shortcut(self.kernel.session(), None) {
@@ -11937,12 +11893,15 @@ impl DesktopProgram {
                     }
                     Err(error) => self.shell_error = Some(error),
                 }
-            },
+            }
         }
         None
     }
 
-    fn apply_workspace_layout_message(&mut self, message: WorkspaceLayoutMessage) -> Option<HostedWindowAction> {
+    fn apply_workspace_layout_message(
+        &mut self,
+        message: WorkspaceLayoutMessage,
+    ) -> Option<HostedWindowAction> {
         match message {
             WorkspaceLayoutMessage::Workspace(action) => {
                 let window_resized = matches!(action, WorkspaceAction::WindowResized { .. });
@@ -11965,10 +11924,10 @@ impl DesktopProgram {
                 if workspace_changed && persist_sidebar_layout {
                     self.persist_sidebar_layout_state();
                 }
-            },
+            }
             WorkspaceLayoutMessage::SelectWorkspacePaneTab { pane_id, item_id } => {
                 self.select_workspace_pane_tab(pane_id, item_id);
-            },
+            }
             WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
                 pane_id,
                 item_id,
@@ -11979,7 +11938,7 @@ impl DesktopProgram {
                     target_pane_id: pane_id,
                     before,
                 });
-            },
+            }
             WorkspaceLayoutMessage::TransferWorkspaceTab {
                 source_strip,
                 target_strip,
@@ -11987,23 +11946,25 @@ impl DesktopProgram {
                 before,
             } => {
                 self.transfer_workspace_tab(&source_strip, &target_strip, item_id, before);
-            },
+            }
             WorkspaceLayoutMessage::FocusWorkspacePane(pane_id) => {
                 self.execute_workspace_command(DesktopCommand::FocusPane(pane_id));
-            },
+            }
             WorkspaceLayoutMessage::SplitWorkspacePane { pane_id, axis } => {
                 self.split_workspace_pane(pane_id, axis);
-            },
+            }
             WorkspaceLayoutMessage::WorkspaceSplitAction { key, action } => {
                 self.update_workspace_split(key, action);
-            },
+            }
             WorkspaceLayoutMessage::MoveWorkspaceItemToNextPane(item_id) => {
                 self.move_workspace_item_to_next_pane(item_id);
-            },
+            }
             WorkspaceLayoutMessage::CloseWorkspacePane(pane_id) => {
                 self.execute_workspace_command(DesktopCommand::ClosePane { pane_id });
-            },
-            WorkspaceLayoutMessage::CloseWorkspaceItem(item_id) => self.close_workspace_item(item_id),
+            }
+            WorkspaceLayoutMessage::CloseWorkspaceItem(item_id) => {
+                self.close_workspace_item(item_id)
+            }
         }
         None
     }
@@ -12015,7 +11976,7 @@ impl DesktopProgram {
                 if self.titlebar_menu_open {
                     self.sidebar_menu = None;
                 }
-            },
+            }
             ChromeMessage::TitlebarMenu(event) => self.update_titlebar_menu(event),
             ChromeMessage::ToggleCommandPalette => {
                 self.titlebar_menu_open = false;
@@ -12025,7 +11986,7 @@ impl DesktopProgram {
                     let window_id = HostedWindowId::PRIMARY;
                     self.open_command_palette(window_id, self.active_item_for_window(window_id));
                 }
-            },
+            }
             ChromeMessage::CommandPalette(event) => self.update_command_palette(event),
             ChromeMessage::CommandKeyStroke {
                 window_id,
@@ -12040,7 +12001,7 @@ impl DesktopProgram {
                 self.command_source_window = window_id;
                 self.command_source_item = item_id;
                 self.execute_native_action(action);
-            },
+            }
             ChromeMessage::FromShell(intent) => return self.apply_shell_intent(intent),
             ChromeMessage::Shell(command) => match command {
                 ShellCommand::OpenNewConversation => {
@@ -12051,11 +12012,15 @@ impl DesktopProgram {
                 }
                 ShellCommand::ToggleConversationStatus => {
                     if self.conversation_status_open {
-                        self.update_message(Message::ConversationStatus(ConversationStatusMessage::CloseConversationStatus));
+                        self.update_message(Message::ConversationStatus(
+                            ConversationStatusMessage::CloseConversationStatus,
+                        ));
                         self.pending_window_commands
                             .push(HostedWindowCommand::Close(CONVERSATION_STATUS_WINDOW_ID));
                     } else {
-                        self.update_message(Message::ConversationStatus(ConversationStatusMessage::OpenConversationStatus));
+                        self.update_message(Message::ConversationStatus(
+                            ConversationStatusMessage::OpenConversationStatus,
+                        ));
                         self.pending_window_commands
                             .push(conversation_status_window_command(
                                 false,
@@ -12074,13 +12039,12 @@ impl DesktopProgram {
                         id: HostedWindowId::PRIMARY,
                         action,
                     });
-            },
+            }
             #[cfg(debug_assertions)]
             ChromeMessage::AgentDebug(request) => self.handle_debug_request(request),
         }
         None
     }
-
 
     fn apply_project_message(&mut self, message: ProjectMessage) -> Option<HostedWindowAction> {
         match message {
@@ -12092,17 +12056,17 @@ impl DesktopProgram {
                 self.project_name_edit = value;
                 self.error_message = None;
                 self.project_action_error = None;
-            },
+            }
             ProjectMessage::ProjectWorkspaceChanged(value) => {
                 self.project_workspace_edit = value;
                 self.error_message = None;
                 self.project_action_error = None;
-            },
+            }
             ProjectMessage::PickProjectWorkspace => self.pick_project_workspace(),
             ProjectMessage::ClearProjectWorkspace => {
                 self.project_workspace_edit.clear();
                 self.project_action_error = None;
-            },
+            }
             ProjectMessage::SaveProject => self.save_project(),
             ProjectMessage::ToggleProjectPinned => self.toggle_project_pinned(),
             ProjectMessage::MoveProjectUp => self.move_selected_project(-1),
@@ -12114,34 +12078,38 @@ impl DesktopProgram {
             ProjectMessage::RequestProjectRemoval => self.request_project_removal(),
             ProjectMessage::ConfirmProjectRemoval => self.confirm_project_removal(),
             ProjectMessage::CancelProjectRemoval => self.project_removal = None,
-            ProjectMessage::ProjectRemovalDialogInteraction => {},
+            ProjectMessage::ProjectRemovalDialogInteraction => {}
             ProjectMessage::RequestProjectConversationArchive => {
                 self.request_project_conversation_archive()
-            },
+            }
             ProjectMessage::ConfirmProjectConversationArchive => {
                 self.confirm_project_conversation_archive()
-            },
-            ProjectMessage::CancelProjectConversationArchive => self.project_archive_confirmation = None,
-            ProjectMessage::ProjectConversationArchiveDialogInteraction => {},
+            }
+            ProjectMessage::CancelProjectConversationArchive => {
+                self.project_archive_confirmation = None
+            }
+            ProjectMessage::ProjectConversationArchiveDialogInteraction => {}
             ProjectMessage::RestoreProject(project_id) => self.restore_project(project_id),
             ProjectMessage::OpenProjectTasks => self.open_project_tasks(),
             ProjectMessage::OpenProjectSettings => self.open_project_settings(),
             ProjectMessage::CloseInspectorDock => self.close_inspector_dock(),
-            ProjectMessage::OpenProjectFiles => self.open_project_surface(ProjectWorkspaceSurface::Files),
+            ProjectMessage::OpenProjectFiles => {
+                self.open_project_surface(ProjectWorkspaceSurface::Files)
+            }
             ProjectMessage::RefreshProjectFiles => self.refresh_project_files(),
             ProjectMessage::ToggleProjectFileExpand(path) => self.toggle_project_file_expand(path),
             ProjectMessage::OpenProjectFile(path) => {
                 self.open_project_file_path(path);
-            },
+            }
             ProjectMessage::OpenProjectWorkspace => {
                 self.open_project_workspace(ExternalWorkspaceTarget::FileManager);
-            },
+            }
             ProjectMessage::OpenProjectCodeEditor => {
                 self.open_project_workspace(ExternalWorkspaceTarget::CodeEditor);
-            },
+            }
             ProjectMessage::OpenProjectTerminal => {
                 self.open_project_workspace(ExternalWorkspaceTarget::Terminal);
-            },
+            }
             ProjectMessage::OpenNativeProjectTerminal => self.open_native_project_terminal(),
             ProjectMessage::RunProjectTask(task_id) => self.run_project_task(task_id),
             ProjectMessage::SelectProject(project_id) => {
@@ -12155,22 +12123,22 @@ impl DesktopProgram {
                 }
                 self.execute_workspace_command(DesktopCommand::SelectProject(project_id));
                 self.refresh_project_files();
-            },
+            }
             ProjectMessage::CycleProjectWorktreeMode => self.cycle_project_worktree_mode(),
             ProjectMessage::ProjectWorktreeParentChanged(value) => {
                 self.project_settings.worktree.parent_dir = Some(value);
                 self.project_settings_error = None;
-            },
+            }
             ProjectMessage::PickProjectWorktreeParent => self.pick_project_worktree_parent(),
             ProjectMessage::ProjectWorktreeInstructionsEdited(action) => {
                 self.project_worktree_instructions.perform(action);
                 self.project_settings_error = None;
-            },
+            }
             ProjectMessage::ToggleProjectWorktreeCleanup => {
                 self.project_settings.worktree.cleanup_on_archive =
                     !self.project_settings.worktree.cleanup_on_archive;
                 self.project_settings_error = None;
-            },
+            }
             ProjectMessage::SaveProjectSettings => self.save_project_preferences(),
         }
         None
@@ -12182,13 +12150,13 @@ impl DesktopProgram {
             TaskMessage::NewTaskTitleChanged(value) => {
                 self.new_task_title = value;
                 self.error_message = None;
-            },
+            }
             TaskMessage::CreateTask => self.create_task(),
             TaskMessage::CloseMainConversationDraft => self.close_main_conversation_draft(),
             TaskMessage::TaskTitleChanged(value) => {
                 self.task_title_edit = value;
                 self.task_action_error = None;
-            },
+            }
             TaskMessage::SaveTask => self.save_task(),
             TaskMessage::CycleTaskDependency => self.cycle_task_dependency(),
             TaskMessage::ToggleTaskDependency => self.toggle_task_dependency(),
@@ -12202,11 +12170,11 @@ impl DesktopProgram {
                 before_task_id,
             } => self.reorder_task(task_id, before_task_id),
             TaskMessage::DropTask { source, before } => self.drop_task(source, before),
-            TaskMessage::TaskDropInteraction => {},
+            TaskMessage::TaskDropInteraction => {}
             TaskMessage::TaskDropSearchChanged(value) => {
                 self.task_drop_search = value;
                 self.task_action_error = None;
-            },
+            }
             TaskMessage::CycleTaskMoveTarget => self.cycle_task_move_target(),
             TaskMessage::MoveTaskToProject => self.move_selected_task_to_project(),
             TaskMessage::CycleTaskParentTarget => self.cycle_task_parent_target(),
@@ -12220,14 +12188,14 @@ impl DesktopProgram {
                 self.automations_open = false;
                 self.project_surface = ProjectSurface::Tasks;
                 self.execute_workspace_command(DesktopCommand::SelectInbox);
-            },
+            }
             TaskMessage::SelectTask(task_id) => {
                 self.close_sidebar_search();
                 self.close_main_conversation_draft();
                 self.automations_open = false;
                 self.project_surface = ProjectSurface::Tasks;
                 self.select_task(task_id);
-            },
+            }
         }
         None
     }
@@ -12245,16 +12213,16 @@ impl DesktopProgram {
                         target: target_ids::SIDEBAR_SEARCH_INPUT.to_owned(),
                     });
                 }
-            },
+            }
             SidebarMessage::SidebarSearchChanged(value) => {
                 self.sidebar_search_query = value;
                 self.sidebar_search_selection = 0;
-            },
+            }
             SidebarMessage::SidebarSearchSelectionChanged(index) => {
                 if index < self.sidebar_search_targets().len() {
                     self.sidebar_search_selection = index;
                 }
-            },
+            }
             SidebarMessage::ToggleSidebarProject(project_id) => {
                 let key = project_id.as_str().to_owned();
                 if let Some(index) = self
@@ -12268,7 +12236,7 @@ impl DesktopProgram {
                     self.sidebar_tree_state.expanded_project_ids.push(key);
                 }
                 self.persist_sidebar_tree_state();
-            },
+            }
             SidebarMessage::ToggleAllSidebarProjects => {
                 let all_expanded = self
                     .projects
@@ -12283,21 +12251,21 @@ impl DesktopProgram {
                         .collect()
                 };
                 self.persist_sidebar_tree_state();
-            },
+            }
             SidebarMessage::ToggleSidebarInbox => {
                 self.sidebar_tree_state.inbox_expanded = !self.sidebar_tree_state.inbox_expanded;
                 self.persist_sidebar_tree_state();
-            },
+            }
             SidebarMessage::RevealSidebarInboxTasks => {
                 self.sidebar_inbox_revealed = true;
-            },
+            }
             SidebarMessage::RevealSidebarProjectTasks(project_id) => {
                 self.sidebar_revealed_projects.insert(project_id);
-            },
+            }
             SidebarMessage::OpenSidebarMenuAt { target, anchor } => {
                 self.titlebar_menu_open = false;
                 self.sidebar_menu = Some(SidebarMenuState::new(target, anchor));
-            },
+            }
             SidebarMessage::OpenSidebarMenu { target, anchor_y } => {
                 self.titlebar_menu_open = false;
                 let anchor_x = self
@@ -12312,7 +12280,7 @@ impl DesktopProgram {
                     target,
                     Point::new(anchor_x, anchor_y),
                 ));
-            },
+            }
             SidebarMessage::SidebarMenu(event) => self.update_sidebar_menu(event),
             SidebarMessage::OpenSidebarProjectPopup(project_id) => {
                 if let Err(error) =
@@ -12320,40 +12288,41 @@ impl DesktopProgram {
                 {
                     self.error_message = Some(format!("无法创建新对话窗口：{error}"));
                 }
-            },
+            }
             SidebarMessage::OpenSidebarProjectDraft(project_id) => {
                 self.execute_workspace_command(DesktopCommand::SelectProject(project_id));
                 self.open_main_conversation_draft();
-            },
+            }
             SidebarMessage::OpenSidebarInboxDraft => {
                 self.execute_workspace_command(DesktopCommand::SelectInbox);
                 self.open_main_conversation_draft();
-            },
+            }
             SidebarMessage::OpenSidebarTaskPopup(task_id) => {
                 self.select_task(task_id.clone());
                 if self.selected_task.as_ref() == Some(&task_id) {
                     self.open_selected_task_popup();
                 }
-            },
+            }
             SidebarMessage::SidebarToggleTaskPinned(task_id) => {
                 self.sidebar_pending_task_archive = None;
                 self.select_task(task_id.clone());
                 if self.selected_task.as_ref() == Some(&task_id) {
                     self.toggle_task_pinned();
                 }
-            },
+            }
             SidebarMessage::SidebarRequestTaskWorktreeMerge(task_id) => {
                 self.sidebar_pending_task_archive = None;
                 self.select_task(task_id.clone());
                 if self.selected_task.as_ref() == Some(&task_id)
                     && self
-                        .kernel.session()
+                        .kernel
+                        .session()
                         .task_worktree(&task_id)
                         .is_ok_and(|worktree| worktree.is_some())
                 {
                     self.worktree_confirmation = Some(WorktreeDangerAction::MergeAndArchive);
                 }
-            },
+            }
             SidebarMessage::SidebarArchiveTask(task_id) => {
                 if self.sidebar_pending_task_archive.as_ref() != Some(&task_id) {
                     self.sidebar_pending_task_archive = Some(task_id);
@@ -12364,47 +12333,48 @@ impl DesktopProgram {
                 if self.selected_task.as_ref() == Some(&task_id) {
                     self.archive_task();
                 }
-            },
+            }
             SidebarMessage::CancelSidebarTaskArchive(task_id) => {
                 if self.sidebar_pending_task_archive.as_ref() == Some(&task_id) {
                     self.sidebar_pending_task_archive = None;
                 }
-            },
+            }
             SidebarMessage::SidebarStopTask(task_id) => self.stop_conversation_status_task(task_id),
             SidebarMessage::SidebarTreeDrop {
                 source,
                 target,
                 position,
             } => self.apply_sidebar_tree_drop(source, target, position),
-            SidebarMessage::SidebarTreeInteraction => {},
+            SidebarMessage::SidebarTreeInteraction => {}
             SidebarMessage::DismissSidebarError => {
                 self.conversation_status_error = None;
                 self.task_move_candidates_error = None;
                 self.error_message = None;
-            },
+            }
             SidebarMessage::OpenSidebarNavigation(target) => {
                 self.navigate(sidebar_navigation_target(target));
-            },
+            }
         }
         None
     }
 
-    fn apply_project_clone_message(&mut self, message: ProjectCloneMessage) -> Option<HostedWindowAction> {
+    fn apply_project_clone_message(
+        &mut self,
+        message: ProjectCloneMessage,
+    ) -> Option<HostedWindowAction> {
         match message {
             ProjectCloneMessage::Close => self.close_project_clone(),
             ProjectCloneMessage::RepositoryChanged(value) => {
                 self.project_clone_repository = value;
                 self.selected_github_repository = None;
                 self.project_action_error = None;
-            },
+            }
             ProjectCloneMessage::ParentChanged(value) => {
                 self.project_clone_parent = value;
                 self.persist_project_clone_parent();
                 self.project_action_error = None;
-            },
-            ProjectCloneMessage::PickParent => {
-                self.pick_project_clone_parent()
-            },
+            }
+            ProjectCloneMessage::PickParent => self.pick_project_clone_parent(),
             ProjectCloneMessage::Start => self.start_project_clone(),
             ProjectCloneMessage::Cancel => self.cancel_project_clone(),
         }
@@ -12418,18 +12388,14 @@ impl DesktopProgram {
             GitHubMessage::OpenVerification => self.open_github_verification(),
             GitHubMessage::CopyUserCode => self.copy_github_user_code(),
             GitHubMessage::Unbind => self.unbind_github(),
-            GitHubMessage::RefreshRepositories => {
-                self.load_github_repositories(false)
-            },
-            GitHubMessage::LoadMoreRepositories => {
-                self.load_github_repositories(true)
-            },
+            GitHubMessage::RefreshRepositories => self.load_github_repositories(false),
+            GitHubMessage::LoadMoreRepositories => self.load_github_repositories(true),
             GitHubMessage::SelectRepository { full_name } => {
                 self.project_clone_repository = full_name.clone();
                 self.selected_github_repository = Some(full_name);
                 self.project_action_error = None;
                 self.github_error = None;
-            },
+            }
         }
         None
     }
@@ -12438,22 +12404,20 @@ impl DesktopProgram {
         match message {
             DocumentMessage::EditorEdited { item_id, action } => {
                 self.handle_document_editor_action(item_id, action);
-            },
+            }
             DocumentMessage::GoToDefinition { item_id, window_id } => {
                 self.start_document_definition(item_id, window_id);
-            },
+            }
             DocumentMessage::OpenDefinitionTarget {
                 item_id,
                 window_id,
                 index,
             } => self.open_document_definition_target(item_id, window_id, index),
             DocumentMessage::SaveEditor(item_id) => self.save_document_editor(item_id),
-            DocumentMessage::DiscardEditor(item_id) => {
-                self.discard_document_editor(item_id)
-            },
+            DocumentMessage::DiscardEditor(item_id) => self.discard_document_editor(item_id),
             DocumentMessage::SelectDiagnostic { item_id, index } => {
                 self.select_document_diagnostic(item_id, index);
-            },
+            }
         }
         None
     }
@@ -12465,51 +12429,51 @@ impl DesktopProgram {
         None
     }
 
-    fn apply_suggestions_message(&mut self, message: SuggestionsMessage) -> Option<HostedWindowAction> {
+    fn apply_suggestions_message(
+        &mut self,
+        message: SuggestionsMessage,
+    ) -> Option<HostedWindowAction> {
         match message {
             SuggestionsMessage::Refresh { window_id, force } => {
                 self.refresh_conversation_suggestions(window_id, force);
-            },
+            }
             SuggestionsMessage::Apply { window_id, prompt } => {
                 self.apply_conversation_suggestion(window_id, prompt);
-            },
+            }
         }
         None
     }
 
-    fn apply_prompt_optimize_message(&mut self, message: PromptOptimizeMessage) -> Option<HostedWindowAction> {
+    fn apply_prompt_optimize_message(
+        &mut self,
+        message: PromptOptimizeMessage,
+    ) -> Option<HostedWindowAction> {
         match message {
-            PromptOptimizeMessage::Optimize(window_id) => {
-                self.start_prompt_optimization(window_id)
-            },
+            PromptOptimizeMessage::Optimize(window_id) => self.start_prompt_optimization(window_id),
             PromptOptimizeMessage::ApplyRoute(window_id) => {
                 self.apply_prompt_route_workflow(window_id)
-            },
+            }
             PromptOptimizeMessage::DismissRoute(window_id) => {
                 self.dismiss_prompt_route_workflow(window_id)
-            },
+            }
         }
         None
     }
 
     fn apply_worktree_message(&mut self, message: WorktreeMessage) -> Option<HostedWindowAction> {
         match message {
-            WorktreeMessage::Create => {
-                self.start_worktree_operation(WorktreeOperation::Create)
-            },
+            WorktreeMessage::Create => self.start_worktree_operation(WorktreeOperation::Create),
             WorktreeMessage::Pick => self.pick_worktree(),
             WorktreeMessage::Open => self.open_worktree(),
-            WorktreeMessage::Clear => {
-                self.start_worktree_operation(WorktreeOperation::Clear)
-            },
+            WorktreeMessage::Clear => self.start_worktree_operation(WorktreeOperation::Clear),
             WorktreeMessage::RequestCleanup => {
                 self.worktree_confirmation = Some(WorktreeDangerAction::CleanupAndArchive);
                 self.task_action_error = None;
-            },
+            }
             WorktreeMessage::RequestMerge => {
                 self.worktree_confirmation = Some(WorktreeDangerAction::MergeAndArchive);
                 self.task_action_error = None;
-            },
+            }
             WorktreeMessage::ConfirmAction => {
                 if let Some(action) = self.worktree_confirmation.take() {
                     self.start_worktree_operation(match action {
@@ -12519,11 +12483,11 @@ impl DesktopProgram {
                         WorktreeDangerAction::MergeAndArchive => WorktreeOperation::MergeAndArchive,
                     });
                 }
-            },
+            }
             WorktreeMessage::CancelAction => {
                 self.worktree_confirmation = None;
                 self.task_action_error = None;
-            },
+            }
         }
         None
     }
@@ -12531,9 +12495,7 @@ impl DesktopProgram {
     fn apply_import_message(&mut self, message: ImportMessage) -> Option<HostedWindowAction> {
         match message {
             ImportMessage::PickSource => self.pick_data_import_source(),
-            ImportMessage::ToggleCredentials => {
-                self.data_import.toggle_credentials()
-            },
+            ImportMessage::ToggleCredentials => self.data_import.toggle_credentials(),
             ImportMessage::Execute => self.start_data_import_execution(),
             ImportMessage::Reset => self.reset_data_import(),
             ImportMessage::RestartAfter => self.restart_after_data_import(),
@@ -12554,13 +12516,13 @@ impl DesktopProgram {
                     self.provider_secret.clear();
                     self.provider_error = None;
                 }
-            },
+            }
             ProviderMessage::SecretChanged(value) => {
-                if !self.provider_busy {
+                if !self.provider_busy() {
                     self.provider_secret = value;
                     self.provider_error = None;
                 }
-            },
+            }
             ProviderMessage::SaveCredential => self.save_provider_credential(),
             ProviderMessage::RevokeCredential {
                 credential_id,
@@ -12573,61 +12535,57 @@ impl DesktopProgram {
                 self.start_provider_operation(CredentialRequest::Refresh {
                     provider_id: self.selected_provider.clone(),
                 });
-            },
+            }
             ProviderMessage::ModelChanged(value) => {
                 self.provider_model = value;
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::OpenAiEndpointChanged(value) => {
                 self.provider_openai_endpoint = value;
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::AnthropicEndpointChanged(value) => {
                 self.provider_anthropic_endpoint = value;
                 self.provider_error = None;
-            },
-            ProviderMessage::SaveRuntimeSettings => {
-                self.save_provider_runtime_settings()
-            },
-            ProviderMessage::ResetRuntimeSettings => {
-                self.reset_provider_runtime_settings()
-            },
+            }
+            ProviderMessage::SaveRuntimeSettings => self.save_provider_runtime_settings(),
+            ProviderMessage::ResetRuntimeSettings => self.reset_provider_runtime_settings(),
             ProviderMessage::AssistantBaseUrlChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.provider_ai_settings.assistant_base_url = value;
                     self.provider_error = None;
                     self.assistant_ai_probe_notice = None;
                 }
-            },
+            }
             ProviderMessage::AssistantModelChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.provider_ai_settings.assistant_model = value;
                     self.provider_error = None;
                     self.assistant_ai_probe_notice = None;
                 }
-            },
+            }
             ProviderMessage::AssistantSecretChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.provider_ai_settings.assistant_secret = value;
                     self.provider_error = None;
                     self.assistant_ai_probe_notice = None;
                 }
-            },
+            }
             ProviderMessage::AssistantNewModelIdChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.assistant_ai_new_model_id = value;
                     self.assistant_ai_probe_notice = None;
                 }
-            },
+            }
             ProviderMessage::AssistantNewModelLabelChanged(value) => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.assistant_ai_new_model_label = value;
                     self.assistant_ai_probe_notice = None;
                 }
-            },
+            }
             ProviderMessage::AddAssistantModel => {
-                if !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                if !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                     && self.provider_ai_settings.add_assistant_model(
                         &self.assistant_ai_new_model_id,
                         &self.assistant_ai_new_model_label,
@@ -12637,77 +12595,67 @@ impl DesktopProgram {
                     self.assistant_ai_new_model_label.clear();
                     self.assistant_ai_probe_notice = None;
                 }
-            },
+            }
             ProviderMessage::RenameAssistantModel { model_id, value } => {
-                if !self.provider_busy && !self.assistant_ai_probe_busy {
+                if !self.provider_busy() && !self.assistant_ai_probe_busy() {
                     self.provider_ai_settings
                         .rename_assistant_model(&model_id, value);
                     self.assistant_ai_probe_notice = None;
                 }
-            },
-            ProviderMessage::FetchAssistantModels => {
-                self.start_assistant_ai_models_fetch()
-            },
-            ProviderMessage::TestAssistantConnection => {
-                self.start_assistant_ai_connection_test()
-            },
-            ProviderMessage::SaveAssistantConfiguration => {
-                self.save_assistant_ai_configuration()
-            },
-            ProviderMessage::ClearAssistantSecret => {
-                self.clear_assistant_ai_secret()
-            },
+            }
+            ProviderMessage::FetchAssistantModels => self.start_assistant_ai_models_fetch(),
+            ProviderMessage::TestAssistantConnection => self.start_assistant_ai_connection_test(),
+            ProviderMessage::SaveAssistantConfiguration => self.save_assistant_ai_configuration(),
+            ProviderMessage::ClearAssistantSecret => self.clear_assistant_ai_secret(),
             ProviderMessage::TitleModelChanged(value) => {
                 self.provider_ai_settings.title_model = value;
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::SuggestionModelChanged(value) => {
                 self.provider_ai_settings.suggestion_model = value;
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::PromptRouterModelChanged(value) => {
                 self.provider_ai_settings.prompt_router_model = value;
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::PromptOptimizeModelChanged(value) => {
                 self.provider_ai_settings.prompt_optimize_model = value;
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::AutoTurnDecisionModelChanged(value) => {
                 self.provider_ai_settings.auto_turn_decision_model = value;
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::FeaturePresetModelChanged { preset_id, value } => {
                 self.provider_ai_settings
                     .set_preset_model(&preset_id, value);
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::CycleFeaturePresetEffort(preset_id) => {
                 self.provider_ai_settings.cycle_preset_effort(&preset_id);
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::CustomPresetDraftChanged(value) => {
                 self.custom_preset_draft = value;
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::AddCustomPreset => {
                 self.provider_ai_settings
                     .add_custom_preset(&self.custom_preset_draft);
                 self.custom_preset_draft.clear();
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::RenameCustomPreset { preset_id, value } => {
                 self.provider_ai_settings
                     .rename_custom_preset(&preset_id, value);
                 self.provider_error = None;
-            },
+            }
             ProviderMessage::RemoveCustomPreset(preset_id) => {
                 self.provider_ai_settings.remove_custom_preset(&preset_id);
                 self.provider_error = None;
-            },
-            ProviderMessage::SaveModelFeatureSettings => {
-                self.save_model_feature_settings()
-            },
+            }
+            ProviderMessage::SaveModelFeatureSettings => self.save_model_feature_settings(),
         }
         None
     }
@@ -12716,90 +12664,81 @@ impl DesktopProgram {
         match message {
             QuotaMessage::Refresh => self.refresh_quota(),
             QuotaMessage::CycleDays => {
-                if !self.quota_busy {
+                if !self.quota_busy() {
                     self.quota_days = next_quota_days(self.quota_days);
                     self.refresh_quota();
                 }
-            },
+            }
             QuotaMessage::CycleBackend => {
-                if !self.quota_busy {
+                if !self.quota_busy() {
                     self.quota_backend = next_quota_backend(&self.quota_backend).to_owned();
                     self.refresh_quota();
                 }
-            },
+            }
         }
         None
     }
 
-    fn apply_extensions_message(&mut self, message: ExtensionsMessage) -> Option<HostedWindowAction> {
+    fn apply_extensions_message(
+        &mut self,
+        message: ExtensionsMessage,
+    ) -> Option<HostedWindowAction> {
         match message {
             ExtensionsMessage::Refresh => self.refresh_extensions(),
             ExtensionsMessage::SkillIdChanged(value) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.skill_id_input = value;
                     self.extensions_error = None;
                 }
-            },
+            }
             ExtensionsMessage::SkillDescriptionChanged(value) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.skill_description_input = value;
                     self.extensions_error = None;
                 }
-            },
+            }
             ExtensionsMessage::CreateSkill => self.create_skill(),
-            ExtensionsMessage::ToggleSkill(skill_id) => {
-                self.toggle_skill(&skill_id)
-            },
+            ExtensionsMessage::ToggleSkill(skill_id) => self.toggle_skill(&skill_id),
             ExtensionsMessage::RequestDeleteSkill(skill_id) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.skill_delete_confirmation = Some(skill_id);
                     self.extensions_error = None;
                 }
-            },
-            ExtensionsMessage::ConfirmDeleteSkill => {
-                self.confirm_delete_skill()
-            },
+            }
+            ExtensionsMessage::ConfirmDeleteSkill => self.confirm_delete_skill(),
             ExtensionsMessage::CancelDeleteSkill => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.skill_delete_confirmation = None;
                 }
-            },
+            }
             ExtensionsMessage::PluginSourceChanged(value) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.plugin_source_input = value;
                     self.extensions_error = None;
                 }
-            },
-            ExtensionsMessage::PickPluginDirectory => {
-                self.pick_plugin_directory()
-            },
+            }
+            ExtensionsMessage::PickPluginDirectory => self.pick_plugin_directory(),
             ExtensionsMessage::InstallPlugin => self.install_plugin(),
-            ExtensionsMessage::TogglePlugin(plugin_id) => {
-                self.toggle_plugin(&plugin_id)
-            },
+            ExtensionsMessage::TogglePlugin(plugin_id) => self.toggle_plugin(&plugin_id),
             ExtensionsMessage::RequestDeletePlugin(plugin_id) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.plugin_delete_confirmation = Some(plugin_id);
                     self.extensions_error = None;
                 }
-            },
-            ExtensionsMessage::ConfirmDeletePlugin => {
-                self.confirm_delete_plugin()
-            },
+            }
+            ExtensionsMessage::ConfirmDeletePlugin => self.confirm_delete_plugin(),
             ExtensionsMessage::CancelDeletePlugin => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.plugin_delete_confirmation = None;
                 }
-            },
+            }
             ExtensionsMessage::HookDraftChanged { source_id, value } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.hook_drafts.insert(source_id, value);
                     self.extensions_error = None;
                 }
-            },
-            ExtensionsMessage::AddHookHandler(source_id) => {
-                self.add_hook_handler_draft(&source_id)
-            },
+            }
+            ExtensionsMessage::AddHookHandler(source_id) => self.add_hook_handler_draft(&source_id),
             ExtensionsMessage::HookHandlerDraftChanged {
                 source_id,
                 index,
@@ -12808,54 +12747,44 @@ impl DesktopProgram {
             } => self.update_hook_handler_draft(&source_id, index, field, value),
             ExtensionsMessage::RemoveHookHandler { source_id, index } => {
                 self.remove_hook_handler_draft(&source_id, index)
-            },
-            ExtensionsMessage::CreateHookSource(source_id) => {
-                self.create_hook_source(&source_id)
-            },
-            ExtensionsMessage::SaveHookSource(source_id) => {
-                self.save_hook_source(&source_id)
-            },
-            ExtensionsMessage::ToggleHookSource(source_id) => {
-                self.toggle_hook_source(&source_id)
-            },
+            }
+            ExtensionsMessage::CreateHookSource(source_id) => self.create_hook_source(&source_id),
+            ExtensionsMessage::SaveHookSource(source_id) => self.save_hook_source(&source_id),
+            ExtensionsMessage::ToggleHookSource(source_id) => self.toggle_hook_source(&source_id),
             ExtensionsMessage::RequestDeleteHookSource(source_id) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.hook_delete_confirmation = Some(source_id);
                     self.extensions_error = None;
                 }
-            },
-            ExtensionsMessage::ConfirmDeleteHookSource => {
-                self.confirm_delete_hook_source()
-            },
+            }
+            ExtensionsMessage::ConfirmDeleteHookSource => self.confirm_delete_hook_source(),
             ExtensionsMessage::CancelDeleteHookSource => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.hook_delete_confirmation = None;
                 }
-            },
-            ExtensionsMessage::ActivateRegisteredMcp => {
-                self.activate_registered_mcp()
-            },
+            }
+            ExtensionsMessage::ActivateRegisteredMcp => self.activate_registered_mcp(),
             ExtensionsMessage::NewMcpServer => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_editor = Some(McpEditorState::default());
                     self.mcp_delete_confirmation = None;
                     self.extensions_error = None;
                 }
-            },
-            ExtensionsMessage::EditMcpServer(server_id) => {
-                self.begin_edit_mcp_server(&server_id)
-            },
+            }
+            ExtensionsMessage::EditMcpServer(server_id) => self.begin_edit_mcp_server(&server_id),
             ExtensionsMessage::McpServerIdChanged(value) => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if editor.editing_server_id.is_none() && !self.extensions_busy {
+                    if editor.editing_server_id.is_none() && !busy {
                         editor.server_id = value;
                         self.extensions_error = None;
                     }
                 }
-            },
+            }
             ExtensionsMessage::CycleMcpTransport => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.transport = next_mcp_transport(editor.transport);
                         editor.location.clear();
                         editor.args_json = "[]".to_owned();
@@ -12863,82 +12792,82 @@ impl DesktopProgram {
                         self.extensions_error = None;
                     }
                 }
-            },
+            }
             ExtensionsMessage::McpLocationChanged(value) => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.location = value;
                         self.extensions_error = None;
                     }
                 }
-            },
+            }
             ExtensionsMessage::McpArgsChanged(value) => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.args_json = value;
                         self.extensions_error = None;
                     }
                 }
-            },
+            }
             ExtensionsMessage::McpCredentialNamesChanged(value) => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.credential_names_json = value;
                         self.extensions_error = None;
                     }
                 }
-            },
+            }
             ExtensionsMessage::ToggleMcpEditorEnabled => {
+                let busy = self.extensions_busy();
                 if let Some(editor) = &mut self.mcp_editor {
-                    if !self.extensions_busy {
+                    if !busy {
                         editor.enabled = !editor.enabled;
                         self.extensions_error = None;
                     }
                 }
-            },
+            }
             ExtensionsMessage::SaveMcpServer => self.save_mcp_server(),
             ExtensionsMessage::CancelMcpEditor => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_editor = None;
                     self.extensions_error = None;
                 }
-            },
-            ExtensionsMessage::ToggleMcpServer(server_id) => {
-                self.toggle_mcp_server(&server_id)
-            },
+            }
+            ExtensionsMessage::ToggleMcpServer(server_id) => self.toggle_mcp_server(&server_id),
             ExtensionsMessage::RequestDeleteMcpServer(server_id) => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_delete_confirmation = Some(server_id);
                     self.mcp_editor = None;
                     self.extensions_error = None;
                 }
-            },
-            ExtensionsMessage::ConfirmDeleteMcpServer => {
-                self.confirm_delete_mcp_server()
-            },
+            }
+            ExtensionsMessage::ConfirmDeleteMcpServer => self.confirm_delete_mcp_server(),
             ExtensionsMessage::CancelDeleteMcpServer => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_delete_confirmation = None;
                 }
-            },
+            }
             ExtensionsMessage::McpCredentialChanged {
                 server_id,
                 kind,
                 name,
                 value,
             } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_credential_drafts
                         .insert(mcp_credential_draft_key(&server_id, kind, &name), value);
                     self.extensions_error = None;
                 }
-            },
+            }
             ExtensionsMessage::SaveMcpCredential {
                 server_id,
                 kind,
                 name,
             } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     let key = mcp_credential_draft_key(&server_id, kind, &name);
                     if let Some(secret) = self.mcp_credential_drafts.remove(&key) {
                         self.start_mcp_registry_operation(McpRegistryOperation::SetCredential {
@@ -12949,13 +12878,13 @@ impl DesktopProgram {
                         });
                     }
                 }
-            },
+            }
             ExtensionsMessage::DeleteMcpCredential {
                 server_id,
                 kind,
                 name,
             } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_credential_drafts
                         .remove(&mcp_credential_draft_key(&server_id, kind, &name));
                     self.start_mcp_registry_operation(McpRegistryOperation::DeleteCredential {
@@ -12964,23 +12893,23 @@ impl DesktopProgram {
                         name,
                     });
                 }
-            },
+            }
             ExtensionsMessage::ReadMcpResource { server_id, uri } => {
                 self.start_mcp_content_operation(McpContentOperation::ReadResource {
                     server_id,
                     uri,
                 });
-            },
+            }
             ExtensionsMessage::McpPromptArgumentsChanged {
                 namespaced_name,
                 value,
             } => {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     self.mcp_prompt_argument_drafts
                         .insert(namespaced_name, value);
                     self.extensions_error = None;
                 }
-            },
+            }
             ExtensionsMessage::GetMcpPrompt(namespaced_name) => {
                 let draft = self
                     .mcp_prompt_argument_drafts
@@ -12996,47 +12925,41 @@ impl DesktopProgram {
                     }
                     Err(error) => self.extensions_error = Some(error),
                 }
-            },
+            }
         }
         None
     }
 
     fn apply_remote_message(&mut self, message: RemoteMessage) -> Option<HostedWindowAction> {
         match message {
-            RemoteMessage::Refresh => {
-                self.start_remote_operation(RemoteRequest::Refresh)
-            },
+            RemoteMessage::Refresh => self.start_remote_operation(RemoteRequest::Refresh),
             RemoteMessage::ToggleHost => {
                 if let Some(status) = &self.remote {
                     self.start_remote_operation(RemoteRequest::SetEnabled {
                         enabled: !status.host_enabled,
                     });
                 }
-            },
+            }
             RemoteMessage::PcNameChanged(value) => {
-                if !self.remote_busy {
+                if !self.remote_busy() {
                     self.remote_pc_name = value;
                     self.remote_error = None;
                 }
-            },
-            RemoteMessage::SavePcName => {
-                self.start_remote_operation(RemoteRequest::SetPcName {
-                    name: self.remote_pc_name.clone(),
-                })
-            },
+            }
+            RemoteMessage::SavePcName => self.start_remote_operation(RemoteRequest::SetPcName {
+                name: self.remote_pc_name.clone(),
+            }),
             RemoteMessage::ToggleKeepAwake => {
                 if let Some(status) = &self.remote {
                     self.start_remote_operation(RemoteRequest::SetKeepAwake {
                         enabled: !status.keep_awake_enabled,
                     });
                 }
-            },
-            RemoteMessage::StartPairing => {
-                self.start_remote_operation(RemoteRequest::StartPairing)
-            },
+            }
+            RemoteMessage::StartPairing => self.start_remote_operation(RemoteRequest::StartPairing),
             RemoteMessage::CancelPairing => {
                 self.start_remote_operation(RemoteRequest::CancelPairing)
-            },
+            }
             RemoteMessage::CopyPairingUri => {
                 let pairing_uri = self
                     .remote
@@ -13045,7 +12968,8 @@ impl DesktopProgram {
                     .map(|ticket| ticket.pairing_uri.clone());
                 if let Some(pairing_uri) = pairing_uri {
                     match self
-                        .kernel.session()
+                        .kernel
+                        .session()
                         .execute_host(DesktopHostAction::WriteClipboardText(pairing_uri))
                     {
                         Ok(DesktopHostResult::Completed) => self.remote_error = None,
@@ -13056,10 +12980,10 @@ impl DesktopProgram {
                         Err(error) => self.remote_error = Some(error.to_string()),
                     }
                 }
-            },
+            }
             RemoteMessage::RevokeDevice(device_id) => {
                 self.start_remote_operation(RemoteRequest::RevokeDevice { device_id })
-            },
+            }
         }
         None
     }
@@ -13069,12 +12993,12 @@ impl DesktopProgram {
             UpdateMessage::Check => {
                 self.update_failure_dismissed = false;
                 self.start_update_operation(UpdateOperation::Check);
-            },
+            }
             UpdateMessage::Install => {
                 if let DesktopUpdateState::Available { version, .. } = &self.update_state {
                     self.start_update_operation(UpdateOperation::Install(version.clone()));
                 }
-            },
+            }
             UpdateMessage::DismissPrompt => {
                 if !self.update_prompt_is_busy() {
                     match &self.update_state {
@@ -13085,11 +13009,12 @@ impl DesktopProgram {
                         _ => {}
                     }
                 }
-            },
-            UpdateMessage::PromptDialogInteraction => {},
+            }
+            UpdateMessage::PromptDialogInteraction => {}
             UpdateMessage::OpenReleases => {
                 match self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .execute_host(DesktopHostAction::OpenExternal(
                         crate::updater::RELEASES_URL.to_owned(),
                     )) {
@@ -13100,11 +13025,10 @@ impl DesktopProgram {
                         self.update_error = Some("无法打开 发布页，请稍后重试。".to_owned());
                     }
                 }
-            },
+            }
         }
         None
     }
-
 
     fn select_task(&mut self, task_id: TaskId) {
         self.clear_timeline_text_selection(HostedWindowId::PRIMARY);
@@ -13125,7 +13049,8 @@ impl DesktopProgram {
                     task_id.as_str()
                 ))
                 .expect("UUID-backed task view ids are valid");
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .task_workspace_item_view(&task_id, instance_id)
             } else {
                 Ok(item)
@@ -13477,7 +13402,8 @@ impl DesktopProgram {
             })
         };
         let enabled = self
-            .kernel.session()
+            .kernel
+            .session()
             .conversation_suggestion_settings()
             .map(|settings| settings.enabled)
             .unwrap_or(false);
@@ -13749,13 +13675,15 @@ impl DesktopProgram {
 
         let project_cwd = if transient {
             project_id.and_then(|project_id| {
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .project_context(&project_id)
                     .ok()
                     .map(|context| context.active_root().to_string_lossy().into_owned())
             })
         } else {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .task_workspace_path(&task_id)
                 .ok()
                 .flatten()
@@ -14253,10 +14181,12 @@ impl DesktopProgram {
             return;
         };
         let commands = if transient {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .search_project_slash_commands(project_id.as_ref(), &query, 8)
         } else {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .search_task_slash_commands(&task_id, &query, 8)
         };
         match commands {
@@ -14492,10 +14422,12 @@ impl DesktopProgram {
             return;
         };
         let references = if transient {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .search_conversation_references_from(&task_id, &query, 8)
         } else {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .search_conversation_references(&task_id, &query, 8)
         };
         match references {
@@ -14528,7 +14460,8 @@ impl DesktopProgram {
                             .and_then(|composer| composer_context_query(&composer.content)),
                     )
                     .and_then(|(task_id, query)| {
-                        self.kernel.session()
+                        self.kernel
+                            .session()
                             .get_task(&task_id)
                             .ok()
                             .and_then(|task| task.project_id)
@@ -14541,11 +14474,13 @@ impl DesktopProgram {
         };
         let attachments = task_id.map_or_else(
             || {
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .search_project_context_attachments(&project_id, &query, 8)
             },
             |task_id| {
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .search_task_context_attachments(&task_id, &query, 8)
             },
         );
@@ -14615,7 +14550,8 @@ impl DesktopProgram {
             return;
         }
         let result = if let Some(todo_id) = self.editing_todo.clone() {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .update_task_todo(
                     &todo_id,
                     DesktopTodoUpdate {
@@ -14625,7 +14561,8 @@ impl DesktopProgram {
                 )
                 .map(|todo| todo.is_some())
         } else {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .create_task_todo(DesktopTodoCreate {
                     task_id,
                     text: text.to_owned(),
@@ -14737,7 +14674,11 @@ impl DesktopProgram {
         if objective.is_empty() {
             return;
         }
-        match self.kernel.session().set_task_goal(&task_id, objective, None) {
+        match self
+            .kernel
+            .session()
+            .set_task_goal(&task_id, objective, None)
+        {
             Ok(_) => {
                 self.goal_draft.clear();
                 self.task_action_error = None;
@@ -14778,13 +14719,12 @@ impl DesktopProgram {
     }
 
     fn start_worktree_operation(&mut self, operation: WorktreeOperation) {
-        if self.worktree_busy || self.composer_is_locked() {
+        if self.worktree_busy() || self.composer_is_locked() {
             return;
         }
         let Some(task_id) = self.selected_task.clone() else {
             return;
         };
-        self.worktree_busy = true;
         self.worktree_confirmation = None;
         self.task_action_error = None;
         let request = JobRequest::new(
@@ -14798,9 +14738,8 @@ impl DesktopProgram {
         .in_slot(lilia_feature_worktree::worktree_slot(task_id.as_str()));
 
         match self.kernel.jobs().submit(request) {
-            Ok(handle) => self.active_worktree_job = Some(handle.id()),
+            Ok(handle) => self.active_worktree_job = Some((handle.id(), task_id)),
             Err(error) => {
-                self.worktree_busy = false;
                 self.task_action_error = Some(format!("无法启动工作树操作：{error}"));
             }
         }
@@ -14816,14 +14755,13 @@ impl DesktopProgram {
         }
         self.active_worktree_job = None;
         if let JobState::Failed { message } = state {
-            self.worktree_busy = false;
             self.worktree_confirmation = None;
             self.task_action_error = Some(message);
         }
     }
 
     fn pick_worktree(&mut self) {
-        if self.worktree_busy || self.composer_is_locked() {
+        if self.worktree_busy() || self.composer_is_locked() {
             return;
         }
         let request = DesktopFileDialogRequest {
@@ -14835,7 +14773,8 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -14860,7 +14799,8 @@ impl DesktopProgram {
             return;
         };
         if let Err(error) = self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::OpenPath(path))
         {
             self.task_action_error = Some(error.to_string());
@@ -14885,7 +14825,11 @@ impl DesktopProgram {
         let Some(task_id) = self.selected_task.as_ref() else {
             return false;
         };
-        match self.kernel.session().execute_composer_command(task_id, command) {
+        match self
+            .kernel
+            .session()
+            .execute_composer_command(task_id, command)
+        {
             Ok(composer) => {
                 sync_hosted_textarea(&self.composer_editor, &composer.content);
                 self.composer = Some(composer);
@@ -14930,7 +14874,8 @@ impl DesktopProgram {
         let submission = session_branch.map_or_else(
             || self.kernel.session().submit_composer(&task_id),
             |branch| {
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .submit_composer_with_session_branch(&task_id, branch)
             },
         );
@@ -15076,7 +15021,8 @@ impl DesktopProgram {
         };
 
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .retry_task_timeline_event(&task_id, event_id)
         {
             Ok(dispatch) => {
@@ -15212,7 +15158,8 @@ impl DesktopProgram {
             multiple: true,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -15357,7 +15304,8 @@ impl DesktopProgram {
 
     fn capture_clipboard_text_paste(&self) -> Result<Option<ClipboardTextPaste>, String> {
         let value = match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::ReadClipboardText)
         {
             Ok(DesktopHostResult::ClipboardText(Some(value))) if value.is_empty() => {
@@ -15379,7 +15327,8 @@ impl DesktopProgram {
         if !clipboard_text_should_be_attachment(&value) {
             return Ok(Some(ClipboardTextPaste::Inline(value)));
         }
-        self.kernel.session()
+        self.kernel
+            .session()
             .cache_clipboard_text_attachment(&value)
             .map(ClipboardTextPaste::Attachment)
             .map(Some)
@@ -15476,7 +15425,8 @@ impl DesktopProgram {
             return;
         };
         if let Err(error) = self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::OpenPath(path))
         {
             self.set_attachment_error(window_id, error.to_string());
@@ -15523,7 +15473,8 @@ impl DesktopProgram {
                 .map(PathBuf::from);
         }
         let task_id = self.selected_task.as_ref()?;
-        self.kernel.session()
+        self.kernel
+            .session()
             .task_workspace_path(task_id)
             .ok()
             .flatten()
@@ -15552,7 +15503,8 @@ impl DesktopProgram {
             return;
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .respond_task_approval(&task_id, &request_id, approved)
         {
             Ok(response) => {
@@ -15582,7 +15534,8 @@ impl DesktopProgram {
             return;
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .respond_title_update_review(&task_id, &request_id, accepted)
         {
             Ok(_) => {
@@ -15615,10 +15568,12 @@ impl DesktopProgram {
             self.task_action_error = None;
             return;
         }
-        match self
-            .kernel.session()
-            .respond_task_interaction(&task_id, &request_id, accepted, response)
-        {
+        match self.kernel.session().respond_task_interaction(
+            &task_id,
+            &request_id,
+            accepted,
+            response,
+        ) {
             Ok(result) => {
                 self.interaction_drafts.remove(&request_id);
                 self.ask_user_drafts.remove(&request_id);
@@ -16035,7 +15990,8 @@ impl DesktopProgram {
         };
         let byte_count = selection.text.len();
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::WriteClipboardText(selection.text))
         {
             Ok(DesktopHostResult::Completed) => {
@@ -16149,7 +16105,7 @@ impl DesktopProgram {
     fn refresh_task_session(&mut self) {
         let Some(task_id) = self.selected_task.clone() else {
             self.task_session = None;
-            self.memory_injection = None;
+            self.refresh_memory_injection();
             self.sync_markdown_images();
             return;
         };
@@ -16163,14 +16119,16 @@ impl DesktopProgram {
             .and_then(|session| session.timeline.last())
             .cloned();
         let restored_runtime = self
-            .kernel.session()
+            .kernel
+            .session()
             .restore_task_runtime_from_projection(&task_id);
         if let Err(error) = &restored_runtime {
             eprintln!("failed to restore LiliaCode task runtime: {error}");
             self.task_action_error = Some("无法恢复等待中的任务，请重试。".to_owned());
         }
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .task_session_snapshot_page(&task_id, TIMELINE_PAGE_SIZE)
         {
             Ok(snapshot) => {
@@ -16365,10 +16323,7 @@ impl DesktopProgram {
             }
             (tail_changed, timeline_extent, is_active)
         };
-        if is_active
-            && follow_timeline_tail
-            && (!timeline_had_viewport || tail_changed)
-        {
+        if is_active && follow_timeline_tail && (!timeline_had_viewport || tail_changed) {
             if let Some(timeline_extent) = timeline_extent {
                 self.queue_timeline_to_end(timeline_surface, timeline_extent);
             }
@@ -16423,7 +16378,8 @@ impl DesktopProgram {
             }
             let previous = self.pane_task_sessions.get(&task_id);
             if let Ok(snapshot) = self
-                .kernel.session()
+                .kernel
+                .session()
                 .task_session_snapshot_page(&task_id, TIMELINE_PAGE_SIZE)
             {
                 let session = TaskSessionView::refresh_preserving_history(snapshot, previous);
@@ -16448,19 +16404,23 @@ impl DesktopProgram {
         for (item_id, project_id, surface) in requests {
             let preview = match surface {
                 ProjectWorkspaceSurface::Roadmap => self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .project_roadmap(&project_id)
                     .map(ProjectWorkspacePreview::Roadmap),
                 ProjectWorkspaceSurface::Memory => self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .list_memories(Some(&project_id))
                     .map(ProjectWorkspacePreview::Memory),
                 ProjectWorkspaceSurface::Architecture => self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .project_architecture(&project_id)
                     .map(ProjectWorkspacePreview::Architecture),
                 ProjectWorkspaceSurface::Files => self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .project_files_snapshot(&project_id, ProjectFilesViewState::default())
                     .map(|snapshot| ProjectWorkspacePreview::Files {
                         entry_count: snapshot.entries.len(),
@@ -16491,7 +16451,8 @@ impl DesktopProgram {
             return;
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .task_timeline_page(&task_id, Some(&before), TIMELINE_PAGE_SIZE)
         {
             Ok(page) => {
@@ -16729,14 +16690,14 @@ impl DesktopProgram {
     }
 
     fn reset_provider_runtime_settings(&mut self) {
-        match self
-            .kernel.session()
-            .save_provider_runtime_settings(DesktopAgentRuntimeSettingsUpdate {
+        match self.kernel.session().save_provider_runtime_settings(
+            DesktopAgentRuntimeSettingsUpdate {
                 expected_revision: self.provider_runtime_settings.revision,
                 openai_endpoint: None,
                 anthropic_endpoint: None,
                 model: None,
-            }) {
+            },
+        ) {
             Ok(settings) => {
                 self.sync_provider_runtime_settings(settings);
                 self.provider_error = None;
@@ -16788,11 +16749,15 @@ impl DesktopProgram {
     }
 
     fn save_assistant_ai_configuration(&mut self) {
-        if self.provider_busy || self.assistant_ai_probe_busy {
+        if self.provider_busy() || self.assistant_ai_probe_busy() {
             return;
         }
         let update = self.provider_ai_settings.assistant_update();
-        match self.kernel.session().save_assistant_ai_configuration(update) {
+        match self
+            .kernel
+            .session()
+            .save_assistant_ai_configuration(update)
+        {
             Ok(settings) => match self.kernel.session().assistant_ai_secret_configured() {
                 Ok(secret_configured) => {
                     self.provider_ai_settings
@@ -16812,11 +16777,15 @@ impl DesktopProgram {
     }
 
     fn clear_assistant_ai_secret(&mut self) {
-        if self.provider_busy || self.assistant_ai_probe_busy {
+        if self.provider_busy() || self.assistant_ai_probe_busy() {
             return;
         }
         let update = self.provider_ai_settings.clear_secret_update();
-        match self.kernel.session().save_assistant_ai_configuration(update) {
+        match self
+            .kernel
+            .session()
+            .save_assistant_ai_configuration(update)
+        {
             Ok(settings) => {
                 self.provider_ai_settings.sync_assistant(settings, false);
                 self.provider_error = None;
@@ -16866,10 +16835,9 @@ impl DesktopProgram {
         kind: lilia_feature_provider::AssistantProbeKind,
         failure_notice: &str,
     ) {
-        if self.provider_busy || self.assistant_ai_probe_busy {
+        if self.provider_busy() || self.assistant_ai_probe_busy() {
             return;
         }
-        self.assistant_ai_probe_busy = true;
         self.assistant_ai_probe_notice = None;
         let ticket = self.assistant_probes.park(self.assistant_ai_probe_input());
         let request = JobRequest::new(
@@ -16886,7 +16854,6 @@ impl DesktopProgram {
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode assistant probe job: {error}");
                 self.assistant_probes.discard(ticket);
-                self.assistant_ai_probe_busy = false;
                 self.assistant_ai_probe_notice = Some((false, failure_notice.to_owned()));
             }
         }
@@ -16904,20 +16871,17 @@ impl DesktopProgram {
             JobState::Failed { message } => {
                 self.active_assistant_probe_job = None;
                 self.assistant_probes.discard(ticket);
-                self.assistant_ai_probe_busy = false;
                 self.assistant_ai_probe_notice = Some((false, message));
                 return;
             }
             _ => {
                 self.active_assistant_probe_job = None;
                 self.assistant_probes.discard(ticket);
-                self.assistant_ai_probe_busy = false;
                 return;
             }
         };
         self.active_assistant_probe_job = None;
         self.assistant_probes.discard(ticket);
-        self.assistant_ai_probe_busy = false;
         match kind {
             lilia_feature_provider::AssistantProbeKind::Models => {
                 self.apply_assistant_ai_models_result(output)
@@ -16986,7 +16950,8 @@ impl DesktopProgram {
             .provider_ai_settings
             .conversation_suggestion_update(enabled);
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .save_conversation_suggestion_settings(update)
         {
             Ok(settings) => {
@@ -17062,7 +17027,11 @@ impl DesktopProgram {
                     !update.auto_turn_decision.allow_session_fork
             }
         }
-        match self.kernel.session().save_agent_interaction_settings(update) {
+        match self
+            .kernel
+            .session()
+            .save_agent_interaction_settings(update)
+        {
             Ok(settings) => {
                 self.agent_interaction_settings = settings;
                 self.custom_agents.revision = self.agent_interaction_settings.revision;
@@ -17150,7 +17119,8 @@ impl DesktopProgram {
             return;
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .upsert_custom_subagent(DesktopCustomSubagentUpsert {
                 expected_revision: self.custom_agents.revision,
                 id: Some(agent.id),
@@ -17169,7 +17139,8 @@ impl DesktopProgram {
 
     fn delete_custom_agent(&mut self, agent_id: &str) {
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .delete_custom_subagent(self.custom_agents.revision, agent_id)
         {
             Ok(catalog) => {
@@ -17199,7 +17170,7 @@ impl DesktopProgram {
     }
 
     fn save_provider_credential(&mut self) {
-        if self.provider_busy || self.provider_secret.trim().is_empty() {
+        if self.provider_busy() || self.provider_secret.trim().is_empty() {
             return;
         }
         let Some(provider_id) = self.selected_provider.clone() else {
@@ -17228,7 +17199,8 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -17457,7 +17429,7 @@ impl DesktopProgram {
     }
 
     fn start_provider_operation(&mut self, request: CredentialRequest) {
-        if self.provider_busy {
+        if self.provider_busy() {
             return;
         }
         let request = JobRequest::new(
@@ -17466,14 +17438,12 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_provider::credential_slot());
 
-        self.provider_busy = true;
         self.provider_error = None;
         match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_provider_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode provider job: {error}");
                 self.provider_secrets.discard();
-                self.provider_busy = false;
                 self.provider_error = Some("无法启动凭据操作，请稍后重试。".to_owned());
             }
         }
@@ -17484,17 +17454,14 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => return,
             JobState::Completed { .. } => {
                 self.active_provider_job = None;
-                self.provider_busy = false;
                 self.provider_error = None;
             }
             JobState::Failed { message } => {
                 self.active_provider_job = None;
-                self.provider_busy = false;
                 self.provider_error = Some(message);
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_provider_job = None;
-                self.provider_busy = false;
             }
         }
         self.provider_secrets.discard();
@@ -17502,7 +17469,7 @@ impl DesktopProgram {
     }
 
     fn refresh_quota(&mut self) {
-        if self.quota_busy {
+        if self.quota_busy() {
             return;
         }
         let request = JobRequest::new(
@@ -17515,13 +17482,11 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_usage::quota_slot());
 
-        self.quota_busy = true;
         self.quota_error = None;
         match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_quota_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode quota job: {error}");
-                self.quota_busy = false;
                 self.quota_error = Some("无法刷新本地用量，请稍后重试。".to_owned());
             }
         }
@@ -17532,7 +17497,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => {}
             JobState::Completed { output } => {
                 self.active_quota_job = None;
-                self.quota_busy = false;
                 match serde_json::from_value::<QuotaUsageStats>(output) {
                     Ok(stats) => {
                         self.quota_days = stats.days;
@@ -17545,18 +17509,16 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_quota_job = None;
-                self.quota_busy = false;
                 self.quota_error = Some(message);
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_quota_job = None;
-                self.quota_busy = false;
             }
         }
     }
 
     fn create_skill(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let skill_id = self.skill_id_input.trim();
@@ -17579,7 +17541,7 @@ impl DesktopProgram {
     }
 
     fn toggle_skill(&mut self, skill_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some((enabled, revision)) = self.extensions.as_ref().and_then(|snapshot| {
@@ -17599,7 +17561,7 @@ impl DesktopProgram {
     }
 
     fn confirm_delete_skill(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(skill_id) = self.skill_delete_confirmation.clone() else {
@@ -17627,7 +17589,7 @@ impl DesktopProgram {
     /// is single-flight, which is what `extensions_busy` already means to the
     /// surface.
     fn submit_extensions_command(&mut self, command: ExtensionsCommand, failure: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let operation = command.operation();
@@ -17642,7 +17604,6 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_extensions::extensions_slot());
 
-        self.extensions_busy = true;
         self.extensions_error = None;
         match self.kernel.jobs().submit(request) {
             Ok(handle) => {
@@ -17655,7 +17616,6 @@ impl DesktopProgram {
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode extensions job: {error}");
                 self.extensions_exchange.discard(ticket);
-                self.extensions_busy = false;
                 self.extensions_error = Some(failure.to_owned());
             }
         }
@@ -17670,7 +17630,6 @@ impl DesktopProgram {
         }
 
         self.active_extensions_job = None;
-        self.extensions_busy = false;
         if job.lane.clears_credential_drafts() {
             self.mcp_credential_drafts.clear();
         }
@@ -17730,7 +17689,7 @@ impl DesktopProgram {
     }
 
     fn pick_plugin_directory(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let request = DesktopFileDialogRequest {
@@ -17742,7 +17701,8 @@ impl DesktopProgram {
             multiple: false,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -17759,7 +17719,7 @@ impl DesktopProgram {
     }
 
     fn install_plugin(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let source_path = self.plugin_source_input.trim();
@@ -17781,7 +17741,7 @@ impl DesktopProgram {
     }
 
     fn toggle_plugin(&mut self, plugin_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some((enabled, revision)) = self.extensions.as_ref().and_then(|snapshot| {
@@ -17801,7 +17761,7 @@ impl DesktopProgram {
     }
 
     fn confirm_delete_plugin(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(plugin_id) = self.plugin_delete_confirmation.clone() else {
@@ -17845,7 +17805,7 @@ impl DesktopProgram {
         field: HookHandlerDraftField,
         value: String,
     ) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let draft = self
@@ -17863,7 +17823,7 @@ impl DesktopProgram {
     }
 
     fn add_hook_handler_draft(&mut self, source_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let draft = self
@@ -17881,7 +17841,7 @@ impl DesktopProgram {
     }
 
     fn remove_hook_handler_draft(&mut self, source_id: &str, index: usize) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(draft) = self.hook_drafts.get(source_id).cloned() else {
@@ -17967,7 +17927,7 @@ impl DesktopProgram {
     }
 
     fn start_hook_source_operation(&mut self, operation: HookSourceOperation) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let overview_project_cwd = self.selected_project_workspace().map(|(_, root)| root);
@@ -17999,7 +17959,7 @@ impl DesktopProgram {
     }
 
     fn activate_registered_mcp(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             self.extensions_activation_pending = true;
             return;
         }
@@ -18013,7 +17973,7 @@ impl DesktopProgram {
     }
 
     fn start_mcp_content_operation(&mut self, operation: McpContentOperation) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         self.mcp_content_preview = None;
@@ -18024,7 +17984,7 @@ impl DesktopProgram {
     }
 
     fn begin_edit_mcp_server(&mut self, server_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(server) = self.extensions.as_ref().and_then(|snapshot| {
@@ -18066,7 +18026,7 @@ impl DesktopProgram {
     }
 
     fn save_mcp_server(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(editor) = self.mcp_editor.clone() else {
@@ -18122,7 +18082,7 @@ impl DesktopProgram {
     }
 
     fn toggle_mcp_server(&mut self, server_id: &str) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some((enabled, revision)) = self.extensions.as_ref().and_then(|snapshot| {
@@ -18142,7 +18102,7 @@ impl DesktopProgram {
     }
 
     fn confirm_delete_mcp_server(&mut self) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         let Some(server_id) = self.mcp_delete_confirmation.clone() else {
@@ -18160,7 +18120,7 @@ impl DesktopProgram {
     }
 
     fn start_mcp_registry_operation(&mut self, operation: McpRegistryOperation) {
-        if self.extensions_busy {
+        if self.extensions_busy() {
             return;
         }
         self.extensions_activation = None;
@@ -18172,7 +18132,7 @@ impl DesktopProgram {
     }
 
     fn start_remote_operation(&mut self, request: RemoteRequest) {
-        if self.remote_busy {
+        if self.remote_busy() {
             return;
         }
         let request = JobRequest::new(
@@ -18181,13 +18141,11 @@ impl DesktopProgram {
         )
         .in_slot(lilia_feature_remote::remote_slot());
 
-        self.remote_busy = true;
         self.remote_error = None;
         match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_remote_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode remote job: {error}");
-                self.remote_busy = false;
                 self.remote_error = Some("无法启动远控操作，请稍后重试。".to_owned());
             }
         }
@@ -18198,7 +18156,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => {}
             JobState::Completed { output } => {
                 self.active_remote_job = None;
-                self.remote_busy = false;
                 match serde_json::from_value::<RemoteControlStatus>(output) {
                     Ok(status) => {
                         self.remote_pc_name = status.pc_name.clone();
@@ -18212,18 +18169,16 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_remote_job = None;
-                self.remote_busy = false;
                 self.remote_error = Some(message);
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_remote_job = None;
-                self.remote_busy = false;
             }
         }
     }
 
     fn start_update_operation(&mut self, operation: UpdateOperation) {
-        if self.update_busy {
+        if self.update_busy() {
             return;
         }
         if matches!(&operation, UpdateOperation::Check) && !self.update_configured {
@@ -18242,13 +18197,11 @@ impl DesktopProgram {
         }
         .in_slot(lilia_feature_update::update_slot());
 
-        self.update_busy = true;
         self.update_error = None;
         match self.kernel.jobs().submit(request) {
             Ok(handle) => self.active_update_job = Some(handle.id()),
             Err(error) => {
                 eprintln!("failed to submit the LiliaCode update job: {error}");
-                self.update_busy = false;
                 self.update_error = Some("无法启动更新操作，请稍后重试。".to_owned());
             }
         }
@@ -18259,7 +18212,6 @@ impl DesktopProgram {
             JobState::Pending | JobState::Running { .. } => {}
             JobState::Completed { .. } => {
                 self.active_update_job = None;
-                self.update_busy = false;
                 self.update_error = None;
                 if let Ok(state) = self.kernel.session().update_state() {
                     self.exit_requested = matches!(&state, DesktopUpdateState::Restarting { .. });
@@ -18271,7 +18223,6 @@ impl DesktopProgram {
             }
             JobState::Failed { message } => {
                 self.active_update_job = None;
-                self.update_busy = false;
                 self.update_state = self.kernel.session().update_state().unwrap_or_else(|_| {
                     DesktopUpdateState::Failed {
                         message: message.clone(),
@@ -18281,7 +18232,6 @@ impl DesktopProgram {
             }
             JobState::Cancelled | JobState::Superseded => {
                 self.active_update_job = None;
-                self.update_busy = false;
             }
         }
     }
@@ -18302,7 +18252,7 @@ impl DesktopProgram {
     }
 
     fn update_prompt_is_busy(&self) -> bool {
-        self.update_busy
+        self.update_busy()
             || matches!(
                 &self.update_state,
                 DesktopUpdateState::Downloading { .. }
@@ -18330,7 +18280,11 @@ impl DesktopProgram {
                         Some(&self.debug_observation()),
                     )
                 } else {
-                    match self.kernel.session().debug_equivalence_snapshot(&fixture_id) {
+                    match self
+                        .kernel
+                        .session()
+                        .debug_equivalence_snapshot(&fixture_id)
+                    {
                         Ok(snapshot) => snapshot_response("equivalence-snapshot", &snapshot),
                         Err(error) => failure_response(
                             "equivalence-snapshot",
@@ -18346,7 +18300,11 @@ impl DesktopProgram {
                 success_response("mark", &self.debug_observation())
             }
             DebugCommand::CorruptQueuedTurn { turn_id } => {
-                match self.kernel.session().corrupt_queued_turn_for_debug(&turn_id) {
+                match self
+                    .kernel
+                    .session()
+                    .corrupt_queued_turn_for_debug(&turn_id)
+                {
                     Ok(true) => success_response("corrupt-queued-turn", &self.debug_observation()),
                     Ok(false) => failure_response(
                         "corrupt-queued-turn",
@@ -18366,7 +18324,8 @@ impl DesktopProgram {
                 match TaskId::new(task_id)
                     .map_err(|error| error.to_string())
                     .and_then(|task_id| {
-                        self.kernel.session()
+                        self.kernel
+                            .session()
                             .seed_interrupted_tool_for_debug(&task_id, &turn_id)
                             .map_err(|error| error.to_string())
                     }) {
@@ -18381,7 +18340,8 @@ impl DesktopProgram {
             }
             DebugCommand::HoldDatabaseWriter { duration_ms } => {
                 match self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .hold_domain_database_writer_for_debug(duration_ms)
                 {
                     Ok(()) => success_response("hold-database-writer", &self.debug_observation()),
@@ -18518,7 +18478,7 @@ impl DesktopProgram {
                     return;
                 } else if self.application_surface_is_visible(ApplicationWorkspaceSurface::Settings)
                     && self.settings_state.active_tab().as_str() == "extensions"
-                    && !self.extensions_busy
+                    && !self.extensions_busy()
                 {
                     let hook_handler_input =
                         self.hook_drafts.iter().find_map(|(source_id, draft)| {
@@ -18677,7 +18637,7 @@ impl DesktopProgram {
                     .filter(|preset_id| {
                         settings_visible
                             && self.settings_state.active_tab().as_str() == "provider"
-                            && !self.provider_busy
+                            && !self.provider_busy()
                             && self.provider_ai_settings.has_preset(preset_id)
                     })
                     .map(str::to_owned);
@@ -18685,7 +18645,7 @@ impl DesktopProgram {
                     .filter(|preset_id| {
                         settings_visible
                             && self.settings_state.active_tab().as_str() == "provider"
-                            && !self.provider_busy
+                            && !self.provider_busy()
                             && self
                                 .provider_ai_settings
                                 .custom_presets()
@@ -18697,8 +18657,8 @@ impl DesktopProgram {
                         .filter(|model_id| {
                             settings_visible
                                 && self.settings_state.active_tab().as_str() == "provider"
-                                && !self.provider_busy
-                                && !self.assistant_ai_probe_busy
+                                && !self.provider_busy()
+                                && !self.assistant_ai_probe_busy()
                                 && self
                                     .provider_ai_settings
                                     .assistant_model_pool()
@@ -18710,7 +18670,11 @@ impl DesktopProgram {
                 {
                     match text.parse::<f32>() {
                         Ok(opacity) => {
-                            self.update_message(Message::ConversationStatus(ConversationStatusMessage::ConversationStatusOpacityChanged(opacity)));
+                            self.update_message(Message::ConversationStatus(
+                                ConversationStatusMessage::ConversationStatusOpacityChanged(
+                                    opacity,
+                                ),
+                            ));
                             success_response("input", &self.debug_observation())
                         }
                         Err(_) => failure_response(
@@ -18724,7 +18688,7 @@ impl DesktopProgram {
                     && !self.settings_open
                     && !self.automations_open
                     && self.project_surface == ProjectSurface::Clone
-                    && !self.project_clone_busy
+                    && !self.project_clone_busy()
                 {
                     self.update_message(Message::ProjectClone(
                         ProjectCloneMessage::RepositoryChanged(text),
@@ -18734,7 +18698,7 @@ impl DesktopProgram {
                     && !self.settings_open
                     && !self.automations_open
                     && self.project_surface == ProjectSurface::Clone
-                    && !self.project_clone_busy
+                    && !self.project_clone_busy()
                 {
                     self.update_message(Message::ProjectClone(ProjectCloneMessage::ParentChanged(
                         text,
@@ -18756,7 +18720,9 @@ impl DesktopProgram {
                     && self.selected_project.is_some()
                     && self.selected_task.is_none()
                 {
-                    self.update_message(Message::Project(ProjectMessage::ProjectWorkspaceChanged(text)));
+                    self.update_message(Message::Project(ProjectMessage::ProjectWorkspaceChanged(
+                        text,
+                    )));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::TASK_SEARCH
                     && self.project_surface == ProjectSurface::Tasks
@@ -18788,48 +18754,41 @@ impl DesktopProgram {
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::ROADMAP_TITLE
                     && self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some()
+                    && self.roadmap_module().selected().is_some()
                 {
-                    self.milestone_title = text;
-                    self.roadmap_error = None;
+                    self.route_roadmap_message(RoadmapMessage::TitleChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::ROADMAP_DESCRIPTION
                     && self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some()
+                    && self.roadmap_module().selected().is_some()
                 {
-                    self.milestone_description = text;
-                    self.roadmap_error = None;
+                    self.route_roadmap_message(RoadmapMessage::DescriptionChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::ROADMAP_DUE_DATE
                     && self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some()
+                    && self.roadmap_module().selected().is_some()
                 {
-                    self.milestone_due_date = text;
-                    self.roadmap_error = None;
+                    self.route_roadmap_message(RoadmapMessage::DueDateChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::MEMORY_TITLE
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    self.memory_title = text;
-                    self.memory_error = None;
+                    self.route_memory_message(MemoryMessage::TitleChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::MEMORY_BODY
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    self.memory_body.set_text(&text);
-                    self.memory_error = None;
+                    self.route_memory_message(MemoryMessage::BodyReplaced(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::MEMORY_TAGS
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    self.memory_tags = text;
-                    self.memory_error = None;
+                    self.route_memory_message(MemoryMessage::TagsChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    self.memory_cooldown_input = text;
-                    self.memory_error = None;
+                    self.route_memory_message(MemoryMessage::CooldownChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::IAB_URL
                     && self.inspector_surface == InspectorSurface::Iab
@@ -18840,7 +18799,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::CODING_TOOLS_QUERY
                     && self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy
+                    && !self.coding_busy()
                 {
                     self.coding_query = text;
                     self.coding_error = None;
@@ -18860,7 +18819,9 @@ impl DesktopProgram {
                     && automations_visible
                     && self.selected_automation.is_some()
                 {
-                    self.update_message(Message::Automation(AutomationMessage::AutomationNameChanged(text)));
+                    self.update_message(Message::Automation(
+                        AutomationMessage::AutomationNameChanged(text),
+                    ));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::AUTOMATIONS_NODE_TITLE
                     && automations_visible
@@ -18891,7 +18852,9 @@ impl DesktopProgram {
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "project"
                 {
-                    self.update_message(Message::Project(ProjectMessage::ProjectWorktreeParentChanged(text)));
+                    self.update_message(Message::Project(
+                        ProjectMessage::ProjectWorktreeParentChanged(text),
+                    ));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::PROJECT_WORKTREE_INSTRUCTIONS
                     && settings_visible
@@ -18914,14 +18877,14 @@ impl DesktopProgram {
                 } else if target_id == target_ids::PROVIDER_MODEL_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(ProviderMessage::ModelChanged(text)));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::PROVIDER_OPENAI_ENDPOINT_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(ProviderMessage::OpenAiEndpointChanged(
                         text,
@@ -18930,7 +18893,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::PROVIDER_ANTHROPIC_ENDPOINT_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AnthropicEndpointChanged(text),
@@ -18939,8 +18902,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_BASE_URL_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AssistantBaseUrlChanged(text),
@@ -18949,8 +18912,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_MODEL_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(ProviderMessage::AssistantModelChanged(
                         text,
@@ -18959,8 +18922,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_SECRET_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AssistantSecretChanged(text),
@@ -18969,8 +18932,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_NEW_MODEL_ID
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AssistantNewModelIdChanged(text),
@@ -18979,8 +18942,8 @@ impl DesktopProgram {
                 } else if target_id == target_ids::ASSISTANT_AI_NEW_MODEL_LABEL
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AssistantNewModelLabelChanged(text),
@@ -18995,7 +18958,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_TITLE_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(ProviderMessage::TitleModelChanged(
                         text,
@@ -19004,7 +18967,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_SUGGESTION_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::SuggestionModelChanged(text),
@@ -19013,7 +18976,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_PROMPT_ROUTER_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::PromptRouterModelChanged(text),
@@ -19022,7 +18985,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_PROMPT_OPTIMIZE_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::PromptOptimizeModelChanged(text),
@@ -19031,7 +18994,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_MODEL_AUTO_TURN_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::AutoTurnDecisionModelChanged(text),
@@ -19040,7 +19003,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::FEATURE_CUSTOM_PRESET_NAME
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     self.update_message(Message::Provider(
                         ProviderMessage::CustomPresetDraftChanged(text),
@@ -19063,7 +19026,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::PROVIDER_SECRET_INPUT
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.selected_provider_supports_api_key()
                 {
                     self.provider_secret = text;
@@ -19081,7 +19044,9 @@ impl DesktopProgram {
                     && self.settings_state.active_tab().as_str() == "agent"
                     && self.custom_agent_editor_open
                 {
-                    self.update_message(Message::Settings(SettingsMessage::AgentDescriptionChanged(text)));
+                    self.update_message(Message::Settings(
+                        SettingsMessage::AgentDescriptionChanged(text),
+                    ));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::AGENT_INSTRUCTION_INPUT
                     && settings_visible
@@ -19094,7 +19059,7 @@ impl DesktopProgram {
                 } else if target_id == target_ids::REMOTE_PC_NAME
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                 {
                     self.remote_pc_name = text;
                     self.remote_error = None;
@@ -19103,7 +19068,9 @@ impl DesktopProgram {
                     && settings_visible
                     && self.settings_state.active_tab().as_str() == "desktop"
                 {
-                    self.update_message(Message::Settings(SettingsMessage::ShellShortcutChanged(text)));
+                    self.update_message(Message::Settings(SettingsMessage::ShellShortcutChanged(
+                        text,
+                    )));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::GOAL_INPUT
                     && !self.composer_is_locked()
@@ -19263,13 +19230,17 @@ impl DesktopProgram {
             return false;
         };
         let message = match inner_target.as_str() {
-            target_ids::ROADMAP_TITLE => Message::Roadmap(RoadmapMessage::MilestoneTitleChanged(value)),
-            target_ids::ROADMAP_DESCRIPTION => Message::Roadmap(RoadmapMessage::MilestoneDescriptionChanged(value)),
-            target_ids::ROADMAP_DUE_DATE => Message::Roadmap(RoadmapMessage::MilestoneDueDateChanged(value)),
-            target_ids::MEMORY_TITLE => Message::Memory(MemoryMessage::MemoryTitleChanged(value)),
-            target_ids::MEMORY_BODY => Message::Memory(MemoryMessage::MemoryBodyReplaced(value)),
-            target_ids::MEMORY_TAGS => Message::Memory(MemoryMessage::MemoryTagsChanged(value)),
-            target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT => Message::Memory(MemoryMessage::MemoryCooldownChanged(value)),
+            target_ids::ROADMAP_TITLE => Message::Roadmap(RoadmapMessage::TitleChanged(value)),
+            target_ids::ROADMAP_DESCRIPTION => {
+                Message::Roadmap(RoadmapMessage::DescriptionChanged(value))
+            }
+            target_ids::ROADMAP_DUE_DATE => Message::Roadmap(RoadmapMessage::DueDateChanged(value)),
+            target_ids::MEMORY_TITLE => Message::Memory(MemoryMessage::TitleChanged(value)),
+            target_ids::MEMORY_BODY => Message::Memory(MemoryMessage::BodyReplaced(value)),
+            target_ids::MEMORY_TAGS => Message::Memory(MemoryMessage::TagsChanged(value)),
+            target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT => {
+                Message::Memory(MemoryMessage::CooldownChanged(value))
+            }
             _ => return false,
         };
         self.update_workspace_window_project_action(window_id, item_id, message);
@@ -19435,25 +19406,33 @@ impl DesktopProgram {
                 return true;
             }
             if target_ids::workspace_pane_focus(pane_id.as_str()) == target_id {
-                self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::FocusWorkspacePane(pane_id)));
+                self.update_message(Message::WorkspaceLayout(
+                    WorkspaceLayoutMessage::FocusWorkspacePane(pane_id),
+                ));
                 return true;
             }
             if target_ids::workspace_pane_split_horizontal(pane_id.as_str()) == target_id {
-                self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::SplitWorkspacePane {
-                    pane_id,
-                    axis: SplitAxis::Horizontal,
-                }));
+                self.update_message(Message::WorkspaceLayout(
+                    WorkspaceLayoutMessage::SplitWorkspacePane {
+                        pane_id,
+                        axis: SplitAxis::Horizontal,
+                    },
+                ));
                 return true;
             }
             if target_ids::workspace_pane_split_vertical(pane_id.as_str()) == target_id {
-                self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::SplitWorkspacePane {
-                    pane_id,
-                    axis: SplitAxis::Vertical,
-                }));
+                self.update_message(Message::WorkspaceLayout(
+                    WorkspaceLayoutMessage::SplitWorkspacePane {
+                        pane_id,
+                        axis: SplitAxis::Vertical,
+                    },
+                ));
                 return true;
             }
             if target_ids::workspace_pane_close(pane_id.as_str()) == target_id {
-                self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::CloseWorkspacePane(pane_id)));
+                self.update_message(Message::WorkspaceLayout(
+                    WorkspaceLayoutMessage::CloseWorkspacePane(pane_id),
+                ));
                 return true;
             }
             let item_ids = self
@@ -19482,21 +19461,25 @@ impl DesktopProgram {
             }
             for (index, item_id) in visible_item_ids.iter().enumerate() {
                 if index > 0 && target_ids::workspace_tab_drag_left(item_id.as_str()) == target_id {
-                    self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
-                        pane_id,
-                        item_id: item_id.clone(),
-                        before: visible_item_ids.get(index - 1).cloned(),
-                    }));
+                    self.update_message(Message::WorkspaceLayout(
+                        WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
+                            pane_id,
+                            item_id: item_id.clone(),
+                            before: visible_item_ids.get(index - 1).cloned(),
+                        },
+                    ));
                     return true;
                 }
                 if index + 1 < visible_item_ids.len()
                     && target_ids::workspace_tab_drag_right(item_id.as_str()) == target_id
                 {
-                    self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
-                        pane_id,
-                        item_id: item_id.clone(),
-                        before: visible_item_ids.get(index + 2).cloned(),
-                    }));
+                    self.update_message(Message::WorkspaceLayout(
+                        WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
+                            pane_id,
+                            item_id: item_id.clone(),
+                            before: visible_item_ids.get(index + 2).cloned(),
+                        },
+                    ));
                     return true;
                 }
                 if let Some(target_pane_id) = drag_target_pane_ids.iter().find(|target_pane_id| {
@@ -19506,11 +19489,13 @@ impl DesktopProgram {
                             target_pane_id.as_str(),
                         ) == target_id
                 }) {
-                    self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
-                        pane_id: target_pane_id.clone(),
-                        item_id: item_id.clone(),
-                        before: None,
-                    }));
+                    self.update_message(Message::WorkspaceLayout(
+                        WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
+                            pane_id: target_pane_id.clone(),
+                            item_id: item_id.clone(),
+                            before: None,
+                        },
+                    ));
                     return true;
                 }
             }
@@ -19522,13 +19507,17 @@ impl DesktopProgram {
                 .cloned();
             if target_ids::workspace_pane_move_next(pane_id.as_str()) == target_id {
                 if let Some(item_id) = active_item.clone() {
-                    self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::MoveWorkspaceItemToNextPane(item_id)));
+                    self.update_message(Message::WorkspaceLayout(
+                        WorkspaceLayoutMessage::MoveWorkspaceItemToNextPane(item_id),
+                    ));
                     return true;
                 }
             } else if let Some(item_id) = active_item.clone().filter(|item_id| {
                 target_ids::workspace_tab_move_to_new_window(item_id.as_str()) == target_id
             }) {
-                self.update_message(Message::WorkspaceWindow(WorkspaceWindowMessage::MoveWorkspaceItemToNewWindow(item_id)));
+                self.update_message(Message::WorkspaceWindow(
+                    WorkspaceWindowMessage::MoveWorkspaceItemToNewWindow(item_id),
+                ));
                 return true;
             } else if let Some(item_id) = active_item
                 .filter(|item_id| target_ids::workspace_tab_close(item_id.as_str()) == target_id)
@@ -19719,8 +19708,8 @@ impl DesktopProgram {
     ) -> Option<(HostedWindowId, WorkspaceItemId, String)> {
         self.task_popups.values().find_map(|popup| {
             let item_id = popup.active_workspace_item_id.as_ref()?;
-            let editor = popup.project_states.get(item_id)?;
-            self.project_workspace_editor_debug_targets(editor)
+            let (_, surface) = self.workspace_window_project_surface(popup.id, item_id)?;
+            self.project_workspace_editor_debug_targets(popup.id, surface)
                 .into_iter()
                 .find(|inner_target| {
                     target_ids::workspace_window_project_action(popup.id.0, inner_target)
@@ -19774,15 +19763,15 @@ impl DesktopProgram {
             return false;
         }
         if target_id == target_ids::TITLEBAR_SIDEBAR_TOGGLE {
-            self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::Workspace(WorkspaceAction::ToggleRegion(
-                RegionId::Resources,
-            ))));
+            self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::Workspace(
+                WorkspaceAction::ToggleRegion(RegionId::Resources),
+            )));
             return true;
         }
         if target_id == target_ids::TITLEBAR_TASK_INSPECTOR_TOGGLE {
-            self.update_message(Message::Chrome(ChromeMessage::TitlebarMenu(HostedContextMenuEvent::Select(
-                TitlebarMenuAction::ToggleTaskInspector,
-            ))));
+            self.update_message(Message::Chrome(ChromeMessage::TitlebarMenu(
+                HostedContextMenuEvent::Select(TitlebarMenuAction::ToggleTaskInspector),
+            )));
             return true;
         }
         if target_id == target_ids::TITLEBAR_MORE {
@@ -19805,9 +19794,9 @@ impl DesktopProgram {
             _ => None,
         };
         if let Some(action) = titlebar_action {
-            self.update_message(Message::Chrome(ChromeMessage::TitlebarMenu(HostedContextMenuEvent::Select(
-                action,
-            ))));
+            self.update_message(Message::Chrome(ChromeMessage::TitlebarMenu(
+                HostedContextMenuEvent::Select(action),
+            )));
             return true;
         }
         if target_id == target_ids::COMMAND_PALETTE_OPEN {
@@ -19943,7 +19932,7 @@ impl DesktopProgram {
         }
         if settings_visible && self.settings_state.active_tab().as_str() == "extensions" {
             if target_id == target_ids::EXTENSIONS_SKILL_CREATE
-                && !self.extensions_busy
+                && !self.extensions_busy()
                 && !self.skill_id_input.trim().is_empty()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::CreateSkill));
@@ -19976,13 +19965,13 @@ impl DesktopProgram {
                 }
             }
             if target_id == target_ids::EXTENSIONS_PLUGIN_INSTALL
-                && !self.extensions_busy
+                && !self.extensions_busy()
                 && !self.plugin_source_input.trim().is_empty()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::InstallPlugin));
                 return true;
             }
-            if target_id == target_ids::EXTENSIONS_PLUGIN_PICK && !self.extensions_busy {
+            if target_id == target_ids::EXTENSIONS_PLUGIN_PICK && !self.extensions_busy() {
                 self.update_message(Message::Extensions(ExtensionsMessage::PickPluginDirectory));
                 return true;
             }
@@ -20068,20 +20057,20 @@ impl DesktopProgram {
                     return true;
                 }
             }
-            if target_id == target_ids::EXTENSIONS_MCP_ADD && !self.extensions_busy {
+            if target_id == target_ids::EXTENSIONS_MCP_ADD && !self.extensions_busy() {
                 self.update_message(Message::Extensions(ExtensionsMessage::NewMcpServer));
                 return true;
             }
             if target_id == target_ids::EXTENSIONS_MCP_TRANSPORT
                 && self.mcp_editor.is_some()
-                && !self.extensions_busy
+                && !self.extensions_busy()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::CycleMcpTransport));
                 return true;
             }
             if target_id == target_ids::EXTENSIONS_MCP_ENABLED
                 && self.mcp_editor.is_some()
-                && !self.extensions_busy
+                && !self.extensions_busy()
             {
                 self.update_message(Message::Extensions(
                     ExtensionsMessage::ToggleMcpEditorEnabled,
@@ -20092,14 +20081,14 @@ impl DesktopProgram {
                 && self.mcp_editor.as_ref().is_some_and(|editor| {
                     !editor.server_id.trim().is_empty() && !editor.location.trim().is_empty()
                 })
-                && !self.extensions_busy
+                && !self.extensions_busy()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::SaveMcpServer));
                 return true;
             }
             if target_id == target_ids::EXTENSIONS_MCP_CANCEL
                 && self.mcp_editor.is_some()
-                && !self.extensions_busy
+                && !self.extensions_busy()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::CancelMcpEditor));
                 return true;
@@ -20266,7 +20255,9 @@ impl DesktopProgram {
                     .then(|| event.id.clone())
             })
         }) {
-            self.update_message(Message::Timeline(TimelineMessage::ToggleTimelineEvent(event_id)));
+            self.update_message(Message::Timeline(TimelineMessage::ToggleTimelineEvent(
+                event_id,
+            )));
             return true;
         }
         if let Some((window_id, event_id)) =
@@ -20374,7 +20365,9 @@ impl DesktopProgram {
             (target_ids::composer_slash_command(&result.command.name) == target_id)
                 .then(|| result.command.clone())
         }) {
-            self.update_message(Message::Composer(ComposerMessage::SelectSlashCommand(command)));
+            self.update_message(Message::Composer(ComposerMessage::SelectSlashCommand(
+                command,
+            )));
             return true;
         }
         if let Some((window_id, command)) = self.task_popups.values().find_map(|popup| {
@@ -20384,7 +20377,9 @@ impl DesktopProgram {
                     .then(|| (popup.id, result.command.clone()))
             })
         }) {
-            self.update_message(Message::Composer(ComposerMessage::TaskPopupSelectSlashCommand { window_id, command }));
+            self.update_message(Message::Composer(
+                ComposerMessage::TaskPopupSelectSlashCommand { window_id, command },
+            ));
             return true;
         }
         let review_windows = std::iter::once((
@@ -20437,14 +20432,18 @@ impl DesktopProgram {
                     .then(|| reference.task_id.clone())
             })
         {
-            self.update_message(Message::Composer(ComposerMessage::SelectConversationReference(task_id)));
+            self.update_message(Message::Composer(
+                ComposerMessage::SelectConversationReference(task_id),
+            ));
             return true;
         }
         if let Some(relative_path) = self.context_attachment_results.iter().find_map(|result| {
             (target_ids::composer_context_attachment(&result.relative_path) == target_id)
                 .then(|| result.relative_path.clone())
         }) {
-            self.update_message(Message::Composer(ComposerMessage::SelectContextAttachment(relative_path)));
+            self.update_message(Message::Composer(ComposerMessage::SelectContextAttachment(
+                relative_path,
+            )));
             return true;
         }
         if let Some(task_id) = self.composer.as_ref().and_then(|composer| {
@@ -20457,7 +20456,9 @@ impl DesktopProgram {
                         .then(|| reference.task_id.clone())
                 })
         }) {
-            self.update_message(Message::Composer(ComposerMessage::RemoveConversationReference(task_id)));
+            self.update_message(Message::Composer(
+                ComposerMessage::RemoveConversationReference(task_id),
+            ));
             return true;
         }
         if let Some((window_id, task_id)) = self.task_popups.values().find_map(|popup| {
@@ -20470,10 +20471,9 @@ impl DesktopProgram {
                         .then(|| (popup.id, reference.task_id.clone()))
                 })
         }) {
-            self.update_message(Message::Composer(ComposerMessage::TaskPopupSelectConversationReference {
-                window_id,
-                task_id,
-            }));
+            self.update_message(Message::Composer(
+                ComposerMessage::TaskPopupSelectConversationReference { window_id, task_id },
+            ));
             return true;
         }
         if let Some((window_id, relative_path)) = self.task_popups.values().find_map(|popup| {
@@ -20483,10 +20483,12 @@ impl DesktopProgram {
                     .then(|| (popup.id, result.relative_path.clone()))
             })
         }) {
-            self.update_message(Message::Composer(ComposerMessage::TaskPopupSelectContextAttachment {
-                window_id,
-                relative_path,
-            }));
+            self.update_message(Message::Composer(
+                ComposerMessage::TaskPopupSelectContextAttachment {
+                    window_id,
+                    relative_path,
+                },
+            ));
             return true;
         }
         if let Some((window_id, task_id)) = self.task_popups.values().find_map(|popup| {
@@ -20503,18 +20505,19 @@ impl DesktopProgram {
                     })
             })
         }) {
-            self.update_message(Message::Composer(ComposerMessage::TaskPopupRemoveConversationReference {
-                window_id,
-                task_id,
-            }));
+            self.update_message(Message::Composer(
+                ComposerMessage::TaskPopupRemoveConversationReference { window_id, task_id },
+            ));
             return true;
         }
         if let Some((_, action)) = self
-            .sidebar_menu_debug_targets()
+            .sidebar_menu_actions()
             .into_iter()
             .find(|(candidate, _)| candidate == target_id)
         {
-            self.update_message(Message::Sidebar(SidebarMessage::SidebarMenu(HostedContextMenuEvent::Select(action))));
+            self.update_message(Message::Sidebar(SidebarMessage::SidebarMenu(
+                HostedContextMenuEvent::Select(action),
+            )));
             return true;
         }
         if let Some((_, source, target, position)) = self
@@ -20567,12 +20570,15 @@ impl DesktopProgram {
             return true;
         }
         if let Some(contribution) = self
-            .kernel.session()
+            .kernel
+            .session()
             .sidebar_navigation_contributions()
             .into_iter()
             .find(|contribution| contribution.id == target_id)
         {
-            self.update_message(Message::Sidebar(SidebarMessage::OpenSidebarNavigation(contribution.target)));
+            self.update_message(Message::Sidebar(SidebarMessage::OpenSidebarNavigation(
+                contribution.target,
+            )));
             return true;
         }
         if target_id == target_ids::SIDEBAR_FOOTER_PROVIDER {
@@ -20583,7 +20589,9 @@ impl DesktopProgram {
             (target_ids::sidebar_project(project.id.as_str()) == target_id)
                 .then(|| project.id.clone())
         }) {
-            self.update_message(Message::Sidebar(SidebarMessage::ToggleSidebarProject(project_id)));
+            self.update_message(Message::Sidebar(SidebarMessage::ToggleSidebarProject(
+                project_id,
+            )));
             return true;
         }
         if let Some(project_id) = self.projects.iter().find_map(|project| {
@@ -20600,7 +20608,9 @@ impl DesktopProgram {
             (target_ids::sidebar_project_new_conversation(project.id.as_str()) == target_id)
                 .then(|| project.id.clone())
         }) {
-            self.update_message(Message::Sidebar(SidebarMessage::OpenSidebarProjectDraft(project_id)));
+            self.update_message(Message::Sidebar(SidebarMessage::OpenSidebarProjectDraft(
+                project_id,
+            )));
             return true;
         }
         if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
@@ -20621,27 +20631,35 @@ impl DesktopProgram {
         if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
             (target_ids::sidebar_task_popup(task.id.as_str()) == target_id).then(|| task.id.clone())
         }) {
-            self.update_message(Message::Sidebar(SidebarMessage::OpenSidebarTaskPopup(task_id)));
+            self.update_message(Message::Sidebar(SidebarMessage::OpenSidebarTaskPopup(
+                task_id,
+            )));
             return true;
         }
         if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
             (target_ids::sidebar_task_pin(task.id.as_str()) == target_id).then(|| task.id.clone())
         }) {
-            self.update_message(Message::Sidebar(SidebarMessage::SidebarToggleTaskPinned(task_id)));
+            self.update_message(Message::Sidebar(SidebarMessage::SidebarToggleTaskPinned(
+                task_id,
+            )));
             return true;
         }
         if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
             (target_ids::sidebar_task_merge_delete(task.id.as_str()) == target_id)
                 .then(|| task.id.clone())
         }) {
-            self.update_message(Message::Sidebar(SidebarMessage::SidebarRequestTaskWorktreeMerge(task_id)));
+            self.update_message(Message::Sidebar(
+                SidebarMessage::SidebarRequestTaskWorktreeMerge(task_id),
+            ));
             return true;
         }
         if let Some(task_id) = self.task_move_candidates.iter().find_map(|task| {
             (target_ids::sidebar_task_archive(task.id.as_str()) == target_id)
                 .then(|| task.id.clone())
         }) {
-            self.update_message(Message::Sidebar(SidebarMessage::SidebarArchiveTask(task_id)));
+            self.update_message(Message::Sidebar(SidebarMessage::SidebarArchiveTask(
+                task_id,
+            )));
             return true;
         }
         if let Some(task_id) = self.conversation_status_entries.iter().find_map(|entry| {
@@ -20683,15 +20701,21 @@ impl DesktopProgram {
             return true;
         }
         if target_id == target_ids::CONVERSATION_STATUS_PIN && self.conversation_status_open {
-            self.update_message(Message::ConversationStatus(ConversationStatusMessage::ToggleConversationStatusAlwaysOnTop));
+            self.update_message(Message::ConversationStatus(
+                ConversationStatusMessage::ToggleConversationStatusAlwaysOnTop,
+            ));
             return true;
         }
         if target_id == target_ids::CONVERSATION_STATUS_OPACITY && self.conversation_status_open {
-            self.update_message(Message::ConversationStatus(ConversationStatusMessage::ToggleConversationStatusOpacityPanel));
+            self.update_message(Message::ConversationStatus(
+                ConversationStatusMessage::ToggleConversationStatusOpacityPanel,
+            ));
             return true;
         }
         if target_id == target_ids::CONVERSATION_STATUS_NEW_CHAT && self.conversation_status_open {
-            self.update_message(Message::ConversationStatus(ConversationStatusMessage::OpenConversationStatusNewChat));
+            self.update_message(Message::ConversationStatus(
+                ConversationStatusMessage::OpenConversationStatusNewChat,
+            ));
             return true;
         }
         if target_id == target_ids::TASK_POPUP_OPEN
@@ -20808,7 +20832,10 @@ impl DesktopProgram {
                     .map(|image| (window_id, image))
             });
         if let Some((window_id, image)) = markdown_image_target {
-            self.update_message(Message::Timeline(TimelineMessage::OpenMarkdownImage { window_id, image }));
+            self.update_message(Message::Timeline(TimelineMessage::OpenMarkdownImage {
+                window_id,
+                image,
+            }));
             return true;
         }
         if let Some((window_id, action)) =
@@ -21211,7 +21238,7 @@ impl DesktopProgram {
             }));
             return true;
         }
-        if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy {
+        if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy() {
             if let Some(repository) = self.github_repositories.iter().find(|repository| {
                 target_ids::github_repository(&repository.full_name) == target_id
             }) {
@@ -21230,32 +21257,32 @@ impl DesktopProgram {
                 self.open_project_clone();
             }
             target_ids::PROJECT_CLONE_BACK
-                if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy =>
+                if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy() =>
             {
                 self.close_project_clone();
             }
             target_ids::PROJECT_CLONE_PICK_PARENT
-                if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy =>
+                if self.project_surface == ProjectSurface::Clone && !self.project_clone_busy() =>
             {
                 self.pick_project_clone_parent();
             }
             target_ids::PROJECT_CLONE_START
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.project_clone_busy
+                    && !self.project_clone_busy()
                     && !self.project_clone_repository.trim().is_empty()
                     && !self.project_clone_parent.trim().is_empty() =>
             {
                 self.start_project_clone();
             }
             target_ids::PROJECT_CLONE_CANCEL
-                if self.project_surface == ProjectSurface::Clone && self.project_clone_busy =>
+                if self.project_surface == ProjectSurface::Clone && self.project_clone_busy() =>
             {
                 self.cancel_project_clone();
             }
             target_ids::GITHUB_BIND_START
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.project_clone_busy
-                    && !self.github_binding_busy
+                    && !self.project_clone_busy()
+                    && !self.github_binding_busy()
                     && self.github_binding.state == "unbound"
                     && self.github_binding.client_id_configured =>
             {
@@ -21263,7 +21290,7 @@ impl DesktopProgram {
             }
             target_ids::GITHUB_BIND_CANCEL
                 if self.project_surface == ProjectSurface::Clone
-                    && self.github_binding_busy
+                    && self.github_binding_busy()
                     && self.github_device_flow.is_some() =>
             {
                 self.cancel_github_binding();
@@ -21282,21 +21309,21 @@ impl DesktopProgram {
             }
             target_ids::GITHUB_UNBIND
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.github_binding_busy
+                    && !self.github_binding_busy()
                     && self.github_binding.state == "bound" =>
             {
                 self.unbind_github();
             }
             target_ids::GITHUB_REPOS_REFRESH
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.github_repositories_busy
+                    && !self.github_repositories_busy()
                     && self.github_binding.state == "bound" =>
             {
                 self.load_github_repositories(false);
             }
             target_ids::GITHUB_REPOS_LOAD_MORE
                 if self.project_surface == ProjectSurface::Clone
-                    && !self.github_repositories_busy
+                    && !self.github_repositories_busy()
                     && self.github_repositories_next_page.is_some() =>
             {
                 self.load_github_repositories(true);
@@ -21411,109 +21438,100 @@ impl DesktopProgram {
                     && !self.automations_open
                     && self.selected_project.is_some() =>
             {
-                self.update_message(Message::Roadmap(RoadmapMessage::OpenRoadmap));
+                self.update_message(Message::Roadmap(RoadmapMessage::Open));
             }
             target_ids::ROADMAP_REFRESH if self.project_surface == ProjectSurface::Roadmap => {
                 self.refresh_roadmap();
             }
             target_ids::ROADMAP_CREATE if self.project_surface == ProjectSurface::Roadmap => {
-                self.create_milestone();
+                self.route_roadmap_message(RoadmapMessage::Create);
             }
             target_ids::ROADMAP_SAVE
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some()
-                    && !self.milestone_title.trim().is_empty() =>
+                    && self.roadmap_module().selected().is_some()
+                    && !self.roadmap_module().title().trim().is_empty() =>
             {
-                self.save_milestone();
+                self.route_roadmap_message(RoadmapMessage::Save);
             }
             target_ids::ROADMAP_STATUS
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some() =>
+                    && self.roadmap_module().selected().is_some() =>
             {
-                self.cycle_milestone_status();
+                self.route_roadmap_message(RoadmapMessage::CycleStatus);
             }
             target_ids::ROADMAP_MOVE_UP
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some() =>
+                    && self.roadmap_module().selected().is_some() =>
             {
-                self.move_milestone(-1);
+                self.route_roadmap_message(RoadmapMessage::Move(-1));
             }
             target_ids::ROADMAP_MOVE_DOWN
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some() =>
+                    && self.roadmap_module().selected().is_some() =>
             {
-                self.move_milestone(1);
+                self.route_roadmap_message(RoadmapMessage::Move(1));
             }
             target_ids::ROADMAP_DELETE
                 if self.project_surface == ProjectSurface::Roadmap
-                    && self.selected_milestone.is_some() =>
+                    && self.roadmap_module().selected().is_some() =>
             {
-                self.delete_milestone();
+                self.route_roadmap_message(RoadmapMessage::Delete);
             }
             target_ids::MEMORY_OPEN
                 if !self.settings_open
                     && !self.automations_open
                     && self.selected_project.is_some() =>
             {
-                self.update_message(Message::Memory(MemoryMessage::OpenMemory));
+                self.update_message(Message::Memory(MemoryMessage::Open));
             }
             target_ids::MEMORY_REFRESH if self.project_surface == ProjectSurface::Memory => {
                 self.refresh_memories();
             }
             target_ids::MEMORY_NEW if self.project_surface == ProjectSurface::Memory => {
-                self.new_memory();
+                self.route_memory_message(MemoryMessage::New);
             }
             target_ids::MEMORY_SCOPE if self.project_surface == ProjectSurface::Memory => {
-                self.memory_scope = match self.memory_scope {
-                    MemoryScope::User => MemoryScope::Project,
-                    MemoryScope::Project => MemoryScope::User,
-                };
+                self.route_memory_message(MemoryMessage::ToggleScope);
             }
             target_ids::MEMORY_SAVE
                 if self.project_surface == ProjectSurface::Memory
-                    && !self.memory_title.trim().is_empty()
-                    && !self.memory_body.text().trim().is_empty() =>
+                    && !self.memory_module().title().trim().is_empty()
+                    && !self.memory_module().body().text().trim().is_empty() =>
             {
-                self.save_memory();
+                self.route_memory_message(MemoryMessage::Save);
             }
             target_ids::MEMORY_TOGGLE
                 if self.project_surface == ProjectSurface::Memory
-                    && self.selected_memory.is_some() =>
+                    && self.memory_module().selected().is_some() =>
             {
-                self.toggle_memory_enabled();
+                self.route_memory_message(MemoryMessage::ToggleEnabled);
             }
             target_ids::MEMORY_DELETE
                 if self.project_surface == ProjectSurface::Memory
-                    && self.selected_memory.is_some() =>
+                    && self.memory_module().selected().is_some() =>
             {
-                self.delete_memory();
+                self.route_memory_message(MemoryMessage::Delete);
             }
             target_ids::MEMORY_SETTINGS_GLOBAL
                 if self.project_surface == ProjectSurface::Memory =>
             {
-                let mut settings = self.memory_settings.clone();
-                settings.enabled = !settings.enabled;
-                self.update_memory_settings(settings);
+                self.route_memory_message(MemoryMessage::ToggleGlobal);
             }
             target_ids::MEMORY_SETTINGS_BASELINE
                 if self.project_surface == ProjectSurface::Memory =>
             {
-                let mut settings = self.memory_settings.clone();
-                settings.baseline_injection_enabled = !settings.baseline_injection_enabled;
-                self.update_memory_settings(settings);
+                self.route_memory_message(MemoryMessage::ToggleBaseline);
             }
             target_ids::MEMORY_SETTINGS_COOLDOWN
                 if self.project_surface == ProjectSurface::Memory =>
             {
-                let mut settings = self.memory_settings.clone();
-                settings.cooldown_turns = next_memory_cooldown(settings.cooldown_turns);
-                self.update_memory_settings(settings);
+                self.route_memory_message(MemoryMessage::CycleCooldown);
             }
             target_ids::MEMORY_SETTINGS_COOLDOWN_SAVE
                 if self.project_surface == ProjectSurface::Memory
-                    && parse_memory_cooldown(&self.memory_cooldown_input).is_ok() =>
+                    && parse_memory_cooldown(self.memory_module().cooldown_input()).is_ok() =>
             {
-                self.save_memory_cooldown();
+                self.route_memory_message(MemoryMessage::SaveCooldown);
             }
             target_ids::CODING_TOOLS_OPEN
                 if !self.settings_open
@@ -21551,14 +21569,14 @@ impl DesktopProgram {
             target_ids::CODING_TOOLS_REFRESH
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 self.refresh_coding_tools();
             }
             target_ids::CODING_TOOLS_SEARCH
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy
+                    && !self.coding_busy()
                     && !self.coding_query.trim().is_empty()
                     && (self.selected_project_workspace().is_some()
                         || (self.coding_search_all_projects
@@ -21569,21 +21587,21 @@ impl DesktopProgram {
             target_ids::CODING_TOOLS_SEARCH_MODE
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 self.update_message(Message::Coding(CodingMessage::CycleCodingSearchMode));
             }
             target_ids::CODING_TOOLS_SEARCH_SCOPE
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 self.update_message(Message::Coding(CodingMessage::ToggleCodingSearchScope));
             }
             target_ids::CODING_TOOLS_DIFF_SCOPE
                 if self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 self.update_message(Message::Coding(CodingMessage::CycleCodingGitDiffScope));
             }
@@ -21625,7 +21643,7 @@ impl DesktopProgram {
                 if target.starts_with(target_ids::CODING_TOOLS_TASK_PREFIX)
                     && self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 let task_id = self.coding_project_tasks.as_ref().and_then(|catalog| {
                     catalog
@@ -21650,7 +21668,7 @@ impl DesktopProgram {
                 if target.starts_with(target_ids::CODING_TOOLS_SEARCH_HIT_PREFIX)
                     && self.inspector_surface == InspectorSurface::CodingTools
                     && self.inspector_region_is_visible()
-                    && !self.coding_busy =>
+                    && !self.coding_busy() =>
             {
                 if let Some(hit) = self.coding_search.as_ref().and_then(|result| {
                     result
@@ -21683,7 +21701,7 @@ impl DesktopProgram {
                     && !self.automations_open
                     && self.selected_project.is_some() =>
             {
-                self.open_architecture();
+                self.route_architecture_message(ArchitectureMessage::Open);
             }
             target_ids::ARCHITECTURE_REFRESH
                 if self.project_surface == ProjectSurface::Architecture =>
@@ -21692,13 +21710,10 @@ impl DesktopProgram {
             }
             target_ids::ARCHITECTURE_ROLLBACK
                 if self.project_surface == ProjectSurface::Architecture
-                    && !self.tasks.is_empty()
-                    && self.architecture_history.iter().any(|record| {
-                        record.event.status == ArchitectureChangeStatus::Applied
-                            && record.after_graph.as_ref() == Some(&self.architecture)
-                    }) =>
+                    && !self.window_tasks(self.dispatch_window()).is_empty()
+                    && self.architecture_can_roll_back() =>
             {
-                self.rollback_architecture();
+                self.route_architecture_message(ArchitectureMessage::Rollback);
             }
             target_ids::AUTOMATIONS_OPEN if !self.settings_open && !self.automations_open => {
                 self.update_message(Message::Automation(AutomationMessage::OpenAutomations));
@@ -21809,34 +21824,54 @@ impl DesktopProgram {
                 self.update_message(Message::Settings(SettingsMessage::CloseSettings));
             }
             target_ids::SETTINGS_APPEARANCE if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("appearance"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("appearance"),
+                )));
             }
             target_ids::SETTINGS_PROJECT if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("project"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("project"),
+                )));
             }
             target_ids::SETTINGS_PROVIDER if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("provider"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("provider"),
+                )));
             }
             target_ids::SETTINGS_AGENT if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("agent"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("agent"),
+                )));
             }
             target_ids::SETTINGS_QUOTA if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("quota"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("quota"),
+                )));
             }
             target_ids::SETTINGS_EXTENSIONS if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("extensions"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("extensions"),
+                )));
             }
             target_ids::SETTINGS_REMOTE if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("remote"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("remote"),
+                )));
             }
             target_ids::SETTINGS_DESKTOP if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("desktop"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("desktop"),
+                )));
             }
             target_ids::SETTINGS_DATA if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("data"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("data"),
+                )));
             }
             target_ids::SETTINGS_ABOUT if settings_visible => {
-                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(SettingsTabId::new("about"))));
+                self.update_message(Message::Settings(SettingsMessage::SelectSettingsTab(
+                    SettingsTabId::new("about"),
+                )));
             }
             target_ids::PROJECT_WORKTREE_MODE
                 if settings_visible && self.settings_state.active_tab().as_str() == "project" =>
@@ -22006,7 +22041,7 @@ impl DesktopProgram {
             target_ids::PROVIDER_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.selected_provider_supports_api_key()
                     && !self.provider_secret.trim().is_empty() =>
             {
@@ -22015,7 +22050,7 @@ impl DesktopProgram {
             target_ids::PROVIDER_RUNTIME_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.provider_runtime_settings_dirty() =>
             {
                 self.save_provider_runtime_settings();
@@ -22023,7 +22058,7 @@ impl DesktopProgram {
             target_ids::PROVIDER_RUNTIME_RESET
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && (self.provider_runtime_settings.model.is_some()
                         || self.provider_runtime_settings.openai_endpoint.is_some()
                         || self.provider_runtime_settings.anthropic_endpoint.is_some()) =>
@@ -22033,8 +22068,8 @@ impl DesktopProgram {
             target_ids::ASSISTANT_AI_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                     && self.provider_ai_settings.assistant_dirty() =>
             {
                 self.save_assistant_ai_configuration();
@@ -22042,8 +22077,8 @@ impl DesktopProgram {
             target_ids::ASSISTANT_AI_CLEAR_SECRET
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                     && self.provider_ai_settings.assistant_secret_configured =>
             {
                 self.clear_assistant_ai_secret();
@@ -22051,8 +22086,8 @@ impl DesktopProgram {
             target_ids::ASSISTANT_AI_ADD_MODEL
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy()
                     && !self.assistant_ai_new_model_id.trim().is_empty() =>
             {
                 self.update_message(Message::Provider(ProviderMessage::AddAssistantModel));
@@ -22060,23 +22095,23 @@ impl DesktopProgram {
             target_ids::ASSISTANT_AI_FETCH_MODELS
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy =>
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy() =>
             {
                 self.start_assistant_ai_models_fetch();
             }
             target_ids::ASSISTANT_AI_TEST_CONNECTION
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
-                    && !self.assistant_ai_probe_busy =>
+                    && !self.provider_busy()
+                    && !self.assistant_ai_probe_busy() =>
             {
                 self.start_assistant_ai_connection_test();
             }
             target_ids::FEATURE_MODEL_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.provider_ai_settings.model_features_dirty() =>
             {
                 self.save_model_feature_settings();
@@ -22084,14 +22119,14 @@ impl DesktopProgram {
             target_ids::FEATURE_CUSTOM_PRESET_ADD
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy =>
+                    && !self.provider_busy() =>
             {
                 self.update_message(Message::Provider(ProviderMessage::AddCustomPreset));
             }
             target_id
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && target_ids::parse_feature_preset_effort(target_id).is_some() =>
             {
                 let preset_id = target_ids::parse_feature_preset_effort(target_id)
@@ -22104,7 +22139,7 @@ impl DesktopProgram {
             target_id
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && target_ids::parse_feature_preset_remove(target_id).is_some() =>
             {
                 let preset_id = target_ids::parse_feature_preset_remove(target_id)
@@ -22121,7 +22156,7 @@ impl DesktopProgram {
             target_ids::CONVERSATION_SUGGESTIONS_ENABLE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && !self.provider_ai_settings.conversation_suggestions_enabled() =>
             {
                 self.set_conversation_suggestions_enabled(true);
@@ -22129,7 +22164,7 @@ impl DesktopProgram {
             target_ids::CONVERSATION_SUGGESTIONS_DISABLE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                     && self.provider_ai_settings.conversation_suggestions_enabled() =>
             {
                 self.set_conversation_suggestions_enabled(false);
@@ -22137,42 +22172,42 @@ impl DesktopProgram {
             target_ids::PROVIDER_REFRESH
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy =>
+                    && !self.provider_busy() =>
             {
                 self.refresh_provider();
             }
             target_ids::QUOTA_REFRESH
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "quota"
-                    && !self.quota_busy =>
+                    && !self.quota_busy() =>
             {
                 self.refresh_quota();
             }
             target_ids::QUOTA_DAYS
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "quota"
-                    && !self.quota_busy =>
+                    && !self.quota_busy() =>
             {
                 self.update_message(Message::Quota(QuotaMessage::CycleDays));
             }
             target_ids::QUOTA_BACKEND
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "quota"
-                    && !self.quota_busy =>
+                    && !self.quota_busy() =>
             {
                 self.update_message(Message::Quota(QuotaMessage::CycleBackend));
             }
             target_ids::EXTENSIONS_REFRESH
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "extensions"
-                    && !self.extensions_busy =>
+                    && !self.extensions_busy() =>
             {
                 self.refresh_extensions();
             }
             target_ids::EXTENSIONS_ACTIVATE_MCP
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "extensions"
-                    && !self.extensions_busy
+                    && !self.extensions_busy()
                     && self.extensions.as_ref().is_some_and(|snapshot| {
                         snapshot.mcp_servers.iter().any(|server| server.enabled)
                     }) =>
@@ -22182,14 +22217,14 @@ impl DesktopProgram {
             target_ids::REMOTE_REFRESH
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy =>
+                    && !self.remote_busy() =>
             {
                 self.start_remote_operation(RemoteRequest::Refresh);
             }
             target_ids::REMOTE_HOST_TOGGLE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && self.remote.is_some() =>
             {
                 self.update_message(Message::Remote(RemoteMessage::ToggleHost));
@@ -22197,7 +22232,7 @@ impl DesktopProgram {
             target_ids::REMOTE_PC_NAME_SAVE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && !self.remote_pc_name.trim().is_empty() =>
             {
                 self.update_message(Message::Remote(RemoteMessage::SavePcName));
@@ -22205,7 +22240,7 @@ impl DesktopProgram {
             target_ids::REMOTE_KEEP_AWAKE
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && self.remote.is_some() =>
             {
                 self.update_message(Message::Remote(RemoteMessage::ToggleKeepAwake));
@@ -22213,7 +22248,7 @@ impl DesktopProgram {
             target_ids::REMOTE_START_PAIRING
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && self.remote.as_ref().is_some_and(|status| {
                         status.host_enabled && status.active_ticket.is_none()
                     }) =>
@@ -22223,7 +22258,7 @@ impl DesktopProgram {
             target_ids::REMOTE_CANCEL_PAIRING
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                     && self
                         .remote
                         .as_ref()
@@ -22249,7 +22284,9 @@ impl DesktopProgram {
             target_ids::DESKTOP_SHORTCUT
                 if settings_visible && self.settings_state.active_tab().as_str() == "desktop" =>
             {
-                self.update_message(Message::Settings(SettingsMessage::BeginShellShortcutCapture));
+                self.update_message(Message::Settings(
+                    SettingsMessage::BeginShellShortcutCapture,
+                ));
             }
             target_ids::DESKTOP_SHORTCUT_CLEAR
                 if settings_visible && self.settings_state.active_tab().as_str() == "desktop" =>
@@ -22260,7 +22297,7 @@ impl DesktopProgram {
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "desktop"
                     && self.update_configured
-                    && !self.update_busy =>
+                    && !self.update_busy() =>
             {
                 self.update_message(Message::Update(UpdateMessage::Check));
             }
@@ -22282,7 +22319,7 @@ impl DesktopProgram {
                 if settings_visible
                     && self.settings_state.active_tab().as_str() == "desktop"
                     && self.update_configured
-                    && !self.update_busy
+                    && !self.update_busy()
                     && matches!(&self.update_state, DesktopUpdateState::Available { .. }) =>
             {
                 self.update_message(Message::Update(UpdateMessage::Install));
@@ -22314,7 +22351,9 @@ impl DesktopProgram {
                     true,
                 ) =>
             {
-                self.update_message(Message::Timeline(TimelineMessage::ScrollTimelineToEnd(TimelineSurfaceKey::Main)));
+                self.update_message(Message::Timeline(TimelineMessage::ScrollTimelineToEnd(
+                    TimelineSurfaceKey::Main,
+                )));
             }
             target_ids::TASK_SESSION_INSPECTOR_TOGGLE
                 if !self.settings_open
@@ -22443,15 +22482,17 @@ impl DesktopProgram {
             {
                 self.clear_goal();
             }
-            target_ids::TASK_MEMORY_TOGGLE if self.memory_injection.is_some() => {
-                self.toggle_task_memory();
+            target_ids::TASK_MEMORY_TOGGLE if self.memory_module().injection().is_some() => {
+                self.route_memory_message(MemoryMessage::ToggleTaskInjection);
             }
-            target_ids::TASK_MEMORY_RESET_COOLDOWN if self.memory_injection.is_some() => {
-                self.reset_task_memory_cooldown();
+            target_ids::TASK_MEMORY_RESET_COOLDOWN
+                if self.memory_module().injection().is_some() =>
+            {
+                self.route_memory_message(MemoryMessage::ResetTaskCooldown);
             }
             target_ids::WORKTREE_CREATE
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22461,7 +22502,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_ATTACH
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22479,7 +22520,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_CLEAR
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22489,7 +22530,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_REQUEST_CLEANUP
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22499,7 +22540,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_REQUEST_MERGE
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self
                         .task_session
                         .as_ref()
@@ -22509,7 +22550,7 @@ impl DesktopProgram {
             }
             target_ids::WORKTREE_CONFIRM
                 if !self.composer_is_locked()
-                    && !self.worktree_busy
+                    && !self.worktree_busy()
                     && self.worktree_confirmation.is_some() =>
             {
                 self.update_message(Message::Worktree(WorktreeMessage::ConfirmAction));
@@ -22698,7 +22739,9 @@ impl DesktopProgram {
                     })
                     .flatten();
                 if let Some(project_id) = project_target {
-                    self.update_message(Message::Project(ProjectMessage::SelectProject(project_id)));
+                    self.update_message(Message::Project(ProjectMessage::SelectProject(
+                        project_id,
+                    )));
                     return true;
                 }
                 if !self.settings_open
@@ -22711,23 +22754,31 @@ impl DesktopProgram {
                     && !self.automations_open
                     && self.project_surface == ProjectSurface::Roadmap
                 {
-                    if let Some(milestone_id) =
-                        self.roadmap.milestones.iter().find_map(|milestone| {
+                    if let Some(milestone_id) = self
+                        .roadmap_module()
+                        .roadmap()
+                        .milestones
+                        .iter()
+                        .find_map(|milestone| {
                             (target_ids::milestone(&milestone.id) == target_id)
                                 .then(|| milestone.id.clone())
                         })
                     {
-                        self.select_milestone(milestone_id);
+                        self.route_roadmap_message(RoadmapMessage::Select(milestone_id));
                         return true;
                     }
-                    if let Some(milestone_id) = self.selected_milestone.clone() {
-                        let task_id = self.tasks.iter().find_map(|task| {
-                            (target_ids::milestone_task(&milestone_id, task.id.as_str())
-                                == target_id)
-                                .then(|| task.id.as_str().to_owned())
-                        });
+                    if let Some(milestone_id) = self.roadmap_module().selected().map(str::to_owned)
+                    {
+                        let task_id =
+                            self.window_tasks(self.dispatch_window())
+                                .iter()
+                                .find_map(|task| {
+                                    (target_ids::milestone_task(&milestone_id, task.id.as_str())
+                                        == target_id)
+                                        .then(|| task.id.as_str().to_owned())
+                                });
                         if let Some(task_id) = task_id {
-                            self.toggle_milestone_task(task_id);
+                            self.route_roadmap_message(RoadmapMessage::ToggleTask(task_id));
                             return true;
                         }
                     }
@@ -22736,10 +22787,12 @@ impl DesktopProgram {
                     && !self.automations_open
                     && self.project_surface == ProjectSurface::Memory
                 {
-                    if let Some(memory_id) = self.memories.iter().find_map(|memory| {
-                        (target_ids::memory(&memory.id) == target_id).then(|| memory.id.clone())
-                    }) {
-                        self.select_memory(memory_id);
+                    if let Some(memory_id) =
+                        self.memory_module().memories().iter().find_map(|memory| {
+                            (target_ids::memory(&memory.id) == target_id).then(|| memory.id.clone())
+                        })
+                    {
+                        self.route_memory_message(MemoryMessage::Select(memory_id));
                         return true;
                     }
                     return false;
@@ -22786,7 +22839,7 @@ impl DesktopProgram {
                     return false;
                 } else if settings_visible
                     && self.settings_state.active_tab().as_str() == "provider"
-                    && !self.provider_busy
+                    && !self.provider_busy()
                 {
                     if let Some(provider_id) = self.provider.providers.iter().find_map(|provider| {
                         (target_ids::provider(&provider.provider_id) == target_id)
@@ -22837,7 +22890,7 @@ impl DesktopProgram {
                     }
                 } else if settings_visible
                     && self.settings_state.active_tab().as_str() == "remote"
-                    && !self.remote_busy
+                    && !self.remote_busy()
                 {
                     if let Some(device_id) = self.remote.as_ref().and_then(|status| {
                         status.trusted_devices.iter().find_map(|device| {
@@ -22958,7 +23011,9 @@ impl DesktopProgram {
                         (target_ids::project(project.id.as_str()) == target_id)
                             .then(|| project.id.clone())
                     }) {
-                        self.update_message(Message::Project(ProjectMessage::SelectProject(project_id)));
+                        self.update_message(Message::Project(ProjectMessage::SelectProject(
+                            project_id,
+                        )));
                         return true;
                     }
                     if self.error_message.is_none() && self.selected_task.is_none() {
@@ -23120,7 +23175,9 @@ impl DesktopProgram {
                                     field_key,
                                 ),
                                 McpDebugAction::OpenUrl(url) => {
-                                    self.update_message(Message::Timeline(TimelineMessage::OpenMarkdownLink(url)));
+                                    self.update_message(Message::Timeline(
+                                        TimelineMessage::OpenMarkdownLink(url),
+                                    ));
                                 }
                                 McpDebugAction::Respond {
                                     request_id,
@@ -23265,28 +23322,40 @@ impl DesktopProgram {
             .selected_task
             .as_ref()
             .and_then(|task_id| {
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .task_turn_queue_debug_snapshot(task_id)
                     .ok()
             })
             .unwrap_or_default();
         let quarantined_turns = self
-            .kernel.session()
+            .kernel
+            .session()
             .turn_queue_quarantine_debug_snapshot()
             .unwrap_or_default();
         let active_durable_turn = runtime
             .as_ref()
             .and_then(|runtime| runtime.turn_id.as_deref())
             .and_then(|turn_id| durable_turns.iter().find(|turn| turn.turn_id == turn_id));
-        let selected_milestone = self.selected_milestone.as_deref().and_then(|selected| {
-            self.roadmap
+        let memory_module = self.memory_module();
+        let selected_memory = memory_module.selected().and_then(|selected| {
+            memory_module
+                .memories()
+                .iter()
+                .find(|memory| memory.id == selected)
+        });
+        let roadmap_module = self.roadmap_module();
+        let selected_milestone = roadmap_module.selected().and_then(|selected| {
+            roadmap_module
+                .roadmap()
                 .milestones
                 .iter()
                 .find(|milestone| milestone.id == selected)
         });
         let selected_milestone_task_count = selected_milestone
             .map(|milestone| {
-                self.roadmap
+                roadmap_module
+                    .roadmap()
                     .links
                     .iter()
                     .filter(|link| link.milestone_id == milestone.id)
@@ -23593,7 +23662,7 @@ impl DesktopProgram {
                 .iter()
                 .find(|project| Some(&project.id) == self.selected_project.as_ref())
                 .map(|project| project.pinned),
-            project_clone_busy: self.project_clone_busy,
+            project_clone_busy: self.project_clone_busy(),
             project_clone_outcome: project_clone_outcome_key(self.project_clone_outcome),
             project_clone_phase: self.project_clone_phase.clone(),
             project_clone_percent: self.project_clone_percent,
@@ -23607,9 +23676,9 @@ impl DesktopProgram {
                 .binding
                 .as_ref()
                 .map(|binding| binding.login.clone()),
-            github_binding_busy: self.github_binding_busy,
+            github_binding_busy: self.github_binding_busy(),
             github_device_flow_active: self.github_device_flow.is_some(),
-            github_repository_busy: self.github_repositories_busy,
+            github_repository_busy: self.github_repositories_busy(),
             github_repository_count: self.github_repositories.len(),
             github_repository_names: self
                 .github_repositories
@@ -23685,7 +23754,7 @@ impl DesktopProgram {
                 .and_then(|_| {
                     parse_automation_node_config(&self.automation_node_inspector.config).ok()
                 }),
-            selected_milestone: self.selected_milestone.clone(),
+            selected_milestone: roadmap_module.selected().map(str::to_owned),
             selected_milestone_title: selected_milestone.map(|milestone| milestone.title.clone()),
             selected_milestone_description: selected_milestone
                 .map(|milestone| milestone.description.clone()),
@@ -23695,39 +23764,25 @@ impl DesktopProgram {
             selected_milestone_status: selected_milestone
                 .map(|milestone| milestone.status.as_str()),
             selected_milestone_task_count,
-            milestone_count: self.roadmap.milestones.len(),
-            roadmap_error: self.roadmap_error.clone(),
-            selected_memory: self.selected_memory.clone(),
-            selected_memory_title: self.selected_memory.as_deref().and_then(|selected| {
-                self.memories
-                    .iter()
-                    .find(|memory| memory.id == selected)
-                    .map(|memory| memory.title.clone())
-            }),
-            selected_memory_body_line_count: self.selected_memory.as_deref().and_then(|selected| {
-                self.memories
-                    .iter()
-                    .find(|memory| memory.id == selected)
-                    .map(|memory| memory.body.lines().count())
-            }),
-            memory_draft_body_line_count: self.memory_body.line_count(),
-            memory_count: self.memories.len(),
-            memory_enabled: self.selected_memory.as_deref().and_then(|selected| {
-                self.memories
-                    .iter()
-                    .find(|memory| memory.id == selected)
-                    .map(|memory| memory.enabled)
-            }),
+            milestone_count: roadmap_module.roadmap().milestones.len(),
+            roadmap_error: roadmap_module.error().map(str::to_owned),
+            selected_memory: memory_module.selected().map(str::to_owned),
+            selected_memory_title: selected_memory.map(|memory| memory.title.clone()),
+            selected_memory_body_line_count: selected_memory
+                .map(|memory| memory.body.lines().count()),
+            memory_draft_body_line_count: memory_module.body().line_count(),
+            memory_count: memory_module.memories().len(),
+            memory_enabled: selected_memory.map(|memory| memory.enabled),
             memory_scope: (self.project_surface == ProjectSurface::Memory).then_some(
-                match self.memory_scope {
+                match memory_module.scope() {
                     MemoryScope::User => "user",
                     MemoryScope::Project => "project",
                 },
             ),
-            memory_global_enabled: self.memory_settings.enabled,
-            memory_baseline_enabled: self.memory_settings.baseline_injection_enabled,
-            memory_cooldown_turns: self.memory_settings.cooldown_turns,
-            task_memory_enabled: self.memory_injection.as_ref().map(|state| state.enabled),
+            memory_global_enabled: memory_module.settings().enabled,
+            memory_baseline_enabled: memory_module.settings().baseline_injection_enabled,
+            memory_cooldown_turns: memory_module.settings().cooldown_turns,
+            task_memory_enabled: memory_module.injection().map(|state| state.enabled),
             sidebar_region_extent: self
                 .workspace
                 .layout()
@@ -23785,7 +23840,7 @@ impl DesktopProgram {
                 .iab_windows
                 .values()
                 .find_map(|window| window.error().map(str::to_owned)),
-            coding_tools_busy: self.coding_busy,
+            coding_tools_busy: self.coding_busy(),
             coding_tools_shared_identity: self
                 .coding_tools
                 .as_ref()
@@ -23803,12 +23858,12 @@ impl DesktopProgram {
             coding_tools_has_git: self.coding_git.is_some(),
             coding_tools_has_workspace: self.coding_workspace.is_some(),
             coding_tools_has_search: self.coding_search.is_some(),
-            architecture_version: self.architecture.version,
-            architecture_node_count: self.architecture.nodes.len(),
-            architecture_edge_count: self.architecture.edges.len(),
-            architecture_history_count: self.architecture_history.len(),
-            architecture_quarantine_count: self.architecture_quarantine_count,
-            architecture_selected_node: match self.architecture_selection.as_ref() {
+            architecture_version: self.architecture_module().graph().version,
+            architecture_node_count: self.architecture_module().graph().nodes.len(),
+            architecture_edge_count: self.architecture_module().graph().edges.len(),
+            architecture_history_count: self.architecture_module().history().len(),
+            architecture_quarantine_count: self.architecture_module().quarantine_count(),
+            architecture_selected_node: match self.architecture_module().selection() {
                 Some(GraphSelection::Node(node)) => Some(node.as_str().to_owned()),
                 _ => None,
             },
@@ -23901,7 +23956,7 @@ impl DesktopProgram {
             provider_openai_endpoint: self.provider_runtime_settings.openai_endpoint.clone(),
             provider_anthropic_endpoint: self.provider_runtime_settings.anthropic_endpoint.clone(),
             provider_runtime_dirty: self.provider_runtime_settings_dirty(),
-            provider_busy: self.provider_busy,
+            provider_busy: self.provider_busy(),
             provider_error: self.provider_error.clone(),
             agent_interaction_revision: self.agent_interaction_settings.revision,
             agent_non_interrupt_mode: self.agent_interaction_settings.non_interrupt_mode,
@@ -23958,9 +24013,9 @@ impl DesktopProgram {
                 .as_ref()
                 .and_then(|stats| stats.cost.known_cost_usd)
                 .is_some(),
-            quota_busy: self.quota_busy,
+            quota_busy: self.quota_busy(),
             quota_error: self.quota_error.clone(),
-            extensions_busy: self.extensions_busy,
+            extensions_busy: self.extensions_busy(),
             extensions_shared_identity: self
                 .extensions
                 .as_ref()
@@ -24227,7 +24282,7 @@ impl DesktopProgram {
                 .map(|editor| editor.transport.as_registry().to_owned()),
             extensions_mcp_delete_confirmation: self.mcp_delete_confirmation.clone(),
             extensions_error: self.extensions_error.clone(),
-            remote_busy: self.remote_busy,
+            remote_busy: self.remote_busy(),
             remote_host_enabled: self
                 .remote
                 .as_ref()
@@ -24261,7 +24316,7 @@ impl DesktopProgram {
             shell_error: self.shell_error.clone(),
             update_configured: self.update_configured,
             update_state: update_state_key(&self.update_state),
-            update_busy: self.update_busy,
+            update_busy: self.update_busy(),
             update_error: self.update_error.clone(),
             data_import_busy: self.data_import.busy,
             data_import_has_source: self.data_import.source_home.is_some(),
@@ -24343,7 +24398,7 @@ impl DesktopProgram {
                 .as_ref()
                 .and_then(|session| session.worktree.as_ref())
                 .map(|worktree| worktree.branch_name.clone()),
-            worktree_busy: self.worktree_busy,
+            worktree_busy: self.worktree_busy(),
             worktree_confirmation: self.worktree_confirmation.map(worktree_confirmation_key),
             todo_count: self
                 .task_session
@@ -24430,9 +24485,9 @@ impl DesktopProgram {
                 self.conversation_status_error.as_deref(),
             ),
             ("automation", self.automation_error.as_deref()),
-            ("roadmap", self.roadmap_error.as_deref()),
-            ("architecture", self.architecture_error.as_deref()),
-            ("memory", self.memory_error.as_deref()),
+            ("roadmap", self.roadmap_module().error()),
+            ("architecture", self.architecture_module().error()),
+            ("memory", self.memory_module().error()),
             ("coding-tools", self.coding_error.as_deref()),
             ("provider", self.provider_error.as_deref()),
             ("quota", self.quota_error.as_deref()),
@@ -24479,22 +24534,24 @@ impl DesktopProgram {
     #[cfg(debug_assertions)]
     fn project_workspace_editor_debug_targets(
         &self,
-        editor: &ProjectWorkspaceEditorState,
+        window_id: HostedWindowId,
+        surface: ProjectWorkspaceSurface,
     ) -> Vec<String> {
-        match editor.surface {
+        match surface {
             ProjectWorkspaceSurface::Roadmap => {
                 let mut targets = vec![
                     target_ids::ROADMAP_REFRESH.to_owned(),
                     target_ids::ROADMAP_CREATE.to_owned(),
                 ];
+                let module = self.window_roadmap_module(window_id);
                 targets.extend(
-                    editor
-                        .roadmap
-                        .milestones
+                    module
+                        .map(|module| module.roadmap().milestones.as_slice())
+                        .unwrap_or_default()
                         .iter()
                         .map(|milestone| target_ids::milestone(&milestone.id)),
                 );
-                if let Some(milestone_id) = &editor.selected_milestone {
+                if let Some(milestone_id) = module.and_then(|module| module.selected()) {
                     targets.extend([
                         target_ids::ROADMAP_TITLE.to_owned(),
                         target_ids::ROADMAP_DESCRIPTION.to_owned(),
@@ -24504,12 +24561,11 @@ impl DesktopProgram {
                         target_ids::ROADMAP_MOVE_DOWN.to_owned(),
                         target_ids::ROADMAP_DELETE.to_owned(),
                     ]);
-                    if !editor.milestone_title.trim().is_empty() {
+                    if module.is_some_and(|module| !module.title().trim().is_empty()) {
                         targets.push(target_ids::ROADMAP_SAVE.to_owned());
                     }
                     targets.extend(
-                        editor
-                            .tasks
+                        self.window_tasks(window_id)
                             .iter()
                             .map(|task| target_ids::milestone_task(milestone_id, task.id.as_str())),
                     );
@@ -24529,21 +24585,25 @@ impl DesktopProgram {
                     target_ids::MEMORY_SETTINGS_COOLDOWN.to_owned(),
                     target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT.to_owned(),
                 ];
-                if parse_memory_cooldown(&self.memory_cooldown_input).is_ok() {
+                let module = self.window_memory_module(window_id);
+                if module
+                    .is_some_and(|module| parse_memory_cooldown(module.cooldown_input()).is_ok())
+                {
                     targets.push(target_ids::MEMORY_SETTINGS_COOLDOWN_SAVE.to_owned());
                 }
                 targets.extend(
-                    editor
-                        .memories
+                    module
+                        .map(crate::module::memory::MemoryModule::memories)
+                        .unwrap_or_default()
                         .iter()
                         .map(|memory| target_ids::memory(&memory.id)),
                 );
-                if !editor.memory_title.trim().is_empty()
-                    && !editor.memory_body.text().trim().is_empty()
-                {
+                if module.is_some_and(|module| {
+                    !module.title().trim().is_empty() && !module.body().text().trim().is_empty()
+                }) {
                     targets.push(target_ids::MEMORY_SAVE.to_owned());
                 }
-                if editor.selected_memory.is_some() {
+                if module.is_some_and(|module| module.selected().is_some()) {
                     targets.extend([
                         target_ids::MEMORY_TOGGLE.to_owned(),
                         target_ids::MEMORY_DELETE.to_owned(),
@@ -24553,11 +24613,10 @@ impl DesktopProgram {
             }
             ProjectWorkspaceSurface::Architecture => {
                 let mut targets = vec![target_ids::ARCHITECTURE_REFRESH.to_owned()];
-                if !editor.tasks.is_empty()
-                    && editor.architecture_history.iter().any(|record| {
-                        record.event.status == ArchitectureChangeStatus::Applied
-                            && record.after_graph.as_ref() == Some(&editor.architecture)
-                    })
+                if !self.window_tasks(window_id).is_empty()
+                    && self
+                        .window_architecture_module(window_id)
+                        .is_some_and(architecture_module_can_roll_back)
                 {
                     targets.push(target_ids::ARCHITECTURE_ROLLBACK.to_owned());
                 }
@@ -24582,11 +24641,12 @@ impl DesktopProgram {
             let Some(item_id) = popup.active_workspace_item_id.as_ref() else {
                 continue;
             };
-            let Some(editor) = popup.project_states.get(item_id) else {
+            let Some((_, surface)) = self.workspace_window_project_surface(popup.id, item_id)
+            else {
                 continue;
             };
             targets.extend(
-                self.project_workspace_editor_debug_targets(editor)
+                self.project_workspace_editor_debug_targets(popup.id, surface)
                     .into_iter()
                     .map(|target_id| {
                         target_ids::workspace_window_project_action(popup.id.0, &target_id)
@@ -24711,7 +24771,8 @@ impl DesktopProgram {
                 target_ids::SIDEBAR_FOOTER_PROVIDER.to_owned(),
             ]);
             targets.extend(
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .sidebar_navigation_contributions()
                     .into_iter()
                     .map(|contribution| contribution.id),
@@ -24739,7 +24800,8 @@ impl DesktopProgram {
                     target_ids::sidebar_task_archive(task.id.as_str()),
                 ]);
                 if self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .task_worktree(&task.id)
                     .is_ok_and(|worktree| worktree.is_some())
                 {
@@ -24761,7 +24823,7 @@ impl DesktopProgram {
                     .map(|(target, ..)| target),
             );
             targets.extend(
-                self.sidebar_menu_debug_targets()
+                self.sidebar_menu_actions()
                     .into_iter()
                     .map(|(target, _)| target),
             );
@@ -25276,7 +25338,7 @@ impl DesktopProgram {
                     target_ids::PROJECT_SETTINGS_SAVE.to_owned(),
                 ]);
             } else if self.settings_state.active_tab().as_str() == "provider" {
-                if !self.provider_busy {
+                if !self.provider_busy() {
                     targets.extend([
                         target_ids::PROVIDER_REFRESH.to_owned(),
                         target_ids::PROVIDER_MODEL_INPUT.to_owned(),
@@ -25290,7 +25352,7 @@ impl DesktopProgram {
                         target_ids::FEATURE_CUSTOM_PRESET_NAME.to_owned(),
                         target_ids::FEATURE_CUSTOM_PRESET_ADD.to_owned(),
                     ]);
-                    if !self.assistant_ai_probe_busy {
+                    if !self.assistant_ai_probe_busy() {
                         targets.extend([
                             target_ids::ASSISTANT_AI_BASE_URL_INPUT.to_owned(),
                             target_ids::ASSISTANT_AI_MODEL_INPUT.to_owned(),
@@ -25328,11 +25390,12 @@ impl DesktopProgram {
                     {
                         targets.push(target_ids::PROVIDER_RUNTIME_RESET.to_owned());
                     }
-                    if !self.assistant_ai_probe_busy && self.provider_ai_settings.assistant_dirty()
+                    if !self.assistant_ai_probe_busy()
+                        && self.provider_ai_settings.assistant_dirty()
                     {
                         targets.push(target_ids::ASSISTANT_AI_SAVE.to_owned());
                     }
-                    if !self.assistant_ai_probe_busy
+                    if !self.assistant_ai_probe_busy()
                         && self.provider_ai_settings.assistant_secret_configured
                     {
                         targets.push(target_ids::ASSISTANT_AI_CLEAR_SECRET.to_owned());
@@ -25357,11 +25420,11 @@ impl DesktopProgram {
                 );
                 if self.selected_provider_supports_api_key() {
                     targets.push(target_ids::PROVIDER_SECRET_INPUT.to_owned());
-                    if !self.provider_busy && !self.provider_secret.trim().is_empty() {
+                    if !self.provider_busy() && !self.provider_secret.trim().is_empty() {
                         targets.push(target_ids::PROVIDER_SAVE.to_owned());
                     }
                 }
-                if !self.provider_busy {
+                if !self.provider_busy() {
                     targets.extend(
                         self.provider
                             .credentials
@@ -25410,7 +25473,7 @@ impl DesktopProgram {
                     }
                 }
             } else if self.settings_state.active_tab().as_str() == "quota" {
-                if !self.quota_busy {
+                if !self.quota_busy() {
                     targets.extend([
                         target_ids::QUOTA_REFRESH.to_owned(),
                         target_ids::QUOTA_DAYS.to_owned(),
@@ -25418,7 +25481,7 @@ impl DesktopProgram {
                     ]);
                 }
             } else if self.settings_state.active_tab().as_str() == "extensions" {
-                if !self.extensions_busy {
+                if !self.extensions_busy() {
                     targets.extend([
                         target_ids::EXTENSIONS_REFRESH.to_owned(),
                         target_ids::EXTENSIONS_SKILL_ID.to_owned(),
@@ -25590,7 +25653,7 @@ impl DesktopProgram {
                     }
                 }
             } else if self.settings_state.active_tab().as_str() == "remote" {
-                if !self.remote_busy {
+                if !self.remote_busy() {
                     targets.push(target_ids::REMOTE_REFRESH.to_owned());
                     if let Some(status) = &self.remote {
                         targets.extend([
@@ -25627,7 +25690,7 @@ impl DesktopProgram {
                     target_ids::DESKTOP_SHORTCUT_CLEAR.to_owned(),
                     target_ids::DESKTOP_UPDATE_RELEASES.to_owned(),
                 ]);
-                if self.update_configured && !self.update_busy {
+                if self.update_configured && !self.update_busy() {
                     targets.push(target_ids::DESKTOP_UPDATE_CHECK.to_owned());
                     if matches!(&self.update_state, DesktopUpdateState::Available { .. }) {
                         targets.push(target_ids::DESKTOP_UPDATE_INSTALL.to_owned());
@@ -25822,7 +25885,7 @@ impl DesktopProgram {
                 .map(|project| target_ids::archived_project(project.id.as_str())),
         );
         if self.project_surface == ProjectSurface::Clone {
-            if self.project_clone_busy {
+            if self.project_clone_busy() {
                 targets.push(target_ids::PROJECT_CLONE_CANCEL.to_owned());
             } else {
                 targets.extend([
@@ -25837,13 +25900,13 @@ impl DesktopProgram {
                     targets.push(target_ids::PROJECT_CLONE_START.to_owned());
                 }
                 if self.github_binding.state == "bound" {
-                    if !self.github_binding_busy && !self.github_repositories_busy {
+                    if !self.github_binding_busy() && !self.github_repositories_busy() {
                         targets.extend([
                             target_ids::GITHUB_UNBIND.to_owned(),
                             target_ids::GITHUB_REPOS_REFRESH.to_owned(),
                         ]);
                     }
-                    if !self.github_repositories_busy
+                    if !self.github_repositories_busy()
                         && self.github_repositories_next_page.is_some()
                     {
                         targets.push(target_ids::GITHUB_REPOS_LOAD_MORE.to_owned());
@@ -25870,7 +25933,7 @@ impl DesktopProgram {
                         target_ids::GITHUB_VERIFICATION_OPEN.to_owned(),
                         target_ids::GITHUB_USER_CODE_COPY.to_owned(),
                     ]);
-                } else if !self.github_binding_busy && self.github_binding.client_id_configured {
+                } else if !self.github_binding_busy() && self.github_binding.client_id_configured {
                     targets.push(target_ids::GITHUB_BIND_START.to_owned());
                 }
             }
@@ -25956,12 +26019,13 @@ impl DesktopProgram {
                 target_ids::ROADMAP_CREATE.to_owned(),
             ]);
             targets.extend(
-                self.roadmap
+                self.roadmap_module()
+                    .roadmap()
                     .milestones
                     .iter()
                     .map(|milestone| target_ids::milestone(&milestone.id)),
             );
-            if let Some(milestone_id) = &self.selected_milestone {
+            if let Some(milestone_id) = self.roadmap_module().selected() {
                 targets.extend([
                     target_ids::ROADMAP_TITLE.to_owned(),
                     target_ids::ROADMAP_DESCRIPTION.to_owned(),
@@ -25971,7 +26035,7 @@ impl DesktopProgram {
                     target_ids::ROADMAP_MOVE_DOWN.to_owned(),
                     target_ids::ROADMAP_DELETE.to_owned(),
                 ]);
-                if !self.milestone_title.trim().is_empty() {
+                if !self.roadmap_module().title().trim().is_empty() {
                     targets.push(target_ids::ROADMAP_SAVE.to_owned());
                 }
                 targets.extend(
@@ -25995,18 +26059,21 @@ impl DesktopProgram {
                 target_ids::MEMORY_SETTINGS_COOLDOWN.to_owned(),
                 target_ids::MEMORY_SETTINGS_COOLDOWN_INPUT.to_owned(),
             ]);
-            if parse_memory_cooldown(&self.memory_cooldown_input).is_ok() {
+            if parse_memory_cooldown(self.memory_module().cooldown_input()).is_ok() {
                 targets.push(target_ids::MEMORY_SETTINGS_COOLDOWN_SAVE.to_owned());
             }
             targets.extend(
-                self.memories
+                self.memory_module()
+                    .memories()
                     .iter()
                     .map(|memory| target_ids::memory(&memory.id)),
             );
-            if !self.memory_title.trim().is_empty() && !self.memory_body.text().trim().is_empty() {
+            if !self.memory_module().title().trim().is_empty()
+                && !self.memory_module().body().text().trim().is_empty()
+            {
                 targets.push(target_ids::MEMORY_SAVE.to_owned());
             }
-            if self.selected_memory.is_some() {
+            if self.memory_module().selected().is_some() {
                 targets.extend([
                     target_ids::MEMORY_TOGGLE.to_owned(),
                     target_ids::MEMORY_DELETE.to_owned(),
@@ -26018,7 +26085,7 @@ impl DesktopProgram {
             && self.inspector_region_is_visible()
         {
             targets.push(target_ids::CODING_TOOLS_CLOSE.to_owned());
-            if !self.coding_busy {
+            if !self.coding_busy() {
                 targets.extend([
                     target_ids::CODING_TOOLS_REFRESH.to_owned(),
                     target_ids::CODING_TOOLS_QUERY.to_owned(),
@@ -26118,12 +26185,7 @@ impl DesktopProgram {
         }
         if self.project_surface == ProjectSurface::Architecture {
             targets.push(target_ids::ARCHITECTURE_REFRESH.to_owned());
-            if !self.tasks.is_empty()
-                && self.architecture_history.iter().any(|record| {
-                    record.event.status == ArchitectureChangeStatus::Applied
-                        && record.after_graph.as_ref() == Some(&self.architecture)
-                })
-            {
+            if !self.tasks.is_empty() && self.architecture_can_roll_back() {
                 targets.push(target_ids::ARCHITECTURE_ROLLBACK.to_owned());
             }
             return targets;
@@ -26342,7 +26404,7 @@ impl DesktopProgram {
                     }
                     if session.worktree.is_some() {
                         targets.push(target_ids::WORKTREE_OPEN.to_owned());
-                        if !self.composer_is_locked() && !self.worktree_busy {
+                        if !self.composer_is_locked() && !self.worktree_busy() {
                             targets.extend([
                                 target_ids::WORKTREE_CLEAR.to_owned(),
                                 target_ids::WORKTREE_REQUEST_CLEANUP.to_owned(),
@@ -26353,7 +26415,7 @@ impl DesktopProgram {
                                 targets.push(target_ids::WORKTREE_CANCEL.to_owned());
                             }
                         }
-                    } else if !self.composer_is_locked() && !self.worktree_busy {
+                    } else if !self.composer_is_locked() && !self.worktree_busy() {
                         targets.push(target_ids::WORKTREE_CREATE.to_owned());
                         targets.push(target_ids::WORKTREE_ATTACH.to_owned());
                     }
@@ -26706,7 +26768,7 @@ impl DesktopProgram {
                     }
                 }
             }
-            if self.memory_injection.is_some() {
+            if self.memory_module().injection().is_some() {
                 targets.extend([
                     target_ids::TASK_MEMORY_TOGGLE.to_owned(),
                     target_ids::TASK_MEMORY_RESET_COOLDOWN.to_owned(),
@@ -26880,9 +26942,6 @@ impl DesktopProgram {
                 project_id,
                 task_id,
             } => {
-                if task_id.as_ref() == self.selected_task.as_ref() {
-                    self.worktree_busy = false;
-                }
                 let active_location_changed = match project_id.as_ref() {
                     Some(project_id) => self.selected_project.as_ref() == Some(project_id),
                     None => self.inbox_selected,
@@ -26934,10 +26993,10 @@ impl DesktopProgram {
             DesktopEventKind::WorktreeChanged { task_id }
             | DesktopEventKind::WorktreeOperationCompleted { task_id } => {
                 if self.selected_task.as_ref() == Some(&task_id) {
-                    self.worktree_busy = false;
                     self.worktree_confirmation = None;
                     if self
-                        .kernel.session()
+                        .kernel
+                        .session()
                         .get_task(&task_id)
                         .is_ok_and(|task| task.archived)
                     {
@@ -26951,7 +27010,6 @@ impl DesktopProgram {
             }
             DesktopEventKind::WorktreeOperationFailed { task_id, message } => {
                 if self.selected_task.as_ref() == Some(&task_id) {
-                    self.worktree_busy = false;
                     self.worktree_confirmation = None;
                     self.task_action_error = Some(message);
                     self.refresh_task_session();
@@ -27081,35 +27139,39 @@ impl DesktopProgram {
                 }
                 if self.projects.iter().any(|project| project.id == project_id) {
                     self.update_message(Message::Settings(SettingsMessage::CloseSettings));
-                    self.update_message(Message::Project(ProjectMessage::SelectProject(project_id)));
+                    self.update_message(Message::Project(ProjectMessage::SelectProject(
+                        project_id,
+                    )));
                 } else {
                     self.error_message = Some("无法打开指定项目。".to_owned());
                 }
             }
-            DesktopNavigationTarget::Task(task_id) => match self.kernel.session().get_task(&task_id) {
-                Ok(task) => {
-                    let Some(project_id) = task.project_id else {
-                        self.error_message = Some("该任务没有所属项目。".to_owned());
-                        return;
-                    };
-                    if !self.projects.iter().any(|project| project.id == project_id) {
-                        self.refresh_projects();
+            DesktopNavigationTarget::Task(task_id) => {
+                match self.kernel.session().get_task(&task_id) {
+                    Ok(task) => {
+                        let Some(project_id) = task.project_id else {
+                            self.error_message = Some("该任务没有所属项目。".to_owned());
+                            return;
+                        };
+                        if !self.projects.iter().any(|project| project.id == project_id) {
+                            self.refresh_projects();
+                        }
+                        self.update_message(Message::Settings(SettingsMessage::CloseSettings));
+                        self.project_surface = ProjectSurface::Tasks;
+                        if self.execute_workspace_command(DesktopCommand::SelectProject(project_id))
+                            && self.tasks.iter().any(|task| task.id == task_id)
+                        {
+                            self.select_task(task_id);
+                        } else {
+                            self.error_message = Some("无法打开指定任务。".to_owned());
+                        }
                     }
-                    self.update_message(Message::Settings(SettingsMessage::CloseSettings));
-                    self.project_surface = ProjectSurface::Tasks;
-                    if self.execute_workspace_command(DesktopCommand::SelectProject(project_id))
-                        && self.tasks.iter().any(|task| task.id == task_id)
-                    {
-                        self.select_task(task_id);
-                    } else {
+                    Err(error) => {
+                        eprintln!("failed to navigate to LiliaCode task: {error}");
                         self.error_message = Some("无法打开指定任务。".to_owned());
                     }
                 }
-                Err(error) => {
-                    eprintln!("failed to navigate to LiliaCode task: {error}");
-                    self.error_message = Some("无法打开指定任务。".to_owned());
-                }
-            },
+            }
             DesktopNavigationTarget::Settings => {
                 self.update_message(Message::Settings(SettingsMessage::OpenSettings));
             }
@@ -27316,7 +27378,7 @@ impl DesktopProgram {
         }
         if item_changed {
             self.sync_workspace_window_application_surface(window_id);
-            self.sync_workspace_window_project_surfaces(window_id, false);
+            self.sync_workspace_window_project_surfaces(window_id);
         }
         self.sync_workspace_window_splits(window_id);
         self.sync_document_editors_from_workspaces();
@@ -27507,6 +27569,8 @@ impl DesktopProgram {
             };
             seen_items.extend(restored_items);
             let window_id = WindowId(persisted.window_id);
+            self.workspace_sessions
+                .install(window_id, workspace.clone());
             self.task_popups.insert(
                 window_id,
                 TaskPopupWindow {
@@ -27539,14 +27603,13 @@ impl DesktopProgram {
                     surface_position: persisted.geometry.map(|geometry| (geometry.x, geometry.y)),
                     scale_factor: 1.0,
                     workspace_splits: BTreeMap::new(),
-                    project_states: BTreeMap::new(),
                 },
             );
             self.sync_workspace_window_splits(window_id);
             self.refresh_task_popup(window_id);
             self.refresh_conversation_suggestions(window_id, false);
             self.sync_workspace_window_application_surface(window_id);
-            self.sync_workspace_window_project_surfaces(window_id, false);
+            self.sync_workspace_window_project_surfaces(window_id);
             self.sync_document_editors_from_workspaces();
             let Some(popup) = self.task_popups.get(&window_id) else {
                 continue;
@@ -27609,6 +27672,8 @@ impl DesktopProgram {
             }
         };
         let title = item.title.clone();
+        self.workspace_sessions
+            .install(window_id, workspace.clone());
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -27641,14 +27706,13 @@ impl DesktopProgram {
                 surface_position: None,
                 scale_factor: 1.0,
                 workspace_splits: BTreeMap::new(),
-                project_states: BTreeMap::new(),
             },
         );
         self.apply_workspace_snapshot(outcome.source);
         self.sync_workspace_window_splits(window_id);
         self.refresh_task_popup(window_id);
         self.sync_workspace_window_application_surface(window_id);
-        self.sync_workspace_window_project_surfaces(window_id, false);
+        self.sync_workspace_window_project_surfaces(window_id);
         self.persist_workspace_topology();
         self.pending_window_commands
             .push(HostedWindowCommand::Open {
@@ -27718,13 +27782,15 @@ impl DesktopProgram {
     }
 
     fn preferred_popup_project(&self) -> Option<ProjectId> {
-        self.kernel.session()
+        self.kernel
+            .session()
             .popup_last_project_id()
             .ok()
             .flatten()
             .and_then(|project_id| ProjectId::new(project_id).ok())
             .filter(|project_id| {
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .get_project(project_id)
                     .is_ok_and(|project| project.archive == ProjectArchiveState::Active)
             })
@@ -27738,14 +27804,16 @@ impl DesktopProgram {
     ) -> Result<HostedWindowId, String> {
         if let Some(project_id) = &project_id {
             let project = self
-                .kernel.session()
+                .kernel
+                .session()
                 .get_project(project_id)
                 .map_err(|error| error.to_string())?;
             if project.archive != ProjectArchiveState::Active {
                 return Err("project is archived".to_owned());
             }
             if let Err(error) = self
-                .kernel.session()
+                .kernel
+                .session()
                 .remember_popup_last_project(project_id.as_str())
             {
                 eprintln!("failed to remember Native popup draft project: {error}");
@@ -27780,6 +27848,8 @@ impl DesktopProgram {
             .unwrap_or_else(|| "收集箱".to_owned());
         let draft_worktree = self.initial_draft_worktree(project_id.as_ref());
         let composer_editor = TextEditorState::with_text(&composer.content);
+        self.workspace_sessions
+            .install(window_id, workspace.clone());
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -27812,7 +27882,6 @@ impl DesktopProgram {
                 surface_position: None,
                 scale_factor: 1.0,
                 workspace_splits: BTreeMap::new(),
-                project_states: BTreeMap::new(),
             },
         );
         self.refresh_conversation_suggestions(window_id, false);
@@ -27831,7 +27900,8 @@ impl DesktopProgram {
     ) {
         if let Some(project_id) = &project_id {
             let valid = self
-                .kernel.session()
+                .kernel
+                .session()
                 .get_project(project_id)
                 .is_ok_and(|project| project.archive == ProjectArchiveState::Active);
             if !valid {
@@ -27867,7 +27937,8 @@ impl DesktopProgram {
         popup.conversation_suggestions.clear();
         if let Some(project_id) = project_id {
             if let Err(error) = self
-                .kernel.session()
+                .kernel
+                .session()
                 .remember_popup_last_project(project_id.as_str())
             {
                 eprintln!("failed to remember Native popup draft project: {error}");
@@ -27914,7 +27985,8 @@ impl DesktopProgram {
         };
         if let Some(project_id) = task.project_id.as_ref() {
             if let Err(error) = self
-                .kernel.session()
+                .kernel
+                .session()
                 .remember_popup_last_project(project_id.as_str())
             {
                 eprintln!("failed to remember Native popup project: {error}");
@@ -27991,7 +28063,8 @@ impl DesktopProgram {
             ))
             .expect("task popup view ids are valid");
             let item = match self
-                .kernel.session()
+                .kernel
+                .session()
                 .task_workspace_item_view(&task_id, item_id.clone())
             {
                 Ok(item) => item,
@@ -28021,6 +28094,8 @@ impl DesktopProgram {
             })
             .map(|project| project.name.clone())
             .unwrap_or_else(|| "收集箱".to_owned());
+        self.workspace_sessions
+            .install(window_id, workspace.clone());
         self.task_popups.insert(
             window_id,
             TaskPopupWindow {
@@ -28053,7 +28128,6 @@ impl DesktopProgram {
                 surface_position: None,
                 scale_factor: 1.0,
                 workspace_splits: BTreeMap::new(),
-                project_states: BTreeMap::new(),
             },
         );
         self.sync_workspace_window_splits(window_id);
@@ -28124,7 +28198,8 @@ impl DesktopProgram {
         let mut session_error = false;
         for task_id in task_ids {
             match self
-                .kernel.session()
+                .kernel
+                .session()
                 .task_session_snapshot_page(&task_id, TIMELINE_PAGE_SIZE)
             {
                 Ok(snapshot) => {
@@ -28173,7 +28248,8 @@ impl DesktopProgram {
         };
         let task = self.kernel.session().get_task(&task_id);
         let runtime = self
-            .kernel.session()
+            .kernel
+            .session()
             .restore_task_runtime_from_projection(&task_id);
         let session = task_sessions.get(&task_id).cloned();
         let timeline_follow_extent = session.as_ref().and_then(|session| {
@@ -28329,147 +28405,43 @@ impl DesktopProgram {
         }
     }
 
-    fn load_project_workspace_editor_state(
+    /// The project and page a workspace window's item shows.
+    ///
+    /// Read from the item each time rather than mirrored beside it: the item is
+    /// the only writer of its own surface, and a second copy is what used to
+    /// drift when a window reopened.
+    fn workspace_window_project_surface(
         &self,
-        item: &WorkspaceItem,
-    ) -> Option<ProjectWorkspaceEditorState> {
-        let (project_id, surface) = item.project_surface().ok().flatten()?;
-        let tasks = self
-            .kernel.session()
-            .query_tasks(TaskQuery::for_project(project_id.clone()))
-            .unwrap_or_default()
-            .into_iter()
-            .map(|task| DesktopWorkspaceTask {
-                id: task.id,
-                title: task.title,
-                parent_id: task.parent_id,
-                status: task.status,
-                priority: task.priority,
-                pinned: task.pinned,
-                sort_order: task.sort_order,
-            })
-            .collect::<Vec<_>>();
-        let selected_milestone = item
-            .serialized_state
-            .as_ref()
-            .and_then(|state| state.get("selectedMilestoneId"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let selected_memory = item
-            .serialized_state
-            .as_ref()
-            .and_then(|state| state.get("selectedMemoryId"))
-            .and_then(Value::as_str)
-            .map(str::to_owned);
-        let (roadmap, roadmap_error) = match self.kernel.session().project_roadmap(&project_id) {
-            Ok(roadmap) => (roadmap, None),
-            Err(error) => (
-                ProjectRoadmap::default(),
-                Some(format!("无法读取路线图：{error}")),
-            ),
-        };
-        let selected_milestone = selected_milestone
-            .filter(|selected| roadmap.milestones.iter().any(|item| &item.id == selected))
-            .or_else(|| roadmap.milestones.first().map(|item| item.id.clone()));
-        let milestone = selected_milestone
-            .as_deref()
-            .and_then(|selected| roadmap.milestones.iter().find(|item| item.id == selected));
-        let milestone_title = milestone.map(|item| item.title.clone()).unwrap_or_default();
-        let milestone_description = milestone
-            .map(|item| item.description.clone())
-            .unwrap_or_default();
-        let milestone_due_date = milestone
-            .and_then(|item| item.due_date)
-            .map(format_civil_date)
-            .unwrap_or_default();
-        let (memories, memory_error) = match self.kernel.session().list_memories(Some(&project_id)) {
-            Ok(memories) => (memories, None),
-            Err(error) => (Vec::new(), Some(format!("无法读取 Memory：{error}"))),
-        };
-        let selected_memory = selected_memory
-            .filter(|selected| memories.iter().any(|item| &item.id == selected))
-            .or_else(|| memories.first().map(|item| item.id.clone()));
-        let memory = selected_memory
-            .as_deref()
-            .and_then(|selected| memories.iter().find(|item| item.id == selected));
-        let memory_title = memory.map(|item| item.title.clone()).unwrap_or_default();
-        let memory_body =
-            TextEditorState::with_text(memory.map(|item| item.body.as_str()).unwrap_or_default());
-        let memory_tags = memory.map(|item| item.tags.join(", ")).unwrap_or_default();
-        let memory_scope = memory.map_or(MemoryScope::Project, |item| item.scope);
-        let memory_updated_at = memory.map(|item| item.updated_at);
-        let (
-            architecture,
-            architecture_history,
-            architecture_quarantine_count,
-            mut architecture_error,
-        ) = match (
-            self.kernel.session().project_architecture(&project_id),
-            self.kernel.session()
-                .project_architecture_changes(&project_id, 40),
-            self.kernel.session()
-                .project_architecture_quarantine(&project_id),
-        ) {
-            (Ok(graph), Ok(history), Ok(quarantine)) => (graph, history, quarantine.len(), None),
-            (graph, history, quarantine) => (
-                ProjectArchitectureGraph::empty(project_id.as_str()),
-                Vec::new(),
-                0,
-                Some(format!(
-                    "无法读取架构快照：{}",
-                    graph
-                        .err()
-                        .or_else(|| history.err())
-                        .or_else(|| quarantine.err())
-                        .map(|error| error.to_string())
-                        .unwrap_or_else(|| "未知错误".to_owned())
-                )),
-            ),
-        };
-        let mut architecture_graph =
-            architecture_graph_model(&architecture).unwrap_or_else(|_| GraphModel::empty());
-        let mut architecture_viewport = architecture_default_viewport(&architecture_graph);
-        if let Err(error) = restore_architecture_workspace_layout(
-            item.serialized_state.as_ref(),
-            architecture.version,
-            &mut architecture_graph,
-            &mut architecture_viewport,
-        ) {
-            architecture_error = Some(format!("架构图布局已重置，保存的布局无法恢复：{error}"));
-        }
-        Some(ProjectWorkspaceEditorState {
-            project_id,
-            surface,
-            tasks,
-            roadmap,
-            selected_milestone,
-            milestone_title,
-            milestone_description,
-            milestone_due_date,
-            roadmap_error,
-            memories,
-            selected_memory,
-            memory_title,
-            memory_body,
-            memory_tags,
-            memory_scope,
-            memory_updated_at,
-            memory_error,
-            architecture,
-            architecture_history,
-            architecture_quarantine_count,
-            architecture_graph,
-            architecture_viewport,
-            architecture_selection: None,
-            architecture_error,
-        })
+        window_id: HostedWindowId,
+        item_id: &WorkspaceItemId,
+    ) -> Option<(ProjectId, ProjectWorkspaceSurface)> {
+        self.task_popups
+            .get(&window_id)?
+            .workspace
+            .snapshot()
+            .ok()?
+            .workspace_items
+            .iter()
+            .find(|item| &item.id == item_id)
+            .and_then(|item| item.project_surface().ok().flatten())
     }
 
-    fn sync_workspace_window_project_surfaces(
-        &mut self,
-        window_id: HostedWindowId,
-        replace_existing: bool,
-    ) {
+    /// The tasks a window's project pages render against, taken from that
+    /// window's own session.
+    fn window_tasks(&self, window_id: HostedWindowId) -> Cow<'_, [DesktopWorkspaceTask]> {
+        if window_id == HostedWindowId::PRIMARY {
+            return Cow::Borrowed(&self.tasks);
+        }
+        self.task_popups
+            .get(&window_id)
+            .and_then(|popup| popup.workspace.snapshot().ok())
+            .map(|snapshot| Cow::Owned(snapshot.tasks))
+            .unwrap_or(Cow::Borrowed(&[]))
+    }
+
+    /// Loads every project page a workspace window has open into that window's
+    /// own modules.
+    fn sync_workspace_window_project_surfaces(&mut self, window_id: HostedWindowId) {
         let items = self
             .task_popups
             .get(&window_id)
@@ -28482,27 +28454,122 @@ impl DesktopProgram {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let item_ids = items
+        self.sync_workspace_window_architecture(window_id, &items);
+        self.sync_workspace_window_roadmap(window_id, &items);
+        self.sync_workspace_window_memory(window_id, &items);
+    }
+
+    /// Loads the window's memory module and restores the memory its item
+    /// remembered.
+    fn sync_workspace_window_memory(&mut self, window_id: HostedWindowId, items: &[WorkspaceItem]) {
+        let Some(saved) = Self::workspace_item_state(items, ProjectWorkspaceSurface::Memory) else {
+            return;
+        };
+        self.route_to_window_module(
+            window_id,
+            &crate::module::memory::MemoryModule::feature_id(),
+            Box::new(MemoryMessage::Refresh),
+            Some(crate::runtime_shell::ShellProjectPage::Memory),
+        );
+        let selected = saved
+            .as_ref()
+            .and_then(|state| state.get("selectedMemoryId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(module) = self
+            .window_ui_modules(window_id)
+            .get_mut::<crate::module::memory::MemoryModule>(
+                &crate::module::memory::MemoryModule::feature_id(),
+            )
+        {
+            module.restore_selection(selected);
+        }
+    }
+
+    /// The state a workspace item saved for one of the window's project pages.
+    fn workspace_item_state(
+        items: &[WorkspaceItem],
+        surface: ProjectWorkspaceSurface,
+    ) -> Option<Option<Value>> {
+        items
             .iter()
-            .map(|item| item.id.clone())
-            .collect::<BTreeSet<_>>();
-        let loaded = items
-            .iter()
-            .filter_map(|item| {
-                self.load_project_workspace_editor_state(item)
-                    .map(|state| (item.id.clone(), state))
+            .find(|item| {
+                item.project_surface()
+                    .ok()
+                    .flatten()
+                    .is_some_and(|(_, item_surface)| item_surface == surface)
             })
-            .collect::<Vec<_>>();
-        if let Some(popup) = self.task_popups.get_mut(&window_id) {
-            popup
-                .project_states
-                .retain(|item_id, _| item_ids.contains(item_id));
-            for (item_id, state) in loaded {
-                if replace_existing {
-                    popup.project_states.insert(item_id, state);
-                } else {
-                    popup.project_states.entry(item_id).or_insert(state);
-                }
+            .map(|item| item.serialized_state.clone())
+    }
+
+    /// Loads the window's roadmap module and restores the milestone its item
+    /// remembered. Without a roadmap item the module stays empty, which is what
+    /// an unopened page should project.
+    fn sync_workspace_window_roadmap(
+        &mut self,
+        window_id: HostedWindowId,
+        items: &[WorkspaceItem],
+    ) {
+        let Some(saved) = Self::workspace_item_state(items, ProjectWorkspaceSurface::Roadmap)
+        else {
+            return;
+        };
+        self.route_to_window_module(
+            window_id,
+            &crate::module::roadmap::RoadmapModule::feature_id(),
+            Box::new(RoadmapMessage::Refresh),
+            Some(crate::runtime_shell::ShellProjectPage::Roadmap),
+        );
+        let selected = saved
+            .as_ref()
+            .and_then(|state| state.get("selectedMilestoneId"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        if let Some(module) = self
+            .window_ui_modules(window_id)
+            .get_mut::<crate::module::roadmap::RoadmapModule>(
+                &crate::module::roadmap::RoadmapModule::feature_id(),
+            )
+        {
+            module.restore_selection(selected);
+        }
+    }
+
+    /// Loads the window's architecture module and lays it out with whatever the
+    /// architecture item saved.
+    fn sync_workspace_window_architecture(
+        &mut self,
+        window_id: HostedWindowId,
+        items: &[WorkspaceItem],
+    ) {
+        let Some(saved) = Self::workspace_item_state(items, ProjectWorkspaceSurface::Architecture)
+        else {
+            return;
+        };
+        self.route_to_window_module(
+            window_id,
+            &crate::module::architecture::ArchitectureModule::feature_id(),
+            Box::new(ArchitectureMessage::Refresh),
+            Some(crate::runtime_shell::ShellProjectPage::Architecture),
+        );
+        let module = self
+            .window_ui_modules(window_id)
+            .get_mut::<crate::module::architecture::ArchitectureModule>(
+                &crate::module::architecture::ArchitectureModule::feature_id(),
+            )
+            .expect("the architecture module is registered for every window");
+        let mut model = module.model().clone();
+        let mut viewport = module.viewport();
+        let version = module.graph().version;
+        match restore_architecture_workspace_layout(
+            saved.as_ref(),
+            version,
+            &mut model,
+            &mut viewport,
+        ) {
+            Ok(()) => module.restore_layout(model, viewport),
+            Err(error) => {
+                self.error_message = Some(format!("架构图布局已重置，保存的布局无法恢复：{error}"));
             }
         }
     }
@@ -28534,72 +28601,18 @@ impl DesktopProgram {
             })
             .collect::<Vec<_>>();
         for window_id in window_ids {
-            self.sync_workspace_window_project_surfaces(window_id, true);
+            self.sync_workspace_window_project_surfaces(window_id);
         }
     }
 
-    fn capture_project_workspace_editor_state(
-        &self,
-        project_id: ProjectId,
-        surface: ProjectWorkspaceSurface,
-    ) -> ProjectWorkspaceEditorState {
-        ProjectWorkspaceEditorState {
-            project_id,
-            surface,
-            tasks: self.tasks.clone(),
-            roadmap: self.roadmap.clone(),
-            selected_milestone: self.selected_milestone.clone(),
-            milestone_title: self.milestone_title.clone(),
-            milestone_description: self.milestone_description.clone(),
-            milestone_due_date: self.milestone_due_date.clone(),
-            roadmap_error: self.roadmap_error.clone(),
-            memories: self.memories.clone(),
-            selected_memory: self.selected_memory.clone(),
-            memory_title: self.memory_title.clone(),
-            memory_body: TextEditorState::with_text(&self.memory_body.text()),
-            memory_tags: self.memory_tags.clone(),
-            memory_scope: self.memory_scope,
-            memory_updated_at: self.memory_updated_at,
-            memory_error: self.memory_error.clone(),
-            architecture: self.architecture.clone(),
-            architecture_history: self.architecture_history.clone(),
-            architecture_quarantine_count: self.architecture_quarantine_count,
-            architecture_graph: self.architecture_graph.clone(),
-            architecture_viewport: self.architecture_viewport,
-            architecture_selection: self.architecture_selection.clone(),
-            architecture_error: self.architecture_error.clone(),
-        }
-    }
-
-    fn apply_project_workspace_editor_state(&mut self, state: &ProjectWorkspaceEditorState) {
-        self.selected_project = Some(state.project_id.clone());
-        self.inbox_selected = false;
-        self.selected_task = None;
-        self.project_surface = ProjectSurface::from(state.surface);
-        self.tasks = state.tasks.clone();
-        self.roadmap = state.roadmap.clone();
-        self.selected_milestone = state.selected_milestone.clone();
-        self.milestone_title = state.milestone_title.clone();
-        self.milestone_description = state.milestone_description.clone();
-        self.milestone_due_date = state.milestone_due_date.clone();
-        self.roadmap_error = state.roadmap_error.clone();
-        self.memories = state.memories.clone();
-        self.selected_memory = state.selected_memory.clone();
-        self.memory_title = state.memory_title.clone();
-        self.memory_body.set_text(&state.memory_body.text());
-        self.memory_tags = state.memory_tags.clone();
-        self.memory_scope = state.memory_scope;
-        self.memory_updated_at = state.memory_updated_at;
-        self.memory_error = state.memory_error.clone();
-        self.architecture = state.architecture.clone();
-        self.architecture_history = state.architecture_history.clone();
-        self.architecture_quarantine_count = state.architecture_quarantine_count;
-        self.architecture_graph = state.architecture_graph.clone();
-        self.architecture_viewport = state.architecture_viewport;
-        self.architecture_selection = state.architecture_selection.clone();
-        self.architecture_error = state.architecture_error.clone();
-    }
-
+    /// Runs `operation` as if the workspace window's project page were the one
+    /// the primary window is showing.
+    ///
+    /// The domains that page renders now live in the window's own modules, so
+    /// nothing is swapped into the primary window's state any more. What remains
+    /// is the selection the shell's own handlers read, plus a note of which
+    /// window's modules a dispatch belongs to — a debug target names a widget,
+    /// never a window, so the shell has to say.
     fn with_workspace_window_project_state<R>(
         &mut self,
         window_id: HostedWindowId,
@@ -28607,63 +28620,56 @@ impl DesktopProgram {
         persist_item_state: bool,
         operation: impl FnOnce(&mut Self) -> R,
     ) -> Option<R> {
-        let mut editor = self
-            .task_popups
-            .get_mut(&window_id)
-            .and_then(|popup| popup.project_states.remove(&item_id))?;
-        let previous_project = self.selected_project.clone();
-        let previous_inbox = self.inbox_selected;
-        let previous_task = self.selected_task.clone();
-        let previous_surface = self.project_surface;
-        let previous_editor = self.capture_project_workspace_editor_state(
-            previous_project
-                .clone()
-                .unwrap_or_else(|| editor.project_id.clone()),
-            editor.surface,
-        );
-        self.apply_project_workspace_editor_state(&editor);
+        let (project_id, surface) = self.workspace_window_project_surface(window_id, &item_id)?;
+        // Furnished up front so the guards the operation runs can read this
+        // window's modules rather than falling back to the primary window's.
+        self.window_ui_modules(window_id);
+        let previous_project = self.selected_project.replace(project_id);
+        let previous_inbox = std::mem::replace(&mut self.inbox_selected, false);
+        let previous_task = self.selected_task.take();
+        let previous_surface =
+            std::mem::replace(&mut self.project_surface, ProjectSurface::from(surface));
+        let previous_dispatch = self.module_dispatch.replace((
+            window_id,
+            crate::runtime_shell::ShellProjectPage::from(surface),
+        ));
         let result = operation(self);
-        editor =
-            self.capture_project_workspace_editor_state(editor.project_id.clone(), editor.surface);
-        self.apply_project_workspace_editor_state(&previous_editor);
+        self.module_dispatch = previous_dispatch;
         self.selected_project = previous_project;
         self.inbox_selected = previous_inbox;
         self.selected_task = previous_task;
         self.project_surface = previous_surface;
-        if let Some(popup) = self.task_popups.get_mut(&window_id) {
-            popup.project_states.insert(item_id.clone(), editor.clone());
-        }
-        if !persist_item_state {
-            return Some(result);
-        }
-        let serialized_state = Some(serde_json::json!({
-            "selectedMilestoneId": editor.selected_milestone,
-            "selectedMemoryId": editor.selected_memory,
-            "architectureLayout": architecture_workspace_layout_value(
-                editor.architecture.version,
-                &editor.architecture_graph,
-                editor.architecture_viewport,
-            ),
-        }));
-        let workspace = self
-            .task_popups
-            .get(&window_id)
-            .map(|popup| popup.workspace.clone());
-        if let Some(workspace) = workspace {
-            match workspace.execute(DesktopCommand::UpdateWorkspaceItemState {
-                item_id,
-                serialized_state,
-            }) {
-                Ok(outcome) => {
-                    self.apply_task_popup_workspace_snapshot(window_id, outcome.workspace);
-                    self.persist_workspace_topology();
-                }
-                Err(error) => {
-                    eprintln!("failed to persist Native project Workspace Item state: {error}");
-                }
-            }
+        if persist_item_state {
+            self.persist_workspace_window_item_state(window_id, item_id);
         }
         Some(result)
+    }
+
+    fn persist_workspace_window_item_state(
+        &mut self,
+        window_id: HostedWindowId,
+        item_id: WorkspaceItemId,
+    ) {
+        let serialized_state = self.workspace_window_item_state(window_id);
+        let Some(workspace) = self
+            .task_popups
+            .get(&window_id)
+            .map(|popup| popup.workspace.clone())
+        else {
+            return;
+        };
+        match workspace.execute(DesktopCommand::UpdateWorkspaceItemState {
+            item_id,
+            serialized_state: Some(serialized_state),
+        }) {
+            Ok(outcome) => {
+                self.apply_task_popup_workspace_snapshot(window_id, outcome.workspace);
+                self.persist_workspace_topology();
+            }
+            Err(error) => {
+                eprintln!("failed to persist Native project Workspace Item state: {error}");
+            }
+        }
     }
 
     fn update_workspace_window_project_action(
@@ -28672,22 +28678,46 @@ impl DesktopProgram {
         item_id: WorkspaceItemId,
         message: Message,
     ) -> Option<HostedWindowAction> {
-        let persist_item_state = match &message {
-            Message::Architecture(ArchitectureMessage::ArchitectureGraph(event)) => architecture_layout_event_committed(event),
-            _ => true,
-        };
-        self.with_workspace_window_project_state(
-            window_id,
-            item_id,
-            persist_item_state,
-            |program| match message {
-                Message::Architecture(ArchitectureMessage::ArchitectureGraph(event)) => {
-                    program.update_architecture_graph(event);
-                    None
-                }
-                message => program.update_message(message),
-            },
-        )
+        if let Message::Architecture(message) = message {
+            let persist_item_state = match &message {
+                ArchitectureMessage::Graph(event) => architecture_layout_event_committed(event),
+                _ => true,
+            };
+            self.route_workspace_window_module(
+                window_id,
+                item_id,
+                &crate::module::architecture::ArchitectureModule::feature_id(),
+                Box::new(message),
+                crate::runtime_shell::ShellProjectPage::Architecture,
+                persist_item_state,
+            );
+            return None;
+        }
+        if let Message::Roadmap(message) = message {
+            self.route_workspace_window_module(
+                window_id,
+                item_id,
+                &crate::module::roadmap::RoadmapModule::feature_id(),
+                Box::new(message),
+                crate::runtime_shell::ShellProjectPage::Roadmap,
+                true,
+            );
+            return None;
+        }
+        if let Message::Memory(message) = message {
+            self.route_workspace_window_module(
+                window_id,
+                item_id,
+                &crate::module::memory::MemoryModule::feature_id(),
+                Box::new(message),
+                crate::runtime_shell::ShellProjectPage::Memory,
+                true,
+            );
+            return None;
+        }
+        self.with_workspace_window_project_state(window_id, item_id, true, |program| {
+            program.update_message(message)
+        })
         .flatten()
     }
 
@@ -28717,10 +28747,12 @@ impl DesktopProgram {
             return;
         };
         let commands = if transient {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .search_project_slash_commands(project_id.as_ref(), &query, 8)
         } else {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .search_task_slash_commands(&task_id, &query, 8)
         };
         if let Some(popup) = self.task_popups.get_mut(&window_id) {
@@ -28758,10 +28790,12 @@ impl DesktopProgram {
             return;
         };
         let references = if transient {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .search_conversation_references_from(&task_id, &query, 8)
         } else {
-            self.kernel.session()
+            self.kernel
+                .session()
                 .search_conversation_references(&task_id, &query, 8)
         };
         if let Some(popup) = self.task_popups.get_mut(&window_id) {
@@ -28800,11 +28834,13 @@ impl DesktopProgram {
         };
         let attachments = task_id.map_or_else(
             || {
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .search_project_context_attachments(&project_id, &query, 8)
             },
             |task_id| {
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .search_task_context_attachments(&task_id, &query, 8)
             },
         );
@@ -28902,7 +28938,8 @@ impl DesktopProgram {
             return;
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .task_timeline_page(&task_id, Some(&before), TIMELINE_PAGE_SIZE)
         {
             Ok(page) => {
@@ -28957,6 +28994,11 @@ impl DesktopProgram {
     }
 
     fn clear_task_popup_ephemeral_state(&mut self, window_id: HostedWindowId) {
+        // Dropped here rather than at each removal site so a window id the
+        // platform later recycles cannot inherit the closed window's session or
+        // modules.
+        self.workspace_sessions.remove(window_id);
+        self.ui_module_hosts.remove(&window_id);
         self.file_drop_hovered_windows.remove(&window_id);
         self.attachment_previews.remove(&window_id);
         self.timeline_text_selections.remove(&window_id);
@@ -29286,11 +29328,13 @@ impl DesktopProgram {
                 Some(WorkspaceTabStripLocation::Main(_)),
                 Some(WorkspaceTabStripLocation::Main(target_pane)),
             ) => {
-                self.update_message(Message::WorkspaceLayout(WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
-                    pane_id: target_pane,
-                    item_id,
-                    before,
-                }));
+                self.update_message(Message::WorkspaceLayout(
+                    WorkspaceLayoutMessage::ReorderWorkspacePaneTab {
+                        pane_id: target_pane,
+                        item_id,
+                        before,
+                    },
+                ));
             }
             (
                 Some(WorkspaceTabStripLocation::TaskPopup(window_id, _)),
@@ -29463,7 +29507,11 @@ impl DesktopProgram {
         else {
             return false;
         };
-        match self.kernel.session().execute_composer_command(&task_id, command) {
+        match self
+            .kernel
+            .session()
+            .execute_composer_command(&task_id, command)
+        {
             Ok(composer) => {
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
                     sync_hosted_textarea(&popup.composer_editor, &composer.content);
@@ -29514,7 +29562,13 @@ impl DesktopProgram {
             ),
             initial_directory: task_id
                 .as_ref()
-                .and_then(|task_id| self.kernel.session().task_workspace_path(task_id).ok().flatten())
+                .and_then(|task_id| {
+                    self.kernel
+                        .session()
+                        .task_workspace_path(task_id)
+                        .ok()
+                        .flatten()
+                })
                 .or_else(|| {
                     project_id.and_then(|project_id| {
                         self.projects
@@ -29529,7 +29583,8 @@ impl DesktopProgram {
             multiple: true,
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .execute_host(DesktopHostAction::FileDialog(request))
         {
             Ok(DesktopHostResult::FileDialogSelection(paths)) => {
@@ -29667,7 +29722,8 @@ impl DesktopProgram {
         let submission = session_branch.map_or_else(
             || self.kernel.session().submit_composer(&task_id),
             |branch| {
-                self.kernel.session()
+                self.kernel
+                    .session()
                     .submit_composer_with_session_branch(&task_id, branch)
             },
         );
@@ -29741,7 +29797,8 @@ impl DesktopProgram {
             .draft_worktree_intent(&draft_worktree)
             .expect("incomplete existing worktree selections are rejected above");
         if let Err(error) = self
-            .kernel.session()
+            .kernel
+            .session()
             .set_initial_worktree_intent(&input.id, worktree_intent.as_ref())
         {
             eprintln!("failed to persist Native popup draft worktree intent: {error}");
@@ -29751,11 +29808,16 @@ impl DesktopProgram {
             return false;
         }
         let reserved_task_id = input.id.clone();
-        let task = match self.kernel.session().materialize_task_draft(input, composer) {
+        let task = match self
+            .kernel
+            .session()
+            .materialize_task_draft(input, composer)
+        {
             Ok(task) => task,
             Err(error) => {
                 if let Err(clear_error) = self
-                    .kernel.session()
+                    .kernel
+                    .session()
                     .set_initial_worktree_intent(&reserved_task_id, None)
                 {
                     eprintln!(
@@ -29795,7 +29857,8 @@ impl DesktopProgram {
         ))
         .expect("task popup view ids are valid");
         let item = match self
-            .kernel.session()
+            .kernel
+            .session()
             .task_workspace_item_view(&task.id, item_id.clone())
         {
             Ok(item) => item,
@@ -29932,7 +29995,8 @@ impl DesktopProgram {
             return;
         };
         match self
-            .kernel.session()
+            .kernel
+            .session()
             .respond_task_approval(&task_id, &request_id, approved)
         {
             Ok(response) => {
@@ -29977,10 +30041,12 @@ impl DesktopProgram {
             }
             return;
         }
-        match self
-            .kernel.session()
-            .respond_task_interaction(&task_id, &request_id, accepted, response)
-        {
+        match self.kernel.session().respond_task_interaction(
+            &task_id,
+            &request_id,
+            accepted,
+            response,
+        ) {
             Ok(result) => {
                 if let Some(popup) = self.task_popups.get_mut(&window_id) {
                     popup.interaction_drafts.remove(&request_id);
@@ -30125,7 +30191,10 @@ impl DesktopProgram {
             let message_sender = Arc::clone(&self.message_sender);
             std::thread::spawn(move || {
                 let result = load_markdown_image(&source);
-                let _ = message_sender(Message::Timeline(TimelineMessage::MarkdownImageLoaded { source, result }));
+                let _ = message_sender(Message::Timeline(TimelineMessage::MarkdownImageLoaded {
+                    source,
+                    result,
+                }));
             });
         }
     }
@@ -30243,16 +30312,19 @@ impl DesktopProgram {
         self.sync_markdown_images();
     }
 
-    fn sidebar_project_tasks<'a>(
-        &'a self,
-        project_id: Option<&ProjectId>,
-    ) -> Vec<(&'a ProductTask, usize)> {
-        let tasks = self
-            .task_move_candidates
-            .iter()
-            .filter(|task| !task.archived && task.project_id.as_ref() == project_id)
-            .collect::<Vec<_>>();
-        ordered_product_task_tree(tasks)
+    /// 侧栏一次分组，避免每个展开的项目都重新全扫任务表。
+    fn sidebar_task_groups(&self) -> HashMap<Option<&ProjectId>, Vec<&ProductTask>> {
+        let mut groups: HashMap<Option<&ProjectId>, Vec<&ProductTask>> = HashMap::new();
+        for task in &self.task_move_candidates {
+            if task.archived {
+                continue;
+            }
+            groups
+                .entry(task.project_id.as_ref())
+                .or_default()
+                .push(task);
+        }
+        groups
     }
 
     fn sidebar_visible_project_tasks<'a>(
@@ -30605,7 +30677,9 @@ impl RuntimeProgram for DesktopProgram {
                 );
                 let mut layer = KeyCaptureLayer::new().recording(true);
                 if let Some(capture) = layer.handle_key(&key_input) {
-                    self.update_message(Message::Settings(SettingsMessage::ShellShortcutCaptured(capture)));
+                    self.update_message(Message::Settings(SettingsMessage::ShellShortcutCaptured(
+                        capture,
+                    )));
                     return Ok(HostedProgramUpdate::redraw(id));
                 }
                 if layer.should_consume(&key_input) {
@@ -30706,6 +30780,7 @@ impl RuntimeProgram for DesktopProgram {
         let coding_exchange = Arc::new(CodingExchange::default());
         let mut kernel = {
             let dispatcher = context.clone();
+            let (project_tasks, project_task_events) = application.project_task_services();
             crate::kernel_host::KernelHost::start(
                 crate::kernel_host::KernelServices {
                     authority: application.authority().clone(),
@@ -30717,6 +30792,15 @@ impl RuntimeProgram for DesktopProgram {
                     roadmap: application.roadmap_service(),
                     architecture: application.architecture_service(),
                     automation: application.automation_service(),
+                    project_tasks,
+                    project_task_events,
+                    workspace_sessions: {
+                        let sessions = Arc::new(crate::shell_service::WorkspaceSessions::new());
+                        sessions.install(WindowId::PRIMARY, application_workspace);
+                        sessions
+                    },
+                    application: application.clone(),
+                    journal: application.journal(),
                     clone_credentials: Arc::new(GitHubCloneCredentials {
                         application: application.clone(),
                     }),
@@ -30779,6 +30863,17 @@ impl RuntimeProgram for DesktopProgram {
             )?
         };
         kernel.attach_session(application.clone());
+        // The sessions now live in the service registry, so the shell reads the
+        // primary one from the same slot a UI module would rather than keeping a
+        // private handle that could outlive an unmount.
+        let workspace_sessions = crate::shell_service::workspace_sessions(kernel.kernel());
+        let application_workspace = workspace_sessions
+            .get(WindowId::PRIMARY)
+            .expect("the primary session was installed before the kernel mounted");
+        let ui_module_registry = crate::ui_module::UiModuleRegistry::from_kernel(kernel.kernel());
+        let ui_modules = ui_module_registry
+            .host()
+            .map_err(|error| format!("failed to build the primary window's UI modules: {error}"))?;
         application
             .install_title_update_scheduler(Arc::new(QueuedTitleScheduler {
                 messages: Arc::clone(&message_sender),
@@ -30823,7 +30918,9 @@ impl RuntimeProgram for DesktopProgram {
                         message: Some(error.to_string()),
                     });
                 if result.accepted {
-                    let _ = message_sender(Message::Chrome(ChromeMessage::Shell(ShellCommand::FocusMainWindow)));
+                    let _ = message_sender(Message::Chrome(ChromeMessage::Shell(
+                        ShellCommand::FocusMainWindow,
+                    )));
                 }
                 result
             })?;
@@ -30889,10 +30986,6 @@ impl RuntimeProgram for DesktopProgram {
             .as_ref()
             .map(|status| status.pc_name.clone())
             .unwrap_or_else(|| "Lilia 电脑".to_owned());
-        let memory_settings = application
-            .memory_settings()
-            .map_err(|error| error.to_string())?;
-        let memory_cooldown_input = memory_settings.cooldown_turns.to_string();
         let (github_binding, github_error) = match application.github_binding_status() {
             Ok(status) => (status, None),
             Err(error) => (unbound_github_status(), Some(github_error_message(&error))),
@@ -30974,21 +31067,23 @@ impl RuntimeProgram for DesktopProgram {
             project_archive_confirmation: None,
             project_clone_repository: String::new(),
             project_clone_parent,
-            project_clone_busy: false,
             project_clone_outcome: ProjectCloneOutcome::Idle,
             project_clone_phase: None,
             project_clone_percent: None,
             project_clone_target: None,
             project_clone_detail: None,
             active_project_clone_job: None,
+            ui_modules,
+            ui_module_hosts: HashMap::new(),
+            module_dispatch: None,
+            ui_module_registry,
+            workspace_sessions,
             kernel,
             github_binding,
             github_device_flow: None,
-            github_binding_busy: false,
             active_github_binding_job: None,
             github_repositories: Vec::new(),
             github_repositories_next_page: None,
-            github_repositories_busy: false,
             active_github_repository_job: None,
             selected_github_repository: None,
             github_error,
@@ -31028,7 +31123,6 @@ impl RuntimeProgram for DesktopProgram {
             todo_draft: String::new(),
             editing_todo: None,
             goal_draft: String::new(),
-            worktree_busy: false,
             active_worktree_job: None,
             worktree_confirmation: None,
             pending_initial_worktrees: BTreeMap::new(),
@@ -31071,30 +31165,6 @@ impl RuntimeProgram for DesktopProgram {
             automation_selection: None,
             automation_node_inspector: AutomationNodeInspectorDraft::default(),
             automation_error: None,
-            roadmap: ProjectRoadmap::default(),
-            selected_milestone: None,
-            milestone_title: String::new(),
-            milestone_description: String::new(),
-            milestone_due_date: String::new(),
-            roadmap_error: None,
-            architecture: ProjectArchitectureGraph::empty(""),
-            architecture_history: Vec::new(),
-            architecture_quarantine_count: 0,
-            architecture_graph: GraphModel::empty(),
-            architecture_viewport: GraphViewport::default(),
-            architecture_selection: None,
-            architecture_error: None,
-            memories: Vec::new(),
-            selected_memory: None,
-            memory_title: String::new(),
-            memory_body: TextEditorState::new(),
-            memory_tags: String::new(),
-            memory_scope: MemoryScope::Project,
-            memory_updated_at: None,
-            memory_error: None,
-            memory_settings,
-            memory_cooldown_input,
-            memory_injection: None,
             coding_tools: None,
             coding_git: None,
             coding_git_diff: None,
@@ -31106,7 +31176,6 @@ impl RuntimeProgram for DesktopProgram {
             coding_search: None,
             coding_search_all_projects: false,
             coding_notice: None,
-            coding_busy: false,
             coding_exchange,
             active_coding_job: None,
             active_coding_search_job: None,
@@ -31124,7 +31193,6 @@ impl RuntimeProgram for DesktopProgram {
             provider_ai_settings,
             assistant_ai_new_model_id: String::new(),
             assistant_ai_new_model_label: String::new(),
-            assistant_ai_probe_busy: false,
             import_exchange,
             active_import_job: None,
             assistant_probes,
@@ -31141,14 +31209,12 @@ impl RuntimeProgram for DesktopProgram {
             agent_interaction_error: None,
             selected_provider,
             provider_secret: String::new(),
-            provider_busy: false,
             provider_secrets,
             active_provider_job: None,
             provider_error: None,
             quota_usage: None,
             quota_days: 30,
             quota_backend: "all".to_owned(),
-            quota_busy: false,
             active_quota_job: None,
             quota_error: None,
             extensions: None,
@@ -31167,14 +31233,12 @@ impl RuntimeProgram for DesktopProgram {
             mcp_credential_drafts: BTreeMap::new(),
             mcp_prompt_argument_drafts: BTreeMap::new(),
             mcp_content_preview: None,
-            extensions_busy: false,
             extensions_activation_pending: false,
             extensions_exchange,
             active_extensions_job: None,
             extensions_error: None,
             remote,
             remote_pc_name,
-            remote_busy: false,
             active_remote_job: None,
             remote_error,
             shell,
@@ -31185,7 +31249,6 @@ impl RuntimeProgram for DesktopProgram {
             dismissed_update_versions: BTreeSet::new(),
             update_failure_dismissed: false,
             update_configured,
-            update_busy: false,
             active_update_job: None,
             update_error: None,
             exit_requested: false,
@@ -31246,10 +31309,22 @@ impl RuntimeProgram for DesktopProgram {
         _context: &HostedProgramContext<Self::Message>,
     ) -> HostedProgramUpdate {
         let status_was_open = self.conversation_status_open;
-        let open_status = matches!(&message, Message::ConversationStatus(ConversationStatusMessage::OpenConversationStatus));
-        let close_status = matches!(&message, Message::ConversationStatus(ConversationStatusMessage::CloseConversationStatus));
-        let focus_main = matches!(&message, Message::Chrome(ChromeMessage::Shell(ShellCommand::FocusMainWindow)));
-        let shell_exit = matches!(&message, Message::Chrome(ChromeMessage::Shell(ShellCommand::Quit)));
+        let open_status = matches!(
+            &message,
+            Message::ConversationStatus(ConversationStatusMessage::OpenConversationStatus)
+        );
+        let close_status = matches!(
+            &message,
+            Message::ConversationStatus(ConversationStatusMessage::CloseConversationStatus)
+        );
+        let focus_main = matches!(
+            &message,
+            Message::Chrome(ChromeMessage::Shell(ShellCommand::FocusMainWindow))
+        );
+        let shell_exit = matches!(
+            &message,
+            Message::Chrome(ChromeMessage::Shell(ShellCommand::Quit))
+        );
         let window_action = self.update_message(message);
         #[cfg(debug_assertions)]
         self.capture_debug_errors();
@@ -32320,6 +32395,16 @@ fn ordered_task_tree_indices(tasks: &[DesktopWorkspaceTask]) -> Vec<(usize, usiz
     ordered_tree_indices(&ids, &parent_ids)
 }
 
+fn sidebar_grouped_tasks<'a>(
+    groups: &HashMap<Option<&'a ProjectId>, Vec<&'a ProductTask>>,
+    project_id: Option<&'a ProjectId>,
+) -> Vec<(&'a ProductTask, usize)> {
+    groups
+        .get(&project_id)
+        .map(|tasks| ordered_product_task_tree(tasks.clone()))
+        .unwrap_or_default()
+}
+
 fn ordered_product_task_tree(mut tasks: Vec<&ProductTask>) -> Vec<(&ProductTask, usize)> {
     tasks.sort_by(|left, right| {
         right
@@ -32811,7 +32896,17 @@ fn architecture_permission_label(permission: ArchitecturePermission) -> &'static
     }
 }
 
-fn architecture_change_label(change: &ProjectArchitectureChange) -> String {
+/// A rollback only means something when the drawn graph is an applied version.
+fn architecture_module_can_roll_back(
+    module: &crate::module::architecture::ArchitectureModule,
+) -> bool {
+    module.history().iter().any(|record| {
+        record.event.status == ArchitectureChangeStatus::Applied
+            && record.after_graph.as_ref() == Some(module.graph())
+    })
+}
+
+pub(crate) fn architecture_change_label(change: &ProjectArchitectureChange) -> String {
     match change {
         ProjectArchitectureChange::UpsertNode { node } => format!("更新节点 {}", node.label),
         ProjectArchitectureChange::RemoveNode { node_id } => format!("移除节点 {node_id}"),
@@ -34463,7 +34558,7 @@ fn automation_node_kind_label(kind: &str) -> &str {
     }
 }
 
-fn milestone_status_label(status: MilestoneStatus) -> &'static str {
+pub(crate) fn milestone_status_label(status: MilestoneStatus) -> &'static str {
     match status {
         MilestoneStatus::Upcoming => "即将开始",
         MilestoneStatus::InProgress => "进行中",
@@ -34472,7 +34567,7 @@ fn milestone_status_label(status: MilestoneStatus) -> &'static str {
     }
 }
 
-fn next_milestone_status(status: MilestoneStatus) -> MilestoneStatus {
+pub(crate) fn next_milestone_status(status: MilestoneStatus) -> MilestoneStatus {
     match status {
         MilestoneStatus::Upcoming => MilestoneStatus::InProgress,
         MilestoneStatus::InProgress => MilestoneStatus::Done,
@@ -34481,7 +34576,7 @@ fn next_milestone_status(status: MilestoneStatus) -> MilestoneStatus {
     }
 }
 
-fn parse_memory_tags(value: &str) -> Vec<String> {
+pub(crate) fn parse_memory_tags(value: &str) -> Vec<String> {
     value
         .split([',', '，'])
         .map(str::trim)
@@ -34490,7 +34585,7 @@ fn parse_memory_tags(value: &str) -> Vec<String> {
         .collect()
 }
 
-fn parse_memory_cooldown(value: &str) -> Result<u64, &'static str> {
+pub(crate) fn parse_memory_cooldown(value: &str) -> Result<u64, &'static str> {
     value
         .trim()
         .parse::<u64>()
@@ -34499,7 +34594,7 @@ fn parse_memory_cooldown(value: &str) -> Result<u64, &'static str> {
         .ok_or("冷却 turn 必须是 1–100 的整数。")
 }
 
-fn next_memory_cooldown(current: u64) -> u64 {
+pub(crate) fn next_memory_cooldown(current: u64) -> u64 {
     match current {
         0..=1 => 3,
         2..=3 => 5,
@@ -34508,7 +34603,7 @@ fn next_memory_cooldown(current: u64) -> u64 {
     }
 }
 
-fn parse_civil_date_update(value: &str) -> Result<MilestoneDueDateUpdate, String> {
+pub(crate) fn parse_civil_date_update(value: &str) -> Result<MilestoneDueDateUpdate, String> {
     let value = value.trim();
     if value.is_empty() {
         return Ok(MilestoneDueDateUpdate::Clear);
@@ -34537,7 +34632,7 @@ fn parse_civil_date_update(value: &str) -> Result<MilestoneDueDateUpdate, String
     Ok(MilestoneDueDateUpdate::Set(millis))
 }
 
-fn format_civil_date(timestamp_millis: i64) -> String {
+pub(crate) fn format_civil_date(timestamp_millis: i64) -> String {
     let days = timestamp_millis.div_euclid(86_400_000);
     let (year, month, day) = civil_from_days(days);
     format!("{year:04}-{month:02}-{day:02}")
@@ -34877,7 +34972,7 @@ fn architecture_layout_event_committed(event: &GraphCanvasEvent) -> bool {
     )
 }
 
-fn architecture_default_viewport(graph: &GraphModel) -> GraphViewport {
+pub(crate) fn architecture_default_viewport(graph: &GraphModel) -> GraphViewport {
     graph
         .bounds()
         .map(|bounds| GraphViewport::fit(bounds, GraphSize::new(900.0, 560.0), 64.0))
@@ -34962,7 +35057,9 @@ fn restore_architecture_workspace_layout(
     Ok(())
 }
 
-fn architecture_graph_model(graph: &ProjectArchitectureGraph) -> Result<GraphModel, String> {
+pub(crate) fn architecture_graph_model(
+    graph: &ProjectArchitectureGraph,
+) -> Result<GraphModel, String> {
     let nodes = graph
         .nodes
         .iter()
@@ -35009,7 +35106,7 @@ fn architecture_graph_model(graph: &ProjectArchitectureGraph) -> Result<GraphMod
     GraphModel::new(nodes, edges).map_err(|error| error.to_string())
 }
 
-fn architecture_status_label(status: ArchitectureChangeStatus) -> &'static str {
+pub(crate) fn architecture_status_label(status: ArchitectureChangeStatus) -> &'static str {
     match status {
         ArchitectureChangeStatus::Proposed => "已提议",
         ArchitectureChangeStatus::Pending => "待确认",
@@ -35244,7 +35341,10 @@ mod tests {
     #[test]
     fn startup_restores_registered_mcp_after_the_first_frame() {
         let messages = initial_messages(false);
-        assert!(matches!(messages[0], Message::WorkspaceWindow(WorkspaceWindowMessage::RestoreTaskPopupWindows)));
+        assert!(matches!(
+            messages[0],
+            Message::WorkspaceWindow(WorkspaceWindowMessage::RestoreTaskPopupWindows)
+        ));
         assert!(matches!(
             messages[1],
             Message::Extensions(ExtensionsMessage::ActivateRegisteredMcp)

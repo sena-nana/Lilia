@@ -43,6 +43,10 @@ pub(crate) struct DesktopApplicationInner {
     pub(crate) host_context: DesktopHostContext,
     pub(crate) events: DesktopEventBus,
     pub(crate) project_tasks: lilia_feature_task::ProjectTaskService,
+    pub(crate) project_task_events: Arc<lilia_feature_task::ProjectTaskEventFanout>,
+    pub(crate) journal: lilia_kernel::Journal,
+    /// Held only for its `Drop`, which drains and flushes the export writer.
+    pub(crate) _journal_export: Option<crate::journal_export::JournalExport>,
     pub(crate) workspace: Arc<Mutex<DesktopWorkspaceState>>,
     pub(crate) timeline: lilia_feature_timeline::TimelineService,
     pub(crate) domain_db: Db,
@@ -75,6 +79,8 @@ pub(crate) struct DesktopApplicationInner {
     pub(crate) project_task_runs:
         Mutex<std::collections::BTreeMap<(String, String), crate::application::DesktopTerminalSessionId>>,
     pub(crate) conversation_suggestion_generation: Mutex<()>,
+    pub(crate) session_search_cache:
+        Mutex<Option<Arc<crate::application::session_search::SessionSearchCorpus>>>,
     pub(crate) product_change_feed: crate::application::change_feed::ProductChangeFeed,
     pub(crate) registry_file_watch: crate::application::registry_watch::RegistryFileWatch,
     pub(crate) title_update: std::sync::Arc<crate::application::title_update::DesktopTitleUpdateCoordinator>,
@@ -240,13 +246,24 @@ impl DesktopApplication {
                 message: error.to_string(),
                 rollback_failed: None,
             })?;
-        let project_tasks = lilia_feature_task::ProjectTaskService::new(
-            authority.clone(),
-            Arc::new(crate::application::product_management::BroadcastProjectTaskEvents::new(
+        let project_task_events = Arc::new(lilia_feature_task::ProjectTaskEventFanout::default());
+        project_task_events.install(Arc::new(
+            crate::application::product_management::BroadcastProjectTaskEvents::new(
                 events.clone(),
                 config.instance_identity(),
-            )),
-        );
+            ),
+        ));
+        // The journal is built here rather than by the kernel because services
+        // bootstrapped alongside storage already write facts worth recording; the
+        // shell hands this instance to `Kernel::with_journal` so one ordered log
+        // covers both halves.
+        let journal = lilia_kernel::Journal::new();
+        let journal_export = crate::journal_export::install_from_env(&journal);
+        let project_tasks = lilia_feature_task::ProjectTaskService::new(
+            authority.clone(),
+            project_task_events.clone(),
+        )
+        .with_journal(journal.clone());
         let contribution_host = crate::application::contributions::LiliaContributionHost::bootstrap()
             .map_err(|error| DesktopApplicationError::Contribution(error.to_string()))?;
         let timeline = lilia_feature_timeline::TimelineService::new(authority.clone());
@@ -258,6 +275,9 @@ impl DesktopApplication {
                 host_context,
                 events,
                 project_tasks,
+                project_task_events,
+                journal,
+                _journal_export: journal_export,
                 workspace: Arc::new(Mutex::new(DesktopWorkspaceState::default())),
                 timeline,
                 domain_db: domain_connection,
@@ -288,6 +308,7 @@ impl DesktopApplication {
                 project_files_revisions: Arc::new(Mutex::new(std::collections::BTreeMap::new())),
                 project_task_runs: Mutex::new(std::collections::BTreeMap::new()),
                 conversation_suggestion_generation: Mutex::new(()),
+                session_search_cache: Mutex::new(None),
                 product_change_feed: crate::application::change_feed::ProductChangeFeed::default(),
                 registry_file_watch: crate::application::registry_watch::RegistryFileWatch::default(),
                 title_update: std::sync::Arc::new(

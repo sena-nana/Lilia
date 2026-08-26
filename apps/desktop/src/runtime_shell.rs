@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use lilia_contracts::TaskId;
@@ -41,7 +42,13 @@ const WINDOW_CONTROL_SIZE: f32 = 28.0;
 const TITLE_BREADCRUMB_WIDTH: f32 = 440.0;
 const EMPTY_HEADING_FONT_SIZE: f32 = 24.0;
 
-#[derive(Debug, Clone)]
+pub(crate) fn content_hash(value: &str) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellTaskRow {
     pub id: TaskId,
     pub title: String,
@@ -63,7 +70,7 @@ pub enum ShellSidebarKind {
     SearchTask,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellSidebarRow {
     pub id: String,
     pub label: String,
@@ -85,7 +92,7 @@ pub enum ShellConfirmKind {
     Update,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellConfirm {
     pub kind: ShellConfirmKind,
     pub title: String,
@@ -96,7 +103,7 @@ pub struct ShellConfirm {
     pub busy: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellTodoRow {
     pub id: String,
     pub label: String,
@@ -114,7 +121,7 @@ pub enum ShellPendingKind {
     TitleUpdate,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellPendingOption {
     pub id: String,
     pub label: String,
@@ -122,7 +129,7 @@ pub struct ShellPendingOption {
     pub danger: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellToolConsentPending {
     pub command: String,
     pub message: String,
@@ -131,7 +138,7 @@ pub struct ShellToolConsentPending {
     pub can_deny: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellAskUserPending {
     pub show_other: bool,
     pub other_selected: bool,
@@ -146,7 +153,7 @@ pub struct ShellAskUserPending {
     pub reject_label: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellMcpFieldOption {
     pub value: String,
     pub label: String,
@@ -154,7 +161,7 @@ pub struct ShellMcpFieldOption {
     pub multi: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellMcpField {
     pub key: String,
     pub label: String,
@@ -164,7 +171,7 @@ pub struct ShellMcpField {
     pub options: Vec<ShellMcpFieldOption>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellMcpPending {
     pub url: Option<String>,
     pub raw_json: Option<String>,
@@ -172,7 +179,7 @@ pub struct ShellMcpPending {
     pub can_accept: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellPending {
     pub request_id: String,
     pub kind: ShellPendingKind,
@@ -185,7 +192,7 @@ pub struct ShellPending {
     pub mcp: Option<ShellMcpPending>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellSlashItem {
     pub name: String,
     pub label: String,
@@ -202,7 +209,19 @@ pub enum ShellProjectPage {
     Files,
 }
 
-#[derive(Debug, Clone)]
+impl From<crate::application::ProjectWorkspaceSurface> for ShellProjectPage {
+    fn from(surface: crate::application::ProjectWorkspaceSurface) -> Self {
+        use crate::application::ProjectWorkspaceSurface;
+        match surface {
+            ProjectWorkspaceSurface::Roadmap => Self::Roadmap,
+            ProjectWorkspaceSurface::Memory => Self::Memory,
+            ProjectWorkspaceSurface::Architecture => Self::Architecture,
+            ProjectWorkspaceSurface::Files => Self::Files,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellNavItem {
     pub id: String,
     pub label: String,
@@ -210,13 +229,13 @@ pub struct ShellNavItem {
     pub selected: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellMenuItem {
     pub id: String,
     pub label: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellTimelineRow {
     pub id: String,
     pub markdown: String,
@@ -226,20 +245,20 @@ pub struct ShellTimelineRow {
     pub can_copy: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellMentionItem {
     pub id: String,
     pub label: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellProjectCard {
     pub id: String,
     pub title: String,
     pub subtitle: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellRoadmapCard {
     pub id: String,
     pub title: String,
@@ -247,27 +266,27 @@ pub struct ShellRoadmapCard {
     pub date: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellArchitectureRecord {
     pub id: String,
     pub title: String,
     pub status: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellCodingFile {
     pub path: String,
     pub kind: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellCodingHit {
     pub id: String,
     pub label: String,
     pub summary: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellCodingSnapshot {
     pub query: String,
     pub mode_label: String,
@@ -280,61 +299,61 @@ pub struct ShellCodingSnapshot {
     pub tasks: Vec<ShellActionRow>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellAttachmentRow {
     pub id: String,
     pub label: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellSuggestionRow {
     pub id: String,
     pub label: String,
     pub prompt: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellActionRow {
     pub id: String,
     pub label: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellProviderRow {
     pub id: String,
     pub label: String,
     pub selected: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellCredentialRow {
     pub id: String,
     pub revision: u64,
     pub label: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellAgentRow {
     pub id: String,
     pub label: String,
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellSkillRow {
     pub id: String,
     pub label: String,
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellMcpRow {
     pub id: String,
     pub label: String,
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellMcpEditor {
     pub server_id: String,
     pub transport: String,
@@ -343,7 +362,7 @@ pub struct ShellMcpEditor {
     pub enabled: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellPaneItem {
     pub id: String,
     pub title: String,
@@ -352,21 +371,21 @@ pub struct ShellPaneItem {
     pub closable: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellPaneRow {
     pub id: String,
     pub active: bool,
     pub items: Vec<ShellPaneItem>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellAutomationRow {
     pub id: String,
     pub label: String,
     pub selected: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellDocumentSnapshot {
     pub item_id: String,
     pub title: String,
@@ -378,26 +397,26 @@ pub struct ShellDocumentSnapshot {
     pub diagnostics: Vec<ShellDiagnosticRow>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellDiagnosticRow {
     pub severity: String,
     pub message: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellMarkdownPreview {
     pub title: String,
     pub metadata: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellTerminalSnapshot {
     pub output: String,
     pub input: String,
     pub notice: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ShellFilesSnapshot {
     pub tree: TreeView,
     pub preview: Option<String>,
@@ -786,6 +805,35 @@ pub enum ShellIntent {
 
 type IntentSink = Arc<dyn Fn(ShellIntent) + Send + Sync>;
 
+/// 上一次真正同步进 `RuntimeDocument` 的输入。`sync` 是快照的纯函数，
+/// 所以输入不变时重跑 reconcile 只会产生同一棵树，可以整段跳过。
+#[derive(Default)]
+struct SyncedInputs {
+    sidebar_rows: Vec<ShellSidebarRow>,
+    sidebar_tasks: Vec<ShellTaskRow>,
+    sidebar_search_open: bool,
+    timeline: Vec<ShellTimelineRow>,
+    workspace: Option<WorkspaceInputs>,
+    inspector: Option<InspectorInputs>,
+}
+
+/// 工作区页、面板标签条与诊断面板共同的输入。
+#[derive(PartialEq)]
+struct WorkspaceInputs {
+    panes: Vec<ShellPaneRow>,
+    document: Option<ShellDocumentSnapshot>,
+    terminal: Option<ShellTerminalSnapshot>,
+    files: Option<ShellFilesSnapshot>,
+}
+
+#[derive(PartialEq)]
+struct InspectorInputs {
+    kind: String,
+    todos: Vec<ShellTodoRow>,
+    iab_url: String,
+    coding: Option<ShellCodingSnapshot>,
+}
+
 pub struct ShellHandles {
     sink: IntentSink,
     shell: Entity<DesktopShell>,
@@ -858,7 +906,10 @@ pub struct ShellHandles {
     timeline_scroll: Entity<ScrollView>,
     timeline_items: HashMap<String, Entity<HostStack>>,
     timeline_markdown: HashMap<String, Entity<NativeMarkdown>>,
+    timeline_markdown_source: HashMap<String, u64>,
     timeline_actions: HashMap<String, Entity<Button>>,
+    synced: SyncedInputs,
+    shell_assembled: bool,
     load_earlier: Option<Entity<Button>>,
     composer: Entity<TextArea>,
     composer_toolbar: Entity<HostStack>,
@@ -2142,7 +2193,10 @@ pub fn mount_primary_shell(
         timeline_scroll,
         timeline_items: HashMap::new(),
         timeline_markdown: HashMap::new(),
+        timeline_markdown_source: HashMap::new(),
         timeline_actions: HashMap::new(),
+        synced: SyncedInputs::default(),
+        shell_assembled: false,
         load_earlier: None,
         composer,
         composer_toolbar,
@@ -2356,13 +2410,31 @@ impl ShellHandles {
             .node(self.workspace_page.stable_id())
             .map(|node| node.document)
             .ok_or(FrameworkError::MissingView(self.workspace_page.stable_id()))?;
-        self.sync_workspace_page(context, document_id, snapshot)?;
-        self.sync_panes(context, document_id, snapshot)?;
+        let workspace_inputs = WorkspaceInputs {
+            panes: snapshot.panes.clone(),
+            document: snapshot.document.clone(),
+            terminal: snapshot.terminal.clone(),
+            files: snapshot.files.clone(),
+        };
+        if self.synced.workspace.as_ref() != Some(&workspace_inputs) {
+            self.sync_workspace_page(context, document_id, snapshot)?;
+            self.sync_panes(context, document_id, snapshot)?;
+            self.sync_diagnostics(context, document_id, snapshot)?;
+            self.synced.workspace = Some(workspace_inputs);
+        }
         self.sync_automations(context, document_id, snapshot)?;
         self.sync_composer_stage(context, document_id, snapshot)?;
         self.sync_project_page(context, document_id, snapshot)?;
-        self.sync_inspector_details(context, document_id, snapshot)?;
-        self.sync_diagnostics(context, document_id, snapshot)?;
+        let inspector_inputs = InspectorInputs {
+            kind: snapshot.inspector_kind.clone(),
+            todos: snapshot.inspector_todos.clone(),
+            iab_url: snapshot.iab_url.clone(),
+            coding: snapshot.coding.clone(),
+        };
+        if self.synced.inspector.as_ref() != Some(&inspector_inputs) {
+            self.sync_inspector_details(context, document_id, snapshot)?;
+            self.synced.inspector = Some(inspector_inputs);
+        }
         self.sync_overlay(context, document_id, snapshot)?;
         let navigation = if snapshot.settings_open {
             self.settings_sidebar.stable_id()
@@ -2379,7 +2451,21 @@ impl ShellHandles {
             self.automations_page,
             self.project_page,
         );
+        let inspector = (!snapshot.inspector_title.is_empty()).then(|| self.inspector.stable_id());
+        let bottom = snapshot
+            .document
+            .as_ref()
+            .is_some_and(|document| !document.diagnostics.is_empty())
+            .then(|| self.diagnostics_panel.stable_id());
+        let mut shell_changed = !self.shell_assembled;
         context.update_component(self.shell, |shell, _| {
+            shell_changed = shell_changed
+                || shell.model != snapshot.workspace
+                || shell.title.as_deref() != Some(snapshot.title_context.as_str())
+                || shell.navigation != Some(navigation)
+                || shell.primary != Some(primary)
+                || shell.inspector != inspector
+                || shell.bottom != bottom;
             shell.model = snapshot.workspace.clone();
             shell.title = Some(Arc::from(snapshot.title_context.as_str()));
             shell.title_leading = Some(self.title_leading.stable_id());
@@ -2387,22 +2473,13 @@ impl ShellHandles {
             shell.title_trailing = Some(self.title_trailing.stable_id());
             shell.navigation = Some(navigation);
             shell.primary = Some(primary);
-            shell.inspector = if snapshot.inspector_title.is_empty() {
-                None
-            } else {
-                Some(self.inspector.stable_id())
-            };
-            shell.bottom = if snapshot
-                .document
-                .as_ref()
-                .is_some_and(|document| !document.diagnostics.is_empty())
-            {
-                Some(self.diagnostics_panel.stable_id())
-            } else {
-                None
-            };
+            shell.inspector = inspector;
+            shell.bottom = bottom;
         })?;
-        context.assemble_desktop_shell(self.shell)?;
+        if shell_changed {
+            context.assemble_desktop_shell(self.shell)?;
+            self.shell_assembled = true;
+        }
         self.overlay_host = context
             .read(self.shell, |shell| {
                 shell.overlay.map(Entity::<OverlayHost>::from_stable_id)
@@ -2460,11 +2537,23 @@ impl ShellHandles {
             .node(self.task_body.stable_id())
             .map(|node| node.document)
             .ok_or(FrameworkError::MissingView(self.task_body.stable_id()))?;
-        let groups = partition_sidebar_rows(snapshot);
-        self.reconcile_task_rows(context, document_id, &groups)?;
-        self.sync_sidebar_sections(context, snapshot, &groups)?;
+        if self.synced.sidebar_rows != snapshot.sidebar_rows
+            || self.synced.sidebar_tasks != snapshot.tasks
+            || self.synced.sidebar_search_open != snapshot.sidebar_search_open
+        {
+            let groups = partition_sidebar_rows(snapshot);
+            self.reconcile_task_rows(context, document_id, &groups)?;
+            self.sync_sidebar_sections(context, snapshot, &groups)?;
+            self.synced.sidebar_rows = snapshot.sidebar_rows.clone();
+            self.synced.sidebar_tasks = snapshot.tasks.clone();
+            self.synced.sidebar_search_open = snapshot.sidebar_search_open;
+        }
         self.sync_sidebar_chrome(context, snapshot)?;
-        self.reconcile_timeline(context, document_id, snapshot)
+        if self.synced.timeline != snapshot.timeline {
+            self.reconcile_timeline(context, document_id, snapshot)?;
+            self.synced.timeline = snapshot.timeline.clone();
+        }
+        Ok(())
     }
 
     fn sync_sidebar_sections(
@@ -3618,6 +3707,9 @@ impl ShellHandles {
         document_id: DocumentId,
         snapshot: &PrimaryShellSnapshot,
     ) -> Result<(), FrameworkError> {
+        if snapshot.project_page.is_none() {
+            return Ok(());
+        }
         context.update_component(self.project_page_title, |text, _| {
             *text = Text::new(snapshot.project_page_title.clone());
         })?;
@@ -3861,11 +3953,15 @@ impl ShellHandles {
         let mut order = Vec::new();
         for item in &snapshot.timeline {
             keep.insert(item.id.clone());
+            let source = content_hash(&item.markdown);
             let markdown = if let Some(entity) = self.timeline_markdown.get(&item.id).copied() {
-                context.update_component(entity, |markdown, _| {
-                    *markdown = NativeMarkdown::parse(&item.markdown);
-                })?;
-                context.assemble_markdown(entity)?;
+                if self.timeline_markdown_source.get(&item.id) != Some(&source) {
+                    context.update_component(entity, |markdown, _| {
+                        *markdown = NativeMarkdown::parse(&item.markdown);
+                    })?;
+                    context.assemble_markdown(entity)?;
+                    self.timeline_markdown_source.insert(item.id.clone(), source);
+                }
                 entity
             } else {
                 let entity = context.create_detached_component(
@@ -3874,6 +3970,7 @@ impl ShellHandles {
                 )?;
                 context.assemble_markdown(entity)?;
                 self.timeline_markdown.insert(item.id.clone(), entity);
+                self.timeline_markdown_source.insert(item.id.clone(), source);
                 entity
             };
             let root = if let Some(entity) = self.timeline_items.get(&item.id).copied() {
@@ -3982,6 +4079,7 @@ impl ShellHandles {
             if let Some(entity) = self.timeline_markdown.remove(&key) {
                 let _ = context.remove_view(entity);
             }
+            self.timeline_markdown_source.remove(&key);
         }
         let stale_actions: Vec<_> = self
             .timeline_actions
@@ -4126,6 +4224,9 @@ impl ShellHandles {
         document_id: DocumentId,
         snapshot: &PrimaryShellSnapshot,
     ) -> Result<(), FrameworkError> {
+        if !snapshot.settings_open {
+            return Ok(());
+        }
         context.update_component(self.settings_sidebar, |sidebar, _| {
             sidebar.model = snapshot.settings.model.clone();
             sidebar.state = snapshot.settings.state.clone();
@@ -4956,6 +5057,9 @@ impl ShellHandles {
         document_id: DocumentId,
         snapshot: &PrimaryShellSnapshot,
     ) -> Result<(), FrameworkError> {
+        if !snapshot.automations_open {
+            return Ok(());
+        }
         context.update_component(self.automation_canvas, |canvas, _| {
             canvas.model = snapshot.automation_graph.clone();
             canvas.viewport = snapshot.automation_viewport.clone();
@@ -5880,13 +5984,15 @@ fn settings_tab_copy(
     }
 }
 
+/// A projection with every field at rest.
+///
+/// Lives outside the test module because the UI module tests assert on which
+/// fields a module writes, and that only means something against a baseline
+/// where nothing is set. Not a `Default` impl: `SettingsModel` is a NanaUI type
+/// and giving it a default is not this crate's call.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runtime_layout::COMPOSER_CARD_RADIUS;
-
-    fn empty_snapshot() -> PrimaryShellSnapshot {
-        PrimaryShellSnapshot {
+pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
+    PrimaryShellSnapshot {
             theme: ThemeMode::Light,
             title: "LiliaCode".to_owned(),
             title_parent: "LiliaCode".to_owned(),
@@ -6017,9 +6123,14 @@ mod tests {
             automation_graph: nana_ui::GraphModel::empty(),
             automation_viewport: nana_ui::GraphViewport::default(),
             automation_selection: None,
-            panes: Vec::new(),
-        }
+        panes: Vec::new(),
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime_layout::COMPOSER_CARD_RADIUS;
 
     fn snapshot_with_empty_primary_pane() -> PrimaryShellSnapshot {
         let mut snapshot = empty_snapshot();
