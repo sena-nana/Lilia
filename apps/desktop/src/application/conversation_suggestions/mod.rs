@@ -24,7 +24,8 @@ use lilia_feature_suggestions::generation::{
 };
 use scope::summarize_scope_sources;
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError};
+use crate::application::{ConversationSuggestionsChanged};
 
 impl DesktopApplication {
     pub fn conversation_suggestion_sources(
@@ -91,7 +92,7 @@ impl DesktopApplication {
                     ) {
                         eprintln!("[conversation-suggestions] save cache failed: {error}");
                     }
-                    self.emit_event(DesktopEventKind::ConversationSuggestionsChanged {
+                    self.emit_event(ConversationSuggestionsChanged {
                         project_id: project_id.map(str::to_owned),
                     });
                     return Ok(generated);

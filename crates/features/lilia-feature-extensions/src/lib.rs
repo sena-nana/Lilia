@@ -9,12 +9,45 @@
 mod error;
 mod jobs;
 mod mcp;
+mod service;
 mod skill;
 mod types;
 
 use std::sync::Arc;
 
-use lilia_kernel::{Feature, FeatureContext, FeatureId, JobProtocol, KernelError};
+use lilia_kernel::{Event, Feature, FeatureContext, FeatureId, JobProtocol, KernelError};
+
+/// User, project or plugin hook documents changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HooksRegistryChanged;
+
+impl Event for HooksRegistryChanged {
+    const NAME: &'static str = "lilia.extensions.hooks_changed";
+}
+
+/// Installed skill packages changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SkillsRegistryChanged;
+
+impl Event for SkillsRegistryChanged {
+    const NAME: &'static str = "lilia.extensions.skills_changed";
+}
+
+/// MCP server entries or their credentials changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct McpRegistryChanged;
+
+impl Event for McpRegistryChanged {
+    const NAME: &'static str = "lilia.extensions.mcp_changed";
+}
+
+/// Installed plugin packages changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginsRegistryChanged;
+
+impl Event for PluginsRegistryChanged {
+    const NAME: &'static str = "lilia.extensions.plugins_changed";
+}
 
 pub use error::{invalid_input, ExtensionsError};
 pub use jobs::{extensions_slot, ExtensionsPort, MutateRequest, MUTATE_PROTOCOL};
@@ -22,8 +55,15 @@ pub use mcp::{
     bump_registry_revision, ensure_mcp_credential_is_configured, ensure_registry_revision,
     mcp_activation_error, mcp_credential_key, mcp_prompts, mcp_resource_contents, mcp_resources,
     mcp_state_key, mcp_tools, normalized_mcp_credential_name, normalized_server_id,
-    removed_mcp_credentials, required_mcp_value,
-    validate_mcp_secret, NormalizedMcpServer,
+    removed_mcp_credentials, required_mcp_value, validate_mcp_secret, NormalizedMcpServer,
+};
+pub use service::{
+    activate_mcp_entry, activate_registered_mcp_servers, coding_runtime_services,
+    create_skill_package, delete_mcp_credentials_for_entries, delete_mcp_server,
+    delete_mcp_server_credential, delete_skill_package, extensions_snapshot, get_mcp_prompt,
+    read_mcp_resource, set_mcp_server_credential, set_mcp_server_enabled,
+    set_skill_package_enabled, upsert_mcp_server, CodingRuntimeFacts, ExtensionsHost,
+    LoadedPluginFacts, McpPromptRead,
 };
 pub use skill::{
     bump_skills_registry_revision, ensure_skills_registry_revision, is_managed_skill,
@@ -34,8 +74,8 @@ pub use types::{
     ExtensionsSnapshot, McpActivationReport, McpActivationResult, McpCredentialKind,
     McpCredentialView, McpPromptArgumentView, McpPromptFragmentView, McpPromptGetView,
     McpPromptView, McpResourceContentView, McpResourceReadView, McpResourceView, McpServerUpsert,
-    McpServerView, McpToolView, McpTransport, PluginPackageView, RuntimeServiceView,
-    SkillPackageView, SkillScope, SkillCreate,
+    McpServerView, McpToolView, McpTransport, PluginPackageView, RuntimeServiceView, SkillCreate,
+    SkillPackageView, SkillScope,
 };
 
 pub struct ExtensionsFeature {

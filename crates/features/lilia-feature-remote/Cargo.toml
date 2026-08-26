@@ -1,11 +1,16 @@
 [package]
 name = "lilia-feature-remote"
-description = "Remote control domain feature: pairing and host operations as a kernel job protocol"
+description = "Remote control domain feature: pairing, host status and a kernel job protocol"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+lilia-contracts = { workspace = true }
 lilia-kernel = { workspace = true }
+lilia-storage = { workspace = true }
+rusqlite = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }

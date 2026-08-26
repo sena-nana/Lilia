@@ -4,7 +4,9 @@
 //! host ports under `crate::ports`.
 
 mod agent;
+mod agent_architecture;
 mod agent_interaction;
+mod agent_turn_host;
 mod application;
 mod architecture;
 mod assistant_ai_probe;
@@ -137,9 +139,18 @@ pub use equivalence::{
     DesktopEquivalenceSnapshot, DesktopEquivalenceTaskFact, DesktopEquivalenceTimelineFact,
 };
 pub use events::{
-    DesktopApprovalState, DesktopEvent, DesktopEventBus, DesktopEventKind,
-    DesktopEventSubscription, DesktopInteractionState, DesktopNavigationTarget, DesktopTurnState,
-    DesktopUpdateState,
+    AgentInteractionChanged, ApprovalChanged, ArchitectureChanged, AssistantAiSettingsChanged,
+    AutomationChanged, AutomationRunChanged, ComposerChanged, ConversationSuggestionSettingsChanged,
+    ConversationSuggestionsChanged, CredentialChanged, DesktopApprovalState, DesktopEvent,
+    DesktopEventBus, DesktopEventSubscription, DesktopInteractionState, DesktopNavigationTarget,
+    DesktopTurnState, DesktopUpdateState, GitHubBindingChanged, GoalChanged, HooksRegistryChanged,
+    InteractionChanged, McpRegistryChanged, MemoryChanged, MemoryInjectionChanged,
+    MemorySettingsChanged, ModelFeatureSettingsChanged, NavigationRequested, PluginsRegistryChanged,
+    PopupWindowSettingsChanged, ProjectFilesChanged, ProjectSettingsChanged, ProjectsChanged,
+    ProviderChanged, RoadmapChanged, RouterModeSettingsChanged, SkillsRegistryChanged,
+    TasksChanged, TerminalChanged, TimelineChanged, TodosChanged, TurnRecoveryIssue,
+    TurnStateChanged, UpdateStateChanged, WorktreeChanged, WorktreeOperationCompleted,
+    WorktreeOperationFailed,
 };
 pub use extensions::{
     DesktopExtensionsSnapshot, DesktopMcpActivationReport, DesktopMcpActivationResult,
@@ -322,16 +333,16 @@ pub use usage::{
 pub use workspace::{
     DesktopWorkspaceProject, DesktopWorkspaceSession, DesktopWorkspaceSessionId,
     DesktopWorkspaceSessionIdError, DesktopWorkspaceSessionState,
-    DesktopWorkspaceSessionStateError, DesktopWorkspaceSnapshot, DesktopWorkspaceTask,
-    DesktopWorkspaceTransferOutcome,
+    DesktopWorkspaceSessionStateError, DesktopWorkspaceSnapshot, DesktopWorkspaceState,
+    DesktopWorkspaceTask, DesktopWorkspaceTransferOutcome, WorkspaceSessionError,
 };
 pub use workspace_item::{
     ApplicationWorkspaceSurface, ProjectWorkspaceSurface, WorkspaceFocusTarget, WorkspaceItem,
-    WorkspaceItemCapabilities, WorkspaceItemError, WorkspaceItemKind, WorkspaceItemRestoration,
-    WorkspaceResourceId, ARCHITECTURE_WORKSPACE_ITEM_KIND, AUTOMATION_WORKSPACE_ITEM_KIND,
-    DOCUMENT_WORKSPACE_ITEM_KIND, MEMORY_WORKSPACE_ITEM_KIND, PROJECT_FILES_WORKSPACE_ITEM_KIND,
-    ROADMAP_WORKSPACE_ITEM_KIND, SETTINGS_WORKSPACE_ITEM_KIND, TASK_WORKSPACE_ITEM_KIND,
-    TERMINAL_WORKSPACE_ITEM_KIND,
+    WorkspaceItemCapabilities, WorkspaceItemError, WorkspaceItemKind, WorkspaceItemResolve,
+    WorkspaceItemRestoration, WorkspaceResourceId, ARCHITECTURE_WORKSPACE_ITEM_KIND,
+    AUTOMATION_WORKSPACE_ITEM_KIND, DOCUMENT_WORKSPACE_ITEM_KIND, MEMORY_WORKSPACE_ITEM_KIND,
+    PROJECT_FILES_WORKSPACE_ITEM_KIND, ROADMAP_WORKSPACE_ITEM_KIND, SETTINGS_WORKSPACE_ITEM_KIND,
+    TASK_WORKSPACE_ITEM_KIND, TERMINAL_WORKSPACE_ITEM_KIND,
 };
 pub use worktree::{
     DesktopInitialWorktreeSelection, DesktopTaskWorktree, DesktopWorktreeError,

@@ -54,9 +54,7 @@ pub fn extensions_slot() -> JobSlot {
 pub(crate) fn mutate_protocol(port: Arc<dyn ExtensionsPort>) -> JobProtocol {
     JobProtocol::new(
         MUTATE_PROTOCOL,
-        Arc::new(move |payload, _context: &JobContext| {
-            run_mutate_job(payload, port.as_ref())
-        }),
+        Arc::new(move |payload, _context: &JobContext| run_mutate_job(payload, port.as_ref())),
     )
 }
 

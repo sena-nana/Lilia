@@ -1,14 +1,12 @@
 use lilia_contracts::{ProjectId, TaskId};
 
 use crate::application::{
-    ArchitectureBackend, DesktopApplication, DesktopApplicationError, DesktopArchitectureService,
-    DesktopEventKind, DesktopMemory, DesktopMemoryService, DesktopRoadmapService,
+    ArchitectureBackend, DesktopApplication, DesktopApplicationError, DesktopArchitectureService, DesktopMemory, DesktopMemoryService, DesktopRoadmapService,
     MemoryInjectionState, MemorySettings, MemoryUpsertInput, Milestone, MilestoneUpdatePatch,
     ProjectArchitectureApplyInput, ProjectArchitectureApplyResult, ProjectArchitectureChangeEvent,
     ProjectArchitectureChangeRecord, ProjectArchitectureGraph, ProjectArchitectureQuarantineRecord,
     ProjectArchitectureRejectInput, ProjectArchitectureRollbackResult, ProjectRoadmap,
-    TaskMilestoneLink,
-};
+    TaskMilestoneLink, MemoryChanged, MemorySettingsChanged, MemoryInjectionChanged, RoadmapChanged, ArchitectureChanged};
 
 impl DesktopApplication {
     pub fn architecture_service(&self) -> DesktopArchitectureService {
@@ -53,7 +51,7 @@ impl DesktopApplication {
         let project_id = ProjectId::new(&input.project_id)?;
         self.validate_architecture_task(&project_id, &input.task_id)?;
         let result = self.inner.architecture.apply(input)?;
-        self.emit_event(DesktopEventKind::ArchitectureChanged {
+        self.emit_event(ArchitectureChanged {
             project_id,
             version: result.graph.version,
         });
@@ -81,7 +79,7 @@ impl DesktopApplication {
                 .architecture
                 .rollback(project_id.as_str(), task_id.as_str(), backend)?;
         if result.event.is_some() {
-            self.emit_event(DesktopEventKind::ArchitectureChanged {
+            self.emit_event(ArchitectureChanged {
                 project_id: project_id.clone(),
                 version: result.graph.version,
             });
@@ -129,7 +127,7 @@ impl DesktopApplication {
         input: MemoryUpsertInput,
     ) -> Result<DesktopMemory, DesktopApplicationError> {
         let memory = self.inner.memory.save(input)?;
-        self.emit_event(DesktopEventKind::MemoryChanged {
+        self.emit_event(MemoryChanged {
             memory_id: Some(memory.id.clone()),
             project_id: memory
                 .project_id
@@ -149,7 +147,7 @@ impl DesktopApplication {
             self.inner
                 .memory
                 .set_enabled_if_unmodified(memory_id, enabled, expected_updated_at)?;
-        self.emit_event(DesktopEventKind::MemoryChanged {
+        self.emit_event(MemoryChanged {
             memory_id: Some(memory.id.clone()),
             project_id: memory
                 .project_id
@@ -170,7 +168,7 @@ impl DesktopApplication {
             .memory
             .delete_if_unmodified(memory_id, expected_updated_at)?;
         if deleted {
-            self.emit_event(DesktopEventKind::MemoryChanged {
+            self.emit_event(MemoryChanged {
                 memory_id: Some(memory_id.to_owned()),
                 project_id: previous
                     .and_then(|memory| memory.project_id)
@@ -189,7 +187,7 @@ impl DesktopApplication {
         settings: MemorySettings,
     ) -> Result<MemorySettings, DesktopApplicationError> {
         let settings = self.inner.memory.save_settings(settings)?;
-        self.emit_event(DesktopEventKind::MemorySettingsChanged);
+        self.emit_event(MemorySettingsChanged);
         Ok(settings)
     }
 
@@ -211,7 +209,7 @@ impl DesktopApplication {
             enabled,
             expected_updated_at,
         )?;
-        self.emit_event(DesktopEventKind::MemoryInjectionChanged {
+        self.emit_event(MemoryInjectionChanged {
             task_id: task_id.clone(),
         });
         Ok(state)
@@ -226,7 +224,7 @@ impl DesktopApplication {
             .inner
             .memory
             .reset_task_cooldown_if_unmodified(task_id.as_str(), expected_updated_at)?;
-        self.emit_event(DesktopEventKind::MemoryInjectionChanged {
+        self.emit_event(MemoryInjectionChanged {
             task_id: task_id.clone(),
         });
         Ok(state)
@@ -331,7 +329,7 @@ impl DesktopApplication {
     }
 
     fn emit_roadmap_changed(&self, project_id: &ProjectId, milestone_id: Option<String>) {
-        self.emit_event(DesktopEventKind::RoadmapChanged {
+        self.emit_event(RoadmapChanged {
             project_id: project_id.clone(),
             milestone_id,
         });

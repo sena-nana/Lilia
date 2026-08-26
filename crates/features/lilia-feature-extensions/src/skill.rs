@@ -87,8 +87,8 @@ pub fn write_skill_document(
 ) -> Result<(), ExtensionsError> {
     use std::io::Write;
 
-    let quoted_id =
-        serde_json::to_string(skill_id).map_err(|error| ExtensionsError::Agent(error.to_string()))?;
+    let quoted_id = serde_json::to_string(skill_id)
+        .map_err(|error| ExtensionsError::Agent(error.to_string()))?;
     let quoted_description = serde_json::to_string(description)
         .map_err(|error| ExtensionsError::Agent(error.to_string()))?;
     let instructions = if description.is_empty() {

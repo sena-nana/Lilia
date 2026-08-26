@@ -6,9 +6,10 @@ use reqwest::header::{ACCEPT, LINK, USER_AGENT};
 use serde::{Deserialize, Serialize};
 
 use crate::application::{
-    DesktopApplication, DesktopCredentialAction, DesktopEventKind, DesktopHostAction,
+    DesktopApplication, DesktopCredentialAction, DesktopHostAction,
     DesktopHostResult, DesktopSecret,
 };
+use crate::application::{GitHubBindingChanged};
 
 pub use lilia_feature_github::{
     DesktopGitHubBindingMetadata, DesktopGitHubBindingStatus, DesktopGitHubClientIdSource,
@@ -251,7 +252,7 @@ impl DesktopApplication {
         self.github_store()?
             .delete_setting(GITHUB_BINDING_SETTINGS_KEY)
             .map_err(|error| DesktopGitHubError::Persistence(error.to_string()))?;
-        self.emit_event(DesktopEventKind::GitHubBindingChanged { login: None });
+        self.emit_event(GitHubBindingChanged { login: None });
         Ok(())
     }
 
@@ -376,7 +377,7 @@ impl DesktopApplication {
             self.github_store()?
                 .delete_setting(GITHUB_BINDING_SETTINGS_KEY)
                 .map_err(|error| DesktopGitHubError::Persistence(error.to_string()))?;
-            self.emit_event(DesktopEventKind::GitHubBindingChanged { login: None });
+            self.emit_event(GitHubBindingChanged { login: None });
             return Ok((None, None));
         }
         Ok((Some(binding), token))
@@ -401,7 +402,7 @@ impl DesktopApplication {
             let _ = self.delete_github_token();
             return Err(DesktopGitHubError::Persistence(error.to_string()));
         }
-        self.emit_event(DesktopEventKind::GitHubBindingChanged {
+        self.emit_event(GitHubBindingChanged {
             login: Some(binding.login),
         });
         Ok(())
@@ -463,7 +464,7 @@ impl DesktopApplication {
         if let Ok(store) = self.github_store() {
             let _ = store.delete_setting(GITHUB_BINDING_SETTINGS_KEY);
         }
-        self.emit_event(DesktopEventKind::GitHubBindingChanged { login: None });
+        self.emit_event(GitHubBindingChanged { login: None });
     }
 }
 
@@ -600,7 +601,7 @@ mod tests {
     use lilia_service::ServiceAuthority;
 
     use super::*;
-    use crate::application::{DesktopApplicationConfig, DesktopHost, DesktopHostContext, DesktopHostError};
+    use crate::application::{DesktopApplicationConfig, DesktopHost, DesktopHostContext, DesktopHostError, GitHubBindingChanged};
 
     #[derive(Default)]
     struct MemoryCredentialHost {

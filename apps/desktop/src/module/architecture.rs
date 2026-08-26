@@ -95,7 +95,10 @@ impl ArchitectureModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match (
             application.project_architecture(&project_id),
@@ -170,7 +173,10 @@ impl ArchitectureModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match application.rollback_project_architecture(
             &project_id,
@@ -228,6 +234,20 @@ impl UiModule for ArchitectureModule {
             ArchitectureMessage::Rollback => self.rollback(cx),
             ArchitectureMessage::Graph(event) => self.apply_graph_event(event),
         }
+    }
+
+    fn invalidate(
+        &mut self,
+        envelope: &lilia_kernel::EventEnvelope,
+        cx: &UiModuleContext<'_>,
+    ) -> UiModuleOutcome {
+        let Some(event) = envelope.downcast::<crate::application::ArchitectureChanged>() else {
+            return UiModuleOutcome::clean();
+        };
+        if cx.selected_project().as_ref() != Some(&event.project_id) {
+            return UiModuleOutcome::clean();
+        }
+        self.refresh(cx)
     }
 
     fn project(&self, cx: &UiModuleContext<'_>, into: &mut PrimaryShellSnapshot) {

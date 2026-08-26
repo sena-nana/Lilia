@@ -8,7 +8,7 @@ mod session;
 
 use std::sync::Arc;
 
-use lilia_kernel::{Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef};
+use lilia_kernel::{Event, EventBus, Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef};
 
 pub use session::{
     canonical_directory,
@@ -17,6 +17,41 @@ pub use session::{
     DesktopTerminalScope, DesktopTerminalService, DesktopTerminalSessionId,
     DesktopTerminalSnapshot, DesktopTerminalStyle, DesktopTerminalStyleSpan,
 };
+
+/// A session's screen or process state advanced.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalChanged {
+    pub session_id: DesktopTerminalSessionId,
+    pub revision: u64,
+}
+
+impl Event for TerminalChanged {
+    const NAME: &'static str = "lilia.terminal.changed";
+
+    fn subject(&self) -> Option<String> {
+        Some(self.session_id.as_str().to_owned())
+    }
+}
+
+/// Publishes screen changes onto the kernel bus.
+pub struct KernelTerminalEvents {
+    events: EventBus,
+}
+
+impl KernelTerminalEvents {
+    pub fn new(events: EventBus) -> Self {
+        Self { events }
+    }
+}
+
+impl TerminalEvents for KernelTerminalEvents {
+    fn changed(&self, session_id: &DesktopTerminalSessionId, revision: u64) {
+        self.events.publish(TerminalChanged {
+            session_id: session_id.clone(),
+            revision,
+        });
+    }
+}
 
 /// Where a session reports that its screen advanced.
 ///

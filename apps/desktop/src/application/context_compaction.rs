@@ -9,7 +9,8 @@ use mutsuki_agent_contracts::{AgentEventEnvelope, AgentRole};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError};
+use crate::application::{TimelineChanged};
 
 const CONTEXT_COMPACTION_INPUT_TOKEN_BUDGET: u64 = 48_000;
 const CONTEXT_COMPACTION_OUTPUT_TOKEN_BUDGET: u64 = 2_048;
@@ -119,7 +120,7 @@ impl DesktopApplication {
             ));
         }
         self.replace_session_binding(task_id, &compacted.session_id, &compacted.profile_id)?;
-        self.emit_event(DesktopEventKind::TimelineChanged {
+        self.emit_event(TimelineChanged {
             task_id: task_id.clone(),
             cursor: compacted.events.last().map(|event| event.sequence),
         });
@@ -188,8 +189,7 @@ mod tests {
 
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, TimelineChanged};
 
     struct NoopHost;
 

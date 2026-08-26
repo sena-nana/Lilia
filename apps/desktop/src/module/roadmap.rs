@@ -55,14 +55,6 @@ impl RoadmapModule {
         &self.title
     }
 
-    pub fn description(&self) -> &str {
-        &self.description
-    }
-
-    pub fn due_date(&self) -> &str {
-        &self.due_date
-    }
-
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
@@ -106,7 +98,10 @@ impl RoadmapModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match application.project_roadmap(&project_id) {
             Ok(roadmap) => {
@@ -168,7 +163,10 @@ impl RoadmapModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match application.create_milestone(&project_id, "新里程碑") {
             Ok(milestone) => {
@@ -196,7 +194,10 @@ impl RoadmapModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         let patch = MilestoneUpdatePatch {
             title: Some(self.title.clone()),
@@ -226,7 +227,10 @@ impl RoadmapModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         let patch = MilestoneUpdatePatch {
             status: Some(status),
@@ -260,7 +264,10 @@ impl RoadmapModule {
         }
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         let mut ids = self
             .roadmap
@@ -285,7 +292,10 @@ impl RoadmapModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match application.delete_milestone(&project_id, &milestone_id) {
             Ok(_) => {
@@ -306,7 +316,10 @@ impl RoadmapModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         let mut task_ids = self
             .roadmap
@@ -368,6 +381,20 @@ impl UiModule for RoadmapModule {
             RoadmapMessage::Delete => self.delete(cx),
             RoadmapMessage::ToggleTask(task_id) => self.toggle_task(task_id, cx),
         }
+    }
+
+    fn invalidate(
+        &mut self,
+        envelope: &lilia_kernel::EventEnvelope,
+        cx: &UiModuleContext<'_>,
+    ) -> UiModuleOutcome {
+        let Some(event) = envelope.downcast::<crate::application::RoadmapChanged>() else {
+            return UiModuleOutcome::clean();
+        };
+        if cx.selected_project().as_ref() != Some(&event.project_id) {
+            return UiModuleOutcome::clean();
+        }
+        self.refresh(cx)
     }
 
     fn project(&self, cx: &UiModuleContext<'_>, into: &mut PrimaryShellSnapshot) {

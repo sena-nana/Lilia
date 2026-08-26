@@ -11,9 +11,10 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopEventKind, DocumentSnapshot,
+    DesktopApplication, DesktopApplicationError, DocumentSnapshot,
     ProjectContext, ProjectContextError,
 };
+use crate::application::{ProjectFilesChanged};
 
 const MAX_DIRECTORY_ENTRIES: usize = 2_000;
 const MAX_OPEN_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -277,7 +278,7 @@ impl ProjectFilesWatcher {
                         pending = false;
                         last_fire = Instant::now();
                         bump_revision(&revisions, project_id.as_str());
-                        application.emit_event(DesktopEventKind::ProjectFilesChanged {
+                        application.emit_event(ProjectFilesChanged {
                             project_id: project_id.clone(),
                         });
                     }
@@ -499,8 +500,7 @@ mod tests {
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
         DesktopHostError, DesktopHostResult, DesktopProjectCreate, ProjectWorkspaceSurface,
-        WorkspaceItemRestoration,
-    };
+        WorkspaceItemRestoration, ProjectFilesChanged};
     use lilia_service::ServiceAuthority;
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
     use std::sync::Arc;
@@ -637,10 +637,10 @@ mod tests {
         for _ in 0..50 {
             if let Ok(event) = events.recv_timeout(Duration::from_millis(100)) {
                 if matches!(
-                    event.kind,
-                    DesktopEventKind::ProjectFilesChanged {
-                        project_id: ref changed
-                    } if changed == &project_id
+                    event.downcast::<ProjectFilesChanged>(),
+                    Some(ProjectFilesChanged {
+                        project_id: changed
+                    }) if changed == &project_id
                 ) {
                     observed = true;
                     break;

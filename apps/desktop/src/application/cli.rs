@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use lilia_contracts::ProjectArchiveState;
 
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopCliRequest, DesktopCliResult,
-    DesktopEventKind, DesktopNavigationTarget, DesktopProjectCreate, DesktopProjectPatch,
+    DesktopApplication, DesktopApplicationError, DesktopCliRequest, DesktopCliResult, DesktopNavigationTarget, DesktopProjectCreate, DesktopProjectPatch,
     ProjectQuery,
 };
+use crate::application::{NavigationRequested};
 
 impl DesktopApplication {
     pub fn handle_cli_request(
@@ -82,7 +82,7 @@ impl DesktopApplication {
                 self.create_project(input)?
             }
         };
-        self.emit_event(DesktopEventKind::NavigationRequested {
+        self.emit_event(NavigationRequested {
             target: DesktopNavigationTarget::Project(project.id.clone()),
         });
         Ok(cli_accepted(format!(
@@ -203,8 +203,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, NavigationRequested};
 
     struct TestHost;
 
@@ -251,7 +250,7 @@ mod tests {
             1
         );
         let navigation_count = std::iter::from_fn(|| events.try_recv().ok())
-            .filter(|event| matches!(event.kind, DesktopEventKind::NavigationRequested { .. }))
+            .filter(|event| event.is::<NavigationRequested>())
             .count();
         assert_eq!(navigation_count, 2);
     }
@@ -327,10 +326,10 @@ mod tests {
         );
         assert!(
             std::iter::from_fn(|| events.try_recv().ok()).any(|event| matches!(
-                event.kind,
-                DesktopEventKind::NavigationRequested {
-                    target: DesktopNavigationTarget::Task(_)
-                }
+                event.downcast::<NavigationRequested>(),
+                Some(NavigationRequested {
+                    target: DesktopNavigationTarget::Task(_),
+                })
             ))
         );
     }

@@ -9,7 +9,7 @@ use lilia_storage::ProjectionApplyResult;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError, TimelineChanged};
 
 const PROJECT_COMMAND_DIR: &str = ".lilia/commands";
 const MAX_PROJECT_COMMAND_BYTES: u64 = 256 * 1024;
@@ -147,7 +147,7 @@ impl DesktopApplication {
             .authority()
             .apply_projection(TimelineProjectionCommand::UpsertTimelineEvent { event })?;
         if applied != ProjectionApplyResult::DuplicateIgnored {
-            self.emit_event(DesktopEventKind::TimelineChanged {
+            self.emit_event(TimelineChanged {
                 task_id: task_id.clone(),
                 cursor: Some(sequence),
             });

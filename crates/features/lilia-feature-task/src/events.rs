@@ -4,7 +4,7 @@ use lilia_contracts::{ProjectId, TaskId};
 use lilia_kernel::Event;
 
 /// Where the service reports fact changes. The kernel feature publishes typed
-/// events; a host that still runs a legacy broadcast supplies its own sink.
+/// events onto the shared bus.
 pub trait ProjectTaskEvents: Send + Sync + 'static {
     fn projects_changed(&self);
     fn tasks_changed(&self, project_id: Option<ProjectId>, task_id: Option<TaskId>);
@@ -12,10 +12,9 @@ pub trait ProjectTaskEvents: Send + Sync + 'static {
 
 /// Fans one mutation out to every installed sink.
 ///
-/// The desktop shell still listens on its own broadcast channel while the kernel
-/// `EventBus` leg is installed at mount time. Routing both through one fanout is
-/// what lets a single [`super::ProjectTaskService`] instance serve both, instead
-/// of the host and the kernel each owning a parallel copy over the same `Db`.
+/// Tests and the kernel each install a sink. Product notifications go through
+/// [`KernelProjectTaskEvents`] onto the typed bus; a test can count them
+/// without standing up the shell.
 #[derive(Default)]
 pub struct ProjectTaskEventFanout {
     sinks: Mutex<Vec<Arc<dyn ProjectTaskEvents>>>,

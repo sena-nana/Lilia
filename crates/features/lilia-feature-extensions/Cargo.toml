@@ -6,6 +6,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+lilia-contracts = { workspace = true }
 lilia-kernel = { workspace = true }
 lilia-storage = { workspace = true }
 mutsuki-agent-contracts = { workspace = true }
@@ -13,3 +14,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 url = { workspace = true }
+uuid = { workspace = true }

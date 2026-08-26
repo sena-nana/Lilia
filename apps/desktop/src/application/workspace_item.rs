@@ -1,319 +1,28 @@
 use lilia_contracts::{ProductError, ProductTask, Project, ProjectArchiveState, ProjectId, TaskId};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::application::{
     document_resource_key, path_from_document_resource_key, DesktopApplication,
     DesktopApplicationError, DocumentId, DocumentSnapshot, WorkspaceItemId,
 };
 
-pub const TASK_WORKSPACE_ITEM_KIND: &str = "task";
-pub const ROADMAP_WORKSPACE_ITEM_KIND: &str = "project-roadmap";
-pub const MEMORY_WORKSPACE_ITEM_KIND: &str = "project-memory";
-pub const ARCHITECTURE_WORKSPACE_ITEM_KIND: &str = "project-architecture";
-pub const PROJECT_FILES_WORKSPACE_ITEM_KIND: &str = "project-files";
-pub const DOCUMENT_WORKSPACE_ITEM_KIND: &str = "document-editor";
-pub const TERMINAL_WORKSPACE_ITEM_KIND: &str = "terminal";
-pub const AUTOMATION_WORKSPACE_ITEM_KIND: &str = "automation-workspace";
-pub const SETTINGS_WORKSPACE_ITEM_KIND: &str = "settings-workspace";
-pub const PROJECTS_WORKSPACE_ITEM_KIND: &str = "projects-workspace";
+pub use lilia_feature_workspace::{
+    ApplicationWorkspaceSurface, ProjectWorkspaceSurface, WorkspaceFocusTarget, WorkspaceItem,
+    WorkspaceItemCapabilities, WorkspaceItemError, WorkspaceItemKind, WorkspaceItemRestoration,
+    WorkspaceResourceId, ARCHITECTURE_WORKSPACE_ITEM_KIND, AUTOMATION_WORKSPACE_ITEM_KIND,
+    DOCUMENT_WORKSPACE_ITEM_KIND, MEMORY_WORKSPACE_ITEM_KIND, PROJECT_FILES_WORKSPACE_ITEM_KIND,
+    ROADMAP_WORKSPACE_ITEM_KIND, SETTINGS_WORKSPACE_ITEM_KIND, TASK_WORKSPACE_ITEM_KIND,
+    TERMINAL_WORKSPACE_ITEM_KIND,
+};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplicationWorkspaceSurface {
-    Projects,
-    Automations,
-    Settings,
-}
-
-impl ApplicationWorkspaceSurface {
-    pub const ALL: [Self; 3] = [Self::Projects, Self::Automations, Self::Settings];
-
-    pub const fn kind(self) -> &'static str {
-        match self {
-            Self::Projects => PROJECTS_WORKSPACE_ITEM_KIND,
-            Self::Automations => AUTOMATION_WORKSPACE_ITEM_KIND,
-            Self::Settings => SETTINGS_WORKSPACE_ITEM_KIND,
-        }
-    }
-
-    const fn resource_id(self) -> &'static str {
-        match self {
-            Self::Projects => "application:projects",
-            Self::Automations => "application:automations",
-            Self::Settings => "application:settings",
-        }
-    }
-
-    const fn title(self) -> &'static str {
-        match self {
-            Self::Projects => "项目",
-            Self::Automations => "自动化",
-            Self::Settings => "设置",
-        }
-    }
-
-    const fn icon(self) -> &'static str {
-        match self {
-            Self::Projects => "workspace",
-            Self::Automations => "automation",
-            Self::Settings => "settings",
-        }
-    }
-
-    const fn focus_target(self) -> &'static str {
-        match self {
-            Self::Projects => "projects-overview",
-            Self::Automations => "automation-canvas",
-            Self::Settings => "settings-content",
-        }
-    }
-
-    fn from_kind(kind: &WorkspaceItemKind) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|surface| surface.kind() == kind.as_str())
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectWorkspaceSurface {
-    Roadmap,
-    Memory,
-    Architecture,
-    Files,
-}
-
-impl ProjectWorkspaceSurface {
-    pub const ALL: [Self; 4] = [Self::Roadmap, Self::Memory, Self::Architecture, Self::Files];
-
-    pub const fn kind(self) -> &'static str {
-        match self {
-            Self::Roadmap => ROADMAP_WORKSPACE_ITEM_KIND,
-            Self::Memory => MEMORY_WORKSPACE_ITEM_KIND,
-            Self::Architecture => ARCHITECTURE_WORKSPACE_ITEM_KIND,
-            Self::Files => PROJECT_FILES_WORKSPACE_ITEM_KIND,
-        }
-    }
-
-    const fn resource_prefix(self) -> &'static str {
-        match self {
-            Self::Roadmap => "project-roadmap:",
-            Self::Memory => "project-memory:",
-            Self::Architecture => "project-architecture:",
-            Self::Files => "project-files:",
-        }
-    }
-
-    const fn title_suffix(self) -> &'static str {
-        match self {
-            Self::Roadmap => "路线图",
-            Self::Memory => "记忆",
-            Self::Architecture => "架构",
-            Self::Files => "文件",
-        }
-    }
-
-    const fn icon(self) -> &'static str {
-        match self {
-            Self::Roadmap => "roadmap",
-            Self::Memory => "memory",
-            Self::Architecture => "architecture",
-            Self::Files => "folder",
-        }
-    }
-
-    const fn focus_target(self) -> &'static str {
-        match self {
-            Self::Roadmap => "roadmap",
-            Self::Memory => "memory-search",
-            Self::Architecture => "architecture-canvas",
-            Self::Files => "project-files",
-        }
-    }
-
-    fn from_kind(kind: &WorkspaceItemKind) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|surface| surface.kind() == kind.as_str())
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct WorkspaceResourceId(String);
-
-impl WorkspaceResourceId {
-    pub fn new(value: impl Into<String>) -> Result<Self, WorkspaceItemError> {
-        let value = value.into();
-        let value = value.trim();
-        if value.is_empty() || value.chars().any(char::is_control) {
-            return Err(WorkspaceItemError::InvalidResourceId);
-        }
-        Ok(Self(value.to_owned()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct WorkspaceItemKind(String);
-
-impl WorkspaceItemKind {
-    pub fn new(value: impl Into<String>) -> Result<Self, WorkspaceItemError> {
-        let value = value.into();
-        let value = value.trim();
-        if value.is_empty() || value.chars().any(char::is_control) {
-            return Err(WorkspaceItemError::InvalidKind);
-        }
-        Ok(Self(value.to_owned()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct WorkspaceFocusTarget(String);
-
-impl WorkspaceFocusTarget {
-    pub fn new(value: impl Into<String>) -> Result<Self, WorkspaceItemError> {
-        let value = value.into();
-        let value = value.trim();
-        if value.is_empty() || value.chars().any(char::is_control) {
-            return Err(WorkspaceItemError::InvalidFocusTarget);
-        }
-        Ok(Self(value.to_owned()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceItemCapabilities {
-    pub closable: bool,
-    pub splittable: bool,
-    pub movable_across_windows: bool,
-    pub persistent: bool,
-}
-
-impl WorkspaceItemCapabilities {
-    pub const fn dockable() -> Self {
-        Self {
-            closable: true,
-            splittable: true,
-            movable_across_windows: true,
-            persistent: true,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceItem {
-    pub id: WorkspaceItemId,
-    pub resource_id: WorkspaceResourceId,
-    pub kind: WorkspaceItemKind,
-    pub title: String,
-    pub icon: Option<String>,
-    pub focus_target: WorkspaceFocusTarget,
-    pub capabilities: WorkspaceItemCapabilities,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub serialized_state: Option<Value>,
-}
-
-impl WorkspaceItem {
-    pub fn new(
-        id: WorkspaceItemId,
-        resource_id: WorkspaceResourceId,
-        kind: WorkspaceItemKind,
-        title: impl Into<String>,
-        focus_target: WorkspaceFocusTarget,
-        capabilities: WorkspaceItemCapabilities,
-    ) -> Result<Self, WorkspaceItemError> {
-        let title = title.into();
-        if title.trim().is_empty() || title.chars().any(char::is_control) {
-            return Err(WorkspaceItemError::InvalidTitle);
-        }
-        Ok(Self {
-            id,
-            resource_id,
-            kind,
-            title,
-            icon: None,
-            focus_target,
-            capabilities,
-            serialized_state: None,
-        })
-    }
-
-    pub fn with_icon(mut self, icon: impl Into<String>) -> Result<Self, WorkspaceItemError> {
-        let icon = icon.into();
-        if icon.trim().is_empty() || icon.chars().any(char::is_control) {
-            return Err(WorkspaceItemError::InvalidIcon);
-        }
-        self.icon = Some(icon);
-        Ok(self)
-    }
-
-    pub fn with_serialized_state(mut self, state: Option<Value>) -> Self {
-        self.serialized_state = state;
-        self
-    }
-
-    pub fn restoration(&self) -> Option<WorkspaceItemRestoration> {
-        self.capabilities
-            .persistent
-            .then(|| WorkspaceItemRestoration {
-                id: self.id.clone(),
-                resource_id: Some(self.resource_id.clone()),
-                kind: self.kind.clone(),
-                serialized_state: self.serialized_state.clone(),
-            })
-    }
-
-    pub fn task_id(&self) -> Result<Option<TaskId>, WorkspaceItemError> {
-        if self.kind.as_str() != TASK_WORKSPACE_ITEM_KIND {
-            return Ok(None);
-        }
-        task_id_from_resource_identity(&self.resource_id).map(Some)
-    }
-
-    pub fn project_surface(
+pub trait WorkspaceItemResolve {
+    fn document_path(&self) -> Result<Option<std::path::PathBuf>, WorkspaceItemError>;
+    fn terminal_session_id(
         &self,
-    ) -> Result<Option<(ProjectId, ProjectWorkspaceSurface)>, WorkspaceItemError> {
-        let Some(surface) = ProjectWorkspaceSurface::from_kind(&self.kind) else {
-            return Ok(None);
-        };
-        project_id_from_resource_identity(&self.resource_id, surface)
-            .map(|project_id| Some((project_id, surface)))
-    }
+    ) -> Result<Option<crate::application::DesktopTerminalSessionId>, WorkspaceItemError>;
+}
 
-    pub fn application_surface(
-        &self,
-    ) -> Result<Option<ApplicationWorkspaceSurface>, WorkspaceItemError> {
-        let Some(surface) = ApplicationWorkspaceSurface::from_kind(&self.kind) else {
-            return Ok(None);
-        };
-        if self.resource_id.as_str() != surface.resource_id() {
-            return Err(WorkspaceItemError::InvalidRestorationIdentity {
-                item_id: self.resource_id.as_str().to_owned(),
-                kind: surface.kind().to_owned(),
-            });
-        }
-        Ok(Some(surface))
-    }
-
-    pub fn document_path(&self) -> Result<Option<std::path::PathBuf>, WorkspaceItemError> {
+impl WorkspaceItemResolve for WorkspaceItem {
+    fn document_path(&self) -> Result<Option<std::path::PathBuf>, WorkspaceItemError> {
         if self.kind.as_str() != DOCUMENT_WORKSPACE_ITEM_KIND {
             return Ok(None);
         }
@@ -325,40 +34,13 @@ impl WorkspaceItem {
             })
     }
 
-    pub fn terminal_session_id(
+    fn terminal_session_id(
         &self,
     ) -> Result<Option<crate::application::DesktopTerminalSessionId>, WorkspaceItemError> {
         if self.kind.as_str() != TERMINAL_WORKSPACE_ITEM_KIND {
             return Ok(None);
         }
         terminal_session_id_from_resource_identity(&self.resource_id).map(Some)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceItemRestoration {
-    pub id: WorkspaceItemId,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resource_id: Option<WorkspaceResourceId>,
-    pub kind: WorkspaceItemKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub serialized_state: Option<Value>,
-}
-
-impl WorkspaceItemRestoration {
-    pub fn from_legacy_id(id: WorkspaceItemId) -> Option<Self> {
-        let is_legacy_task = id
-            .as_str()
-            .strip_prefix("task:")
-            .filter(|value| !value.is_empty())
-            .is_some();
-        is_legacy_task.then(|| Self {
-            id,
-            resource_id: None,
-            kind: WorkspaceItemKind(TASK_WORKSPACE_ITEM_KIND.to_owned()),
-            serialized_state: None,
-        })
     }
 }
 
@@ -474,7 +156,10 @@ impl DesktopApplication {
             let resource_id = restoration
                 .resource_id
                 .clone()
-                .unwrap_or_else(|| WorkspaceResourceId(restoration.id.as_str().to_owned()));
+                .unwrap_or_else(|| {
+                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                        .expect("restored workspace item ids are already validated")
+                });
             let path = match path_from_document_resource_key(resource_id.as_str()) {
                 Ok(path) => path,
                 Err(_) => {
@@ -503,7 +188,10 @@ impl DesktopApplication {
             let resource_id = restoration
                 .resource_id
                 .clone()
-                .unwrap_or_else(|| WorkspaceResourceId(restoration.id.as_str().to_owned()));
+                .unwrap_or_else(|| {
+                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                        .expect("restored workspace item ids are already validated")
+                });
             let session_id = terminal_session_id_from_resource_identity(&resource_id)?;
             let state = restoration.serialized_state.clone().ok_or_else(|| {
                 WorkspaceItemError::InvalidRestorationIdentity {
@@ -532,7 +220,10 @@ impl DesktopApplication {
             let resource_id = restoration
                 .resource_id
                 .clone()
-                .unwrap_or_else(|| WorkspaceResourceId(restoration.id.as_str().to_owned()));
+                .unwrap_or_else(|| {
+                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                        .expect("restored workspace item ids are already validated")
+                });
             let task_id = task_id_from_resource_identity(&resource_id)?;
             let task = match self.get_task(&task_id) {
                 Ok(task) => task,
@@ -554,7 +245,10 @@ impl DesktopApplication {
             let resource_id = restoration
                 .resource_id
                 .clone()
-                .unwrap_or_else(|| WorkspaceResourceId(restoration.id.as_str().to_owned()));
+                .unwrap_or_else(|| {
+                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                        .expect("restored workspace item ids are already validated")
+                });
             if resource_id.as_str() != surface.resource_id() {
                 return Err(WorkspaceItemError::InvalidRestorationIdentity {
                     item_id: resource_id.as_str().to_owned(),
@@ -574,7 +268,10 @@ impl DesktopApplication {
         let resource_id = restoration
             .resource_id
             .clone()
-            .unwrap_or_else(|| WorkspaceResourceId(restoration.id.as_str().to_owned()));
+            .unwrap_or_else(|| {
+                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                        .expect("restored workspace item ids are already validated")
+                });
         let project_id = project_id_from_resource_identity(&resource_id, surface)?;
         let project = match self.get_project(&project_id) {
             Ok(project) => project,
@@ -591,14 +288,6 @@ impl DesktopApplication {
             .map(Some)
             .map_err(DesktopApplicationError::from)
     }
-}
-
-pub(crate) fn has_workspace_item_restorer(kind: &WorkspaceItemKind) -> bool {
-    kind.as_str() == TASK_WORKSPACE_ITEM_KIND
-        || kind.as_str() == DOCUMENT_WORKSPACE_ITEM_KIND
-        || kind.as_str() == TERMINAL_WORKSPACE_ITEM_KIND
-        || ProjectWorkspaceSurface::from_kind(kind).is_some()
-        || ApplicationWorkspaceSurface::from_kind(kind).is_some()
 }
 
 fn terminal_session_id_from_resource_identity(
@@ -851,45 +540,10 @@ fn terminal_item_with_instance_id(
     })
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum WorkspaceItemError {
-    #[error("workspace resource id must not be empty or contain control characters")]
-    InvalidResourceId,
-    #[error("workspace item kind must not be empty or contain control characters")]
-    InvalidKind,
-    #[error("workspace item title must not be empty or contain control characters")]
-    InvalidTitle,
-    #[error("workspace item icon must not be empty or contain control characters")]
-    InvalidIcon,
-    #[error("workspace focus target must not be empty or contain control characters")]
-    InvalidFocusTarget,
-    #[error("workspace item `{item_id}` is not a valid `{kind}` restoration identity")]
-    InvalidRestorationIdentity { item_id: String, kind: String },
-    #[error("workspace item `{item_id}` changed kind from `{existing}` to `{requested}`")]
-    KindMismatch {
-        item_id: String,
-        existing: String,
-        requested: String,
-    },
-    #[error("workspace item `{item_id}` changed resource from `{existing}` to `{requested}`")]
-    ResourceMismatch {
-        item_id: String,
-        existing: String,
-        requested: String,
-    },
-    #[error("workspace item `{0}` is not registered in this workspace session")]
-    UnknownItem(String),
-    #[error("workspace item `{0}` cannot be closed")]
-    NotClosable(String),
-    #[error("workspace item `{0}` cannot be split")]
-    NotSplittable(String),
-    #[error("workspace item `{0}` cannot move across windows")]
-    NotMovableAcrossWindows(String),
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::WorkspaceItemResolve;
 
     #[test]
     fn restoration_does_not_duplicate_presentation_or_product_facts() {

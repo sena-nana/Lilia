@@ -1,9 +1,10 @@
 use std::sync::TryLockError;
 
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopEventKind, DesktopHostAction,
+    DesktopApplication, DesktopApplicationError, DesktopHostAction,
     DesktopHostResult, DesktopUpdateAction, DesktopUpdateResult, DesktopUpdateState,
 };
+use crate::application::{UpdateStateChanged};
 
 const UPDATE_CHANNEL_FIELD: &str = "update.channel";
 const UPDATE_VERSION_FIELD: &str = "update.version";
@@ -149,7 +150,7 @@ impl DesktopApplication {
             .update_state
             .lock()
             .map_err(|_| DesktopApplicationError::StateUnavailable("update"))? = state.clone();
-        self.emit_event(DesktopEventKind::UpdateStateChanged {
+        self.emit_event(UpdateStateChanged {
             state: state.clone(),
         });
         Ok(state)
@@ -192,8 +193,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostContext, DesktopHostError,
-        DesktopUpdateResult,
-    };
+        DesktopUpdateResult, UpdateStateChanged};
 
     static NEXT_UPDATE_TEST: AtomicU64 = AtomicU64::new(1);
 
@@ -289,10 +289,10 @@ mod tests {
         );
 
         let states = (0..5)
-            .map(|_| events.recv().unwrap().kind)
-            .map(|event| match event {
-                DesktopEventKind::UpdateStateChanged { state } => state,
-                other => panic!("unexpected event: {other:?}"),
+            .map(|_| events.recv().unwrap())
+            .map(|event| match event.downcast::<UpdateStateChanged>() {
+                Some(UpdateStateChanged { state }) => state.clone(),
+                _ => panic!("unexpected event: {:?}", event.name()),
             })
             .collect::<Vec<_>>();
         assert_eq!(
@@ -352,10 +352,11 @@ mod tests {
         app.install_update("0.2.0").unwrap();
 
         let states = (0..7)
-            .map(|_| events.recv().unwrap().kind)
-            .filter_map(|event| match event {
-                DesktopEventKind::UpdateStateChanged { state } => Some(state),
-                _ => None,
+            .map(|_| events.recv().unwrap())
+            .filter_map(|event| {
+                event
+                    .downcast::<UpdateStateChanged>()
+                    .map(|UpdateStateChanged { state }| state.clone())
             })
             .collect::<Vec<_>>();
         assert_eq!(

@@ -1,0 +1,12 @@
+[package]
+name = "lilia-feature-workspace"
+description = "Workspace domain feature: session selection, pane layout and workspace items"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+lilia-contracts = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }

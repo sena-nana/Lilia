@@ -23,7 +23,6 @@ pub enum MemoryMessage {
     Select(String),
     New,
     TitleChanged(String),
-    BodyEdited(String),
     BodyReplaced(String),
     TagsChanged(String),
     ToggleScope,
@@ -93,16 +92,8 @@ impl MemoryModule {
         &self.body
     }
 
-    pub fn tags(&self) -> &str {
-        &self.tags
-    }
-
     pub fn scope(&self) -> MemoryScope {
         self.scope
-    }
-
-    pub fn updated_at(&self) -> Option<i64> {
-        self.updated_at
     }
 
     pub fn error(&self) -> Option<&str> {
@@ -142,7 +133,10 @@ impl MemoryModule {
     fn refresh(&mut self, cx: &UiModuleContext<'_>) -> UiModuleOutcome {
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match application.memory_settings() {
             Ok(settings) => {
@@ -224,7 +218,10 @@ impl MemoryModule {
     fn save(&mut self, cx: &UiModuleContext<'_>) -> UiModuleOutcome {
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         let project_id = match self.scope {
             MemoryScope::User => None,
@@ -264,7 +261,10 @@ impl MemoryModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match application.set_memory_enabled(&memory_id, enabled, expected_updated_at) {
             Ok(_) => self.refresh(cx),
@@ -281,7 +281,10 @@ impl MemoryModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match application.delete_memory(&memory_id, self.updated_at) {
             Ok(_) => {
@@ -302,7 +305,10 @@ impl MemoryModule {
     ) -> UiModuleOutcome {
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         let cooldown_changed = settings.cooldown_turns != self.settings.cooldown_turns;
         match application.save_memory_settings(settings) {
@@ -354,7 +360,10 @@ impl MemoryModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match application.set_task_memory_enabled(&task_id, !state.enabled, Some(state.updated_at)) {
             Ok(state) => {
@@ -373,7 +382,10 @@ impl MemoryModule {
         };
         let application = match cx.application() {
             Ok(application) => application,
-            Err(error) => return UiModuleOutcome::failed(error),
+            Err(error) => {
+                self.error = Some(error);
+                return UiModuleOutcome::dirty();
+            }
         };
         match application.reset_task_memory_cooldown(&task_id, Some(state.updated_at)) {
             Ok(state) => {
@@ -406,11 +418,6 @@ impl UiModule for MemoryModule {
             }
             MemoryMessage::TitleChanged(value) => {
                 self.title = value;
-                self.error = None;
-                UiModuleOutcome::dirty()
-            }
-            MemoryMessage::BodyEdited(action) => {
-                self.body.perform(action);
                 self.error = None;
                 UiModuleOutcome::dirty()
             }
@@ -461,15 +468,40 @@ impl UiModule for MemoryModule {
         }
     }
 
+    fn invalidate(
+        &mut self,
+        envelope: &lilia_kernel::EventEnvelope,
+        cx: &UiModuleContext<'_>,
+    ) -> UiModuleOutcome {
+        if let Some(event) = envelope.downcast::<crate::application::MemoryChanged>() {
+            if event
+                .project_id
+                .as_ref()
+                .is_none_or(|project_id| cx.selected_project().as_ref() == Some(project_id))
+            {
+                return self.refresh(cx);
+            }
+        }
+        if envelope.is::<crate::application::MemoryInjectionChanged>() {
+            self.refresh_injection(cx);
+            return UiModuleOutcome::dirty();
+        }
+        if envelope.is::<crate::application::MemorySettingsChanged>() {
+            return self.refresh(cx);
+        }
+        UiModuleOutcome::clean()
+    }
+
     fn project(&self, cx: &UiModuleContext<'_>, into: &mut PrimaryShellSnapshot) {
         if !cx.shows(ShellProjectPage::Memory) {
             return;
         }
-        into.project_page_body = self
-            .memories
-            .iter()
-            .map(|memory| memory.title.clone())
-            .collect::<Vec<_>>()
-            .join("\n");
+        into.project_page_body = self.error.clone().unwrap_or_else(|| {
+            self.memories
+                .iter()
+                .map(|memory| memory.title.clone())
+                .collect::<Vec<_>>()
+                .join("\n")
+        });
     }
 }

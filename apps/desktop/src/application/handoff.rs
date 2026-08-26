@@ -10,9 +10,10 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopEventKind, DesktopNavigationTarget,
+    DesktopApplication, DesktopApplicationError, DesktopNavigationTarget,
     DesktopProjectPatch, ProjectQuery, TaskQuery,
 };
+use crate::application::{ProjectsChanged, TasksChanged, NavigationRequested};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -131,14 +132,14 @@ impl DesktopApplication {
         self.ensure_task_conversation(&record.task, &record.task.title)?;
         if !record.duplicate {
             if project_was_new {
-                self.emit_event(DesktopEventKind::ProjectsChanged);
+                self.emit_event(ProjectsChanged);
             }
-            self.emit_event(DesktopEventKind::TasksChanged {
+            self.emit_event(TasksChanged {
                 project_id: Some(record.project.id.clone()),
                 task_id: Some(record.task.id.clone()),
             });
         }
-        self.emit_event(DesktopEventKind::NavigationRequested {
+        self.emit_event(NavigationRequested {
             target: DesktopNavigationTarget::Task(record.task.id.clone()),
         });
         Ok(open_record(record))
@@ -506,8 +507,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, ProjectsChanged, TasksChanged, NavigationRequested};
 
     struct TestHost;
 

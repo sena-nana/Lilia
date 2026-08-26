@@ -4,7 +4,8 @@ use lilia_storage::SqliteAgentRuntimeStateStore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError};
+use crate::application::{ProjectSettingsChanged};
 
 pub const PROJECT_SETTINGS_KEY: &str = "desktop.project.settings.v1";
 const PROJECT_SETTINGS_SCHEMA_VERSION: u32 = 1;
@@ -113,7 +114,7 @@ impl DesktopApplication {
     ) -> Result<DesktopProjectSettings, DesktopApplicationError> {
         let normalized = normalize_project_settings(settings);
         self.persist_project_settings(&normalized)?;
-        self.emit_event(DesktopEventKind::ProjectSettingsChanged);
+        self.emit_event(ProjectSettingsChanged);
         Ok(normalized)
     }
 
@@ -228,8 +229,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, ProjectSettingsChanged};
     use lilia_service::ServiceAuthority;
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);

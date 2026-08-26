@@ -15,7 +15,8 @@ use std::time::{Duration, Instant, SystemTime};
 use notify::{EventKind, RecursiveMode, Watcher};
 
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopEvent, DesktopEventKind, ProjectQuery,
+    DesktopApplication, DesktopApplicationError, DesktopEvent, HooksRegistryChanged,
+    McpRegistryChanged, PluginsRegistryChanged, ProjectQuery, SkillsRegistryChanged,
 };
 
 pub const REGISTRY_WATCH_SOURCE: &str = "registry-file-watch";
@@ -124,15 +125,12 @@ impl DesktopApplication {
         }
         let mut published = Vec::new();
         for kind in kinds {
-            published.push(self.inner.events.publish(
-                REGISTRY_WATCH_SOURCE,
-                match kind {
-                    RegistryWatchKind::Hooks => DesktopEventKind::HooksRegistryChanged,
-                    RegistryWatchKind::Skills => DesktopEventKind::SkillsRegistryChanged,
-                    RegistryWatchKind::Mcp => DesktopEventKind::McpRegistryChanged,
-                    RegistryWatchKind::Plugins => DesktopEventKind::PluginsRegistryChanged,
-                },
-            ));
+            published.push(match kind {
+                RegistryWatchKind::Hooks => self.emit_event(HooksRegistryChanged),
+                RegistryWatchKind::Skills => self.emit_event(SkillsRegistryChanged),
+                RegistryWatchKind::Mcp => self.emit_event(McpRegistryChanged),
+                RegistryWatchKind::Plugins => self.emit_event(PluginsRegistryChanged),
+            });
         }
         Ok(published)
     }
@@ -367,11 +365,7 @@ mod tests {
 
         let published = app.publish_registry_path_changes(&[hooks_path]).unwrap();
         assert_eq!(published.len(), 1);
-        assert_eq!(published[0].source_instance, REGISTRY_WATCH_SOURCE);
-        assert!(matches!(
-            published[0].kind,
-            DesktopEventKind::HooksRegistryChanged
-        ));
+        assert!(published[0].is::<HooksRegistryChanged>());
     }
 
     #[test]

@@ -21,10 +21,11 @@ use super::{
 };
 use crate::application::agent::DesktopIdempotentTurnStart;
 use crate::application::{
-    DesktopApplication, DesktopAutomationTurnCorrelation, DesktopEventKind,
+    DesktopApplication, DesktopAutomationTurnCorrelation,
     DesktopExecutionPermission, DesktopTodoCreate, DesktopTodoGuideStatus, DesktopTodoPriority,
     DesktopTodoSource, DesktopTurnDispatchKind, DesktopTurnRequest, TaskQuery,
 };
+use crate::application::{TasksChanged, TimelineChanged};
 
 impl DesktopApplication {
     pub fn execute_automation_run(
@@ -145,7 +146,7 @@ impl AutomationTaskPort for DesktopApplication {
             .map_err(port_error)?;
         let task = product_task(result.value)?;
         if !result.duplicate {
-            self.emit_event(DesktopEventKind::TasksChanged {
+            self.emit_event(TasksChanged {
                 project_id: task.project_id.clone(),
                 task_id: Some(task.id.clone()),
             });
@@ -246,7 +247,7 @@ impl AutomationTimelinePort for DesktopApplication {
             .apply_projection(TimelineProjectionCommand::UpsertTimelineEvent { event })
             .map_err(port_error)?;
         if result != ProjectionApplyResult::DuplicateIgnored {
-            self.emit_event(DesktopEventKind::TimelineChanged {
+            self.emit_event(TimelineChanged {
                 task_id: task_id.clone(),
                 cursor: Some(sequence),
             });
@@ -406,7 +407,7 @@ fn create_product_task(
         .map_err(port_error)?;
     let task = product_task(result.value)?;
     if !result.duplicate {
-        application.emit_event(DesktopEventKind::TasksChanged {
+        application.emit_event(TasksChanged {
             project_id: task.project_id.clone(),
             task_id: Some(task.id.clone()),
         });
@@ -519,8 +520,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, TasksChanged, TimelineChanged, TodosChanged};
 
     static NEXT_APPLICATION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -610,10 +610,7 @@ mod tests {
         let tasks = application.query_tasks(TaskQuery::default()).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title, "Ship desktop release");
-        assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::TasksChanged { .. }
-        ));
+        assert!(events.recv().unwrap().is::<TasksChanged>());
         assert!(events.try_recv().is_err());
     }
 
@@ -651,14 +648,8 @@ mod tests {
             stored[1].guide_status,
             Some(DesktopTodoGuideStatus::Pending)
         );
-        assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::TodosChanged { .. }
-        ));
-        assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::TodosChanged { .. }
-        ));
+        assert!(events.recv().unwrap().is::<TodosChanged>());
+        assert!(events.recv().unwrap().is::<TodosChanged>());
         assert!(events.try_recv().is_err());
     }
 
@@ -683,10 +674,7 @@ mod tests {
         let snapshot = application.task_session_snapshot(&task_id).unwrap();
         assert_eq!(snapshot.timeline.len(), 1);
         assert_eq!(snapshot.timeline[0].title, "Automation checkpoint");
-        assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::TimelineChanged { .. }
-        ));
+        assert!(events.recv().unwrap().is::<TimelineChanged>());
         assert!(events.try_recv().is_err());
     }
 

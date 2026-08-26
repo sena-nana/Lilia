@@ -10,9 +10,10 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopCredentialAction, DesktopEventKind,
+    DesktopApplication, DesktopApplicationError, DesktopCredentialAction,
     DesktopHostAction, DesktopHostResult, DesktopSecret,
 };
+use crate::application::{ModelFeatureSettingsChanged, AssistantAiSettingsChanged, RouterModeSettingsChanged};
 
 pub const MODEL_FEATURE_SETTINGS_KEY: &str = "desktop.model-feature.settings.v1";
 pub const ASSISTANT_AI_SETTINGS_KEY: &str = "desktop.assistant-ai.settings.v1";
@@ -296,7 +297,7 @@ impl DesktopApplication {
             auto_turn_decision: update.auto_turn_decision,
         });
         self.persist_model_feature_settings(&next)?;
-        self.emit_event(DesktopEventKind::ModelFeatureSettingsChanged {
+        self.emit_event(ModelFeatureSettingsChanged {
             revision: next.revision,
         });
         Ok(next)
@@ -328,7 +329,7 @@ impl DesktopApplication {
             codex_account_spark_enabled: update.codex_account_spark_enabled,
         });
         self.persist_assistant_ai_settings(&next)?;
-        self.emit_event(DesktopEventKind::AssistantAiSettingsChanged {
+        self.emit_event(AssistantAiSettingsChanged {
             revision: next.revision,
         });
         Ok(next)
@@ -434,7 +435,7 @@ impl DesktopApplication {
             modes: update.modes,
         });
         self.persist_router_mode_settings(&next)?;
-        self.emit_event(DesktopEventKind::RouterModeSettingsChanged {
+        self.emit_event(RouterModeSettingsChanged {
             revision: next.revision,
         });
         Ok(next)
@@ -829,8 +830,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, ModelFeatureSettingsChanged, AssistantAiSettingsChanged, RouterModeSettingsChanged};
     use lilia_service::ServiceAuthority;
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);

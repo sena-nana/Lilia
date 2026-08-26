@@ -5,7 +5,8 @@ use lilia_storage::SqliteAgentRuntimeStateStore;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError};
+use crate::application::{AgentInteractionChanged};
 
 const AGENT_INTERACTION_SETTINGS_KEY: &str = "agent.interaction.v1";
 const AGENT_INTERACTION_SCHEMA_VERSION: u32 = 1;
@@ -112,7 +113,7 @@ impl From<DesktopCustomSubagentDefinition> for NativeSubagentDefinition {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopCustomSubagentCatalog {
     pub revision: u64,
@@ -345,7 +346,7 @@ impl DesktopApplication {
         }
         state.settings = next_settings.clone();
         drop(state);
-        self.emit_event(DesktopEventKind::AgentInteractionChanged {
+        self.emit_event(AgentInteractionChanged {
             revision: next_settings.revision,
         });
         Ok(next_settings)
@@ -393,7 +394,7 @@ impl DesktopApplication {
         state.settings = next_settings.clone();
         state.agents = next_agents;
         drop(state);
-        self.emit_event(DesktopEventKind::AgentInteractionChanged {
+        self.emit_event(AgentInteractionChanged {
             revision: next_settings.revision,
         });
         Ok(saved)
@@ -433,7 +434,7 @@ impl DesktopApplication {
         state.agents = next_agents;
         let catalog = state.catalog();
         drop(state);
-        self.emit_event(DesktopEventKind::AgentInteractionChanged {
+        self.emit_event(AgentInteractionChanged {
             revision: next_settings.revision,
         });
         Ok(catalog)
@@ -610,8 +611,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, AgentInteractionChanged};
 
     struct TestHost;
 

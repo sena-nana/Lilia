@@ -17,7 +17,50 @@ pub use types::{
     MEMORY_SETTINGS_KEY,
 };
 
-use lilia_kernel::{Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef};
+use lilia_contracts::{ProjectId, TaskId};
+use lilia_kernel::{
+    Event, Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef,
+};
+
+/// A memory was created, updated or removed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryChanged {
+    pub memory_id: Option<String>,
+    pub project_id: Option<ProjectId>,
+}
+
+impl Event for MemoryChanged {
+    const NAME: &'static str = "lilia.memory.changed";
+
+    fn subject(&self) -> Option<String> {
+        self.project_id
+            .as_ref()
+            .map(|id| id.as_str().to_owned())
+            .or_else(|| self.memory_id.clone())
+    }
+}
+
+/// Injection or persistence settings for memories changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemorySettingsChanged;
+
+impl Event for MemorySettingsChanged {
+    const NAME: &'static str = "lilia.memory.settings_changed";
+}
+
+/// The memories injected into a task turn changed.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryInjectionChanged {
+    pub task_id: TaskId,
+}
+
+impl Event for MemoryInjectionChanged {
+    const NAME: &'static str = "lilia.memory.injection_changed";
+
+    fn subject(&self) -> Option<String> {
+        Some(self.task_id.as_str().to_owned())
+    }
+}
 
 /// Service slot for [`DesktopMemoryService`].
 pub enum MemoryServiceKey {}
