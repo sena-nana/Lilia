@@ -482,10 +482,14 @@ impl RemoteHost for DesktopApplication {
         };
         let id = DesktopTerminalSessionId::from_stored(session_id.clone());
         match self.terminal_snapshot(&id, 0) {
-            Ok(snapshot) if snapshot.process.is_running() => Ok(Some(session_id)),
-            Ok(_) => {
+            Ok(snapshot) if matches!(snapshot.process, DesktopTerminalProcessState::Running) => {
+                Ok(Some(session_id))
+            }
+            Ok(snapshot) => {
                 self.inner.remote.forget_process_session(task_id);
-                let _ = self.forget_terminal(&id);
+                if !snapshot.process.is_running() {
+                    let _ = self.forget_terminal(&id);
+                }
                 Ok(None)
             }
             Err(DesktopApplicationError::Terminal(

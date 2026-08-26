@@ -507,6 +507,7 @@ fn remote_process_session(
         RemoteProcessSessionCommand::Kill { process_id } => {
             let session_id = require_remote_process_session(existing, process_id.as_deref())?;
             let snapshot = host.kill_process(&session_id)?;
+            host.forget_process(task_id);
             Ok(json!({
                 "type": "chat.send",
                 "result": { "accepted": true },
