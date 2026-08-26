@@ -3,10 +3,11 @@ use uuid::Uuid;
 
 use crate::application::submission::DesktopGuideQueueInput;
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopEventKind, DesktopSessionBranchAnchor,
+    DesktopApplication, DesktopApplicationError, DesktopSessionBranchAnchor,
     DesktopTaskPatch, DesktopTaskTodo, DesktopTodoCreate, DesktopTodoPriority, DesktopTurnDispatch,
     DesktopTurnRequest,
 };
+use crate::application::{ComposerChanged, TodosChanged};
 
 pub(crate) use lilia_feature_composer::ComposerStore as DesktopComposerStore;
 pub use lilia_feature_composer::{
@@ -71,7 +72,7 @@ impl DesktopApplication {
                 return Err(error);
             }
         };
-        self.emit_event(DesktopEventKind::ComposerChanged {
+        self.emit_event(ComposerChanged {
             task_id: task.id.clone(),
             revision: draft.revision,
         });
@@ -94,7 +95,7 @@ impl DesktopApplication {
         self.get_task(task_id)?;
         let (state, changed) = self.inner.composers.execute(task_id, command)?;
         if changed {
-            self.emit_event(DesktopEventKind::ComposerChanged {
+            self.emit_event(ComposerChanged {
                 task_id: task_id.clone(),
                 revision: state.revision,
             });
@@ -136,7 +137,7 @@ impl DesktopApplication {
         let (dispatch, should_start) = self.accept_persisted_task_turn(request, turn_id, false)?;
         drop(submission);
         if let Some(state) = cleared {
-            self.emit_event(DesktopEventKind::ComposerChanged {
+            self.emit_event(ComposerChanged {
                 task_id: task_id.clone(),
                 revision: state.revision,
             });
@@ -189,7 +190,7 @@ impl DesktopApplication {
                     .commit_composer_clear(&composer)?;
                 drop(submission);
                 if let Some(state) = cleared {
-                    self.emit_event(DesktopEventKind::ComposerChanged {
+                    self.emit_event(ComposerChanged {
                         task_id: task_id.clone(),
                         revision: state.revision,
                     });
@@ -268,11 +269,11 @@ impl DesktopApplication {
             })
             .transpose()?;
         drop(submission);
-        self.emit_event(DesktopEventKind::TodosChanged {
+        self.emit_event(TodosChanged {
             task_id: task_id.clone(),
         });
         if let Some(state) = committed.cleared {
-            self.emit_event(DesktopEventKind::ComposerChanged {
+            self.emit_event(ComposerChanged {
                 task_id: task_id.clone(),
                 revision: state.revision,
             });
@@ -333,11 +334,11 @@ impl DesktopApplication {
             .map_err(|_| DesktopApplicationError::StateUnavailable("submission"))?
             .commit_guide(&composer, &guide_id, input, None)?;
         drop(submission);
-        self.emit_event(DesktopEventKind::TodosChanged {
+        self.emit_event(TodosChanged {
             task_id: composer.task_id.clone(),
         });
         if let Some(state) = committed.cleared {
-            self.emit_event(DesktopEventKind::ComposerChanged {
+            self.emit_event(ComposerChanged {
                 task_id: composer.task_id,
                 revision: state.revision,
             });
@@ -363,8 +364,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, ComposerChanged, TodosChanged};
 
     static NEXT_COMPOSER_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -431,12 +431,12 @@ mod tests {
         assert_eq!(configured.permission, DesktopExecutionPermission::Readonly);
         assert_eq!(application.composer_state(&second).unwrap().revision, 0);
         assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::ComposerChanged { ref task_id, revision: 1 } if task_id == &first
+            events.recv().unwrap().downcast::<ComposerChanged>(),
+            Some(ComposerChanged { task_id, revision: 1 }) if task_id == &first
         ));
         assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::ComposerChanged { ref task_id, revision: 2 } if task_id == &first
+            events.recv().unwrap().downcast::<ComposerChanged>(),
+            Some(ComposerChanged { task_id, revision: 2 }) if task_id == &first
         ));
     }
 
