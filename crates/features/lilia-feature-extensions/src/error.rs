@@ -10,6 +10,8 @@ pub enum ExtensionsError {
     },
     #[error("Native Agent operation failed: {0}")]
     Agent(String),
+    #[error(transparent)]
+    Product(#[from] lilia_contracts::ProductError),
     #[error("desktop {0} state is unavailable")]
     StateUnavailable(&'static str),
     #[error("desktop {0} state revision overflowed")]

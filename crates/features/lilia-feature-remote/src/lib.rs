@@ -15,6 +15,31 @@ use lilia_kernel::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod dispatch;
+mod http;
+mod service;
+mod types;
+
+pub use dispatch::{
+    dispatch_remote_payload, dispatch_remote_request, remote_interaction_respond,
+    remote_process_session_command, remote_session_fork_command, remote_timeline_snapshot,
+    RemoteChatPermission, RemoteChatSpec, RemoteHost, RemoteProcessSessionCommand,
+    RemoteSessionForkCommand,
+};
+pub use http::serve_http_bridge;
+pub use service::{
+    active_ticket, advertised_bridge_url, authorize_request, cancel_pairing, database_error,
+    endpoint, endpoint_id, host_enabled, keep_awake_enabled, now_millis, pair_device, pc_name,
+    refresh_trusted_peer_seen, remote_capabilities, remote_status, set_setting, start_pairing,
+    url_encode, DesktopRemoteControlError, DesktopRemoteControlService, RemoteWakeHost,
+    DEFAULT_HTTP_BRIDGE_PORT, HOST_ENABLED_KEY, KEEP_AWAKE_ENABLED_KEY, PC_NAME_KEY,
+};
+pub use types::{
+    RemoteCapabilitySet, RemoteControlStatus, RemoteEndpointAddress, RemotePairDeviceInput,
+    RemotePairingTicket, RemotePeerSummary, RemoteRequestEnvelope, REMOTE_ALPN,
+    REMOTE_MIN_PROTOCOL_VERSION, REMOTE_PROTOCOL_VERSION,
+};
+
 pub const OPERATE_PROTOCOL: &str = "lilia.remote/operate@1";
 
 /// Payload of [`OPERATE_PROTOCOL`]. Nothing here is secret: a pairing ticket is

@@ -225,8 +225,10 @@ impl NormalizedMcpServer {
             .collect::<Result<Vec<_>, _>>()?;
         let command = normalized_text("command", input.command.unwrap_or_default(), 4096)?;
         let url = normalized_text("url", input.url.unwrap_or_default(), 8192)?;
-        let env_secret_names =
-            normalized_mcp_credential_names(McpCredentialKind::Environment, input.env_secret_names)?;
+        let env_secret_names = normalized_mcp_credential_names(
+            McpCredentialKind::Environment,
+            input.env_secret_names,
+        )?;
         let header_secret_names =
             normalized_mcp_credential_names(McpCredentialKind::Header, input.header_secret_names)?;
         match input.transport {
@@ -378,7 +380,9 @@ pub fn normalized_mcp_credential_name(
                 McpCredentialKind::Environment => {
                     "environment credential names must be valid ASCII environment variables"
                 }
-                McpCredentialKind::Header => "header credential names must be safe HTTP field names",
+                McpCredentialKind::Header => {
+                    "header credential names must be safe HTTP field names"
+                }
             },
         ));
     }

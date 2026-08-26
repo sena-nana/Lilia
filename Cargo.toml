@@ -31,6 +31,7 @@ members = [
     "crates/features/lilia-feature-update",
     "crates/features/lilia-feature-usage",
     "crates/features/lilia-feature-worktree",
+    "crates/features/lilia-feature-workspace",
     "apps/service",
     "apps/desktop",
     "xtask",
@@ -80,6 +81,7 @@ lilia-feature-remote = { path = "crates/features/lilia-feature-remote" }
 lilia-feature-update = { path = "crates/features/lilia-feature-update" }
 lilia-feature-usage = { path = "crates/features/lilia-feature-usage" }
 lilia-feature-worktree = { path = "crates/features/lilia-feature-worktree" }
+lilia-feature-workspace = { path = "crates/features/lilia-feature-workspace" }
 # Mutsuki pin mode: PATH (sibling checkout) vs GIT (release rev).
 # See docs/design/mutsuki-dependency-pin.md — switch all entries together.
 # GIT mode (default): pin https://github.com/sena-nana/Mutsuki.git @ bb728d20e89ef65dffda882c70e5c9f70ee48b11

@@ -2938,6 +2938,7 @@ dependencies = [
  "lilia-feature-timeline",
  "lilia-feature-update",
  "lilia-feature-usage",
+ "lilia-feature-workspace",
  "lilia-feature-worktree",
  "lilia-kernel",
  "lilia-platform",
@@ -2978,6 +2979,7 @@ dependencies = [
  "lilia-contracts",
  "lilia-kernel",
  "lilia-storage",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -3056,6 +3058,7 @@ dependencies = [
 name = "lilia-feature-extensions"
 version = "0.1.0"
 dependencies = [
+ "lilia-contracts",
  "lilia-kernel",
  "lilia-storage",
  "mutsuki-agent-contracts",
@@ -3063,6 +3066,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.20",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -3144,9 +3148,14 @@ dependencies = [
 name = "lilia-feature-remote"
 version = "0.1.0"
 dependencies = [
+ "lilia-contracts",
  "lilia-kernel",
+ "lilia-storage",
+ "rusqlite",
  "serde",
  "serde_json",
+ "thiserror 2.0.20",
+ "uuid",
 ]
 
 [[package]]
@@ -3231,6 +3240,16 @@ dependencies = [
  "lilia-kernel",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "lilia-feature-workspace"
+version = "0.1.0"
+dependencies = [
+ "lilia-contracts",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

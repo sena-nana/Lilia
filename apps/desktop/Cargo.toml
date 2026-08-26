@@ -51,6 +51,7 @@ lilia-feature-remote = { workspace = true }
 lilia-feature-update = { workspace = true }
 lilia-feature-usage = { workspace = true }
 lilia-feature-worktree = { workspace = true }
+lilia-feature-workspace = { workspace = true }
 lilia-service = { workspace = true }
 lilia-kernel = { workspace = true }
 lilia-agent = { workspace = true }

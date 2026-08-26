@@ -103,6 +103,31 @@ impl DesktopTurnRequest {
         self.conversation_references = references;
         self
     }
+
+    pub fn content_with_references(&self) -> String {
+        let mut content = self.content.trim().to_owned();
+        for attachment in &self.attachments {
+            let reference = attachment.reference_text();
+            if content.contains(&reference) {
+                continue;
+            }
+            if !content.is_empty() {
+                content.push('\n');
+            }
+            content.push_str(&reference);
+        }
+        for conversation in &self.conversation_references {
+            let reference = conversation.reference_text();
+            if content.contains(&reference) {
+                continue;
+            }
+            if !content.is_empty() {
+                content.push('\n');
+            }
+            content.push_str(&reference);
+        }
+        content
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

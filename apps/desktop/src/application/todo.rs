@@ -1,7 +1,7 @@
 use lilia_contracts::{ChatAttachment, TaskId};
 
 use crate::application::composer::DesktopComposerTurnRequest;
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError, TodosChanged};
 
 pub use lilia_feature_agent_session::{
     guide_message, merge_todos_with_latest_projection, DesktopGuideDispatchResult,
@@ -41,7 +41,7 @@ impl DesktopApplication {
             .lock()
             .map_err(|_| DesktopApplicationError::StateUnavailable("todos"))?
             .create(input)?;
-        self.emit_event(DesktopEventKind::TodosChanged {
+        self.emit_event(TodosChanged {
             task_id: todo.task_id.clone(),
         });
         Ok(todo)
@@ -62,7 +62,7 @@ impl DesktopApplication {
             .map_err(|_| DesktopApplicationError::StateUnavailable("todos"))?
             .create_idempotent(id, input, source, guide_status)?;
         if inserted {
-            self.emit_event(DesktopEventKind::TodosChanged {
+            self.emit_event(TodosChanged {
                 task_id: todo.task_id.clone(),
             });
         }
@@ -81,7 +81,7 @@ impl DesktopApplication {
             .map_err(|_| DesktopApplicationError::StateUnavailable("todos"))?
             .update(id, update)?;
         if let Some(todo) = &todo {
-            self.emit_event(DesktopEventKind::TodosChanged {
+            self.emit_event(TodosChanged {
                 task_id: todo.task_id.clone(),
             });
         }
@@ -96,7 +96,7 @@ impl DesktopApplication {
             .map_err(|_| DesktopApplicationError::StateUnavailable("todos"))?
             .delete(id)?;
         if let Some(task_id) = task_id {
-            self.emit_event(DesktopEventKind::TodosChanged { task_id });
+            self.emit_event(TodosChanged { task_id });
             Ok(true)
         } else {
             Ok(false)

@@ -413,7 +413,11 @@ impl DesktopAgentRuntime {
         })
     }
 
-    pub fn request_automation_cancel(&self, task_id: &TaskId, turn_id: &str) -> Option<CancelSnapshot> {
+    pub fn request_automation_cancel(
+        &self,
+        task_id: &TaskId,
+        turn_id: &str,
+    ) -> Option<CancelSnapshot> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let active = state
             .tasks
@@ -574,7 +578,11 @@ impl DesktopAgentRuntime {
         next
     }
 
-    pub fn finish_and_clear_queue(&self, task_id: &TaskId, turn_id: &str) -> Option<Vec<QueuedTurn>> {
+    pub fn finish_and_clear_queue(
+        &self,
+        task_id: &TaskId,
+        turn_id: &str,
+    ) -> Option<Vec<QueuedTurn>> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         let task = state.tasks.get_mut(task_id.as_str())?;
         if task.active.as_ref().map(|active| active.turn_id.as_str()) != Some(turn_id) {
@@ -665,200 +673,200 @@ mod tests {
     use crate::DesktopAutomationTurnCorrelation;
     use lilia_contracts::TaskId;
 
-#[test]
-fn idempotent_enqueue_reuses_an_active_turn_without_redispatch() {
-    let runtime = DesktopAgentRuntime::default();
-    let request = DesktopTurnRequest::new(
-        TaskId::new("automation-agent-task").unwrap(),
-        "Continue the native migration",
-    );
-    let turn_id = "automation-turn:run-1:agent-node".to_owned();
+    #[test]
+    fn idempotent_enqueue_reuses_an_active_turn_without_redispatch() {
+        let runtime = DesktopAgentRuntime::default();
+        let request = DesktopTurnRequest::new(
+            TaskId::new("automation-agent-task").unwrap(),
+            "Continue the native migration",
+        );
+        let turn_id = "automation-turn:run-1:agent-node".to_owned();
 
-    let (first, should_start, inserted) =
-        runtime.enqueue_idempotent(request.clone(), turn_id.clone());
-    let (replay, replay_should_start, replay_inserted) =
-        runtime.enqueue_idempotent(request, turn_id);
+        let (first, should_start, inserted) =
+            runtime.enqueue_idempotent(request.clone(), turn_id.clone());
+        let (replay, replay_should_start, replay_inserted) =
+            runtime.enqueue_idempotent(request, turn_id);
 
-    assert!(should_start);
-    assert!(inserted);
-    assert_eq!(first, replay);
-    assert!(!replay_should_start);
-    assert!(!replay_inserted);
-}
+        assert!(should_start);
+        assert!(inserted);
+        assert_eq!(first, replay);
+        assert!(!replay_should_start);
+        assert!(!replay_inserted);
+    }
 
-#[test]
-fn finish_claim_is_single_use_for_each_active_turn() {
-    let runtime = DesktopAgentRuntime::default();
-    let task_id = TaskId::new("single-finish-task").unwrap();
-    let turn_id = "single-finish-turn".to_owned();
-    let (_, should_start, inserted) = runtime.enqueue_idempotent(
-        DesktopTurnRequest::new(task_id.clone(), "finish once"),
-        turn_id.clone(),
-    );
-    assert!(should_start);
-    assert!(inserted);
-    assert!(runtime.claim_worker_start(&task_id, &turn_id, "single-finish-claim".to_owned()));
+    #[test]
+    fn finish_claim_is_single_use_for_each_active_turn() {
+        let runtime = DesktopAgentRuntime::default();
+        let task_id = TaskId::new("single-finish-task").unwrap();
+        let turn_id = "single-finish-turn".to_owned();
+        let (_, should_start, inserted) = runtime.enqueue_idempotent(
+            DesktopTurnRequest::new(task_id.clone(), "finish once"),
+            turn_id.clone(),
+        );
+        assert!(should_start);
+        assert!(inserted);
+        assert!(runtime.claim_worker_start(&task_id, &turn_id, "single-finish-claim".to_owned()));
 
-    let first = runtime.begin_finish(&task_id, &turn_id).unwrap();
-    assert_eq!(first.claim_token.as_deref(), Some("single-finish-claim"));
-    assert!(runtime.begin_finish(&task_id, &turn_id).is_none());
-    assert_eq!(runtime.snapshot(&task_id).phase, "running");
-    assert!(runtime.active(&task_id, &turn_id).is_some());
-}
+        let first = runtime.begin_finish(&task_id, &turn_id).unwrap();
+        assert_eq!(first.claim_token.as_deref(), Some("single-finish-claim"));
+        assert!(runtime.begin_finish(&task_id, &turn_id).is_none());
+        assert_eq!(runtime.snapshot(&task_id).phase, "running");
+        assert!(runtime.active(&task_id, &turn_id).is_some());
+    }
 
-#[test]
-fn projected_wait_restores_a_worker_owned_interaction_runtime() {
-    let runtime = DesktopAgentRuntime::default();
-    let task_id = TaskId::new("restored-interaction-task").unwrap();
+    #[test]
+    fn projected_wait_restores_a_worker_owned_interaction_runtime() {
+        let runtime = DesktopAgentRuntime::default();
+        let task_id = TaskId::new("restored-interaction-task").unwrap();
 
-    assert!(runtime.restore_projected_wait(
-        &task_id,
-        "turn-restored",
-        "session-restored",
-        ActiveWait::Interaction,
-    ));
+        assert!(runtime.restore_projected_wait(
+            &task_id,
+            "turn-restored",
+            "session-restored",
+            ActiveWait::Interaction,
+        ));
 
-    let snapshot = runtime.snapshot(&task_id);
-    assert_eq!(snapshot.phase, "waiting_interaction");
-    assert_eq!(snapshot.turn_id.as_deref(), Some("turn-restored"));
-    assert_eq!(snapshot.session_id.as_deref(), Some("session-restored"));
-    assert!(!runtime.claim_worker_start(
-        &task_id,
-        "turn-restored",
-        "restored-claim".to_owned()
-    ));
-}
+        let snapshot = runtime.snapshot(&task_id);
+        assert_eq!(snapshot.phase, "waiting_interaction");
+        assert_eq!(snapshot.turn_id.as_deref(), Some("turn-restored"));
+        assert_eq!(snapshot.session_id.as_deref(), Some("session-restored"));
+        assert!(!runtime.claim_worker_start(
+            &task_id,
+            "turn-restored",
+            "restored-claim".to_owned()
+        ));
+    }
 
-#[test]
-fn projected_wait_never_replaces_a_live_turn() {
-    let runtime = DesktopAgentRuntime::default();
-    let task_id = TaskId::new("live-turn-task").unwrap();
-    let (dispatch, _, _) = runtime.enqueue_idempotent(
-        DesktopTurnRequest::new(task_id.clone(), "continue"),
-        "live-turn".to_owned(),
-    );
+    #[test]
+    fn projected_wait_never_replaces_a_live_turn() {
+        let runtime = DesktopAgentRuntime::default();
+        let task_id = TaskId::new("live-turn-task").unwrap();
+        let (dispatch, _, _) = runtime.enqueue_idempotent(
+            DesktopTurnRequest::new(task_id.clone(), "continue"),
+            "live-turn".to_owned(),
+        );
 
-    assert!(!runtime.restore_projected_wait(
-        &task_id,
-        "stale-turn",
-        "stale-session",
-        ActiveWait::Approval,
-    ));
+        assert!(!runtime.restore_projected_wait(
+            &task_id,
+            "stale-turn",
+            "stale-session",
+            ActiveWait::Approval,
+        ));
 
-    let snapshot = runtime.snapshot(&task_id);
-    assert_eq!(snapshot.phase, "starting");
-    assert_eq!(snapshot.turn_id.as_deref(), Some(dispatch.turn_id.as_str()));
-    assert_eq!(snapshot.session_id, None);
-}
+        let snapshot = runtime.snapshot(&task_id);
+        assert_eq!(snapshot.phase, "starting");
+        assert_eq!(snapshot.turn_id.as_deref(), Some(dispatch.turn_id.as_str()));
+        assert_eq!(snapshot.session_id, None);
+    }
 
-#[test]
-fn restored_wait_keeps_persisted_turns_in_original_fifo_order() {
-    let runtime = DesktopAgentRuntime::default();
-    let task_id = TaskId::new("restored-queue-task").unwrap();
-    assert!(runtime.restore_projected_wait(
-        &task_id,
-        "turn-active",
-        "session-active",
-        ActiveWait::Approval,
-    ));
+    #[test]
+    fn restored_wait_keeps_persisted_turns_in_original_fifo_order() {
+        let runtime = DesktopAgentRuntime::default();
+        let task_id = TaskId::new("restored-queue-task").unwrap();
+        assert!(runtime.restore_projected_wait(
+            &task_id,
+            "turn-active",
+            "session-active",
+            ActiveWait::Approval,
+        ));
 
-    let (first, first_should_start, first_inserted) = runtime.enqueue_idempotent(
-        DesktopTurnRequest::new(task_id.clone(), "first queued"),
-        "turn-queued-1".to_owned(),
-    );
-    let (second, second_should_start, second_inserted) = runtime.enqueue_idempotent(
-        DesktopTurnRequest::new(task_id.clone(), "second queued"),
-        "turn-queued-2".to_owned(),
-    );
+        let (first, first_should_start, first_inserted) = runtime.enqueue_idempotent(
+            DesktopTurnRequest::new(task_id.clone(), "first queued"),
+            "turn-queued-1".to_owned(),
+        );
+        let (second, second_should_start, second_inserted) = runtime.enqueue_idempotent(
+            DesktopTurnRequest::new(task_id.clone(), "second queued"),
+            "turn-queued-2".to_owned(),
+        );
 
-    assert_eq!(first.kind, DesktopTurnDispatchKind::Queued { position: 1 });
-    assert_eq!(second.kind, DesktopTurnDispatchKind::Queued { position: 2 });
-    assert!(!first_should_start);
-    assert!(!second_should_start);
-    assert!(first_inserted);
-    assert!(second_inserted);
-    assert_eq!(
-        runtime.snapshot(&task_id).queued_turn_ids,
-        vec!["turn-queued-1".to_owned(), "turn-queued-2".to_owned()]
-    );
+        assert_eq!(first.kind, DesktopTurnDispatchKind::Queued { position: 1 });
+        assert_eq!(second.kind, DesktopTurnDispatchKind::Queued { position: 2 });
+        assert!(!first_should_start);
+        assert!(!second_should_start);
+        assert!(first_inserted);
+        assert!(second_inserted);
+        assert_eq!(
+            runtime.snapshot(&task_id).queued_turn_ids,
+            vec!["turn-queued-1".to_owned(), "turn-queued-2".to_owned()]
+        );
 
-    let promoted = runtime
-        .finish_and_activate_next(&task_id, "turn-active")
-        .unwrap();
-    assert_eq!(promoted.turn_id, "turn-queued-1");
-    let snapshot = runtime.snapshot(&task_id);
-    assert_eq!(snapshot.turn_id.as_deref(), Some("turn-queued-1"));
-    assert_eq!(snapshot.queued_turn_ids, vec!["turn-queued-2".to_owned()]);
-}
+        let promoted = runtime
+            .finish_and_activate_next(&task_id, "turn-active")
+            .unwrap();
+        assert_eq!(promoted.turn_id, "turn-queued-1");
+        let snapshot = runtime.snapshot(&task_id);
+        assert_eq!(snapshot.turn_id.as_deref(), Some("turn-queued-1"));
+        assert_eq!(snapshot.queued_turn_ids, vec!["turn-queued-2".to_owned()]);
+    }
 
-#[test]
-fn automation_cancellation_targets_one_turn_and_preserves_fifo() {
-    let runtime = DesktopAgentRuntime::default();
-    let task_id = TaskId::new("automation-cancel-task").unwrap();
-    let mut automation = DesktopTurnRequest::new(task_id.clone(), "automation");
-    automation.automation = Some(DesktopAutomationTurnCorrelation {
-        run_id: "run-1".to_owned(),
-        node_id: "agent-1".to_owned(),
-    });
-    runtime.enqueue_idempotent(automation, "turn-automation".to_owned());
-    runtime.enqueue_idempotent(
-        DesktopTurnRequest::new(task_id.clone(), "user follow-up"),
-        "turn-user".to_owned(),
-    );
+    #[test]
+    fn automation_cancellation_targets_one_turn_and_preserves_fifo() {
+        let runtime = DesktopAgentRuntime::default();
+        let task_id = TaskId::new("automation-cancel-task").unwrap();
+        let mut automation = DesktopTurnRequest::new(task_id.clone(), "automation");
+        automation.automation = Some(DesktopAutomationTurnCorrelation {
+            run_id: "run-1".to_owned(),
+            node_id: "agent-1".to_owned(),
+        });
+        runtime.enqueue_idempotent(automation, "turn-automation".to_owned());
+        runtime.enqueue_idempotent(
+            DesktopTurnRequest::new(task_id.clone(), "user follow-up"),
+            "turn-user".to_owned(),
+        );
 
-    assert!(runtime
-        .request_automation_cancel(&task_id, "turn-other")
-        .is_none());
-    let cancel = runtime
-        .request_automation_cancel(&task_id, "turn-automation")
-        .unwrap();
-    assert_eq!(cancel.turn_id, "turn-automation");
-    let finishing = runtime.begin_finish(&task_id, "turn-automation").unwrap();
-    assert_eq!(
-        finishing.cancellation_mode,
-        Some(TurnCancellationMode::AutomationRun)
-    );
-    let promoted = runtime
-        .finish_and_activate_next(&task_id, "turn-automation")
-        .unwrap();
-    assert_eq!(promoted.turn_id, "turn-user");
-    let snapshot = runtime.snapshot(&task_id);
-    assert_eq!(snapshot.turn_id.as_deref(), Some("turn-user"));
-    assert!(snapshot.queued_turn_ids.is_empty());
-}
+        assert!(runtime
+            .request_automation_cancel(&task_id, "turn-other")
+            .is_none());
+        let cancel = runtime
+            .request_automation_cancel(&task_id, "turn-automation")
+            .unwrap();
+        assert_eq!(cancel.turn_id, "turn-automation");
+        let finishing = runtime.begin_finish(&task_id, "turn-automation").unwrap();
+        assert_eq!(
+            finishing.cancellation_mode,
+            Some(TurnCancellationMode::AutomationRun)
+        );
+        let promoted = runtime
+            .finish_and_activate_next(&task_id, "turn-automation")
+            .unwrap();
+        assert_eq!(promoted.turn_id, "turn-user");
+        let snapshot = runtime.snapshot(&task_id);
+        assert_eq!(snapshot.turn_id.as_deref(), Some("turn-user"));
+        assert!(snapshot.queued_turn_ids.is_empty());
+    }
 
-#[test]
-fn explicit_cancellation_discards_queued_turns_without_promoting_them() {
-    let runtime = DesktopAgentRuntime::default();
-    let task_id = TaskId::new("cancel-queued-task").unwrap();
-    runtime.enqueue_idempotent(
-        DesktopTurnRequest::new(task_id.clone(), "active"),
-        "turn-active".to_owned(),
-    );
-    runtime.enqueue_idempotent(
-        DesktopTurnRequest::new(task_id.clone(), "queued one"),
-        "turn-queued-1".to_owned(),
-    );
-    runtime.enqueue_idempotent(
-        DesktopTurnRequest::new(task_id.clone(), "queued two"),
-        "turn-queued-2".to_owned(),
-    );
+    #[test]
+    fn explicit_cancellation_discards_queued_turns_without_promoting_them() {
+        let runtime = DesktopAgentRuntime::default();
+        let task_id = TaskId::new("cancel-queued-task").unwrap();
+        runtime.enqueue_idempotent(
+            DesktopTurnRequest::new(task_id.clone(), "active"),
+            "turn-active".to_owned(),
+        );
+        runtime.enqueue_idempotent(
+            DesktopTurnRequest::new(task_id.clone(), "queued one"),
+            "turn-queued-1".to_owned(),
+        );
+        runtime.enqueue_idempotent(
+            DesktopTurnRequest::new(task_id.clone(), "queued two"),
+            "turn-queued-2".to_owned(),
+        );
 
-    assert!(runtime.request_cancel(&task_id).is_some());
-    let discarded = runtime
-        .finish_and_clear_queue(&task_id, "turn-active")
-        .unwrap();
+        assert!(runtime.request_cancel(&task_id).is_some());
+        let discarded = runtime
+            .finish_and_clear_queue(&task_id, "turn-active")
+            .unwrap();
 
-    assert_eq!(
-        discarded
-            .into_iter()
-            .map(|turn| turn.turn_id)
-            .collect::<Vec<_>>(),
-        vec!["turn-queued-1".to_owned(), "turn-queued-2".to_owned()]
-    );
-    let snapshot = runtime.snapshot(&task_id);
-    assert_eq!(snapshot.phase, "idle");
-    assert!(snapshot.turn_id.is_none());
-    assert!(snapshot.queued_turn_ids.is_empty());
-}
+        assert_eq!(
+            discarded
+                .into_iter()
+                .map(|turn| turn.turn_id)
+                .collect::<Vec<_>>(),
+            vec!["turn-queued-1".to_owned(), "turn-queued-2".to_owned()]
+        );
+        let snapshot = runtime.snapshot(&task_id);
+        assert_eq!(snapshot.phase, "idle");
+        assert!(snapshot.turn_id.is_none());
+        assert!(snapshot.queued_turn_ids.is_empty());
+    }
 }

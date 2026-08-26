@@ -1,8 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use lilia_contracts::{
-    ChatConversationReference, LiliaAgentWorkflow, TaskId, TodoProjection,
-};
+use lilia_contracts::{ChatConversationReference, LiliaAgentWorkflow, TaskId, TodoProjection};
 use lilia_storage::Db;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -560,7 +558,6 @@ impl DesktopTodoStore {
         Self::get_from(connection, id)
     }
 }
-
 
 pub fn guide_message(todo: &DesktopTaskTodo) -> String {
     format!(
