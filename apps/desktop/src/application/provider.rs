@@ -7,7 +7,8 @@ use lilia_agent::{
 };
 use mutsuki_agent_contracts::{AgentError, AgentResult, CredentialKind, CredentialRef};
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind, DesktopSecret};
+use crate::application::{DesktopApplication, DesktopApplicationError, DesktopSecret};
+use crate::application::{ProviderChanged, CredentialChanged};
 use crate::application::{
     DesktopCredentialAction, DesktopHost, DesktopHostAction, DesktopHostContext, DesktopHostResult,
 };
@@ -220,7 +221,7 @@ impl DesktopApplication {
             .provider_revision
             .fetch_add(1, Ordering::AcqRel)
             .saturating_add(1);
-        self.emit_event(DesktopEventKind::ProviderChanged {
+        self.emit_event(ProviderChanged {
             provider_id: None,
             revision,
         });
@@ -392,7 +393,7 @@ impl DesktopApplication {
             .provider_revision
             .fetch_add(1, Ordering::AcqRel)
             .saturating_add(1);
-        self.emit_event(DesktopEventKind::ProviderChanged {
+        self.emit_event(ProviderChanged {
             provider_id,
             revision,
         });
@@ -444,12 +445,12 @@ impl DesktopApplication {
             .fetch_add(1, Ordering::AcqRel)
             .saturating_add(1);
         let view = desktop_credential_view(descriptor);
-        self.emit_event(DesktopEventKind::CredentialChanged {
+        self.emit_event(CredentialChanged {
             provider_id: provider_id.clone(),
             credential_id: view.credential_id.clone(),
             revision,
         });
-        self.emit_event(DesktopEventKind::ProviderChanged {
+        self.emit_event(ProviderChanged {
             provider_id: Some(provider_id),
             revision,
         });
@@ -471,8 +472,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, ProviderChanged, CredentialChanged};
 
     #[derive(Debug)]
     struct TestHost;
@@ -570,14 +570,8 @@ mod tests {
         assert_eq!(credential.status, DesktopCredentialStatus::Active);
         assert_eq!(credential.account_label.as_deref(), Some("LiliaCode"));
         let credential_event = events.recv().unwrap();
-        assert!(matches!(
-            credential_event.kind,
-            DesktopEventKind::CredentialChanged { .. }
-        ));
-        assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::ProviderChanged { .. }
-        ));
+        assert!(credential_event.is::<CredentialChanged>());
+        assert!(events.recv().unwrap().is::<ProviderChanged>());
 
         let active = application.provider_snapshot();
         assert!(active.revision > before.revision);
@@ -589,10 +583,7 @@ mod tests {
             .refresh_provider_runtime(Some(OPENAI_CREDENTIAL_PROVIDER_ID.to_owned()))
             .unwrap();
         assert!(refreshed.revision > active.revision);
-        assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::ProviderChanged { .. }
-        ));
+        assert!(events.recv().unwrap().is::<ProviderChanged>());
 
         let revoked = application
             .revoke_provider_credential(
@@ -665,11 +656,11 @@ mod tests {
         );
         assert_eq!(saved.model.as_deref(), Some("gpt-4.1"));
         assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::ProviderChanged {
+            events.recv().unwrap().downcast::<ProviderChanged>(),
+            Some(ProviderChanged {
                 provider_id: None,
                 ..
-            }
+            })
         ));
         let applied = application
             .authority()

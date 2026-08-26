@@ -20,9 +20,9 @@ use crate::application::todo::DesktopTodoStore;
 use crate::application::workspace::DesktopWorkspaceState;
 use crate::application::worktree::DesktopWorktreeStore;
 use crate::application::{
-    DesktopApplicationConfig, DesktopEvent, DesktopEventBus, DesktopEventKind,
-    DesktopEventSubscription, DesktopHost, DesktopHostAction, DesktopHostContext, DesktopHostError,
-    DesktopHostResult, ProjectQuery, TaskQuery,
+    DesktopApplicationConfig, DesktopEvent, DesktopEventBus, DesktopEventSubscription, DesktopHost,
+    DesktopHostAction, DesktopHostContext, DesktopHostError, DesktopHostResult, ProjectQuery,
+    TaskQuery,
 };
 use crate::application::{
     DesktopArchitectureService, DesktopAutomationService, DesktopMemoryService,
@@ -175,12 +175,12 @@ impl DesktopApplication {
             crate::application::hooks::DesktopHookExecutionStore::from_shared(domain_connection.clone())?;
         let submissions = DesktopSubmissionStore::new(domain_connection.clone());
         let worktrees = DesktopWorktreeStore::from_db(domain_connection.clone())?;
-        let events = DesktopEventBus::new();
+        let journal = lilia_kernel::Journal::new();
+        let events = DesktopEventBus::from_bus(lilia_kernel::EventBus::with_journal(journal.clone()));
         let automation = DesktopAutomationService::from_db(
             domain_connection.clone(),
-            Arc::new(crate::application::automation::BroadcastAutomationEvents::new(
-                events.clone(),
-                config.instance_identity(),
+            Arc::new(lilia_feature_automation::KernelAutomationEvents::new(
+                events.bus().clone(),
             )),
         )?;
         // Product `projects` / `tasks` live in the authority store, which owns a
@@ -203,8 +203,10 @@ impl DesktopApplication {
         let architecture = DesktopArchitectureService::from_db(domain_connection.clone())?;
         let remote = DesktopRemoteControlService::from_db(
             domain_connection.clone(),
-            host.clone(),
-            host_context.clone(),
+            Arc::new(crate::application::remote::DesktopRemoteWakeHost::from_host(
+                host.clone(),
+                host_context.clone(),
+            )),
         )?;
         let provider_settings_store = if authority.data_paths().is_some() {
             lilia_storage::SqliteAgentRuntimeStateStore::open(
@@ -248,16 +250,12 @@ impl DesktopApplication {
             })?;
         let project_task_events = Arc::new(lilia_feature_task::ProjectTaskEventFanout::default());
         project_task_events.install(Arc::new(
-            crate::application::product_management::BroadcastProjectTaskEvents::new(
-                events.clone(),
-                config.instance_identity(),
-            ),
+            lilia_feature_task::KernelProjectTaskEvents::new(events.bus().clone()),
         ));
         // The journal is built here rather than by the kernel because services
         // bootstrapped alongside storage already write facts worth recording; the
-        // shell hands this instance to `Kernel::with_journal` so one ordered log
-        // covers both halves.
-        let journal = lilia_kernel::Journal::new();
+        // shell hands this instance to `Kernel::with_events` so one ordered log
+        // and one bus cover both halves.
         let journal_export = crate::journal_export::install_from_env(&journal);
         let project_tasks = lilia_feature_task::ProjectTaskService::new(
             authority.clone(),
@@ -507,14 +505,16 @@ impl DesktopApplication {
         self.inner.events.subscribe()
     }
 
+    pub fn event_bus(&self) -> lilia_kernel::EventBus {
+        self.inner.events.bus().clone()
+    }
+
     pub fn sidebar_navigation_contributions(&self) -> Vec<SidebarNavigationContribution> {
         self.inner.contribution_host.sidebar_navigation()
     }
 
-    pub fn emit_event(&self, kind: DesktopEventKind) -> DesktopEvent {
-        self.inner
-            .events
-            .publish(self.inner.config.instance_identity(), kind)
+    pub fn emit_event<E: lilia_kernel::Event>(&self, event: E) -> DesktopEvent {
+        self.inner.events.publish(event)
     }
 }
 
@@ -626,6 +626,8 @@ pub enum DesktopApplicationError {
     #[error(transparent)]
     Provider(#[from] crate::application::DesktopProviderError),
     #[error(transparent)]
+    Workspace(#[from] crate::application::WorkspaceSessionError),
+    #[error(transparent)]
     AgentInteraction(#[from] crate::application::DesktopAgentInteractionError),
     #[error(transparent)]
     Hook(#[from] crate::application::DesktopHookError),
@@ -663,7 +665,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::application::{DesktopCredentialAction, DesktopHostResult, DesktopSecret, DesktopWindowAction};
+    use crate::application::{DesktopCredentialAction, DesktopHostResult, DesktopSecret, DesktopWindowAction, ProjectsChanged, TurnStateChanged};
 
     static NEXT_APPLICATION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -958,9 +960,11 @@ mod tests {
         let app = application(Arc::new(RecordingHost::default()));
         let events = app.subscribe_events();
 
-        let published = app.emit_event(DesktopEventKind::ProjectsChanged);
-        assert_eq!(published.source_instance, "liliacode");
-        assert_eq!(events.recv().unwrap(), published);
+        let published = app.emit_event(ProjectsChanged);
+        assert!(published.is::<ProjectsChanged>());
+        let received = events.recv().unwrap();
+        assert!(received.is::<ProjectsChanged>());
+        assert_eq!(received.sequence(), published.sequence());
     }
 
     #[test]
@@ -1157,12 +1161,12 @@ mod tests {
                 continue;
             };
             if matches!(
-                event.kind,
-                DesktopEventKind::TurnStateChanged {
-                    ref task_id,
+                event.downcast::<TurnStateChanged>(),
+                Some(TurnStateChanged {
+                    task_id,
                     state: crate::application::DesktopTurnState::Completed,
                     ..
-                } if task_id.as_str() == "task-native-turn"
+                }) if task_id.as_str() == "task-native-turn"
             ) {
                 completed = true;
                 break;
@@ -1304,24 +1308,24 @@ mod tests {
                 continue;
             };
             if matches!(
-                event.kind,
-                DesktopEventKind::TurnStateChanged {
-                    ref task_id,
+                event.downcast::<TurnStateChanged>(),
+                Some(TurnStateChanged {
+                    task_id,
                     state: crate::application::DesktopTurnState::WaitingApproval { .. },
                     ..
-                } if task_id.as_str() == "task-native-rejection"
+                }) if task_id.as_str() == "task-native-rejection"
             ) {
                 waiting = true;
                 break;
             }
-            if let DesktopEventKind::TurnStateChanged {
+            if let Some(TurnStateChanged {
                 task_id: event_task_id,
                 state: crate::application::DesktopTurnState::Failed { message },
                 ..
-            } = event.kind
+            }) = event.downcast()
             {
-                if event_task_id == task_id {
-                    failure = Some(message);
+                if event_task_id == &task_id {
+                    failure = Some(message.clone());
                     break;
                 }
             }
@@ -1424,33 +1428,26 @@ mod tests {
             let Ok(event) = events.recv_timeout(Duration::from_millis(250)) else {
                 continue;
             };
-            if let DesktopEventKind::TurnStateChanged {
-                task_id: event_task_id,
-                state,
-                ..
-            } = &event.kind
-            {
-                if event_task_id == &task_id {
-                    observed_states.push(format!("{state:?}"));
+            if let Some(changed) = event.downcast::<TurnStateChanged>() {
+                if changed.task_id == task_id {
+                    observed_states.push(format!("{:?}", changed.state));
                 }
-            }
-            match event.kind {
-                DesktopEventKind::TurnStateChanged {
-                    ref task_id,
-                    state: crate::application::DesktopTurnState::Cancelled,
-                    ..
-                } if task_id.as_str() == "task-native-rejection" => {
-                    cancelled = true;
-                    break;
+                match &changed.state {
+                    crate::application::DesktopTurnState::Cancelled
+                        if changed.task_id.as_str() == "task-native-rejection" =>
+                    {
+                        cancelled = true;
+                        break;
+                    }
+                    crate::application::DesktopTurnState::Failed { message }
+                        if changed.task_id.as_str() == "task-native-rejection" =>
+                    {
+                        panic!(
+                            "permission rejection surfaced as an application failure: {message}"
+                        )
+                    }
+                    _ => {}
                 }
-                DesktopEventKind::TurnStateChanged {
-                    ref task_id,
-                    state: crate::application::DesktopTurnState::Failed { ref message },
-                    ..
-                } if task_id.as_str() == "task-native-rejection" => {
-                    panic!("permission rejection surfaced as an application failure: {message}")
-                }
-                _ => {}
             }
         }
         assert!(

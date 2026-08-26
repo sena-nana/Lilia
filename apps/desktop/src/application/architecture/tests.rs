@@ -7,10 +7,9 @@ use serde_json::json;
 
 use super::*;
 use crate::application::{
-    DesktopApplication, DesktopApplicationConfig, DesktopEventKind, DesktopHost, DesktopHostAction,
+    DesktopApplication, DesktopApplicationConfig, DesktopHost, DesktopHostAction,
     DesktopHostContext, DesktopHostError, DesktopHostResult, DesktopProjectCreate,
-    DesktopTaskCreate,
-};
+    DesktopTaskCreate, ArchitectureChanged};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -82,11 +81,11 @@ fn application_validates_product_ownership_and_emits_snapshot_invalidation() {
         .unwrap();
     assert_eq!(result.graph.version, 1);
     assert!(matches!(
-        events.recv().unwrap().kind,
-        DesktopEventKind::ArchitectureChanged {
+        events.recv().unwrap().downcast::<ArchitectureChanged>(),
+        Some(ArchitectureChanged {
             project_id,
             version: 1
-        } if project_id == project.id
+        }) if *project_id == project.id
     ));
     assert_eq!(
         application

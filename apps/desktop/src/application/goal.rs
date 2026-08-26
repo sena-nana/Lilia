@@ -6,7 +6,8 @@ use lilia_contracts::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError};
+use crate::application::{GoalChanged, TimelineChanged};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -160,10 +161,10 @@ impl DesktopApplication {
         };
         self.authority()
             .apply_projection(TimelineProjectionCommand::UpsertTimelineEvent { event })?;
-        self.emit_event(DesktopEventKind::GoalChanged {
+        self.emit_event(GoalChanged {
             task_id: task_id.clone(),
         });
-        self.emit_event(DesktopEventKind::TimelineChanged {
+        self.emit_event(TimelineChanged {
             task_id: task_id.clone(),
             cursor: Some(sequence),
         });
@@ -215,8 +216,7 @@ mod tests {
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
         DesktopHostError, DesktopHostResult, DesktopTodoCreate, DesktopTodoPriority,
-        DesktopTodoUpdate,
-    };
+        DesktopTodoUpdate, TimelineChanged, GoalChanged};
 
     static NEXT_GOAL_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -267,12 +267,12 @@ mod tests {
         assert_eq!(goal.objective, "ship Native");
         assert_eq!(application.task_goal(&task_id).unwrap(), Some(goal));
         assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::GoalChanged { task_id: ref changed } if changed == &task_id
+            events.recv().unwrap().downcast::<GoalChanged>(),
+            Some(GoalChanged { task_id: ref changed }) if changed == &task_id
         ));
         assert!(matches!(
-            events.recv().unwrap().kind,
-            DesktopEventKind::TimelineChanged { task_id: ref changed, .. } if changed == &task_id
+            events.recv().unwrap().downcast::<TimelineChanged>(),
+            Some(TimelineChanged { task_id: ref changed, .. }) if changed == &task_id
         ));
 
         let todo = application

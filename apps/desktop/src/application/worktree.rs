@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 
 use lilia_contracts::{ProjectId, TaskId};
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError};
+use crate::application::{WorktreeChanged};
 
 pub use lilia_feature_worktree::*;
 
@@ -200,7 +201,7 @@ impl DesktopApplication {
                 return Err(error.into());
             }
         };
-        self.emit_event(DesktopEventKind::WorktreeChanged {
+        self.emit_event(WorktreeChanged {
             task_id: task_id.clone(),
         });
         Ok(saved)
@@ -247,7 +248,7 @@ impl DesktopApplication {
                 &branch,
                 &base_branch,
             )?;
-        self.emit_event(DesktopEventKind::WorktreeChanged {
+        self.emit_event(WorktreeChanged {
             task_id: task_id.clone(),
         });
         Ok(saved)
@@ -262,7 +263,7 @@ impl DesktopApplication {
             .map_err(|_| DesktopApplicationError::StateUnavailable("worktrees"))?
             .mark_status(task_id, DesktopWorktreeStatus::Removed)?;
         if changed {
-            self.emit_event(DesktopEventKind::WorktreeChanged {
+            self.emit_event(WorktreeChanged {
                 task_id: task_id.clone(),
             });
         }
@@ -365,7 +366,7 @@ impl DesktopApplication {
         if archived {
             self.set_task_archived(task_id, true)?;
         }
-        self.emit_event(DesktopEventKind::WorktreeChanged {
+        self.emit_event(WorktreeChanged {
             task_id: task_id.clone(),
         });
         Ok(DesktopWorktreeMergeResult {
@@ -397,8 +398,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, WorktreeChanged};
 
     struct NoopHost;
 

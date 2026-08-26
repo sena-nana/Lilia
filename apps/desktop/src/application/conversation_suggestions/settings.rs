@@ -1,6 +1,7 @@
 use lilia_storage::SqliteAgentRuntimeStateStore;
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError};
+use crate::application::{ConversationSuggestionSettingsChanged};
 
 pub use lilia_feature_suggestions::settings::{
     DesktopConversationSuggestionError, DesktopConversationSuggestionSettings,
@@ -39,7 +40,7 @@ impl DesktopApplication {
     ) -> Result<DesktopConversationSuggestionSettings, DesktopApplicationError> {
         let normalized = normalize_conversation_suggestion_settings(settings);
         self.persist_conversation_suggestion_settings(&normalized)?;
-        self.emit_event(DesktopEventKind::ConversationSuggestionSettingsChanged);
+        self.emit_event(ConversationSuggestionSettingsChanged);
         Ok(normalized)
     }
 
@@ -107,8 +108,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, ConversationSuggestionSettingsChanged};
     use lilia_service::ServiceAuthority;
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);

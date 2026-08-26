@@ -19,10 +19,9 @@ impl DesktopApplication {
         launch: DesktopTerminalLaunch,
     ) -> Result<DesktopTerminalSnapshot, DesktopApplicationError> {
         let cwd = self.terminal_workspace_root(&launch.scope)?;
-        let events = Arc::new(BroadcastTerminalEvents {
-            events: self.inner.events.clone(),
-            source_instance: self.config().instance_identity().to_owned(),
-        });
+        let events = Arc::new(lilia_feature_terminal::KernelTerminalEvents::new(
+            self.inner.events.bus().clone(),
+        ));
         Ok(self.inner.terminals.launch(launch, cwd, events)?)
     }
 
@@ -112,24 +111,6 @@ impl DesktopApplication {
             }
         };
         Ok(lilia_feature_terminal::canonical_directory(&root)?)
-    }
-}
-
-/// Relays terminal screen changes onto the desktop event bus.
-struct BroadcastTerminalEvents {
-    events: crate::application::DesktopEventBus,
-    source_instance: String,
-}
-
-impl lilia_feature_terminal::TerminalEvents for BroadcastTerminalEvents {
-    fn changed(&self, session_id: &DesktopTerminalSessionId, revision: u64) {
-        self.events.publish(
-            self.source_instance.clone(),
-            crate::application::DesktopEventKind::TerminalChanged {
-                session_id: session_id.clone(),
-                revision,
-            },
-        );
     }
 }
 

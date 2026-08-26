@@ -2,7 +2,8 @@ use lilia_storage::SqliteAgentRuntimeStateStore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventKind};
+use crate::application::{DesktopApplication, DesktopApplicationError};
+use crate::application::{PopupWindowSettingsChanged};
 
 pub const POPUP_WINDOW_SETTINGS_KEY: &str = "desktop.popup-window.settings.v1";
 pub const POPUP_LAST_PROJECT_KEY: &str = "desktop.popup-window.last-project.v1";
@@ -60,7 +61,7 @@ impl DesktopApplication {
     ) -> Result<DesktopPopupWindowSettings, DesktopApplicationError> {
         let normalized = normalize_popup_window_settings(settings);
         self.persist_popup_window_settings(&normalized)?;
-        self.emit_event(DesktopEventKind::PopupWindowSettingsChanged);
+        self.emit_event(PopupWindowSettingsChanged);
         Ok(normalized)
     }
 
@@ -182,8 +183,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, DesktopProjectCreate,
-    };
+        DesktopHostError, DesktopHostResult, DesktopProjectCreate, PopupWindowSettingsChanged};
     use lilia_service::ServiceAuthority;
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);

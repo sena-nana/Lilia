@@ -15,40 +15,7 @@ use lilia_feature_task::{
     DesktopTaskMove, DesktopTaskPatch, DesktopTaskRunBlock, ProjectTaskService,
 };
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEventBus, DesktopEventKind};
-
-/// Bridges the feature's fact notifications onto the legacy desktop broadcast
-/// so existing subscribers keep working until the shell reads typed events.
-pub(crate) struct BroadcastProjectTaskEvents {
-    events: DesktopEventBus,
-    instance_identity: String,
-}
-
-impl BroadcastProjectTaskEvents {
-    pub(crate) fn new(events: DesktopEventBus, instance_identity: impl Into<String>) -> Self {
-        Self {
-            events,
-            instance_identity: instance_identity.into(),
-        }
-    }
-}
-
-impl lilia_feature_task::ProjectTaskEvents for BroadcastProjectTaskEvents {
-    fn projects_changed(&self) {
-        self.events
-            .publish(&self.instance_identity, DesktopEventKind::ProjectsChanged);
-    }
-
-    fn tasks_changed(&self, project_id: Option<ProjectId>, task_id: Option<TaskId>) {
-        self.events.publish(
-            &self.instance_identity,
-            DesktopEventKind::TasksChanged {
-                project_id,
-                task_id,
-            },
-        );
-    }
-}
+use crate::application::{DesktopApplication, DesktopApplicationError};
 
 impl DesktopApplication {
     pub(crate) fn project_tasks(&self) -> &ProjectTaskService {
@@ -203,11 +170,9 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::application::{
-        DesktopApplication, DesktopApplicationConfig, DesktopApplicationError, DesktopCommand,
-        DesktopEventKind, DesktopHost, DesktopHostAction, DesktopHostContext, DesktopHostError,
+        DesktopApplication, DesktopApplicationConfig, DesktopApplicationError, DesktopCommand, DesktopHost, DesktopHostAction, DesktopHostContext, DesktopHostError,
         DesktopHostResult, DesktopProjectCreate, DesktopProjectPatch, DesktopTaskCreate,
-        DesktopTaskMove, DesktopTaskPatch, DesktopTaskRunBlock, ProjectQuery, TaskQuery,
-    };
+        DesktopTaskMove, DesktopTaskPatch, DesktopTaskRunBlock, ProjectQuery, TaskQuery, ProjectsChanged, TasksChanged};
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -536,20 +501,20 @@ mod tests {
         assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "keep");
         let changed = std::iter::from_fn(|| events.try_recv().ok()).collect::<Vec<_>>();
         assert_eq!(changed.len(), 3);
-        assert!(matches!(changed[0].kind, DesktopEventKind::ProjectsChanged));
+        assert!(changed[0].is::<ProjectsChanged>());
         assert!(matches!(
-            changed[1].kind,
-            DesktopEventKind::TasksChanged {
-                project_id: Some(ref id),
+            changed[1].downcast::<TasksChanged>(),
+            Some(TasksChanged {
+                project_id: Some(id),
                 task_id: None,
-            } if id == &project.id
+            }) if id == &project.id
         ));
         assert!(matches!(
-            changed[2].kind,
-            DesktopEventKind::TasksChanged {
+            changed[2].downcast::<TasksChanged>(),
+            Some(TasksChanged {
                 project_id: None,
                 task_id: None,
-            }
+            })
         ));
 
         let replay = app.remove_project(&project.id).unwrap();

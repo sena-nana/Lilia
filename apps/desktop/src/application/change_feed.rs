@@ -15,7 +15,10 @@ use lilia_contracts::{
     PageRequest, ProductEntityKind, ProductEvent, ProductEventSequence, ProjectId, TaskId,
 };
 
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopEvent, DesktopEventKind};
+use crate::application::{
+    AutomationChanged, DesktopApplication, DesktopApplicationError, DesktopEvent, ProjectsChanged,
+    RoadmapChanged, TasksChanged,
+};
 
 pub const PRODUCT_CHANGE_FEED_SOURCE: &str = "product-change-feed";
 const DEFAULT_POLL_INTERVAL: Duration = Duration::from_millis(750);
@@ -204,15 +207,43 @@ impl DesktopApplication {
         Ok(latest)
     }
 
-    fn publish_change_feed_event(&self, kind: DesktopEventKind) -> DesktopEvent {
-        self.inner.events.publish(PRODUCT_CHANGE_FEED_SOURCE, kind)
+    fn publish_change_feed_event(&self, notice: FeedNotice) -> DesktopEvent {
+        match notice {
+            FeedNotice::Projects => self.emit_event(ProjectsChanged),
+            FeedNotice::Tasks {
+                project_id,
+                task_id,
+            } => self.emit_event(TasksChanged {
+                project_id,
+                task_id,
+            }),
+            FeedNotice::Roadmap { project_id } => self.emit_event(RoadmapChanged {
+                project_id,
+                milestone_id: None,
+            }),
+            FeedNotice::Automation => self.emit_event(AutomationChanged {
+                automation_id: None,
+            }),
+        }
     }
+}
+
+enum FeedNotice {
+    Projects,
+    Tasks {
+        project_id: Option<ProjectId>,
+        task_id: Option<TaskId>,
+    },
+    Roadmap {
+        project_id: ProjectId,
+    },
+    Automation,
 }
 
 fn coalesce_product_events(
     application: &DesktopApplication,
     events: &[ProductEvent],
-) -> Vec<DesktopEventKind> {
+) -> Vec<FeedNotice> {
     let mut projects_changed = false;
     let mut task_keys = BTreeSet::new();
     let mut roadmap_projects = BTreeSet::new();
@@ -235,13 +266,13 @@ fn coalesce_product_events(
             "conversation" => {
                 if let Some(kind) = conversation_event_kind(application, event) {
                     match kind {
-                        DesktopEventKind::TasksChanged {
+                        FeedNotice::Tasks {
                             project_id,
                             task_id,
                         } => {
                             task_keys.insert((project_id, task_id));
                         }
-                        DesktopEventKind::ProjectsChanged => projects_changed = true,
+                        FeedNotice::Projects => projects_changed = true,
                         _ => {}
                     }
                 }
@@ -257,13 +288,13 @@ fn coalesce_product_events(
             "binding" | "assignment" | "artifact" | "project_asset" => {
                 if let Some(kind) = loose_entity_event_kind(application, event) {
                     match kind {
-                        DesktopEventKind::TasksChanged {
+                        FeedNotice::Tasks {
                             project_id,
                             task_id,
                         } => {
                             task_keys.insert((project_id, task_id));
                         }
-                        DesktopEventKind::ProjectsChanged => projects_changed = true,
+                        FeedNotice::Projects => projects_changed = true,
                         _ => {}
                     }
                 }
@@ -274,24 +305,19 @@ fn coalesce_product_events(
 
     let mut kinds = Vec::new();
     if projects_changed {
-        kinds.push(DesktopEventKind::ProjectsChanged);
+        kinds.push(FeedNotice::Projects);
     }
     for (project_id, task_id) in task_keys {
-        kinds.push(DesktopEventKind::TasksChanged {
+        kinds.push(FeedNotice::Tasks {
             project_id,
             task_id,
         });
     }
     for project_id in roadmap_projects {
-        kinds.push(DesktopEventKind::RoadmapChanged {
-            project_id,
-            milestone_id: None,
-        });
+        kinds.push(FeedNotice::Roadmap { project_id });
     }
     if automation_changed {
-        kinds.push(DesktopEventKind::AutomationChanged {
-            automation_id: None,
-        });
+        kinds.push(FeedNotice::Automation);
     }
     kinds
 }
@@ -299,7 +325,7 @@ fn coalesce_product_events(
 fn conversation_event_kind(
     application: &DesktopApplication,
     event: &ProductEvent,
-) -> Option<DesktopEventKind> {
+) -> Option<FeedNotice> {
     let entity = application
         .inner
         .authority
@@ -310,9 +336,9 @@ fn conversation_event_kind(
         .ok()?;
     let conversation = match entity {
         lilia_contracts::ProductEntity::Conversation(value) => value,
-        _ => return Some(DesktopEventKind::ProjectsChanged),
+        _ => return Some(FeedNotice::Projects),
     };
-    Some(DesktopEventKind::TasksChanged {
+    Some(FeedNotice::Tasks {
         project_id: conversation.project_id,
         task_id: conversation.task_id,
     })
@@ -340,13 +366,13 @@ fn resolve_milestone_project(
 fn loose_entity_event_kind(
     application: &DesktopApplication,
     event: &ProductEvent,
-) -> Option<DesktopEventKind> {
+) -> Option<FeedNotice> {
     let kind = match event.entity.as_str() {
         "binding" => ProductEntityKind::Binding,
         "assignment" => ProductEntityKind::Assignment,
         "artifact" => ProductEntityKind::Artifact,
         "project_asset" => ProductEntityKind::ProjectAsset,
-        _ => return Some(DesktopEventKind::ProjectsChanged),
+        _ => return Some(FeedNotice::Projects),
     };
     let entity = application
         .inner
@@ -357,24 +383,20 @@ fn loose_entity_event_kind(
         .get_entity(kind, &event.entity_id)
         .ok()?;
     match entity {
-        lilia_contracts::ProductEntity::Binding(binding) => Some(DesktopEventKind::TasksChanged {
+        lilia_contracts::ProductEntity::Binding(binding) => Some(FeedNotice::Tasks {
             project_id: None,
             task_id: Some(binding.task_id),
         }),
-        lilia_contracts::ProductEntity::Assignment(assignment) => {
-            Some(DesktopEventKind::TasksChanged {
-                project_id: None,
-                task_id: Some(assignment.task_id),
-            })
-        }
-        lilia_contracts::ProductEntity::Artifact(artifact) => {
-            Some(DesktopEventKind::TasksChanged {
-                project_id: None,
-                task_id: Some(artifact.task_id),
-            })
-        }
-        lilia_contracts::ProductEntity::ProjectAsset(_) => Some(DesktopEventKind::ProjectsChanged),
-        _ => Some(DesktopEventKind::ProjectsChanged),
+        lilia_contracts::ProductEntity::Assignment(assignment) => Some(FeedNotice::Tasks {
+            project_id: None,
+            task_id: Some(assignment.task_id),
+        }),
+        lilia_contracts::ProductEntity::Artifact(artifact) => Some(FeedNotice::Tasks {
+            project_id: None,
+            task_id: Some(artifact.task_id),
+        }),
+        lilia_contracts::ProductEntity::ProjectAsset(_) => Some(FeedNotice::Projects),
+        _ => Some(FeedNotice::Projects),
     }
 }
 
@@ -443,18 +465,12 @@ mod tests {
 
         let published = app.poll_product_change_feed().unwrap();
         assert!(!published.is_empty());
-        assert!(published
-            .iter()
-            .any(|event| event.source_instance == PRODUCT_CHANGE_FEED_SOURCE));
-        assert!(published
-            .iter()
-            .any(|event| matches!(event.kind, DesktopEventKind::ProjectsChanged)));
+        assert!(published.iter().any(|event| event.is::<ProjectsChanged>()));
 
         let received = subscription
             .recv_timeout(Duration::from_secs(1))
             .expect("subscriber should receive feed event");
-        assert_eq!(received.source_instance, PRODUCT_CHANGE_FEED_SOURCE);
-        assert!(matches!(received.kind, DesktopEventKind::ProjectsChanged));
+        assert!(received.is::<ProjectsChanged>());
     }
 
     #[test]

@@ -37,7 +37,10 @@ use lilia_service::ServiceAuthority;
 use lilia_storage::Db;
 
 use crate::application::DesktopApplication;
-use crate::shell_service::{ApplicationFeature, WorkspaceSessionFeature, WorkspaceSessions};
+use crate::shell_service::{
+    ApplicationFeature, TaskSessionFeature, TaskSessions, WorkspaceSessionFeature,
+    WorkspaceSessions,
+};
 
 /// Authorities the desktop process already owns and hands to the features it
 /// mounts. Everything here outlives the kernel.
@@ -60,6 +63,9 @@ pub struct KernelServices {
     /// The application facade, so a module can validate and broadcast a domain
     /// write the same way the shell did before the domain moved.
     pub application: DesktopApplication,
+    /// Task session views the shell publishes so a composer can lock against
+    /// pending interactions without holding its own copy.
+    pub task_sessions: Arc<TaskSessions>,
     /// The log the shell already writes to, shared so kernel lifecycle, job and
     /// event records interleave with the mutations recorded before boot.
     pub journal: Journal,
@@ -99,6 +105,7 @@ impl KernelHost {
         F: Fn(JobEvent) + Send + Sync + 'static,
     {
         let journal = services.journal.clone();
+        let events = services.application.event_bus();
         let features = features(services);
         let runtime = LiliaJobRuntime::builder()
             .protocols(features.iter().flat_map(|feature| feature.protocols()))
@@ -106,7 +113,7 @@ impl KernelHost {
             .build()
             .map_err(|error| format!("failed to start the job runtime: {error}"))?;
 
-        let kernel = Kernel::with_journal(journal);
+        let kernel = Kernel::with_events(journal, events);
         kernel.jobs().install_runtime(Arc::new(runtime));
         kernel
             .events()
@@ -166,6 +173,7 @@ fn features(services: KernelServices) -> Vec<Arc<dyn Feature>> {
         project_task_events,
         workspace_sessions,
         application,
+        task_sessions,
         journal: _,
         clone_credentials,
         update,
@@ -210,6 +218,7 @@ fn features(services: KernelServices) -> Vec<Arc<dyn Feature>> {
         Arc::new(SuggestionsFeature::new(suggestions)),
         Arc::new(WorkspaceSessionFeature::new(workspace_sessions)),
         Arc::new(ApplicationFeature::new(application)),
+        Arc::new(TaskSessionFeature::new(task_sessions)),
         Arc::new(crate::module::ShellUiFeature),
     ]
 }
@@ -230,8 +239,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult,
-    };
+        DesktopHostError, DesktopHostResult, ProjectsChanged};
     use crate::shell_service::WorkspaceSessionsKey;
 
     /// Stands in for the shell's own broadcast sink so a test can tell whether
@@ -436,6 +444,7 @@ mod tests {
         KernelServices {
             workspace_sessions,
             application,
+            task_sessions: Arc::new(TaskSessions::new()),
             project_tasks: ProjectTaskService::new(authority.clone(), project_task_events.clone())
                 .with_journal(journal.clone()),
             project_task_events,
@@ -533,6 +542,9 @@ mod tests {
         let shell_service = services.project_tasks.clone();
         let shell_sink = Arc::new(CountingProjectTaskEvents::default());
         services.project_task_events.install(shell_sink.clone());
+        services.project_task_events.install(Arc::new(
+            lilia_feature_task::KernelProjectTaskEvents::new(services.application.event_bus()),
+        ));
 
         let host = KernelHost::start(services, |_| {}).expect("the composition root boots");
         let bus_notifications = Arc::new(AtomicUsize::new(0));
