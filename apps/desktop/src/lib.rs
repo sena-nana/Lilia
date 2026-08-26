@@ -2,6 +2,8 @@
 
 pub mod application;
 
+mod ports;
+
 #[cfg(debug_assertions)]
 mod agent_debug;
 mod ask_user;

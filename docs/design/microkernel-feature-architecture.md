@@ -209,7 +209,7 @@ pub trait Feature: Send + Sync + 'static {
 - 新建：`lilia-kernel`、`lilia-platform`（OS 端口）。
 - 改造：`lilia-storage`（单 Db + 迁移）、`lilia-agent`（Mutsuki bootstrap 与 AgentKit 插件注册）。
 - 新建 `crates/features/lilia-feature-*`，一个领域一个 crate，用编译期边界强制解耦。
-- 收缩：`crates/lilia-desktop-application` 解散，其 57 个 `impl` 文件按域迁入对应 feature crate；`apps/desktop` 只剩 launcher、`LiliaShell`、feature 清单与 platform 实现。
+- 收缩：`crates/lilia-desktop-application` 已从 workspace 移除。域实现进入 `crates/features/lilia-feature-*`；`apps/desktop` 只剩 launcher、`LiliaShell`、feature 清单、platform 与 github/import 宿主 port。`KernelHost` 是组合根，持有 session 与唯一 `jobs()`。`DesktopProgram` 只保留视图状态、`apply_*` 路由与 `kernel.jobs().submit`。
 
 ### 迁移进度
 
@@ -217,26 +217,26 @@ pub trait Feature: Send + Sync + 'static {
 
 `project`、`task`、`composer`、`timeline`、`agent-session`、`terminal`、`document`、`worktree`、`memory`、`roadmap`、`architecture`、`automation`、`usage`、`update`、`coding`、`extensions`、`hooks`、`provider`、`remote`、`suggestions`、`github`、`import`。
 
-`github` 与 `import` 只声明协议、payload 与车道，执行留在宿主 port：一个要驱动 device flow 的轮询循环并在取消点撤销刚拿到的授权，另一个跑在 `DesktopApplicationConfig` 与活的宿主句柄之上——这些是打开的文件锁与 OS 服务，不是数据，搬进 crate 只会把 `lilia-desktop-application` 的类型一起拖进来。
+`github` 与 `import` 只声明协议、payload 与车道，执行留在宿主 port：一个要驱动 device flow 的轮询循环并在取消点撤销刚拿到的授权，另一个跑在 `DesktopApplicationConfig` 与活的宿主句柄之上——这些是打开的文件锁与 OS 服务，不是数据。执行体在 `apps/desktop/src/ports/`。
 
-`lilia-desktop-application` 里剩下的 `import` 实现是执行体本身（复制 SQLite 文件、迁移凭据），由 `lilia-feature-import` 的 port 调用。
-
-装配本身有测试：`apps/desktop/src/kernel_host.rs` 的 `tests` 用一组 in-memory 服务与拒绝一切的 port 真正启动一次 `KernelHost`，断言声明的 Feature 全部挂载、id 不重复、协议 id 不重复、且壳层会提交的每一个协议都有 Feature 声明。协议重名会让运行时拒绝启动，协议漏声明只在用户点到时才失败——两件事都是启动期事实，所以在启动期断言。
+装配本身有测试：`apps/desktop/src/kernel_host.rs` 的 `tests` 用一组 in-memory 服务与拒绝一切的 port 真正启动一次 `KernelHost`，断言声明的 Feature 全部挂载、id 不重复、协议 id 不重复、且壳层会提交的每一个协议都有 Feature 声明。协议重名会让运行时拒绝启动，协议漏声明只在用户点到时才失败——两件事都是启动期事实，所以在启动期断言。组合根持有桌面 session；装配测试在未 `attach_session` 时也能启动。
 
 ### 过渡期的 shim 约定
 
-已迁出的域在 `crates/lilia-desktop-application/src/<域>.rs` 留一层薄壳，只做两件事：`pub use` feature crate 的类型，以及把 `impl DesktopApplication` 的方法转发给 feature service。壳层不得再持有该域的状态或逻辑。`lilia-desktop-application` 解散时这层壳整体删除。
+已迁出的域由 feature crate 拥有类型与 store。`apps/desktop/src/application` 只保留组合（bootstrap、跨域编排）与对 feature service 的转发，随调用点改为 `KernelHost` 的 service 槽位而删除。`Broadcast*` 适配器与壳层同时删除。
 
-薄壳一旦退化成纯 `pub use`，当场删掉而不是等解散：`lib.rs` 改为直接从 feature crate 再导出，调用点不用改。`memory`、`roadmap`、`turn_queue` 与 `conversation_suggestions` 的 `types` / `generation` / `local_git` 已按此删除。`architecture.rs` 例外——它还挂着 `#[cfg(test)] mod tests`，删掉只会把测试声明挪到更难找的地方。
+feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate 里定义事件 trait（`TerminalEvents`、`AutomationEvents`、`ProjectTaskEvents`），宿主提供 `Broadcast*` 适配器桥到 `DesktopEventKind`，直到壳层改读类型化事件。
 
-feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate 里定义事件 trait（`TerminalEvents`、`AutomationEvents`、`ProjectTaskEvents`），由 `lilia-desktop-application` 提供 `Broadcast*` 适配器桥到 `DesktopEventKind`。这层适配器与壳层同时删除。
+### 壳层与组合根
+
+`KernelHost` 持有桌面 session 与唯一 `jobs()`。`DesktopProgram` 不持有 `DesktopApplication`，只保留视图状态、`apply_*` 路由与 `kernel.jobs().submit`。
 
 ### 剩余缺口
 
 长操作已经收口，域**类型**已经下沉。回合权威与壳层入口已经落地。剩下三件：
 
 - `ActiveTurnPhase` 七态已删。`DesktopAgentRuntime` 只做队列协调；`turn_claim_epoch` + `claim_token` 仍在，直到 AgentKit 有 `SessionVersion` ack 替代。壳层经 `QueuedTurnExecutor` 把 `lilia.agent/turn@1` / `approval@1` / `interaction@1` 交给内核。对照与取舍见 `docs/design/agent-authority-gap.md`。
-- 入口已改名 `LiliaShell`，`Message` 已按域拆成 17 个子枚举。但**这只是把变体搬了位置**：变体总数仍约 430，`update_message` 与全部 `apply_*` 仍在 `apps/desktop/src/desktop.rs` 的同一个 28,000 行 `impl DesktopProgram` 里。`UiModule` 契约已落地在 `apps/desktop/src/ui_module.rs`，architecture / roadmap / memory 三个域已迁入 `apps/desktop/src/module/`。
+- 入口已改名 `LiliaShell`，`Message` 已按域拆成 17 个子枚举。但**这只是把变体搬了位置**：变体总数仍约 430，`update_message` 与全部 `apply_*` 仍在 `apps/desktop/src/desktop.rs` 的同一个 28,000 行 `impl DesktopProgram` 里。`DesktopProgram` 不持有 `DesktopApplication`：session 在 `KernelHost`，Job 只经 `kernel.jobs()`。`UiModule` 契约已落地在 `apps/desktop/src/ui_module.rs`，architecture / roadmap / memory 三个域已迁入 `apps/desktop/src/module/`。
 - `crates/lilia-desktop-application` 已从 workspace 移除，实现暂收在 `apps/desktop/src/application`。其中 `agent.rs`、`import.rs`、`remote.rs`、`workspace.rs`、`extensions.rs`、`todo.rs` 仍是实现本体而非转发壳。
 
 ### `DesktopProgram` 的字段分三类，只有一类能在拆分前处理
@@ -286,7 +286,6 @@ feature crate 不认识 `DesktopEventBus`。需要广播的域在自己 crate �
 二，把上面的分区跳过扩展到工作区页、面板条与检视器后，该指标没有变化（111ms → 119ms，在噪声内），说明成本不在产品侧投影与 reconcile，而在 NanaUI 对整窗区域改尺寸的重排与重绘；
 三，调试 socket 只在 `debug_assertions` 下存在，所以门禁只能测未优化构建，这个数字不代表发布态。
 结论：不通过阈值的方式绕过，也不为它改产品代码；要动就动 NanaUI 的区域重排。
-
 ## 硬约束
 
 - 不引入 `bevy_ecs` 到应用层；通用 Native 控件与窗口能力仍归 NanaUI。

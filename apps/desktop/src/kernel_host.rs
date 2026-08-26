@@ -32,7 +32,7 @@ use lilia_feature_timeline::TimelineFeature;
 use lilia_feature_update::{UpdateFeature, UpdatePort};
 use lilia_feature_usage::{UsageFeature, UsagePort};
 use lilia_feature_worktree::{WorktreeFeature, WorktreePort};
-use lilia_kernel::{Feature, JobEvent, Journal, Kernel};
+use lilia_kernel::{Feature, JobEvent, Jobs, Journal, Kernel};
 use lilia_service::ServiceAuthority;
 use lilia_storage::Db;
 
@@ -82,10 +82,11 @@ pub struct KernelServices {
     pub turns: Arc<dyn TurnPort>,
 }
 
-/// Kernel plus its mounted features, owned by the shell for the process
-/// lifetime. Dropping it shuts the job facade down.
+/// Kernel plus its mounted features and the desktop session they serve.
+/// The shell holds this composition root; it does not hold domain services.
 pub struct KernelHost {
     kernel: Kernel,
+    session: Option<DesktopApplication>,
 }
 
 impl KernelHost {
@@ -113,7 +114,30 @@ impl KernelHost {
         kernel
             .mount_all(features)
             .map_err(|error| format!("failed to mount features: {error}"))?;
-        Ok(Self { kernel })
+        Ok(Self {
+            kernel,
+            session: None,
+        })
+    }
+
+    pub fn attach_session(&mut self, session: DesktopApplication) {
+        self.session = Some(session);
+    }
+
+    pub fn session(&self) -> &DesktopApplication {
+        self.session
+            .as_ref()
+            .expect("the composition root attached a desktop session")
+    }
+
+    pub fn try_session(&self) -> Option<&DesktopApplication> {
+        self.session.as_ref()
+    }
+
+    /// The only job submit the shell uses. Features and the session never hold
+    /// this facade.
+    pub fn jobs(&self) -> &Jobs {
+        self.kernel.jobs()
     }
 
     pub fn kernel(&self) -> &Kernel {
@@ -555,6 +579,16 @@ mod tests {
     /// A protocol bound twice makes the runtime refuse to build, and a protocol
     /// the shell submits but no feature declares fails only once a user
     /// triggers it. Both are boot-time facts, so they are asserted here.
+    #[test]
+    fn the_composition_root_boots_without_a_session_until_the_host_attaches_one() {
+        let host = KernelHost::start(test_services("in-memory:no-session"), |_| {})
+            .expect("the composition root should boot from idle ports");
+        assert!(
+            host.try_session().is_none(),
+            "assembly tests must not require a desktop session"
+        );
+    }
+
     #[test]
     fn every_declared_job_protocol_is_unique_and_reaches_the_runtime() {
         let declared: Vec<_> = features(test_services("in-memory:protocols"))
