@@ -146,3 +146,88 @@ impl Feature for ApplicationFeature {
         cx.provide::<ApplicationKey>(self.application.clone())
     }
 }
+
+/// Service slot for the shell's task-session views.
+///
+/// The shell is still the only writer; modules read the selected task's view
+/// through this registry so they do not keep a second copy that can drift.
+pub enum TaskSessionsKey {}
+
+impl ServiceKey for TaskSessionsKey {
+    type Value = Arc<TaskSessions>;
+
+    const NAME: &'static str = "lilia.shell.task_sessions";
+}
+
+/// Per-task session views the shell publishes after each refresh.
+///
+/// Readers clone the `Arc`. Writers go through [`TaskSessions::install`].
+#[derive(Default)]
+pub struct TaskSessions {
+    sessions: Mutex<HashMap<lilia_contracts::TaskId, Arc<crate::task_session::TaskSessionView>>>,
+}
+
+impl TaskSessions {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn install(
+        &self,
+        task_id: lilia_contracts::TaskId,
+        session: Arc<crate::task_session::TaskSessionView>,
+    ) {
+        self.lock().insert(task_id, session);
+    }
+
+    pub fn remove(&self, task_id: &lilia_contracts::TaskId) {
+        self.lock().remove(task_id);
+    }
+
+    pub fn get(
+        &self,
+        task_id: &lilia_contracts::TaskId,
+    ) -> Option<Arc<crate::task_session::TaskSessionView>> {
+        self.lock().get(task_id).cloned()
+    }
+
+    fn lock(
+        &self,
+    ) -> std::sync::MutexGuard<
+        '_,
+        HashMap<lilia_contracts::TaskId, Arc<crate::task_session::TaskSessionView>>,
+    > {
+        self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+pub struct TaskSessionFeature {
+    sessions: Arc<TaskSessions>,
+}
+
+impl TaskSessionFeature {
+    pub fn new(sessions: Arc<TaskSessions>) -> Self {
+        Self { sessions }
+    }
+}
+
+impl Feature for TaskSessionFeature {
+    fn id(&self) -> FeatureId {
+        FeatureId::new("lilia.shell.task_sessions")
+            .expect("the task sessions shell feature id is not blank")
+    }
+
+    fn provides(&self) -> Vec<ServiceRef> {
+        vec![ServiceRef::of::<TaskSessionsKey>()]
+    }
+
+    fn mount(&self, cx: &mut FeatureContext<'_>) -> Result<(), KernelError> {
+        cx.provide::<TaskSessionsKey>(Arc::clone(&self.sessions))
+    }
+}
+
+pub fn task_sessions(kernel: &Kernel) -> Arc<TaskSessions> {
+    kernel
+        .service::<TaskSessionsKey>()
+        .expect("the task sessions slot is filled while features mount")
+}

@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use lilia_kernel::{Contribution, FeatureId, Kernel};
 
-use crate::application::ProjectWorkspaceSurface;
+use crate::application::{ApplicationWorkspaceSurface, ProjectWorkspaceSurface};
 use crate::runtime_shell::{PrimaryShellSnapshot, ShellProjectPage};
 use nana_ui_platform::WindowId;
 
@@ -30,6 +30,8 @@ pub struct UiModuleContext<'a> {
     kernel: &'a Kernel,
     window: WindowId,
     page: Option<ShellProjectPage>,
+    surface: Option<ApplicationWorkspaceSurface>,
+    settings_tab: Option<String>,
 }
 
 impl<'a> UiModuleContext<'a> {
@@ -38,6 +40,8 @@ impl<'a> UiModuleContext<'a> {
             kernel,
             window,
             page: None,
+            surface: None,
+            settings_tab: None,
         }
     }
 
@@ -52,14 +56,39 @@ impl<'a> UiModuleContext<'a> {
         self
     }
 
+    /// Tells the module which application surface this window is showing.
+    pub fn showing_surface(mut self, surface: Option<ApplicationWorkspaceSurface>) -> Self {
+        self.surface = surface;
+        self
+    }
+
+    /// Tells the module which settings tab is active, when settings is open.
+    pub fn showing_settings(mut self, tab: Option<String>) -> Self {
+        self.settings_tab = tab;
+        self
+    }
+
     /// Whether this window is currently showing `page`.
     pub fn shows(&self, page: ShellProjectPage) -> bool {
         self.page == Some(page)
     }
 
+    /// Whether this window is currently showing `surface`.
+    pub fn shows_surface(&self, surface: ApplicationWorkspaceSurface) -> bool {
+        self.surface == Some(surface)
+    }
+
+    /// Whether settings is open on `tab`.
+    pub fn shows_settings_tab(&self, tab: &str) -> bool {
+        self.settings_tab.as_deref() == Some(tab)
+    }
+
     /// This window's workspace session, or `None` once its window has closed.
     pub fn workspace(&self) -> Option<crate::application::DesktopWorkspaceSession> {
-        crate::shell_service::workspace_sessions(self.kernel).get(self.window)
+        self.kernel
+            .service::<crate::shell_service::WorkspaceSessionsKey>()
+            .ok()?
+            .get(self.window)
     }
 
     /// The application facade, through which a domain write is validated and
@@ -94,6 +123,19 @@ impl<'a> UiModuleContext<'a> {
                 .clone(),
         )
     }
+
+    /// The selected task's session view, published by the shell after refresh.
+    ///
+    /// Modules use this for lock checks rather than keeping their own copy of
+    /// pending counts. Missing means the shell has not published a view yet,
+    /// not that the task itself is gone.
+    pub fn task_session(&self) -> Option<std::sync::Arc<crate::task_session::TaskSessionView>> {
+        let task_id = self.selected_task()?;
+        self.kernel
+            .service::<crate::shell_service::TaskSessionsKey>()
+            .ok()?
+            .get(&task_id)
+    }
 }
 
 /// Something only the shell can do, requested by a module.
@@ -103,6 +145,7 @@ impl<'a> UiModuleContext<'a> {
 #[derive(Debug, PartialEq, Eq)]
 pub enum ShellEffect {
     RevealProjectSurface(ProjectWorkspaceSurface),
+    PickPluginDirectory,
 }
 
 /// What a module asks the shell to do after handling a message.
@@ -164,6 +207,18 @@ pub trait UiModule: 'static {
 
     fn reduce(&mut self, message: Self::Message, cx: &UiModuleContext<'_>) -> UiModuleOutcome;
 
+    /// Reloads this module's cached slice when a typed event names its domain.
+    /// The default ignores the envelope so a module that only projects live
+    /// service reads does not have to opt in.
+    fn invalidate(
+        &mut self,
+        envelope: &lilia_kernel::EventEnvelope,
+        cx: &UiModuleContext<'_>,
+    ) -> UiModuleOutcome {
+        let _ = (envelope, cx);
+        UiModuleOutcome::clean()
+    }
+
     /// Writes this module's own fields of the projection and no others.
     fn project(&self, cx: &UiModuleContext<'_>, into: &mut PrimaryShellSnapshot);
 }
@@ -197,6 +252,12 @@ pub trait ErasedUiModule {
     ) -> UiModuleOutcome;
 
     fn project(&self, cx: &UiModuleContext<'_>, into: &mut PrimaryShellSnapshot);
+
+    fn invalidate(
+        &mut self,
+        envelope: &lilia_kernel::EventEnvelope,
+        cx: &UiModuleContext<'_>,
+    ) -> UiModuleOutcome;
 }
 
 impl<M> ErasedUiModule for M
@@ -231,6 +292,14 @@ where
 
     fn project(&self, cx: &UiModuleContext<'_>, into: &mut PrimaryShellSnapshot) {
         UiModule::project(self, cx, into)
+    }
+
+    fn invalidate(
+        &mut self,
+        envelope: &lilia_kernel::EventEnvelope,
+        cx: &UiModuleContext<'_>,
+    ) -> UiModuleOutcome {
+        UiModule::invalidate(self, envelope, cx)
     }
 }
 
@@ -347,6 +416,23 @@ impl UiModuleHost {
         }
     }
 
+    /// Asks each module whether this envelope names its domain.
+    pub fn invalidate(
+        &mut self,
+        envelope: &lilia_kernel::EventEnvelope,
+        cx: &UiModuleContext<'_>,
+    ) -> UiModuleOutcome {
+        let mut combined = UiModuleOutcome::clean();
+        for module in &mut self.modules {
+            let outcome = module.invalidate(envelope, cx);
+            combined.dirty |= outcome.dirty;
+            if combined.error.is_none() {
+                combined.error = outcome.error;
+            }
+            combined.effects.extend(outcome.effects);
+        }
+        combined
+    }
 }
 
 #[cfg(test)]
