@@ -9,10 +9,8 @@ use nana_ui::runtime::{
 use nana_ui::{ButtonKind, ControlSize, Icon, UI_METRICS};
 
 const COMPOSER_SEND_SIZE: f32 = 30.0;
-const SIDEBAR_ACTION_SIZE: f32 = 30.0;
-pub(crate) const COMPOSER_CHIP_HEIGHT: f32 = 28.0;
+const PILL_RADIUS: f32 = 999.0;
 pub(crate) const COMPOSER_CARD_RADIUS: f32 = 16.0;
-pub(crate) const SIDEBAR_ROW_RADIUS: f32 = 12.0;
 
 #[derive(Clone)]
 pub(crate) struct HostStack {
@@ -62,7 +60,7 @@ impl HostStack {
 
     pub(crate) fn composer_card() -> Self {
         Self::column(7.0)
-            .padding(10.0)
+            .padding(UI_METRICS.control_padding_x)
             .surface(SemanticColorRole::Surface)
             .outline(SemanticColorRole::Border, 1.0)
             .radius(COMPOSER_CARD_RADIUS)
@@ -355,15 +353,25 @@ pub(crate) fn composer_interrupt_button(enabled: bool) -> IconButton {
 }
 
 pub(crate) fn sidebar_icon_button(icon: Icon, label: &'static str) -> IconButton {
+    sized_icon_button(icon, label, ButtonKind::Text, UI_METRICS.icon_button_size)
+}
+
+pub(crate) fn window_control(icon: Icon, label: &'static str, kind: ButtonKind) -> IconButton {
+    sized_icon_button(icon, label, kind, UI_METRICS.icon_button_size)
+}
+
+fn sized_icon_button(icon: Icon, label: &'static str, kind: ButtonKind, edge: f32) -> IconButton {
     let mut button = IconButton::new(icon, label)
-        .kind(ButtonKind::Text)
+        .kind(kind)
         .size(ControlSize::Small);
     let layout = Arc::make_mut(&mut button.style.layout);
-    let edge = LengthSpec::Px(SIDEBAR_ACTION_SIZE);
+    let edge = LengthSpec::Px(edge);
     layout.min_width = Some(edge);
     layout.min_height = Some(edge);
     layout.width = Some(edge);
     layout.height = Some(edge);
+    layout.padding_left = Some(LengthSpec::Px(0.0));
+    layout.padding_right = Some(LengthSpec::Px(0.0));
     layout.border_radius = Some(UI_METRICS.radius_sm);
     button
 }
@@ -371,10 +379,10 @@ pub(crate) fn sidebar_icon_button(icon: Icon, label: &'static str) -> IconButton
 pub(crate) fn pill_button(label: &str, kind: ButtonKind) -> Button {
     let mut button = Button::new(label).kind(kind).size(ControlSize::Small);
     let layout = Arc::make_mut(&mut button.style.layout);
-    layout.min_height = Some(LengthSpec::Px(COMPOSER_CHIP_HEIGHT));
-    layout.padding_left = Some(LengthSpec::Px(6.0));
-    layout.padding_right = Some(LengthSpec::Px(6.0));
-    layout.border_radius = Some(999.0);
+    layout.min_height = Some(LengthSpec::Px(UI_METRICS.compact_control_height));
+    layout.padding_left = Some(LengthSpec::Px(UI_METRICS.compact_control_padding_x));
+    layout.padding_right = Some(LengthSpec::Px(UI_METRICS.compact_control_padding_x));
+    layout.border_radius = Some(PILL_RADIUS);
     button
 }
 
@@ -388,9 +396,9 @@ pub(crate) fn flatten_composer_textarea(area: TextArea) -> TextArea {
     layout.border_width = Some(0.0);
     layout.border_radius = Some(0.0);
     layout.min_height = Some(LengthSpec::Px(ControlSize::Medium.height()));
-    layout.padding_left = Some(LengthSpec::Px(6.0));
-    layout.padding_right = Some(LengthSpec::Px(6.0));
-    layout.padding_top = Some(LengthSpec::Px(4.0));
-    layout.padding_bottom = Some(LengthSpec::Px(4.0));
+    layout.padding_left = Some(LengthSpec::Px(UI_METRICS.field_padding_x));
+    layout.padding_right = Some(LengthSpec::Px(UI_METRICS.field_padding_x));
+    layout.padding_top = Some(LengthSpec::Px(UI_METRICS.field_padding_y));
+    layout.padding_bottom = Some(LengthSpec::Px(UI_METRICS.field_padding_y));
     area.style(style)
 }

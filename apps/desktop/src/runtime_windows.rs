@@ -10,7 +10,7 @@ use nana_ui::{ButtonKind, ControlSize, ThemeMode, WindowChrome};
 use nana_ui_platform::WindowId;
 
 use crate::runtime_layout::{
-    composer_interrupt_button, composer_send_button, reconcile_children, HostStack,
+    composer_interrupt_button, composer_send_button, reconcile_children, window_control, HostStack,
 };
 use crate::runtime_shell::{bind_activate, emit, ShellIntent, ShellTimelineRow};
 
@@ -140,7 +140,7 @@ pub fn mount_conversation_status(
     if WindowChrome::platform_default().uses_custom_controls() {
         let close_win = context.create_detached_component(
             document_id,
-            nana_ui::runtime::IconButton::new(nana_ui::Icon::Close, "关闭"),
+            window_control(nana_ui::Icon::Close, "关闭", ButtonKind::Text),
         )?;
         context.append_child(title_trailing, close_win)?;
         bind_activate(

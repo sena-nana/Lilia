@@ -26,7 +26,7 @@ use nana_ui::{
 use crate::runtime_compat::{HostedUiCommand, HostedWindowId};
 use crate::runtime_layout::{
     composer_interrupt_button, composer_send_button, flatten_composer_textarea, pill_button,
-    reconcile_children, sidebar_icon_button, HostStack, SIDEBAR_ROW_RADIUS,
+    reconcile_children, sidebar_icon_button, window_control, HostStack,
 };
 use crate::target_ids;
 
@@ -34,11 +34,10 @@ const PRIMARY_DOCUMENT: u64 = 1;
 const SESSIONS_EMPTY_TEXT: &str = "还没有会话";
 const INBOX_EMPTY_TEXT: &str = "没有未绑定的对话";
 const PROJECTS_EMPTY_TEXT: &str = "暂无项目";
-const PLUS_SLOT_SIZE: f32 = 28.0;
-const COMPOSER_MIN_HEIGHT: f32 = 32.0;
+const PLUS_SLOT_SIZE: f32 = UI_METRICS.icon_button_size;
+const COMPOSER_MIN_HEIGHT: f32 = UI_METRICS.control_height;
 const COMPOSER_MAX_HEIGHT: f32 = 72.0;
 const CHAT_CONTENT_MAX_WIDTH: f32 = 860.0;
-const WINDOW_CONTROL_SIZE: f32 = 28.0;
 const TITLE_BREADCRUMB_WIDTH: f32 = 440.0;
 const EMPTY_HEADING_FONT_SIZE: f32 = 24.0;
 
@@ -953,6 +952,7 @@ pub struct ShellHandles {
     workspace_heading: Entity<Text>,
     workspace_status: Entity<Text>,
     workspace_editor: Entity<TextArea>,
+    workspace_log: Entity<TextArea>,
     workspace_input: Entity<TextArea>,
     diagnostics_panel: Entity<HostStack>,
     diagnostic_rows: HashMap<String, Entity<Text>>,
@@ -1021,7 +1021,6 @@ fn new_conversation_row(leading: StableNodeId) -> SidebarRow {
 fn sidebar_row_style() -> NodeStyle {
     let mut style = NodeStyle::default();
     let layout = Arc::make_mut(&mut style.layout);
-    layout.border_radius = Some(SIDEBAR_ROW_RADIUS);
     // Rows are fixed height; a wrapping title would spill over the row tools.
     layout.white_space_nowrap = true;
     layout.text_overflow_ellipsis = true;
@@ -1076,22 +1075,6 @@ fn breadcrumb_text(value: &str, color: SemanticColorRole, weight: Option<u16>) -
     text
 }
 
-fn window_control(icon: Icon, label: &'static str, kind: ButtonKind) -> IconButton {
-    let mut button = IconButton::new(icon, label)
-        .kind(kind)
-        .size(ControlSize::Small);
-    let layout = Arc::make_mut(&mut button.style.layout);
-    let edge = LengthSpec::Px(WINDOW_CONTROL_SIZE);
-    layout.width = Some(edge);
-    layout.height = Some(edge);
-    layout.min_width = Some(edge);
-    layout.min_height = Some(edge);
-    layout.padding_left = Some(LengthSpec::Px(0.0));
-    layout.padding_right = Some(LengthSpec::Px(0.0));
-    layout.border_radius = Some(UI_METRICS.radius_sm);
-    button
-}
-
 fn extra_button(label: &str, kind: ButtonKind) -> Button {
     pill_button(label, kind)
 }
@@ -1112,7 +1095,17 @@ fn apply_workspace_editor_chrome(editor: &mut TextArea, language: Option<&str>) 
     editor.highlight = language
         .filter(|language| !language.is_empty())
         .map(|language| HighlightRequest::highlight(language.to_owned()));
-    let layout = Arc::make_mut(&mut editor.style.layout);
+    fill_workspace_surface(editor);
+}
+
+fn fill_workspace_log(value: impl Into<String>) -> TextArea {
+    let mut log = fill_workspace_editor(value, None);
+    log.disabled = true;
+    log
+}
+
+fn fill_workspace_surface(area: &mut TextArea) {
+    let layout = Arc::make_mut(&mut area.style.layout);
     layout.height = Some(LengthSpec::Fill);
     layout.flex_grow = Some(1.0);
     layout.min_height = Some(LengthSpec::Px(0.0));
@@ -1884,6 +1877,8 @@ pub fn mount_primary_shell(
             ShellIntent::DocumentChanged(event.value.clone()),
         );
     })?;
+    let workspace_log =
+        context.create_detached_component(document_id, fill_workspace_log(String::new()))?;
     let workspace_tree =
         context.create_detached_component(document_id, TreeView::new(Vec::new()))?;
     let tree_sink = Arc::clone(&sink);
@@ -1912,6 +1907,7 @@ pub fn mount_primary_shell(
     context.append_child(workspace_content, workspace_status)?;
     context.append_child(workspace_content, workspace_tree)?;
     context.append_child(workspace_content, workspace_editor)?;
+    context.append_child(workspace_content, workspace_log)?;
     context.append_child(workspace_content, workspace_input)?;
     context.append_child(workspace_content, workspace_actions)?;
     context.append_child(pane_body, workspace_content)?;
@@ -2240,6 +2236,7 @@ pub fn mount_primary_shell(
         workspace_heading,
         workspace_status,
         workspace_editor,
+        workspace_log,
         workspace_input,
         diagnostics_panel,
         diagnostic_rows: HashMap::new(),
@@ -4787,33 +4784,30 @@ impl ShellHandles {
         document_id: DocumentId,
         snapshot: &PrimaryShellSnapshot,
     ) -> Result<(), FrameworkError> {
-        let (title, status, editor, disabled, language) = if let Some(document) = &snapshot.document
-        {
-            (
-                document.title.clone(),
-                document.status.clone(),
-                document.text.clone(),
-                document.read_only,
-                Some(document.language.as_str()),
-            )
-        } else if let Some(terminal) = &snapshot.terminal {
-            (
+        let pane_kind = active_pane_item_kind(snapshot);
+        let (title, status) = match pane_kind {
+            Some("document-editor") => snapshot
+                .document
+                .as_ref()
+                .map(|document| (document.title.clone(), document.status.clone()))
+                .unwrap_or_default(),
+            Some("terminal") => (
                 "终端".to_owned(),
-                terminal.notice.clone().unwrap_or_default(),
-                terminal.output.clone(),
-                true,
-                None,
-            )
-        } else if let Some(files) = &snapshot.files {
-            (
+                snapshot
+                    .terminal
+                    .as_ref()
+                    .and_then(|terminal| terminal.notice.clone())
+                    .unwrap_or_default(),
+            ),
+            Some("project-files") => (
                 "项目文件".to_owned(),
-                files.preview.clone().unwrap_or_default(),
-                String::new(),
-                true,
-                None,
-            )
-        } else {
-            (String::new(), String::new(), String::new(), true, None)
+                snapshot
+                    .files
+                    .as_ref()
+                    .and_then(|files| files.preview.clone())
+                    .unwrap_or_default(),
+            ),
+            _ => Default::default(),
         };
         context.update_component(self.workspace_heading, |text, _| {
             *text = Text::new(title);
@@ -4821,13 +4815,24 @@ impl ShellHandles {
         context.update_component(self.workspace_status, |text, _| {
             *text = Text::new(status);
         })?;
-        context.update_component(self.workspace_editor, |editor_view, _| {
-            if editor_view.state.value != editor {
-                editor_view.state.replace_value(editor);
-            }
-            editor_view.disabled = disabled;
-            apply_workspace_editor_chrome(editor_view, language);
-        })?;
+        if let Some(document) = &snapshot.document {
+            context.update_component(self.workspace_editor, |editor_view, _| {
+                if editor_view.state.value != document.text {
+                    editor_view.state.replace_value(document.text.clone());
+                }
+                editor_view.disabled = document.read_only;
+                apply_workspace_editor_chrome(editor_view, Some(document.language.as_str()));
+            })?;
+        }
+        if let Some(terminal) = &snapshot.terminal {
+            context.update_component(self.workspace_log, |log, _| {
+                if log.state.value != terminal.output {
+                    log.state.replace_value(terminal.output.clone());
+                }
+                apply_workspace_editor_chrome(log, None);
+                log.disabled = true;
+            })?;
+        }
         let terminal_input = snapshot
             .terminal
             .as_ref()
@@ -4853,7 +4858,7 @@ impl ShellHandles {
             self.workspace_heading.stable_id(),
             self.workspace_status.stable_id(),
         ];
-        match active_pane_item_kind(snapshot) {
+        match pane_kind {
             Some("document-editor") => {
                 order.push(self.workspace_editor.stable_id());
                 order.push(self.workspace_actions.stable_id());
@@ -4863,7 +4868,7 @@ impl ShellHandles {
                 order.push(self.workspace_actions.stable_id());
             }
             Some("terminal") => {
-                order.push(self.workspace_editor.stable_id());
+                order.push(self.workspace_log.stable_id());
                 order.push(self.workspace_input.stable_id());
                 order.push(self.workspace_actions.stable_id());
             }
@@ -6687,6 +6692,47 @@ mod tests {
             })
             .expect("read editor");
         assert_eq!(language.as_deref(), Some("rust"));
+    }
+
+    #[test]
+    fn terminal_pane_uses_plain_log_not_document_editor() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.terminal = Some(ShellTerminalSnapshot {
+            output: "$ ls".to_owned(),
+            input: String::new(),
+            notice: None,
+        });
+        snapshot.panes[0].items.push(ShellPaneItem {
+            id: "term".to_owned(),
+            title: "终端".to_owned(),
+            kind: "terminal".to_owned(),
+            selected: true,
+            closable: true,
+        });
+        let (mut document, handles, _) = mounted_primary(&snapshot);
+        let children = document
+            .context()
+            .world()
+            .node(handles.workspace_content.stable_id())
+            .map(|node| node.children.clone())
+            .expect("workspace children");
+        assert!(children.contains(&handles.workspace_log.stable_id()));
+        assert!(!children.contains(&handles.workspace_editor.stable_id()));
+        let (log_value, log_highlight, log_disabled) = document
+            .context_mut()
+            .read(handles.workspace_log, |log| {
+                (
+                    log.state.value.clone(),
+                    log.highlight
+                        .as_ref()
+                        .map(|request| request.language.to_string()),
+                    log.disabled,
+                )
+            })
+            .expect("read terminal log");
+        assert_eq!(log_value, "$ ls");
+        assert_eq!(log_highlight, None);
+        assert!(log_disabled);
     }
 
     #[test]
