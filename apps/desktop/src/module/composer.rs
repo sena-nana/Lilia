@@ -498,6 +498,8 @@ impl UiModule for ComposerModule {
         }
         let Some(composer) = self.composer.as_ref() else {
             into.composer = self.composer_editor.text();
+            into.composer_task_id = None;
+            into.composer_revision = 0;
             into.composer_height = textarea_height(&self.composer_editor);
             into.attachments.clear();
             into.plan_mode = false;
@@ -507,6 +509,8 @@ impl UiModule for ComposerModule {
             return;
         };
         into.composer = composer.content.clone();
+        into.composer_task_id = Some(composer.task_id.as_str().to_owned());
+        into.composer_revision = composer.revision;
         into.composer_height = textarea_height(&self.composer_editor);
         into.attachments = composer
             .attachments
@@ -578,6 +582,8 @@ mod tests {
         let mut snapshot = empty_snapshot();
         module.project(&cx, &mut snapshot);
         assert_eq!(snapshot.composer, "hello");
+        assert_eq!(snapshot.composer_task_id.as_deref(), Some("draft-task"));
+        assert_eq!(snapshot.composer_revision, 0);
         assert!(module.is_transient());
     }
 

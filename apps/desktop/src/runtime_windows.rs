@@ -12,7 +12,9 @@ use nana_ui_platform::WindowId;
 use crate::runtime_layout::{
     composer_interrupt_button, composer_send_button, reconcile_children, window_control, HostStack,
 };
-use crate::runtime_shell::{bind_activate, emit, ShellIntent, ShellTimelineRow};
+use crate::runtime_shell::{
+    bind_activate, composer_is_focused, emit, ComposerGeneration, ShellIntent, ShellTimelineRow,
+};
 
 const CONVERSATION_STATUS_DOCUMENT: u64 = 10_001;
 
@@ -45,6 +47,8 @@ pub struct TaskPopupSnapshot {
     pub error: Option<String>,
     pub timeline: Vec<ShellTimelineRow>,
     pub composer: String,
+    pub composer_task_id: Option<String>,
+    pub composer_revision: u64,
     pub composer_disabled: bool,
     pub can_send: bool,
     pub can_interrupt: bool,
@@ -68,6 +72,7 @@ pub struct TaskPopupHandles {
     timeline_items: HashMap<String, Entity<NativeMarkdown>>,
     timeline_sources: HashMap<String, u64>,
     composer: Entity<TextArea>,
+    composer_generation: ComposerGeneration,
     send: Entity<IconButton>,
     interrupt: Entity<IconButton>,
 }
@@ -378,6 +383,7 @@ pub fn mount_task_popup(
         timeline_items: HashMap::new(),
         timeline_sources: HashMap::new(),
         composer,
+        composer_generation: ComposerGeneration::default(),
         send,
         interrupt,
     };
@@ -400,12 +406,19 @@ impl TaskPopupHandles {
         context.update_component(self.error, |text, _| {
             *text = Text::new(snapshot.error.clone().unwrap_or_default());
         })?;
+        let composer_generation = ComposerGeneration::new(
+            snapshot.composer_task_id.clone(),
+            snapshot.composer_revision,
+        );
+        let write_composer = !composer_is_focused(context, self.composer)
+            || self.composer_generation != composer_generation;
         context.update_component(self.composer, |editor, _| {
-            if editor.state.value != snapshot.composer {
+            if write_composer && editor.state.value != snapshot.composer {
                 editor.state.replace_value(snapshot.composer.clone());
             }
             editor.disabled = snapshot.composer_disabled;
         })?;
+        self.composer_generation = composer_generation;
         context.update_component(self.send, |button, _| {
             *button = composer_send_button(snapshot.can_send);
         })?;

@@ -3977,6 +3977,8 @@ impl DesktopProgram {
             tasks: Vec::new(),
             timeline: Vec::new(),
             composer: String::new(),
+            composer_task_id: None,
+            composer_revision: 0,
             composer_height: crate::module::composer::textarea_height(
                 self.composer_module().composer_editor(),
             ),
@@ -4560,14 +4562,23 @@ impl DesktopProgram {
                     .collect()
             })
             .unwrap_or_default();
-        let composer = self
-            .window_composer(window_id)
-            .map(|composer| composer.content.clone())
-            .unwrap_or_else(|| {
-                self.window_composer_module(window_id)
-                    .map(|module| module.composer_editor().text())
-                    .unwrap_or_default()
-            });
+        let (composer, composer_task_id, composer_revision, composer_disabled) =
+            match self.window_composer(window_id) {
+                Some(state) => (
+                    state.content.clone(),
+                    Some(state.task_id.as_str().to_owned()),
+                    state.revision,
+                    false,
+                ),
+                None => (
+                    self.window_composer_module(window_id)
+                        .map(|module| module.composer_editor().text())
+                        .unwrap_or_default(),
+                    None,
+                    0,
+                    true,
+                ),
+            };
         Some(crate::runtime_windows::TaskPopupSnapshot {
             window_id,
             theme: self.theme,
@@ -4576,7 +4587,9 @@ impl DesktopProgram {
             error: popup.error.clone(),
             timeline,
             composer,
-            composer_disabled: self.window_composer(window_id).is_none(),
+            composer_task_id,
+            composer_revision,
+            composer_disabled,
             can_send: self
                 .window_composer(window_id)
                 .is_some_and(composer_has_turn_payload),

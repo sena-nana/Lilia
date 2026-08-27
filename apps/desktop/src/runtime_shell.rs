@@ -492,6 +492,8 @@ pub struct PrimaryShellSnapshot {
     pub tasks: Vec<ShellTaskRow>,
     pub timeline: Vec<ShellTimelineRow>,
     pub composer: String,
+    pub composer_task_id: Option<String>,
+    pub composer_revision: u64,
     pub composer_height: f32,
     pub composer_placeholder: String,
     pub composer_disabled: bool,
@@ -913,6 +915,7 @@ pub struct ShellHandles {
     timeline_markdown_source: HashMap<String, u64>,
     timeline_actions: HashMap<String, Entity<Button>>,
     synced: SyncedInputs,
+    composer_generation: ComposerGeneration,
     shell_assembled: bool,
     load_earlier: Option<Entity<Button>>,
     composer: Entity<TextArea>,
@@ -989,6 +992,25 @@ pub struct ShellHandles {
 
 pub(crate) fn emit(sink: &IntentSink, intent: ShellIntent) {
     sink(intent);
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ComposerGeneration {
+    task_id: Option<String>,
+    revision: u64,
+}
+
+impl ComposerGeneration {
+    pub fn new(task_id: Option<String>, revision: u64) -> Self {
+        Self { task_id, revision }
+    }
+}
+
+pub(crate) fn composer_is_focused(context: &AppContext, composer: Entity<TextArea>) -> bool {
+    context
+        .world()
+        .node(composer.stable_id())
+        .is_some_and(|node| context.world().focused(node.document) == Some(composer.stable_id()))
 }
 
 pub(crate) fn bind_activate<V: View>(
@@ -2210,6 +2232,7 @@ pub fn mount_primary_shell(
         timeline_markdown_source: HashMap::new(),
         timeline_actions: HashMap::new(),
         synced: SyncedInputs::default(),
+        composer_generation: ComposerGeneration::default(),
         shell_assembled: false,
         load_earlier: None,
         composer,
@@ -2406,8 +2429,14 @@ impl ShellHandles {
         context.update_component(self.error, |error, _| {
             *error = Text::new(snapshot.error.clone().unwrap_or_default());
         })?;
+        let composer_generation = ComposerGeneration::new(
+            snapshot.composer_task_id.clone(),
+            snapshot.composer_revision,
+        );
+        let write_composer = !composer_is_focused(context, self.composer)
+            || self.composer_generation != composer_generation;
         context.update_component(self.composer, |composer, _| {
-            if composer.state.value != snapshot.composer {
+            if write_composer && composer.state.value != snapshot.composer {
                 composer.state.replace_value(snapshot.composer.clone());
             }
             composer.placeholder = Arc::from(snapshot.composer_placeholder.as_str());
@@ -2418,6 +2447,7 @@ impl ShellHandles {
                     .clamp(COMPOSER_MIN_HEIGHT, COMPOSER_MAX_HEIGHT),
             ));
         })?;
+        self.composer_generation = composer_generation;
         context.update_component(self.inspector_heading, |text, _| {
             *text = Text::new(snapshot.inspector_title.clone());
         })?;
@@ -6146,6 +6176,8 @@ pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
             tasks: Vec::new(),
             timeline: Vec::new(),
             composer: String::new(),
+            composer_task_id: None,
+            composer_revision: 0,
             composer_height: COMPOSER_MIN_HEIGHT,
             composer_placeholder: "输入消息".to_owned(),
             composer_disabled: true,
@@ -6791,6 +6823,48 @@ mod tests {
                 .copied(),
             Some(handles.composer.stable_id())
         );
+    }
+
+    #[test]
+    fn focused_composer_keeps_cleared_text_until_revision_changes() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.composer = "a".to_owned();
+        snapshot.composer_revision = 1;
+        snapshot.composer_disabled = false;
+        let (mut document, mut handles, _primary) = mounted_primary(&snapshot);
+
+        let composer_id = handles.composer.stable_id();
+        let document_id = document.document();
+        document
+            .context_mut()
+            .focus_node(document_id, composer_id)
+            .expect("focus composer");
+        document
+            .context_mut()
+            .update_component(handles.composer, |composer, _| {
+                composer.state.replace_value(String::new());
+            })
+            .expect("clear composer");
+
+        handles
+            .sync(&mut document, &snapshot)
+            .expect("sync stale snapshot");
+        let after_stale = document
+            .context()
+            .read(handles.composer, |composer| composer.state.value.clone())
+            .expect("read composer");
+        assert_eq!(after_stale, "");
+
+        snapshot.composer = "@file".to_owned();
+        snapshot.composer_revision = 2;
+        handles
+            .sync(&mut document, &snapshot)
+            .expect("sync revision bump");
+        let after_revision = document
+            .context()
+            .read(handles.composer, |composer| composer.state.value.clone())
+            .expect("read composer");
+        assert_eq!(after_revision, "@file");
     }
 
     #[test]
