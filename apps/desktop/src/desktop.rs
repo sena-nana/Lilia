@@ -1882,6 +1882,10 @@ impl DesktopProgram {
                 Message::Sidebar(SidebarMessage::SidebarStopTask(task_id))
             }
             crate::runtime_shell::ShellIntent::SidebarMenuAction(id) => {
+                if id.is_empty() {
+                    self.update_sidebar_menu(HostedContextMenuEvent::Dismiss);
+                    return None;
+                }
                 let Some((_, action)) = self
                     .sidebar_menu_actions()
                     .into_iter()
@@ -3954,6 +3958,10 @@ impl DesktopProgram {
             nav_items: self.shell_nav_items(),
             sidebar_rows: self.shell_sidebar_rows(),
             sidebar_menu: self.shell_sidebar_menu_items(),
+            add_project_menu_open: matches!(
+                self.sidebar_menu.as_ref().map(|menu| &menu.target),
+                Some(SidebarMenuTarget::AddProject)
+            ),
             workspace: self.workspace.model().clone(),
             tasks: Vec::new(),
             timeline: Vec::new(),

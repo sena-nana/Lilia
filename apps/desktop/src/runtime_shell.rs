@@ -486,6 +486,7 @@ pub struct PrimaryShellSnapshot {
     pub nav_items: Vec<ShellNavItem>,
     pub sidebar_rows: Vec<ShellSidebarRow>,
     pub sidebar_menu: Vec<ShellMenuItem>,
+    pub add_project_menu_open: bool,
     pub workspace: WorkspaceModel,
     pub tasks: Vec<ShellTaskRow>,
     pub timeline: Vec<ShellTimelineRow>,
@@ -876,6 +877,8 @@ pub struct ShellHandles {
     project_section: Entity<SidebarSection>,
     project_header: Entity<ListItem>,
     project_body: Entity<List>,
+    add_project_menu: Entity<ActionMenu>,
+    add_project_items: HashMap<String, Entity<ActionMenuItem>>,
     inbox_section: Entity<SidebarSection>,
     inbox_body: Entity<List>,
     task_rows: HashMap<String, Entity<SidebarRow>>,
@@ -1035,10 +1038,6 @@ fn sidebar_search_toggle() -> IconButton {
 
 fn sidebar_search_close() -> IconButton {
     sidebar_icon_button(Icon::Close, "关闭搜索")
-}
-
-fn sidebar_add_button() -> IconButton {
-    sidebar_icon_button(Icon::Add, "添加项目")
 }
 
 fn empty_heading(value: String) -> Text {
@@ -1420,13 +1419,20 @@ pub fn mount_primary_shell(
         context.append_child(sidebar_top, search_toggle)?;
     }
 
-    let add_project = context.create_detached_component(document_id, sidebar_add_button())?;
-    bind_activate(
-        context,
-        add_project,
-        Arc::clone(&sink),
-        ShellIntent::OpenAddProjectMenu,
+    let add_project_menu = context.create_detached_component(
+        document_id,
+        composer_plus_menu(snapshot.add_project_menu_open),
     )?;
+    context.on(add_project_menu, {
+        let sink = Arc::clone(&sink);
+        move |_, event: &PopoverToggled, _| {
+            if event.open {
+                emit(&sink, ShellIntent::OpenAddProjectMenu);
+            } else {
+                emit(&sink, ShellIntent::SidebarMenuAction(String::new()));
+            }
+        }
+    })?;
     let (section, _session_header, task_body) = mount_sidebar_section(
         context,
         document_id,
@@ -1434,12 +1440,12 @@ pub fn mount_primary_shell(
         Some(SESSIONS_EMPTY_TEXT),
         None,
     )?;
-    let (project_section, _project_header, project_body) = mount_sidebar_section(
+    let (project_section, project_header, project_body) = mount_sidebar_section(
         context,
         document_id,
         "项目",
         Some(PROJECTS_EMPTY_TEXT),
-        Some(add_project),
+        Some(add_project_menu),
     )?;
     let (inbox_section, inbox_header, inbox_body) =
         mount_sidebar_section(context, document_id, "收集箱", Some(INBOX_EMPTY_TEXT), None)?;
@@ -2160,10 +2166,14 @@ pub fn mount_primary_shell(
         conversation_section: section,
         task_body,
         project_section,
+        project_header,
         project_body,
+        add_project_menu,
+        add_project_items: HashMap::new(),
         inbox_section,
         inbox_body,
         task_rows: HashMap::new(),
+        row_kinds: HashMap::new(),
         row_tools: HashMap::new(),
         row_tool_buttons: HashMap::new(),
         footer_nav,
@@ -2280,6 +2290,10 @@ pub fn mount_primary_shell(
     handles.focus_targets.insert(
         target_ids::SIDEBAR_SEARCH_INPUT.to_owned(),
         search_input.stable_id(),
+    );
+    handles.focus_targets.insert(
+        target_ids::SIDEBAR_PROJECTS_ADD.to_owned(),
+        add_project_menu.stable_id(),
     );
     handles.focus_targets.insert(
         target_ids::COMPOSER_INPUT.to_owned(),
@@ -2404,6 +2418,7 @@ impl ShellHandles {
             .map(|node| node.document)
             .ok_or(FrameworkError::MissingView(self.task_body.stable_id()))?;
         self.sync_lists(context, snapshot)?;
+        self.sync_add_project_menu(context, document_id, snapshot)?;
         self.sync_settings_content(context, document_id, snapshot)?;
         let document_id = context
             .world()
@@ -2554,6 +2569,59 @@ impl ShellHandles {
             self.synced.timeline = snapshot.timeline.clone();
         }
         Ok(())
+    }
+
+    fn sync_add_project_menu(
+        &mut self,
+        context: &mut AppContext,
+        document_id: DocumentId,
+        snapshot: &PrimaryShellSnapshot,
+    ) -> Result<(), FrameworkError> {
+        context.update_component(self.add_project_menu, |menu, _| {
+            *menu = composer_plus_menu(snapshot.add_project_menu_open);
+        })?;
+        let order = if snapshot.add_project_menu_open {
+            let mut order = Vec::new();
+            let mut keep = HashSet::new();
+            for item in &snapshot.sidebar_menu {
+                keep.insert(item.id.clone());
+                let entity = if let Some(entity) = self.add_project_items.get(&item.id).copied() {
+                    context.update_component(entity, |view, _| {
+                        *view = ActionMenuItem::new(item.label.clone());
+                    })?;
+                    entity
+                } else {
+                    let entity = context.create_detached_component(
+                        document_id,
+                        ActionMenuItem::new(item.label.clone()),
+                    )?;
+                    bind_activate(
+                        context,
+                        entity,
+                        Arc::clone(&self.sink),
+                        ShellIntent::SidebarMenuAction(item.id.clone()),
+                    )?;
+                    self.add_project_items.insert(item.id.clone(), entity);
+                    entity
+                };
+                order.push(entity.stable_id());
+            }
+            self.add_project_items.retain(|key, entity| {
+                if keep.contains(key) {
+                    true
+                } else {
+                    let _ = context.remove_view(*entity);
+                    false
+                }
+            });
+            order
+        } else {
+            for entity in self.add_project_items.drain() {
+                let _ = context.remove_view(entity.1);
+            }
+            Vec::new()
+        };
+        reconcile_children(context, self.add_project_menu.stable_id(), &order)
     }
 
     fn sync_sidebar_sections(
@@ -5361,7 +5429,7 @@ impl ShellHandles {
         }
 
         let mut overlays = Vec::new();
-        if !snapshot.sidebar_menu.is_empty() {
+        if !snapshot.sidebar_menu.is_empty() && !snapshot.add_project_menu_open {
             let items: Vec<ContextMenuItem> = snapshot
                 .sidebar_menu
                 .iter()
@@ -5644,7 +5712,7 @@ fn mount_sidebar_section(
     document_id: DocumentId,
     title: &str,
     empty: Option<&str>,
-    tool: Option<Entity<IconButton>>,
+    tool: Option<Entity<ActionMenu>>,
 ) -> Result<(Entity<SidebarSection>, Entity<ListItem>, Entity<List>), FrameworkError> {
     let mut spec = SidebarSection::new(title);
     if let Some(empty) = empty {
@@ -6015,6 +6083,7 @@ pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
             nav_items: Vec::new(),
             sidebar_rows: Vec::new(),
             sidebar_menu: Vec::new(),
+            add_project_menu_open: false,
             workspace: WorkspaceModel::new(),
             tasks: Vec::new(),
             timeline: Vec::new(),
@@ -6524,6 +6593,39 @@ mod tests {
             handles
                 .plus_items
                 .get("add-file")
+                .map(|item| item.stable_id())
+        );
+    }
+
+    #[test]
+    fn add_project_menu_stays_on_the_section_header() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.add_project_menu_open = true;
+        snapshot.sidebar_menu = vec![ShellMenuItem {
+            id: "add-local-folder".to_owned(),
+            label: "使用本地文件夹".to_owned(),
+        }];
+        let (document, handles, _primary) = mounted_primary(&snapshot);
+        assert!(handles.more_menu.is_none());
+        let header_children = document
+            .context()
+            .world()
+            .node(handles.project_header.stable_id())
+            .map(|node| node.children.clone())
+            .unwrap_or_default();
+        assert!(header_children.contains(&handles.add_project_menu.stable_id()));
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .node(handles.add_project_menu.stable_id())
+                .map(|node| node.children.clone())
+                .unwrap_or_default()
+                .first()
+                .copied(),
+            handles
+                .add_project_items
+                .get("add-local-folder")
                 .map(|item| item.stable_id())
         );
     }
