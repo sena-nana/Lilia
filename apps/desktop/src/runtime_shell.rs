@@ -1447,6 +1447,12 @@ pub fn mount_primary_shell(
         Some(PROJECTS_EMPTY_TEXT),
         Some(add_project_menu),
     )?;
+    bind_activate(
+        context,
+        project_header,
+        Arc::clone(&sink),
+        ShellIntent::OpenProjectsOverview,
+    )?;
     let (inbox_section, inbox_header, inbox_body) =
         mount_sidebar_section(context, document_id, "收集箱", Some(INBOX_EMPTY_TEXT), None)?;
     bind_activate(
@@ -2292,6 +2298,10 @@ pub fn mount_primary_shell(
         search_input.stable_id(),
     );
     handles.focus_targets.insert(
+        target_ids::SIDEBAR_PROJECTS_OVERVIEW.to_owned(),
+        project_header.stable_id(),
+    );
+    handles.focus_targets.insert(
         target_ids::SIDEBAR_PROJECTS_ADD.to_owned(),
         add_project_menu.stable_id(),
     );
@@ -2642,7 +2652,7 @@ impl ShellHandles {
         })?;
         context.update_component(self.project_section, |section, _| {
             section.title = Arc::from("项目");
-            section.count = Some(groups.projects.len());
+            section.count = Some(sidebar_project_entry_count(&groups.projects));
             section.empty_text = groups
                 .projects
                 .is_empty()
@@ -2802,7 +2812,7 @@ impl ShellHandles {
             tools.push(button.stable_id());
         }
         if tools.is_empty() {
-            return Ok(());
+            return self.clear_row_tools(context, &item.id, Some(row));
         }
         let host = if let Some(host) = self.row_tools.get(&item.id).copied() {
             host
@@ -2833,6 +2843,13 @@ impl ShellHandles {
         let mut order = Vec::new();
         for item in items {
             keep.insert(item.id.clone());
+            if self
+                .row_kinds
+                .get(&item.id)
+                .is_some_and(|kind| *kind != item.kind)
+            {
+                self.remove_sidebar_row(context, &item.id);
+            }
             let state = if item.selected {
                 SidebarRowState::Active
             } else if item.ancestor {
@@ -2845,9 +2862,7 @@ impl ShellHandles {
                     row.label = Arc::from(item.label.as_str());
                     row.state = state;
                     row.depth = item.depth;
-                    if let Some(expanded) = item.expanded {
-                        row.disclosure = Some(expanded);
-                    }
+                    row.disclosure = item.expanded;
                 })?;
                 row
             } else {
@@ -2882,12 +2897,44 @@ impl ShellHandles {
                     bind_activate(context, row, Arc::clone(&self.sink), intent)?;
                 }
                 self.task_rows.insert(item.id.clone(), row);
+                self.row_kinds.insert(item.id.clone(), item.kind);
                 row
             };
             self.sync_row_tools(context, document_id, item, row)?;
             order.push(row.stable_id());
         }
         Ok(order)
+    }
+
+    fn clear_row_tools(
+        &mut self,
+        context: &mut AppContext,
+        id: &str,
+        row: Option<Entity<SidebarRow>>,
+    ) -> Result<(), FrameworkError> {
+        if let Some(row) = row {
+            context.update_component(row, |row, _| {
+                row.tools = None;
+            })?;
+        }
+        if let Some(host) = self.row_tools.remove(id) {
+            let _ = context.remove_view(host);
+        }
+        for suffix in ["stop", "draft", "menu"] {
+            if let Some(button) = self.row_tool_buttons.remove(&format!("{id}-{suffix}")) {
+                let _ = context.remove_view(button);
+            }
+        }
+        Ok(())
+    }
+
+    fn remove_sidebar_row(&mut self, context: &mut AppContext, id: &str) {
+        self.row_kinds.remove(id);
+        let row = self.task_rows.remove(id);
+        let _ = self.clear_row_tools(context, id, row);
+        if let Some(row) = row {
+            let _ = context.remove_view(row);
+        }
     }
 
     fn reconcile_task_rows(
@@ -2910,9 +2957,7 @@ impl ShellHandles {
             .cloned()
             .collect();
         for key in stale {
-            if let Some(row) = self.task_rows.remove(&key) {
-                let _ = context.remove_view(row);
-            }
+            self.remove_sidebar_row(context, &key);
         }
         reconcile_children(context, self.task_body.stable_id(), &session_order)?;
         reconcile_children(context, self.project_body.stable_id(), &project_order)?;
@@ -5617,6 +5662,17 @@ struct SidebarRowGroups {
     inbox_expanded: bool,
 }
 
+fn sidebar_project_entry_count(rows: &[ShellSidebarRow]) -> usize {
+    rows.iter()
+        .filter(|row| {
+            matches!(
+                row.kind,
+                ShellSidebarKind::Project | ShellSidebarKind::Archived
+            )
+        })
+        .count()
+}
+
 fn sidebar_row_is_section_chrome(row: &ShellSidebarRow) -> bool {
     matches!(row.kind, ShellSidebarKind::Header | ShellSidebarKind::Inbox)
         || matches!(
@@ -5692,7 +5748,13 @@ fn partition_sidebar_rows(snapshot: &PrimaryShellSnapshot) -> SidebarRowGroups {
         if sidebar_row_is_section_chrome(row) {
             continue;
         }
-        match bucket {
+        let target = match row.kind {
+            ShellSidebarKind::DropHint | ShellSidebarKind::Archived if grouped => {
+                SidebarBucket::Project
+            }
+            _ => bucket,
+        };
+        match target {
             SidebarBucket::Session => sessions.push(row.clone()),
             SidebarBucket::Project => projects.push(row.clone()),
             SidebarBucket::Inbox => inbox.push(row.clone()),
@@ -6219,6 +6281,22 @@ mod tests {
         snapshot
     }
 
+    fn test_sidebar_row(id: &str, label: &str, kind: ShellSidebarKind) -> ShellSidebarRow {
+        ShellSidebarRow {
+            id: id.to_owned(),
+            label: label.to_owned(),
+            kind,
+            selected: false,
+            ancestor: false,
+            depth: 0,
+            expanded: None,
+            icon: Icon::Folder,
+            can_stop: false,
+            can_menu: false,
+            can_draft: false,
+        }
+    }
+
     fn mounted_primary(
         snapshot: &PrimaryShellSnapshot,
     ) -> (
@@ -6713,32 +6791,8 @@ mod tests {
     fn grouped_sidebar_mounts_projects_and_inbox_only() {
         let mut snapshot = snapshot_with_empty_primary_pane();
         snapshot.sidebar_rows = vec![
-            ShellSidebarRow {
-                id: "projects-header".to_owned(),
-                label: "项目".to_owned(),
-                kind: ShellSidebarKind::Header,
-                selected: false,
-                ancestor: false,
-                depth: 0,
-                expanded: None,
-                icon: Icon::Workspace,
-                can_stop: false,
-                can_menu: false,
-                can_draft: false,
-            },
-            ShellSidebarRow {
-                id: "inbox".to_owned(),
-                label: "收集箱".to_owned(),
-                kind: ShellSidebarKind::Inbox,
-                selected: false,
-                ancestor: false,
-                depth: 0,
-                expanded: Some(true),
-                icon: Icon::Workspace,
-                can_stop: false,
-                can_menu: false,
-                can_draft: false,
-            },
+            test_sidebar_row("projects-header", "项目", ShellSidebarKind::Header),
+            test_sidebar_row("inbox", "收集箱", ShellSidebarKind::Inbox),
         ];
         let (document, handles, _primary) = mounted_primary(&snapshot);
         let project_empty = document
@@ -6766,6 +6820,127 @@ mod tests {
                 handles.inbox_section.stable_id(),
             ]
         );
+        assert_eq!(
+            handles
+                .focus_targets
+                .get(target_ids::SIDEBAR_PROJECTS_OVERVIEW)
+                .copied(),
+            Some(handles.project_header.stable_id())
+        );
+    }
+
+    #[test]
+    fn partition_sidebar_keeps_drop_hint_and_archived_with_projects() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.sidebar_rows = vec![
+            test_sidebar_row("drop-hint", "松开以添加项目", ShellSidebarKind::DropHint),
+            test_sidebar_row("projects-header", "项目", ShellSidebarKind::Header),
+            test_sidebar_row("proj-1", "Demo", ShellSidebarKind::Project),
+            test_sidebar_row("inbox", "收集箱", ShellSidebarKind::Inbox),
+            test_sidebar_row("inbox-task", "未绑定", ShellSidebarKind::Task),
+            test_sidebar_row("archived-1", "恢复 · 旧项目", ShellSidebarKind::Archived),
+        ];
+        let groups = partition_sidebar_rows(&snapshot);
+        assert!(groups.grouped);
+        assert_eq!(
+            groups
+                .projects
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["drop-hint", "proj-1", "archived-1"]
+        );
+        assert_eq!(
+            groups
+                .inbox
+                .iter()
+                .map(|row| row.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["inbox-task"]
+        );
+        assert_eq!(sidebar_project_entry_count(&groups.projects), 2);
+    }
+
+    #[test]
+    fn grouped_sidebar_project_count_excludes_nested_sessions() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        let mut project = test_sidebar_row("proj-1", "Demo", ShellSidebarKind::Project);
+        project.expanded = Some(true);
+        let mut nested = test_sidebar_row("task-1", "会话", ShellSidebarKind::Task);
+        nested.depth = 1;
+        snapshot.sidebar_rows = vec![
+            test_sidebar_row("projects-header", "项目", ShellSidebarKind::Header),
+            project,
+            nested,
+            test_sidebar_row("reveal-proj-1", "…", ShellSidebarKind::Reveal),
+            test_sidebar_row("inbox", "收集箱", ShellSidebarKind::Inbox),
+        ];
+        let (document, handles, _primary) = mounted_primary(&snapshot);
+        let count = document
+            .context()
+            .read(handles.project_section, |section| section.count)
+            .expect("read project count");
+        assert_eq!(count, Some(1));
+        let body = document
+            .context()
+            .world()
+            .node(handles.project_body.stable_id())
+            .map(|node| node.children.len())
+            .unwrap_or(0);
+        assert_eq!(body, 3);
+    }
+
+    #[test]
+    fn grouped_sidebar_rebuilds_row_when_kind_changes() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        let mut project = test_sidebar_row("proj-1", "Demo", ShellSidebarKind::Project);
+        project.expanded = Some(true);
+        project.can_menu = true;
+        project.can_draft = true;
+        snapshot.sidebar_rows = vec![
+            test_sidebar_row("projects-header", "项目", ShellSidebarKind::Header),
+            project,
+            test_sidebar_row("inbox", "收集箱", ShellSidebarKind::Inbox),
+        ];
+        let (mut document, mut handles, _primary) = mounted_primary(&snapshot);
+        let original = handles
+            .task_rows
+            .get("proj-1")
+            .map(|row| row.stable_id())
+            .expect("project row");
+        assert!(handles.row_tools.contains_key("proj-1"));
+
+        snapshot.sidebar_rows = vec![
+            test_sidebar_row("projects-header", "项目", ShellSidebarKind::Header),
+            test_sidebar_row("inbox", "收集箱", ShellSidebarKind::Inbox),
+            test_sidebar_row("proj-1", "恢复 · Demo", ShellSidebarKind::Archived),
+        ];
+        handles.sync(&mut document, &snapshot).expect("resync");
+        let rebuilt = handles
+            .task_rows
+            .get("proj-1")
+            .map(|row| row.stable_id())
+            .expect("archived row");
+        assert_ne!(original, rebuilt);
+        assert!(!handles.row_tools.contains_key("proj-1"));
+        let tools = document
+            .context()
+            .read(
+                *handles
+                    .task_rows
+                    .get("proj-1")
+                    .expect("archived row entity"),
+                |row| row.tools,
+            )
+            .expect("read tools");
+        assert_eq!(tools, None);
+        let project_children = document
+            .context()
+            .world()
+            .node(handles.project_body.stable_id())
+            .map(|node| node.children.clone())
+            .unwrap_or_default();
+        assert_eq!(project_children, vec![rebuilt]);
     }
 
     #[test]
