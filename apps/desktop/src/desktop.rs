@@ -1815,6 +1815,13 @@ impl DesktopProgram {
                 Message::Project(ProjectMessage::OpenProjectsOverview)
             }
             crate::runtime_shell::ShellIntent::OpenAddProjectMenu => {
+                if matches!(
+                    self.sidebar_menu.as_ref().map(|menu| &menu.target),
+                    Some(SidebarMenuTarget::AddProject)
+                ) {
+                    self.update_sidebar_menu(HostedContextMenuEvent::Dismiss);
+                    return None;
+                }
                 Message::Sidebar(SidebarMessage::OpenSidebarMenu {
                     target: SidebarMenuTarget::AddProject,
                     anchor_y: 96.0,
@@ -3958,6 +3965,10 @@ impl DesktopProgram {
             nav_items: self.shell_nav_items(),
             sidebar_rows: self.shell_sidebar_rows(),
             sidebar_menu: self.shell_sidebar_menu_items(),
+            sidebar_menu_anchor: self
+                .sidebar_menu
+                .as_ref()
+                .map(|menu| (menu.anchor.x, menu.anchor.y)),
             add_project_menu_open: matches!(
                 self.sidebar_menu.as_ref().map(|menu| &menu.target),
                 Some(SidebarMenuTarget::AddProject)

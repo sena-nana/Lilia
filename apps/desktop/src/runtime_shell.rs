@@ -486,6 +486,7 @@ pub struct PrimaryShellSnapshot {
     pub nav_items: Vec<ShellNavItem>,
     pub sidebar_rows: Vec<ShellSidebarRow>,
     pub sidebar_menu: Vec<ShellMenuItem>,
+    pub sidebar_menu_anchor: Option<(f32, f32)>,
     pub add_project_menu_open: bool,
     pub workspace: WorkspaceModel,
     pub tasks: Vec<ShellTaskRow>,
@@ -878,7 +879,6 @@ pub struct ShellHandles {
     project_header: Entity<ListItem>,
     project_body: Entity<List>,
     add_project_menu: Entity<ActionMenu>,
-    add_project_items: HashMap<String, Entity<ActionMenuItem>>,
     inbox_section: Entity<SidebarSection>,
     inbox_body: Entity<List>,
     task_rows: HashMap<String, Entity<SidebarRow>>,
@@ -1419,10 +1419,8 @@ pub fn mount_primary_shell(
         context.append_child(sidebar_top, search_toggle)?;
     }
 
-    let add_project_menu = context.create_detached_component(
-        document_id,
-        composer_plus_menu(snapshot.add_project_menu_open),
-    )?;
+    let add_project_menu =
+        context.create_detached_component(document_id, composer_plus_menu(false))?;
     context.on(add_project_menu, {
         let sink = Arc::clone(&sink);
         move |_, event: &PopoverToggled, _| {
@@ -2175,7 +2173,6 @@ pub fn mount_primary_shell(
         project_header,
         project_body,
         add_project_menu,
-        add_project_items: HashMap::new(),
         inbox_section,
         inbox_body,
         task_rows: HashMap::new(),
@@ -2428,7 +2425,6 @@ impl ShellHandles {
             .map(|node| node.document)
             .ok_or(FrameworkError::MissingView(self.task_body.stable_id()))?;
         self.sync_lists(context, snapshot)?;
-        self.sync_add_project_menu(context, document_id, snapshot)?;
         self.sync_settings_content(context, document_id, snapshot)?;
         let document_id = context
             .world()
@@ -2579,59 +2575,6 @@ impl ShellHandles {
             self.synced.timeline = snapshot.timeline.clone();
         }
         Ok(())
-    }
-
-    fn sync_add_project_menu(
-        &mut self,
-        context: &mut AppContext,
-        document_id: DocumentId,
-        snapshot: &PrimaryShellSnapshot,
-    ) -> Result<(), FrameworkError> {
-        context.update_component(self.add_project_menu, |menu, _| {
-            *menu = composer_plus_menu(snapshot.add_project_menu_open);
-        })?;
-        let order = if snapshot.add_project_menu_open {
-            let mut order = Vec::new();
-            let mut keep = HashSet::new();
-            for item in &snapshot.sidebar_menu {
-                keep.insert(item.id.clone());
-                let entity = if let Some(entity) = self.add_project_items.get(&item.id).copied() {
-                    context.update_component(entity, |view, _| {
-                        *view = ActionMenuItem::new(item.label.clone());
-                    })?;
-                    entity
-                } else {
-                    let entity = context.create_detached_component(
-                        document_id,
-                        ActionMenuItem::new(item.label.clone()),
-                    )?;
-                    bind_activate(
-                        context,
-                        entity,
-                        Arc::clone(&self.sink),
-                        ShellIntent::SidebarMenuAction(item.id.clone()),
-                    )?;
-                    self.add_project_items.insert(item.id.clone(), entity);
-                    entity
-                };
-                order.push(entity.stable_id());
-            }
-            self.add_project_items.retain(|key, entity| {
-                if keep.contains(key) {
-                    true
-                } else {
-                    let _ = context.remove_view(*entity);
-                    false
-                }
-            });
-            order
-        } else {
-            for entity in self.add_project_items.drain() {
-                let _ = context.remove_view(entity.1);
-            }
-            Vec::new()
-        };
-        reconcile_children(context, self.add_project_menu.stable_id(), &order)
     }
 
     fn sync_sidebar_sections(
@@ -5474,21 +5417,28 @@ impl ShellHandles {
         }
 
         let mut overlays = Vec::new();
-        if !snapshot.sidebar_menu.is_empty() && !snapshot.add_project_menu_open {
+        if !snapshot.sidebar_menu.is_empty() {
             let items: Vec<ContextMenuItem> = snapshot
                 .sidebar_menu
                 .iter()
                 .map(|item| ContextMenuItem::new(item.id.clone(), item.label.clone()))
                 .collect();
+            let (anchor_x, anchor_y) = snapshot
+                .add_project_menu_open
+                .then(|| context.world().layout_box(self.add_project_menu.stable_id()))
+                .flatten()
+                .map(|bounds| (bounds.x, bounds.y + bounds.height))
+                .or(snapshot.sidebar_menu_anchor)
+                .unwrap_or((420.0, 48.0));
             let menu = if let Some(menu) = self.more_menu {
                 context.update_component(menu, |view, _| {
-                    *view = ContextMenu::new(420.0, 48.0).items(items).open(true);
+                    *view = ContextMenu::new(anchor_x, anchor_y).items(items).open(true);
                 })?;
                 menu
             } else {
                 let menu = context.create_detached_component(
                     document_id,
-                    ContextMenu::new(420.0, 48.0).items(items).open(true),
+                    ContextMenu::new(anchor_x, anchor_y).items(items).open(true),
                 )?;
                 let sink = Arc::clone(&self.sink);
                 context.on(menu, move |_, event: &ContextMenuEvent, _| match event {
@@ -6145,6 +6095,7 @@ pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
             nav_items: Vec::new(),
             sidebar_rows: Vec::new(),
             sidebar_menu: Vec::new(),
+            sidebar_menu_anchor: None,
             add_project_menu_open: false,
             workspace: WorkspaceModel::new(),
             tasks: Vec::new(),
@@ -6679,12 +6630,12 @@ mod tests {
     fn add_project_menu_stays_on_the_section_header() {
         let mut snapshot = snapshot_with_empty_primary_pane();
         snapshot.add_project_menu_open = true;
+        snapshot.sidebar_menu_anchor = Some((24.0, 96.0));
         snapshot.sidebar_menu = vec![ShellMenuItem {
             id: "add-local-folder".to_owned(),
             label: "使用本地文件夹".to_owned(),
         }];
-        let (document, handles, _primary) = mounted_primary(&snapshot);
-        assert!(handles.more_menu.is_none());
+        let (mut document, handles, _primary) = mounted_primary(&snapshot);
         let header_children = document
             .context()
             .world()
@@ -6692,19 +6643,18 @@ mod tests {
             .map(|node| node.children.clone())
             .unwrap_or_default();
         assert!(header_children.contains(&handles.add_project_menu.stable_id()));
+        assert!(document
+            .context()
+            .world()
+            .node(handles.add_project_menu.stable_id())
+            .is_some_and(|node| node.children.is_empty()));
+        let more_menu = handles.more_menu.expect("add-project items use the overlay");
         assert_eq!(
             document
-                .context()
-                .world()
-                .node(handles.add_project_menu.stable_id())
-                .map(|node| node.children.clone())
-                .unwrap_or_default()
-                .first()
-                .copied(),
-            handles
-                .add_project_items
-                .get("add-local-folder")
-                .map(|item| item.stable_id())
+                .context_mut()
+                .read(more_menu, |menu| menu.items[0].value.to_string())
+                .expect("read overlay menu"),
+            "add-local-folder"
         );
     }
 
