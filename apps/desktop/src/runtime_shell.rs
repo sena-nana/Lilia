@@ -880,7 +880,7 @@ pub struct ShellHandles {
     project_section: Entity<SidebarSection>,
     project_header: Entity<ListItem>,
     project_body: Entity<List>,
-    add_project_menu: Entity<ActionMenu>,
+    add_project_menu: Entity<IconButton>,
     inbox_section: Entity<SidebarSection>,
     inbox_body: Entity<List>,
     task_rows: HashMap<String, Entity<SidebarRow>>,
@@ -1443,18 +1443,14 @@ pub fn mount_primary_shell(
         context.append_child(sidebar_top, search_toggle)?;
     }
 
-    let add_project_menu =
-        context.create_detached_component(document_id, composer_plus_menu(false))?;
-    context.on(add_project_menu, {
-        let sink = Arc::clone(&sink);
-        move |_, event: &PopoverToggled, _| {
-            if event.open {
-                emit(&sink, ShellIntent::OpenAddProjectMenu);
-            } else {
-                emit(&sink, ShellIntent::SidebarMenuAction(String::new()));
-            }
-        }
-    })?;
+    let add_project_menu = context
+        .create_detached_component(document_id, sidebar_icon_button(Icon::Add, "添加项目"))?;
+    bind_activate(
+        context,
+        add_project_menu,
+        Arc::clone(&sink),
+        ShellIntent::OpenAddProjectMenu,
+    )?;
     let (section, _session_header, task_body) = mount_sidebar_section(
         context,
         document_id,
@@ -5799,7 +5795,7 @@ fn mount_sidebar_section(
     document_id: DocumentId,
     title: &str,
     empty: Option<&str>,
-    tool: Option<Entity<ActionMenu>>,
+    tool: Option<Entity<IconButton>>,
 ) -> Result<(Entity<SidebarSection>, Entity<ListItem>, Entity<List>), FrameworkError> {
     let mut spec = SidebarSection::new(title);
     if let Some(empty) = empty {
@@ -6776,11 +6772,6 @@ mod tests {
             .map(|node| node.children.clone())
             .unwrap_or_default();
         assert!(header_children.contains(&handles.add_project_menu.stable_id()));
-        assert!(document
-            .context()
-            .world()
-            .node(handles.add_project_menu.stable_id())
-            .is_some_and(|node| node.children.is_empty()));
         let more_menu = handles.more_menu.expect("add-project items use the overlay");
         assert_eq!(
             document
