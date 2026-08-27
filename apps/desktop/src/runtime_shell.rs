@@ -920,6 +920,8 @@ pub struct ShellHandles {
     extras: Entity<HostStack>,
     extra_buttons: HashMap<String, Entity<Button>>,
     plus_items: HashMap<String, Entity<ActionMenuItem>>,
+    completion_slot: Entity<HostStack>,
+    completion_items: HashMap<String, Entity<ActionMenuItem>>,
     plus_slot: Entity<HostStack>,
     plus_menu: Entity<ActionMenu>,
     attach: Entity<IconButton>,
@@ -1714,6 +1716,7 @@ pub fn mount_primary_shell(
     )?;
     context.append_child(composer_toolbar, extras)?;
     context.append_child(composer_toolbar, actions)?;
+    let completion_slot = context.create_detached_component(document_id, HostStack::column(1.0))?;
     context.append_child(composer_dock, pending_panel)?;
     context.append_child(composer_dock, composer)?;
     context.append_child(composer_dock, composer_toolbar)?;
@@ -2214,6 +2217,8 @@ pub fn mount_primary_shell(
         extras,
         extra_buttons: HashMap::new(),
         plus_items: HashMap::new(),
+        completion_slot,
+        completion_items: HashMap::new(),
         plus_slot,
         plus_menu,
         attach,
@@ -2998,6 +3003,7 @@ impl ShellHandles {
         };
         reconcile_children(context, self.plus_menu.stable_id(), &plus_order)?;
         self.reconcile_composer_extras(context, document_id, snapshot)?;
+        self.reconcile_composer_completion(context, document_id, snapshot)?;
         self.sync_pending_panel(context, document_id, snapshot)?;
         self.sync_composer_actions(context, document_id, snapshot)?;
 
@@ -3009,6 +3015,9 @@ impl ShellHandles {
         let mut stage = Vec::new();
         if snapshot.pending.is_some() {
             stage.push(self.pending_panel.stable_id());
+        }
+        if !self.completion_items.is_empty() {
+            stage.push(self.completion_slot.stable_id());
         }
         stage.push(self.composer.stable_id());
         stage.push(self.composer_toolbar.stable_id());
@@ -4205,22 +4214,6 @@ impl ShellHandles {
                 ShellIntent::RemoveAttachment(attachment.id.clone()),
             ));
         }
-        for item in &snapshot.slash_items {
-            desired.push((
-                format!("slash-{}", item.name),
-                item.label.clone(),
-                ButtonKind::Subtle,
-                ShellIntent::ApplySlash(item.name.clone()),
-            ));
-        }
-        for item in &snapshot.mention_items {
-            desired.push((
-                format!("mention-{}", item.id),
-                item.label.clone(),
-                ButtonKind::Subtle,
-                ShellIntent::SelectMention(item.id.clone()),
-            ));
-        }
         let mut order = vec![
             self.plus_slot.stable_id(),
             self.attach.stable_id(),
@@ -4272,6 +4265,58 @@ impl ShellHandles {
             }
         }
         reconcile_children(context, self.extras.stable_id(), &order)
+    }
+
+    fn reconcile_composer_completion(
+        &mut self,
+        context: &mut AppContext,
+        document_id: DocumentId,
+        snapshot: &PrimaryShellSnapshot,
+    ) -> Result<(), FrameworkError> {
+        let mut keep = HashSet::new();
+        let mut order = Vec::new();
+        let desired = snapshot
+            .slash_items
+            .iter()
+            .map(|item| {
+                (
+                    format!("slash-{}", item.name),
+                    item.label.clone(),
+                    ShellIntent::ApplySlash(item.name.clone()),
+                )
+            })
+            .chain(snapshot.mention_items.iter().map(|item| {
+                (
+                    format!("mention-{}", item.id),
+                    item.label.clone(),
+                    ShellIntent::SelectMention(item.id.clone()),
+                )
+            }));
+        for (id, label, intent) in desired {
+            keep.insert(id.clone());
+            let item = if let Some(item) = self.completion_items.get(&id).copied() {
+                context.update_component(item, |item, _| {
+                    *item = ActionMenuItem::new(label);
+                })?;
+                item
+            } else {
+                let item =
+                    context.create_detached_component(document_id, ActionMenuItem::new(label))?;
+                bind_activate(context, item, Arc::clone(&self.sink), intent)?;
+                self.completion_items.insert(id, item);
+                item
+            };
+            order.push(item.stable_id());
+        }
+        self.completion_items.retain(|key, item| {
+            if keep.contains(key) {
+                true
+            } else {
+                let _ = context.remove_view(*item);
+                false
+            }
+        });
+        reconcile_children(context, self.completion_slot.stable_id(), &order)
     }
 
     fn sync_settings_content(
@@ -6592,6 +6637,62 @@ mod tests {
     }
 
     #[test]
+    fn slash_items_mount_above_the_composer() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.slash_items = vec![ShellSlashItem {
+            name: "status".to_owned(),
+            label: "查看状态".to_owned(),
+        }];
+        let (document, handles, _primary) = mounted_primary(&snapshot);
+        let extras = document
+            .context()
+            .world()
+            .node(handles.extras.stable_id())
+            .map(|node| node.children.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            extras,
+            vec![
+                handles.plus_slot.stable_id(),
+                handles.attach.stable_id(),
+                handles.permission_slot.stable_id()
+            ]
+        );
+        let dock = document
+            .context()
+            .world()
+            .node(handles.composer.stable_id())
+            .and_then(|node| node.parent)
+            .expect("composer dock");
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .node(dock)
+                .map(|node| node.children.clone())
+                .unwrap_or_default(),
+            vec![
+                handles.completion_slot.stable_id(),
+                handles.composer.stable_id(),
+                handles.composer_toolbar.stable_id(),
+            ]
+        );
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .node(handles.completion_slot.stable_id())
+                .map(|node| node.children.clone())
+                .unwrap_or_default()
+                .first()
+                .copied(),
+            handles
+                .completion_items
+                .get("slash-status")
+                .map(|item| item.stable_id())
+        );
+    }
+
     fn composer_plus_items_mount_inside_the_open_menu() {
         let mut snapshot = snapshot_with_empty_primary_pane();
         snapshot.composer_plus_open = true;
