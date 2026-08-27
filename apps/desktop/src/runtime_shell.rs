@@ -874,10 +874,12 @@ pub struct ShellHandles {
     conversation_section: Entity<SidebarSection>,
     task_body: Entity<List>,
     project_section: Entity<SidebarSection>,
+    project_header: Entity<ListItem>,
     project_body: Entity<List>,
     inbox_section: Entity<SidebarSection>,
     inbox_body: Entity<List>,
     task_rows: HashMap<String, Entity<SidebarRow>>,
+    row_kinds: HashMap<String, ShellSidebarKind>,
     row_tools: HashMap<String, Entity<HostStack>>,
     row_tool_buttons: HashMap<String, Entity<Button>>,
     footer_nav: HashMap<String, Entity<SidebarFooterButton>>,
@@ -2279,9 +2281,10 @@ pub fn mount_primary_shell(
         target_ids::SIDEBAR_SEARCH_INPUT.to_owned(),
         search_input.stable_id(),
     );
-    handles
-        .focus_targets
-        .insert("lilia.composer.input".to_owned(), composer.stable_id());
+    handles.focus_targets.insert(
+        target_ids::COMPOSER_INPUT.to_owned(),
+        composer.stable_id(),
+    );
     handles.sync_lists(context, snapshot)?;
     handles.sync_settings_content(context, document_id, snapshot)?;
     handles.sync_workspace_page(context, document_id, snapshot)?;
@@ -6537,6 +6540,25 @@ mod tests {
         assert_eq!(
             children.first().copied(),
             Some(handles.new_conversation.stable_id())
+        );
+    }
+
+    #[test]
+    fn an_enabled_composer_accepts_pointer_and_focus() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.composer_disabled = false;
+        let (mut document, handles, _primary) = mounted_primary(&snapshot);
+        let disabled = document
+            .context_mut()
+            .read(handles.composer, |composer| composer.disabled)
+            .expect("read composer");
+        assert!(!disabled);
+        assert_eq!(
+            handles
+                .focus_targets
+                .get(target_ids::COMPOSER_INPUT)
+                .copied(),
+            Some(handles.composer.stable_id())
         );
     }
 

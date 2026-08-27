@@ -616,4 +616,30 @@ mod tests {
         );
         assert_eq!(snapshot.composer, "stale");
     }
+
+    #[test]
+    fn a_transient_draft_keeps_typed_content() {
+        let kernel = Kernel::new();
+        let cx = UiModuleContext::new(&kernel, WindowId::PRIMARY);
+        let mut module = ComposerModule::default();
+        let composer = DesktopComposerState::transient(
+            TaskId::new("draft-task").expect("the id is not blank"),
+        );
+        module.reduce(
+            ComposerMessage::LoadTransient {
+                composer,
+                project_id: None,
+            },
+            &cx,
+        );
+        module.reduce(
+            ComposerMessage::SetContent("first question".to_owned()),
+            &cx,
+        );
+
+        let mut snapshot = empty_snapshot();
+        module.project(&cx, &mut snapshot);
+        assert_eq!(snapshot.composer, "first question");
+        assert!(module.is_transient());
+    }
 }

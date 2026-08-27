@@ -7904,6 +7904,19 @@ impl DesktopProgram {
         window_id: HostedWindowId,
         message: crate::module::composer::ComposerMessage,
     ) -> bool {
+        if window_id == HostedWindowId::PRIMARY
+            && matches!(
+                message,
+                crate::module::composer::ComposerMessage::SetContent(_)
+                    | crate::module::composer::ComposerMessage::Edited(_)
+                    | crate::module::composer::ComposerMessage::ApplyCommand(_)
+                    | crate::module::composer::ComposerMessage::SelectConversationReference(_)
+                    | crate::module::composer::ComposerMessage::SelectContextAttachment(_)
+            )
+            && !self.ensure_primary_composer_ready()
+        {
+            return false;
+        }
         let Some(outcome) = self.reduce_composer(window_id, message) else {
             return false;
         };
@@ -14794,9 +14807,18 @@ impl DesktopProgram {
     }
 
     fn composer_input_is_locked(&self) -> bool {
-        self.settings_open
-            || self.automations_open
-            || (self.current_selected_task().is_none() && self.main_conversation_draft.is_none())
+        self.settings_open || self.automations_open
+    }
+
+    fn ensure_primary_composer_ready(&mut self) -> bool {
+        if self.composer_input_is_locked() {
+            return false;
+        }
+        if self.current_selected_task().is_some() || self.main_conversation_draft.is_some() {
+            return true;
+        }
+        self.open_main_conversation_draft();
+        self.main_conversation_draft.is_some()
     }
 
     fn selected_task_workspace_path(&self) -> Option<PathBuf> {
