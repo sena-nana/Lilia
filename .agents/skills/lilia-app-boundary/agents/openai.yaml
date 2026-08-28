@@ -1,4 +1,4 @@
 interface:
   display_name: "Lilia App Boundary"
-  short_description: "Decide app versus LiliaUI ownership"
-  default_prompt: "Use $lilia-app-boundary to decide where a Lilia app change belongs."
+  short_description: "Decide app versus NanaUI ownership"
+  default_prompt: "Use $lilia-app-boundary to decide where a LiliaCode change belongs."

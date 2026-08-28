@@ -2,7 +2,7 @@
 
 ## Intent
 
-Chat Composer is redesigned as a focused input workspace: the main editor keeps inline context references, pending agent actions temporarily take over the input, and controls are grouped into a two-level toolbar.
+Chat Composer is a focused input workspace: the main editor keeps inline context references, pending agent actions temporarily take over the input, and controls stay grouped in the composer card.
 
 ## Behavior Model
 
@@ -14,10 +14,9 @@ Chat Composer is redesigned as a focused input workspace: the main editor keeps 
 
 - Stage: pending panel or rich input, followed by the context search panel when active.
 - Toolbar: image previews first, then attachment, permission, plan, and send/interrupt controls.
-- The visual language stays within existing `chat-composer`, `composer-inline`, `chat-chip`, and `chat-attachment-chip` classes.
+- Compose with `HostStack::composer_card()` in `apps/desktop/src/runtime_layout.rs` and NanaUI `Stack` presets. Do not introduce a second visual language for the composer.
 
 ## Confirmation Notes
 
-- Public props and emits on `ChatComposer` stay unchanged.
-- No contracts changes are required.
-- `prefers-reduced-motion` behavior is not added or altered.
+- Visible composer behavior stays on the existing native controls and message flow in `apps/desktop`.
+- Contract changes are required only when the interaction payload itself changes.

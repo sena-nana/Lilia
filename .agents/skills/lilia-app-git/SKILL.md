@@ -1,6 +1,6 @@
 ---
 name: lilia-app-git
-description: Git workflow for final Lilia desktop application changes. Use when Codex stages, commits, pushes, merges, syncs dependencies, reviews diffs before committing, or needs to preserve user and other-agent changes in a final Lilia app repository.
+description: Git workflow for LiliaCode desktop changes. Use when staging, committing, pushing, merging, syncing dependencies, reviewing diffs before committing, or preserving user and other-agent changes.
 ---
 
 # Lilia App Git
@@ -30,4 +30,5 @@ description: Git workflow for final Lilia desktop application changes. Use when 
 ## Dependency Updates
 
 - Keep dependency update commits dependency-only unless the user asked for extra work.
-- After changing LiliaUI dependencies or lockfiles, include the validation required by `$lilia-app-validation`.
+- NanaUI is GIT-pinned in `apps/desktop/Cargo.toml`. Mutsuki pins live in the workspace `Cargo.toml` and must switch together; see `docs/design/mutsuki-dependency-pin.md`.
+- After changing pins or `Cargo.lock`, include the validation required by `$lilia-app-validation`.

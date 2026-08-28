@@ -60,7 +60,7 @@ Border color and border width live in different fields; if either is missing the
 
 Use `$lilia-agent-debug` for detailed Agent debug implementation and validation rules. Keep the user-facing UI normal while exposing stable hidden structure.
 
-- Keep `data-agent-id` invisible and non-semantic to users. Do not add public technical instructions, automation labels, or debug-only copy to the UI.
+- Keep debug target IDs invisible and non-semantic to users. Do not add public technical instructions, automation labels, or debug-only copy to the UI.
 - Important state must be visible as product state: pending approval, blocked work, failed action, empty result, loading, unavailable provider, and recoverable error all need clear user-facing states and real actions where applicable.
 - If a visible action cannot be executed, show a truthful unavailable state or remove the action. No placeholder buttons, fake menus, fake sidebar items, or unconnected Agent affordances.
 

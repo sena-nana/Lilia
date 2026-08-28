@@ -23,30 +23,20 @@ $RECYCLE.BIN/
 # ---------- 日志 ----------
 *.log
 logs/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
 
 # ---------- 环境变量 / 机密 ----------
 .env
 .env.*
 !.env.example
-!.env.yarn
 *.pem
 *.key
 .secrets/
 
-# ---------- Node.js / 前端 ----------
+# ---------- 禁止再引入的 Node / 前端产物（安全网） ----------
 node_modules/
 **/node_modules/
 .npm/
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/sdks
-!.yarn/versions
+.yarn/
 .pnp.*
 .cache/
 .vite/
@@ -61,26 +51,17 @@ dist/
 **/local.properties
 captures/
 
-# ---------- TypeScript ----------
-*.tsbuildinfo
-packages/*/src/**/*.js
-packages/*/src/**/*.d.ts
-packages/*/src/**/*.js.map
-packages/*/src/**/*.d.ts.map
-
 # ---------- 测试 / 覆盖率 ----------
 coverage/
 *.lcov
-.vitest-cache/
 agent-debug-runs/
 artifacts/native-preview-smoke/
 
-# ---------- Rust / Cargo / Tauri ----------
+# ---------- Rust / Cargo ----------
 target/
 **/target/
 **/*.rs.bk
 *.pdb
-**/src-tauri/gen/schemas/
 
 # ---------- 数据库 ----------
 *.sqlite

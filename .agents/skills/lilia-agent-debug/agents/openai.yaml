@@ -1,4 +1,4 @@
 interface:
   display_name: "Lilia Agent Debug"
-  short_description: "Agent debug workflow for Lilia apps"
-  default_prompt: "Use $lilia-agent-debug to add or validate Agent debugging in a Lilia app."
+  short_description: "Native Agent debug workflow"
+  default_prompt: "Use $lilia-agent-debug to add or validate Agent debugging in LiliaCode."
