@@ -59,8 +59,8 @@ lilia-platform = { workspace = true }
 lilia-storage = { workspace = true }
 minisign-verify = "0.2.5"
 mutsuki-agent-contracts = { workspace = true }
-nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "b6f5145790c7eec0a61196dde34252c76672fed3", features = ["bundled-fonts", "charts", "controls", "diagrams", "graph-canvas", "hosted", "image-viewer", "math", "overlays", "popover", "qr-code", "rich-text", "selects", "settings-components", "surfaces", "syntax-highlighting"] }
-nana-ui-platform = { git = "https://github.com/sena-nana/NanaUI.git", rev = "b6f5145790c7eec0a61196dde34252c76672fed3", package = "nana-ui-platform" }
+nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "f0fdcc5c2e6428a4923931205e1a917d1b8706dd", features = ["full"] }
+nana-ui-platform = { git = "https://github.com/sena-nana/NanaUI.git", rev = "f0fdcc5c2e6428a4923931205e1a917d1b8706dd", package = "nana-ui-platform" }
 reqwest = { workspace = true, features = ["form", "query"] }
 rusqlite = { workspace = true, features = ["backup"] }
 semver = "1.0.28"
@@ -70,6 +70,9 @@ sha2 = { workspace = true }
 uuid = { workspace = true }
 url = { workspace = true }
 zip = { version = "4.6.1", default-features = false, features = ["deflate"] }
+
+[build-dependencies]
+winresource = "0.1.17"
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 global-hotkey = "0.8.0"

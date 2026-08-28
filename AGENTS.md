@@ -19,6 +19,16 @@
 - Markdown 是仓库内文档，不构建或发布文档站。
 - 禁止重新引入 Web 桌面宿主、JavaScript 包管理器或编辑器扩展实现。
 
+## UI 布局与边框参考
+
+写或改 NanaUI 界面前，按顺序读以下材料；不要凭 CSS 或其他 GUI 框架的直觉写布局：
+
+1. NanaUI `docs/rust-layout.md` —— Rust 路径布局与边框标准写法（`Stack` 预设、`outline(role, width)`、默认值坑位）。
+2. `apps/desktop/src/runtime_layout.rs` —— 本仓库布局惯用法权威（`HostStack` 预设、卡片三件套、控件构造器）。
+3. `.agents/skills/lilia-app-design/SKILL.md` —— 视觉层级与卡片、浮层规范。
+
+NanaUI 文档与 `examples/component-gallery` 位于其仓库 checkout：工作区旁的 `NanaUI/`，或 cargo git 缓存 `~/.cargo/git/checkouts/nanaui-*/<rev>/docs/`。关键事实：容器默认竖排；水平排列必须用 `Stack::row` / `HostStack::row` 等预设；边框颜色与宽度分属两个字段，缺一即静默不画，必须用 `outline(...)` 一次写全；`flex_shrink` 缺省按 0 处理，不是 CSS 的 1。
+
 ## 运行入口
 
 从仓库根目录执行：
