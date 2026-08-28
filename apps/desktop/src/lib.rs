@@ -136,6 +136,11 @@ fn run_application() -> i32 {
         return 2;
     }
 
+    if let Ok(icon) = nana_ui::window_icon_from_png(include_bytes!("../assets/icons/128x128@2x.png"))
+    {
+        nana_ui_platform::register_application_icon(icon);
+    }
+
     let mut settings = RuntimeWindowSettings::new(PRODUCT_NAME)
         .initial_size(1180.0, 760.0)
         .minimum_size(780.0, 560.0);

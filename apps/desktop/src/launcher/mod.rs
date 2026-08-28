@@ -14,6 +14,8 @@ mod win;
 const ICON_128: &[u8] = include_bytes!("../../assets/icons/128x128.png");
 #[cfg(any(windows, target_os = "linux"))]
 const ICON_256: &[u8] = include_bytes!("../../assets/icons/128x128@2x.png");
+#[cfg(target_os = "macos")]
+const ICON_DOCK: &[u8] = include_bytes!("../../assets/icons/icon-macos.png");
 
 #[cfg(windows)]
 const HOST_LIBRARY: &str = "liliacode_host.dll";
@@ -34,6 +36,8 @@ pub fn run() -> i32 {
         }
     };
     let mut splash = if guard.is_primary() && should_show_startup(&arguments) {
+        #[cfg(target_os = "macos")]
+        macos::set_dock_icon(ICON_DOCK);
         match Splash::show() {
             Ok(window) => Some(window),
             Err(error) => {
