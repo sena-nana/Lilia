@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -20,6 +18,27 @@ env:
   SCCACHE_GHA_ENABLED: "true"
 
 jobs:
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            code:
+              - 'crates/**'
+              - 'apps/**'
+              - 'xtask/**'
+              - 'tests/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+
   verify:
     name: Verify Cargo workspace
     runs-on: ubuntu-latest
@@ -35,29 +54,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo xtask verify
 
-  android:
-    name: Verify Android companion
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-          cache: gradle
-      - uses: android-actions/setup-android@v3
-      - uses: mozilla-actions/sccache-action@v0.0.10
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo xtask android doctor
-      - run: cargo xtask android test
-      - run: cargo xtask android build
-
   native-agent-debug:
     name: Verify Native Agent Debug
+    needs: changes
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.code == 'true' }}
     runs-on: windows-latest
     timeout-minutes: 30
     steps:

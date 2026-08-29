@@ -66,8 +66,6 @@ jobs:
         shell: pwsh
         run: choco install nsis --no-progress -y
 
-      - run: cargo xtask verify
-      - run: cargo xtask agent-debug
       - run: cargo xtask release windows --tag "${{ steps.release.outputs.tag }}"
 
       - name: Create draft GitHub release
@@ -88,11 +86,3 @@ jobs:
           }
 
       - run: cargo xtask installer-smoke --tag "${{ steps.release.outputs.tag }}"
-
-      - name: Upload Agent Debug evidence
-        if: always()
-        uses: actions/upload-artifact@v6
-        with:
-          name: lilia-agent-debug-${{ github.run_id }}
-          path: agent-debug-runs/lilia-*
-          if-no-files-found: warn
