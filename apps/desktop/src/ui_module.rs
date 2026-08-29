@@ -91,6 +91,13 @@ impl<'a> UiModuleContext<'a> {
             .get(self.window)
     }
 
+    /// The kernel, for mechanisms a domain write legitimately needs: job
+    /// submission above all. Facts still come from service slots, not from
+    /// reaching into the kernel for state.
+    pub fn kernel(&self) -> &'a Kernel {
+        self.kernel
+    }
+
     /// The application facade, through which a domain write is validated and
     /// broadcast to the other windows.
     pub fn application(&self) -> Result<crate::application::DesktopApplication, String> {
@@ -146,6 +153,15 @@ impl<'a> UiModuleContext<'a> {
 pub enum ShellEffect {
     RevealProjectSurface(ProjectWorkspaceSurface),
     PickPluginDirectory,
+    /// Navigates to a definition target the documents module resolved. Where
+    /// the item lands — pane activation, window focus, first reveal — is window
+    /// and pane work, so the module hands over the resolved target and the
+    /// shell performs the move.
+    OpenDocumentDefinition {
+        source_window: crate::runtime_compat::HostedWindowId,
+        project_id: lilia_contracts::ProjectId,
+        target: crate::application::DesktopDocumentDefinitionTarget,
+    },
 }
 
 /// What a module asks the shell to do after handling a message.

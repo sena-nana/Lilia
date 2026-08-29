@@ -133,10 +133,11 @@ use crate::host::NativeDesktopHost;
 use crate::iab_panel::{IabPanelMessage, IabPanelState};
 use crate::iab_window::{IabWindowMessage, IabWindowState};
 use crate::markdown_images::{load_markdown_image, LoadedMarkdownImage};
+use crate::module::documents::{DocumentDefinitionOutcome, DocumentMessage, DocumentsModule};
 use crate::project_files_panel;
 use crate::provider_ai_settings::ProviderAiSettingsState;
 use crate::shell::{
-    DocumentMessage, ExtensionsMessage, GitHubMessage, HookHandlerDraftField, ImportMessage,
+    ExtensionsMessage, GitHubMessage, HookHandlerDraftField, ImportMessage,
     ProjectCloneMessage, ProjectMessage, PromptOptimizeMessage, ProviderMessage, QuotaMessage,
     RemoteMessage, SidebarMessage, SuggestionsMessage, TaskMessage, UpdateMessage, WorktreeMessage,
 };
@@ -1500,14 +1501,7 @@ pub struct DesktopProgram {
     github_error: Option<String>,
     project_surface: ProjectSurface,
     project_files: Option<ProjectFilesSnapshot>,
-    opened_project_document: Option<DocumentSnapshot>,
     project_files_error: Option<String>,
-    document_editors: BTreeMap<WorkspaceItemId, DocumentEditorViewState>,
-    /// Diagnostics and definition jobs in flight, keyed by job id. Each job is
-    /// answered against the document or editor recorded here, so no screen
-    /// keeps a sequence field to recognise its own reply.
-    active_diagnostics_jobs: BTreeMap<JobId, crate::application::DocumentId>,
-    active_definition_jobs: BTreeMap<JobId, (WorkspaceItemId, HostedWindowId)>,
     terminal_snapshots: BTreeMap<DesktopTerminalSessionId, DesktopTerminalSnapshot>,
     terminal_inputs: BTreeMap<DesktopTerminalSessionId, String>,
     terminal_scrollback: BTreeMap<DesktopTerminalSessionId, usize>,
@@ -2741,8 +2735,8 @@ impl DesktopProgram {
 
     fn active_document_item_id(&self) -> Option<WorkspaceItemId> {
         let item_id = self.panel_layout.active_workspace_item().ok().flatten()?;
-        self.document_editors
-            .contains_key(item_id)
+        self.documents_module()
+            .is_some_and(|module| module.has_editor(item_id))
             .then(|| item_id.clone())
     }
 
@@ -3827,6 +3821,17 @@ impl DesktopProgram {
         self.dispatch_module(&crate::module::roadmap::RoadmapModule::feature_id())
     }
 
+    /// The documents module of the primary window, whose pane hosts every
+    /// document editor. `None` before the shell furnished its modules, which
+    /// bootstrap reads treat as "no document is open".
+    fn documents_module(&self) -> Option<&DocumentsModule> {
+        self.ui_modules.get(&DocumentsModule::feature_id())
+    }
+
+    fn documents_module_mut(&mut self) -> Option<&mut DocumentsModule> {
+        self.ui_modules.get_mut(&DocumentsModule::feature_id())
+    }
+
     /// The module context for the primary window.
     fn primary_module_context(&self) -> crate::ui_module::UiModuleContext<'_> {
         self.module_context(WindowId::PRIMARY, self.shell_project_page())
@@ -4022,7 +4027,8 @@ impl DesktopProgram {
                 Vec::new()
             },
             settings: self.settings_shell_snapshot(),
-            document: self.active_document_shell_snapshot(),
+            // Written by the documents module's own projection.
+            document: None,
             files: self.project_files_shell_snapshot(),
             terminal: self.active_terminal_shell_snapshot(),
             markdown_preview: self.primary_markdown_preview_snapshot(),
@@ -4377,53 +4383,14 @@ impl DesktopProgram {
         }
     }
 
-    fn active_document_shell_snapshot(
-        &self,
-    ) -> Option<crate::runtime_shell::ShellDocumentSnapshot> {
-        let item_id = self.active_document_item_id()?;
-        let state = self.document_editors.get(&item_id)?;
-        Some(crate::runtime_shell::ShellDocumentSnapshot {
-            item_id: item_id.as_str().to_owned(),
-            title: state.path_label.clone(),
-            text: state.editor.text(),
-            language: state.language_label.clone(),
-            status: state
-                .conflict_message
-                .clone()
-                .or_else(|| state.status_message.clone())
-                .unwrap_or_else(|| {
-                    if state.dirty {
-                        "未保存".to_owned()
-                    } else {
-                        state.language_label.clone()
-                    }
-                }),
-            read_only: state.read_only,
-            dirty: state.dirty,
-            diagnostics: state
-                .diagnostics
-                .iter()
-                .map(|diagnostic| crate::runtime_shell::ShellDiagnosticRow {
-                    severity: match diagnostic.severity {
-                        DiagnosticSeverity::Error => "错误".to_owned(),
-                        DiagnosticSeverity::Warning => "警告".to_owned(),
-                        DiagnosticSeverity::Information => "信息".to_owned(),
-                        DiagnosticSeverity::Hint => "提示".to_owned(),
-                    },
-                    message: diagnostic.message.clone(),
-                })
-                .collect(),
-        })
-    }
-
     fn project_files_shell_snapshot(&self) -> Option<crate::runtime_shell::ShellFilesSnapshot> {
         if self.project_surface != ProjectSurface::Files {
             return None;
         }
         let snapshot = self.project_files.as_ref()?;
         let selected = self
-            .opened_project_document
-            .as_ref()
+            .documents_module()
+            .and_then(|module| module.opened_document())
             .map(|document| document.canonical_path.display().to_string());
         Some(crate::runtime_shell::ShellFilesSnapshot {
             tree: project_files_panel::project_files_tree(snapshot, selected.as_deref()),
@@ -4690,7 +4657,7 @@ impl DesktopProgram {
         if self.current_selected_project().is_some() {
             context.insert("project");
         }
-        if item_id.is_some_and(|item_id| self.document_editors.contains_key(item_id)) {
+        if item_id.is_some_and(|item_id| self.documents_module().is_some_and(|m| m.has_editor(item_id))) {
             context.insert("document");
         }
         context
@@ -4751,7 +4718,7 @@ impl DesktopProgram {
         }
         let restore_focus = item_id
             .as_ref()
-            .filter(|item_id| self.document_editors.contains_key(*item_id))
+            .filter(|item_id| self.documents_module().is_some_and(|m| m.has_editor(item_id)))
             .map(|item_id| target_ids::document_editor_input(item_id.as_str()));
         self.command_source_window = window_id;
         self.command_source_item = item_id;
@@ -4849,7 +4816,7 @@ impl DesktopProgram {
             }
             SAVE_DOCUMENT_ACTION => {
                 if let Some(item_id) = source_item {
-                    self.save_document_editor(item_id);
+                    self.route_documents_message(DocumentMessage::SaveEditor(item_id));
                 }
             }
             TOGGLE_THEME_ACTION => self.set_theme(self.theme.toggle()),
@@ -6023,11 +5990,9 @@ impl DesktopProgram {
             lilia_feature_suggestions::GENERATE_PROTOCOL => {
                 self.apply_conversation_suggestion_job(event.job_id, event.state)
             }
-            lilia_feature_document::DIAGNOSTICS_PROTOCOL => {
-                self.apply_document_diagnostics_job(event.job_id, event.state)
-            }
-            lilia_feature_document::DEFINITION_PROTOCOL => {
-                self.apply_document_definition_job(event.job_id, event.state)
+            lilia_feature_document::DIAGNOSTICS_PROTOCOL
+                | lilia_feature_document::DEFINITION_PROTOCOL => {
+                self.route_documents_message(DocumentMessage::Job(event));
             }
             lilia_feature_github::BIND_PROTOCOL
                 if self.active_github_binding_job == Some(event.job_id) =>
@@ -7393,7 +7358,9 @@ impl DesktopProgram {
     fn refresh_project_files(&mut self) {
         let Some(project_id) = self.current_selected_project() else {
             self.project_files = None;
-            self.opened_project_document = None;
+            if let Some(module) = self.documents_module_mut() {
+                module.set_opened_document(None);
+            }
             self.project_files_error = None;
             return;
         };
@@ -7408,7 +7375,9 @@ impl DesktopProgram {
                 .is_none_or(|path| path.trim().is_empty())
         }) {
             self.project_files = None;
-            self.opened_project_document = None;
+            if let Some(module) = self.documents_module_mut() {
+                module.set_opened_document(None);
+            }
             self.project_files_error = Some("当前项目没有工作区路径。".to_owned());
             return;
         }
@@ -7478,7 +7447,9 @@ impl DesktopProgram {
         {
             Ok((document, item)) => {
                 let document_id = document.id;
-                self.opened_project_document = Some(document.clone());
+                if let Some(module) = self.documents_module_mut() {
+                    module.set_opened_document(Some(document.clone()));
+                }
                 self.project_files_error = None;
                 if let Ok(snapshot) = self
                     .kernel
@@ -7487,7 +7458,9 @@ impl DesktopProgram {
                 {
                     self.project_files = Some(snapshot);
                 }
-                self.ensure_document_editor_state(&item, &document);
+                if let Some(module) = self.documents_module_mut() {
+                    module.ensure_editor(&item, &document);
+                }
                 let item_id = item.id.clone();
                 let window_id = if let Some((window_id, pane_id)) =
                     self.workspace_item_location(&item_id)
@@ -7511,7 +7484,12 @@ impl DesktopProgram {
                     window_id,
                     target: target_ids::document_editor_input(item_id.as_str()),
                 });
-                self.start_document_diagnostics(document_id, Some(project_id));
+                let module = self
+                    .ui_modules
+                    .get_mut::<DocumentsModule>(&DocumentsModule::feature_id())
+                    .expect("every window is furnished with the same modules");
+                let jobs = self.kernel.kernel().jobs();
+                module.start_diagnostics(document_id, Some(project_id), jobs);
                 return Some(item_id);
             }
             Err(error) => {
@@ -7544,7 +7522,7 @@ impl DesktopProgram {
             hit.end_line,
             hit.end_character,
         ) {
-            let Some(state) = self.document_editors.get(&item_id) else {
+            let Some(state) = self.documents_module().and_then(|m| m.editor(&item_id)) else {
                 return;
             };
             if !select_document_editor_range(
@@ -7962,6 +7940,13 @@ impl DesktopProgram {
                     self.open_project_surface(surface);
                 }
                 crate::ui_module::ShellEffect::PickPluginDirectory => {}
+                crate::ui_module::ShellEffect::OpenDocumentDefinition {
+                    source_window,
+                    project_id,
+                    target,
+                } => {
+                    self.navigate_document_definition_target(source_window, project_id, target);
+                }
             }
         }
         ok
@@ -8319,6 +8304,13 @@ impl DesktopProgram {
                 }
                 crate::ui_module::ShellEffect::PickPluginDirectory => {
                     self.pick_plugin_directory();
+                }
+                crate::ui_module::ShellEffect::OpenDocumentDefinition {
+                    source_window,
+                    project_id,
+                    target,
+                } => {
+                    self.navigate_document_definition_target(source_window, project_id, target);
                 }
             }
         }
@@ -10124,17 +10116,9 @@ impl DesktopProgram {
         self.sync_document_editors_from_workspaces();
     }
 
-    fn ensure_document_editor_state(&mut self, item: &WorkspaceItem, snapshot: &DocumentSnapshot) {
-        if let Some(existing) = self.document_editors.get_mut(&item.id) {
-            existing.sync_from_snapshot(snapshot);
-            return;
-        }
-        self.document_editors.insert(
-            item.id.clone(),
-            DocumentEditorViewState::from_snapshot(snapshot),
-        );
-    }
-
+    /// Rebuilds the documents module's editor set from every workspace that
+    /// renders documents. The shell enumerates the items because it owns the
+    /// windows; the module owns the states they map to.
     fn sync_document_editors_from_workspaces(&mut self) {
         let mut document_items = self
             .workspace_items
@@ -10154,304 +10138,9 @@ impl DesktopProgram {
         }
         document_items.sort_by(|left, right| left.id.cmp(&right.id));
         document_items.dedup_by(|left, right| left.id == right.id);
-        let mut next = BTreeMap::new();
-        for item in document_items {
-            let Some(path) = item.document_path().ok().flatten() else {
-                continue;
-            };
-            let snapshot = match self.document_editors.get(&item.id).and_then(|state| {
-                self.kernel
-                    .session()
-                    .document_snapshot(state.document_id)
-                    .ok()
-            }) {
-                Some(snapshot) => snapshot,
-                None => match self.kernel.session().open_document_at_path(&path) {
-                    Ok((snapshot, _)) => snapshot,
-                    Err(error) => {
-                        eprintln!("failed to sync Native document editor: {error}");
-                        continue;
-                    }
-                },
-            };
-            let state = if let Some(mut existing) = self.document_editors.remove(&item.id) {
-                existing.sync_from_snapshot(&snapshot);
-                existing
-            } else {
-                DocumentEditorViewState::from_snapshot(&snapshot)
-            };
-            next.insert(item.id.clone(), state);
-        }
-        self.document_editors = next;
-    }
-
-    fn sync_document_editor_views(&mut self, document_id: crate::application::DocumentId) {
-        let Ok(snapshot) = self.kernel.session().document_snapshot(document_id) else {
-            return;
-        };
-        for state in self
-            .document_editors
-            .values_mut()
-            .filter(|state| state.document_id == document_id)
-        {
-            state.sync_from_snapshot(&snapshot);
-        }
-    }
-
-    fn start_document_diagnostics(
-        &mut self,
-        document_id: crate::application::DocumentId,
-        project_id: Option<ProjectId>,
-    ) {
-        for state in self
-            .document_editors
-            .values_mut()
-            .filter(|state| state.document_id == document_id)
-        {
-            state.mark_diagnostics_checking();
-        }
-        let request = JobRequest::new(
-            lilia_feature_document::DIAGNOSTICS_PROTOCOL,
-            serde_json::to_value(lilia_feature_document::DiagnosticsRequest {
-                document_id,
-                project_id: project_id.map(|project_id| project_id.to_string()),
-            })
-            .expect("a diagnostics request is representable as JSON"),
-        )
-        .in_slot(lilia_feature_document::diagnostics_slot(document_id));
-
-        match self.kernel.jobs().submit(request) {
-            Ok(handle) => {
-                self.active_diagnostics_jobs
-                    .insert(handle.id(), document_id);
-            }
-            Err(error) => {
-                eprintln!("failed to submit the LiliaCode document diagnostics job: {error}");
-                for state in self
-                    .document_editors
-                    .values_mut()
-                    .filter(|state| state.document_id == document_id)
-                {
-                    state.mark_diagnostics_unavailable();
-                }
-            }
-        }
-    }
-
-    fn apply_document_diagnostics_job(&mut self, job_id: JobId, state: JobState) {
-        let result = match state {
-            JobState::Pending | JobState::Running { .. } => return,
-            JobState::Completed { output } => {
-                serde_json::from_value::<DesktopDocumentDiagnosticsSnapshot>(output)
-                    .map_err(|error| error.to_string())
-            }
-            JobState::Failed { message } => Err(message),
-            // Superseded by a newer check of the same document, which will
-            // deliver the answer this one would have.
-            _ => {
-                self.active_diagnostics_jobs.remove(&job_id);
-                return;
-            }
-        };
-        let Some(document_id) = self.active_diagnostics_jobs.remove(&job_id) else {
-            return;
-        };
-        self.finish_document_diagnostics(document_id, result);
-    }
-
-    fn finish_document_diagnostics(
-        &mut self,
-        document_id: crate::application::DocumentId,
-        result: Result<DesktopDocumentDiagnosticsSnapshot, String>,
-    ) {
-        let snapshot = match result {
-            Ok(snapshot) => snapshot,
-            Err(error) => {
-                eprintln!("failed to refresh Native document diagnostics: {error}");
-                match self.kernel.session().document_diagnostics(document_id) {
-                    Ok(snapshot) => snapshot,
-                    Err(snapshot_error) => {
-                        eprintln!(
-                            "failed to read Native document diagnostics state: {snapshot_error}"
-                        );
-                        for state in self
-                            .document_editors
-                            .values_mut()
-                            .filter(|state| state.document_id == document_id)
-                        {
-                            state.mark_diagnostics_unavailable();
-                        }
-                        return;
-                    }
-                }
-            }
-        };
-        for state in self
-            .document_editors
-            .values_mut()
-            .filter(|state| state.document_id == document_id)
-        {
-            state.sync_diagnostics(&snapshot);
-        }
-    }
-
-    fn start_document_definition(&mut self, item_id: WorkspaceItemId, window_id: HostedWindowId) {
-        let Some(state) = self.document_editors.get(&item_id) else {
-            return;
-        };
-        if state.definition_job.is_some() {
-            return;
-        }
-        let document_id = state.document_id;
-        let revision = state.revision;
-        let Some(source_offset) = document_editor_cursor_offset(state) else {
-            if let Some(state) = self.document_editors.get_mut(&item_id) {
-                state.definition_error = Some("当前光标位置不可用。".to_owned());
-            }
-            return;
-        };
-        if let Some(state) = self.document_editors.get_mut(&item_id) {
-            state.definition_project_id = None;
-            state.definition_targets.clear();
-            state.definition_message = Some("正在查找定义…".to_owned());
-            state.definition_error = None;
-        }
-        let request = JobRequest::new(
-            lilia_feature_document::DEFINITION_PROTOCOL,
-            serde_json::to_value(lilia_feature_document::DefinitionRequest {
-                document_id,
-                revision,
-                source_offset,
-            })
-            .expect("a definition request is representable as JSON"),
-        )
-        .in_slot(lilia_feature_document::definition_slot(item_id.as_str()));
-
-        match self.kernel.jobs().submit(request) {
-            Ok(handle) => {
-                self.active_definition_jobs
-                    .insert(handle.id(), (item_id.clone(), window_id));
-                if let Some(state) = self.document_editors.get_mut(&item_id) {
-                    state.definition_job = Some(handle.id());
-                }
-            }
-            Err(error) => {
-                eprintln!("failed to submit the LiliaCode document definition job: {error}");
-                if let Some(state) = self.document_editors.get_mut(&item_id) {
-                    state.definition_job = None;
-                    state.definition_message = None;
-                    state.definition_error = Some("无法启动定义查找，请重试。".to_owned());
-                }
-            }
-        }
-    }
-
-    fn apply_document_definition_job(&mut self, job_id: JobId, state: JobState) {
-        let result = match state {
-            JobState::Pending | JobState::Running { .. } => return,
-            JobState::Completed { output } => {
-                serde_json::from_value::<DocumentDefinitionOutcome>(output)
-                    .map_err(|error| error.to_string())
-            }
-            JobState::Failed { message } => Err(message),
-            _ => {
-                self.clear_definition_job(job_id);
-                return;
-            }
-        };
-        let Some((item_id, window_id)) = self.active_definition_jobs.remove(&job_id) else {
-            return;
-        };
-        let (project_id, result) = match result {
-            Ok(outcome) => (outcome.project_id, Ok(outcome.result)),
-            Err(error) => (None, Err(error)),
-        };
-        self.finish_document_definitions(item_id, window_id, job_id, project_id, result);
-    }
-
-    /// Drops a definition job the surface will never hear about again.
-    fn clear_definition_job(&mut self, job_id: JobId) {
-        let Some((item_id, _)) = self.active_definition_jobs.remove(&job_id) else {
-            return;
-        };
-        if let Some(state) = self.document_editors.get_mut(&item_id) {
-            if state.definition_job == Some(job_id) {
-                state.definition_job = None;
-                state.definition_message = None;
-            }
-        }
-    }
-
-    fn finish_document_definitions(
-        &mut self,
-        item_id: WorkspaceItemId,
-        window_id: HostedWindowId,
-        job_id: JobId,
-        project_id: Option<ProjectId>,
-        result: Result<DesktopDocumentDefinitionResult, String>,
-    ) {
-        let mut immediate_target = None;
-        let Some(state) = self.document_editors.get_mut(&item_id) else {
-            return;
-        };
-        if state.definition_job != Some(job_id) {
-            return;
-        }
-        state.definition_job = None;
-        state.definition_message = None;
-        match result {
-            Ok(result)
-                if result.source_document_id == state.document_id
-                    && result.source_revision == state.revision =>
-            {
-                state.definition_project_id = project_id.clone();
-                match result.targets.as_slice() {
-                    [] => {
-                        state.definition_targets.clear();
-                        state.definition_message = Some("未找到定义。".to_owned());
-                    }
-                    [target] => {
-                        state.definition_targets.clear();
-                        immediate_target =
-                            project_id.map(|project_id| (project_id, target.clone()));
-                    }
-                    targets => {
-                        state.definition_targets = targets.to_vec();
-                        state.definition_message =
-                            Some(format!("找到 {} 个定义，请选择。", targets.len()));
-                    }
-                }
-                state.definition_error = None;
-            }
-            Ok(_) => {
-                state.definition_targets.clear();
-                state.definition_error = Some("文档已变化，请重新查找定义。".to_owned());
-            }
-            Err(error) => {
-                eprintln!("failed to resolve Native document definition: {error}");
-                state.definition_targets.clear();
-                state.definition_error = Some("暂时无法查找定义，请稍后重试。".to_owned());
-            }
-        }
-        if let Some((project_id, target)) = immediate_target {
-            self.navigate_document_definition_target(window_id, project_id, target);
-        }
-    }
-
-    fn open_document_definition_target(
-        &mut self,
-        item_id: WorkspaceItemId,
-        window_id: HostedWindowId,
-        index: usize,
-    ) {
-        let target = self.document_editors.get(&item_id).and_then(|state| {
-            state
-                .definition_project_id
-                .clone()
-                .zip(state.definition_targets.get(index).cloned())
-        });
-        if let Some((project_id, target)) = target {
-            self.navigate_document_definition_target(window_id, project_id, target);
+        let application = self.kernel.session().clone();
+        if let Some(module) = self.documents_module_mut() {
+            module.sync_editors_from_items(&document_items, &application);
         }
     }
 
@@ -10482,7 +10171,9 @@ impl DesktopProgram {
             }
         };
         let item_id = item.id.clone();
-        self.ensure_document_editor_state(&item, &snapshot);
+        if let Some(module) = self.documents_module_mut() {
+            module.ensure_editor(&item, &snapshot);
+        }
         let target_window_id =
             if let Some((window_id, pane_id)) = self.workspace_item_location(&item_id) {
                 if window_id == HostedWindowId::PRIMARY {
@@ -10519,14 +10210,17 @@ impl DesktopProgram {
                 self.reveal_workspace_item(item);
                 HostedWindowId::PRIMARY
             };
-        self.start_document_diagnostics(target.document_id, Some(project_id));
-        let selected = self.document_editors.get(&item_id).is_some_and(|state| {
-            select_document_editor_offsets(state, target.start_offset, target.end_offset)
-        });
-        if !selected {
-            if let Some(state) = self.document_editors.get_mut(&item_id) {
-                state.definition_error = Some("定义位置已失效，请重新查找。".to_owned());
-            }
+        let module = self
+            .ui_modules
+            .get_mut::<DocumentsModule>(&DocumentsModule::feature_id())
+            .expect("every window is furnished with the same modules");
+        let jobs = self.kernel.kernel().jobs();
+        module.start_diagnostics(target.document_id, Some(project_id), jobs);
+        if !module.apply_definition_selection(
+            &item_id,
+            target.start_offset,
+            target.end_offset,
+        ) {
             return;
         }
         self.pending_ui_commands.push(HostedUiCommand::Focus {
@@ -10552,120 +10246,6 @@ impl DesktopProgram {
                 .cloned()
                 .map(|pane_id| (popup.id, pane_id))
         })
-    }
-
-    fn handle_document_editor_action(&mut self, item_id: WorkspaceItemId, action: String) {
-        let Some(state) = self.document_editors.get(&item_id) else {
-            return;
-        };
-        if state.read_only {
-            return;
-        }
-        let is_edit = !action.is_empty();
-        let document_id = state.document_id;
-        let expected = state.revision;
-        state.editor.perform(action);
-        if !is_edit {
-            return;
-        }
-        let text = state.editor.text();
-        match self
-            .kernel
-            .session()
-            .replace_document_text(document_id, expected, text)
-        {
-            Ok(revision) => {
-                if revision == expected {
-                    return;
-                }
-                self.sync_document_editor_views(document_id);
-                for state in self
-                    .document_editors
-                    .values_mut()
-                    .filter(|state| state.document_id == document_id)
-                {
-                    state.note_text_changed();
-                }
-                if let Some(state) = self.document_editors.get_mut(&item_id) {
-                    state.revision = revision;
-                    state.conflict_message = None;
-                    state.status_message = None;
-                }
-            }
-            Err(error) => {
-                if let Ok(snapshot) = self.kernel.session().document_snapshot(document_id) {
-                    if let Some(state) = self.document_editors.get_mut(&item_id) {
-                        state.sync_from_snapshot(&snapshot);
-                        state.conflict_message =
-                            Some(format!("编辑冲突，已恢复当前缓冲区：{error}"));
-                    }
-                } else if let Some(state) = self.document_editors.get_mut(&item_id) {
-                    state.conflict_message = Some(format!("无法写入文档：{error}"));
-                }
-            }
-        }
-    }
-
-    fn select_document_diagnostic(&mut self, item_id: WorkspaceItemId, index: usize) {
-        let Some(state) = self.document_editors.get(&item_id) else {
-            return;
-        };
-        let Some(diagnostic) = state.diagnostics.get(index) else {
-            return;
-        };
-        if !select_document_editor_offsets(state, diagnostic.start_offset, diagnostic.end_offset) {
-            if let Some(state) = self.document_editors.get_mut(&item_id) {
-                state.status_message = Some("问题位置已失效，请重新检查。".to_owned());
-            }
-        }
-    }
-
-    fn save_document_editor(&mut self, item_id: WorkspaceItemId) {
-        let Some(state) = self.document_editors.get(&item_id) else {
-            return;
-        };
-        let document_id = state.document_id;
-        let expected = state.revision;
-        match self.kernel.session().save_document(document_id, expected) {
-            Ok(snapshot) => {
-                self.sync_document_editor_views(document_id);
-                if let Some(state) = self.document_editors.get_mut(&item_id) {
-                    state.conflict_message = None;
-                    state.status_message = Some("已保存".to_owned());
-                }
-                self.opened_project_document = Some(snapshot);
-                self.start_document_diagnostics(document_id, None);
-            }
-            Err(error) => {
-                if let Some(state) = self.document_editors.get_mut(&item_id) {
-                    state.conflict_message = Some(format!("保存失败：{error}"));
-                    state.status_message = None;
-                }
-            }
-        }
-    }
-
-    fn discard_document_editor(&mut self, item_id: WorkspaceItemId) {
-        let Some(state) = self.document_editors.get(&item_id) else {
-            return;
-        };
-        let document_id = state.document_id;
-        match self.kernel.session().discard_document_changes(document_id) {
-            Ok(snapshot) => {
-                self.sync_document_editor_views(document_id);
-                if let Some(state) = self.document_editors.get_mut(&item_id) {
-                    state.conflict_message = None;
-                    state.status_message = Some("已丢弃未保存更改".to_owned());
-                }
-                self.opened_project_document = Some(snapshot);
-                self.start_document_diagnostics(document_id, None);
-            }
-            Err(error) => {
-                if let Some(state) = self.document_editors.get_mut(&item_id) {
-                    state.conflict_message = Some(format!("无法丢弃更改：{error}"));
-                }
-            }
-        }
     }
 
     fn refresh_archived_records(&mut self) {
@@ -12234,25 +11814,19 @@ impl DesktopProgram {
         None
     }
 
-    fn apply_document_message(&mut self, message: DocumentMessage) -> Option<HostedWindowAction> {
-        match message {
-            DocumentMessage::EditorEdited { item_id, action } => {
-                self.handle_document_editor_action(item_id, action);
-            }
-            DocumentMessage::GoToDefinition { item_id, window_id } => {
-                self.start_document_definition(item_id, window_id);
-            }
-            DocumentMessage::OpenDefinitionTarget {
-                item_id,
-                window_id,
-                index,
-            } => self.open_document_definition_target(item_id, window_id, index),
-            DocumentMessage::SaveEditor(item_id) => self.save_document_editor(item_id),
-            DocumentMessage::DiscardEditor(item_id) => self.discard_document_editor(item_id),
-            DocumentMessage::SelectDiagnostic { item_id, index } => {
-                self.select_document_diagnostic(item_id, index);
-            }
+    /// Routes a document message to the module owning the domain. Document
+    /// editors render only in the primary window's pane, so the dispatch
+    /// window is never consulted.
+    fn route_documents_message(&mut self, message: DocumentMessage) {
+        let outcome =
+            self.route_to_primary_module(&DocumentsModule::feature_id(), Box::new(message));
+        if let Some(outcome) = outcome {
+            self.apply_ui_module_outcome(outcome);
         }
+    }
+
+    fn apply_document_message(&mut self, message: DocumentMessage) -> Option<HostedWindowAction> {
+        self.route_documents_message(message);
         None
     }
 
@@ -12866,12 +12440,8 @@ impl DesktopProgram {
     }
 
     fn first_dirty_document_title(&self, items: &[WorkspaceItem]) -> Option<String> {
-        items.iter().find_map(|item| {
-            self.document_editors
-                .get(&item.id)
-                .filter(|state| state.dirty)
-                .map(|_| item.title.clone())
-        })
+        self.documents_module()
+            .and_then(|module| module.first_dirty_title(items))
     }
 
     fn document_ids_released_by_closing(
@@ -12891,8 +12461,10 @@ impl DesktopProgram {
         let mut documents_to_close = BTreeSet::new();
         for item in closing {
             if !remaining_resources.contains(item.resource_id.as_str()) {
-                if let Some(state) = self.document_editors.get(&item.id) {
-                    documents_to_close.insert(state.document_id);
+                if let Some(document_id) =
+                    self.documents_module().and_then(|m| m.editor_document_id(&item.id))
+                {
+                    documents_to_close.insert(document_id);
                 }
             }
         }
@@ -12904,8 +12476,8 @@ impl DesktopProgram {
         closing: &[WorkspaceItem],
         documents_to_close: Vec<crate::application::DocumentId>,
     ) {
-        for item in closing {
-            self.document_editors.remove(&item.id);
+        if let Some(module) = self.documents_module_mut() {
+            module.remove_editors(closing);
         }
         for document_id in documents_to_close {
             if let Err(error) = self.kernel.session().close_document(document_id, false) {
@@ -18650,7 +18222,7 @@ impl DesktopProgram {
             }) else {
                 continue;
             };
-            if self.document_editors.contains_key(&item_id) {
+            if self.documents_module().is_some_and(|m| m.has_editor(&item_id)) {
                 locations.push((popup.id, item_id));
             }
         }
@@ -18736,10 +18308,16 @@ impl DesktopProgram {
         }
         for (window_id, item_id) in self.visible_document_editor_locations() {
             if target_ids::document_editor_definition(item_id.as_str()) == target_id {
-                self.start_document_definition(item_id, window_id);
+                self.route_documents_message(DocumentMessage::GoToDefinition {
+                    item_id,
+                    window_id,
+                });
                 return true;
             }
-            let definition_target = self.document_editors.get(&item_id).and_then(|state| {
+            let definition_target = self
+                .documents_module()
+                .and_then(|m| m.editor(&item_id))
+                .and_then(|state| {
                 state
                     .definition_targets
                     .iter()
@@ -18751,7 +18329,11 @@ impl DesktopProgram {
                     })
             });
             if let Some(index) = definition_target {
-                self.open_document_definition_target(item_id, window_id, index);
+                self.route_documents_message(DocumentMessage::OpenDefinitionTarget {
+                    item_id,
+                    window_id,
+                    index,
+                });
                 return true;
             }
         }
@@ -25053,7 +24635,7 @@ impl DesktopProgram {
             }
         }
         for (_, item_id) in self.visible_document_editor_locations() {
-            if let Some(state) = self.document_editors.get(&item_id) {
+            if let Some(state) = self.documents_module().and_then(|m| m.editor(&item_id)) {
                 if state.language_label != "plaintext" && state.definition_job.is_none() {
                     targets.push(target_ids::document_editor_definition(item_id.as_str()));
                 }
@@ -29694,15 +29276,11 @@ impl RuntimeProgram for DesktopProgram {
             github_error,
             project_surface: ProjectSurface::Tasks,
             project_files: None,
-            opened_project_document: None,
             project_files_error: None,
             task_session: None,
             pane_task_sessions: BTreeMap::new(),
             project_workspace_previews: BTreeMap::new(),
             main_conversation_draft: None,
-            document_editors: BTreeMap::new(),
-            active_diagnostics_jobs: BTreeMap::new(),
-            active_definition_jobs: BTreeMap::new(),
             terminal_snapshots: BTreeMap::new(),
             terminal_inputs: BTreeMap::new(),
             terminal_scrollback: BTreeMap::new(),
@@ -31806,16 +31384,6 @@ fn provider_operation_failure(error: DesktopApplicationError) -> String {
 /// GitHub's polling interval. The old poller slept the whole interval in one
 /// call, so pressing cancel did nothing visible for up to five seconds.
 const GITHUB_POLL_SLICE: Duration = Duration::from_millis(250);
-
-/// Output of the definition job. Resolving which project a document belongs to
-/// is part of the lookup, so the project travels back with the targets rather
-/// than being re-derived on the shell thread.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct DocumentDefinitionOutcome {
-    project_id: Option<ProjectId>,
-    result: DesktopDocumentDefinitionResult,
-}
 
 /// Runs one import step on the job worker thread against the prepared service
 /// the shell staged under the job's ticket.

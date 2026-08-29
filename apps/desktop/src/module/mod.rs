@@ -2,6 +2,7 @@
 
 pub mod architecture;
 pub mod composer;
+pub mod documents;
 pub mod extensions;
 pub mod memory;
 pub mod roadmap;
