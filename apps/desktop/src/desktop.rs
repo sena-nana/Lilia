@@ -26,64 +26,60 @@ use crate::application::{
     DesktopCredentialStatus, DesktopCredentialView, DesktopCustomSubagentCatalog,
     DesktopCustomSubagentUpsert, DesktopDataImportService, DesktopDocumentDefinitionResult,
     DesktopDocumentDefinitionTarget, DesktopDocumentDiagnosticsSnapshot,
-    DesktopExecutionPermission,
-    DesktopFileDialogRequest, DesktopGitDiff, DesktopGitDiffScope, DesktopGitFileStatus,
-    DesktopGitHubBindingStatus, DesktopGitHubClientIdSource, DesktopGitHubDeviceFlowPollResult,
-    DesktopGitHubDeviceFlowStart, DesktopGitHubError, DesktopGitHubRepoPage,
-    DesktopGitHubRepoSummary, DesktopGitStatus, DesktopGoalStatus,
-    DesktopHostAction, DesktopHostResult, DesktopImportExecutionOptions,
-    DesktopImportPlan, DesktopImportPlanStatus, DesktopImportReport, DesktopImportReportStatus,
-    DesktopInitialWorktreeSelection,
-    DesktopMcpElicitation, DesktopMcpElicitationAction, DesktopMcpElicitationMode,
-    DesktopMcpFormFieldKind,
-    DesktopMcpTransport, DesktopMemory, DesktopNavigationTarget,
-    DesktopOptionalTextUpdate, DesktopProjectCreate,
+    DesktopExecutionPermission, DesktopFileDialogRequest, DesktopGitDiff, DesktopGitDiffScope,
+    DesktopGitFileStatus, DesktopGitHubBindingStatus, DesktopGitHubClientIdSource,
+    DesktopGitHubDeviceFlowPollResult, DesktopGitHubDeviceFlowStart, DesktopGitHubError,
+    DesktopGitHubRepoPage, DesktopGitHubRepoSummary, DesktopGitStatus, DesktopGoalStatus,
+    DesktopHostAction, DesktopHostResult, DesktopImportExecutionOptions, DesktopImportPlan,
+    DesktopImportPlanStatus, DesktopImportReport, DesktopImportReportStatus,
+    DesktopInitialWorktreeSelection, DesktopMcpElicitation, DesktopMcpElicitationAction,
+    DesktopMcpElicitationMode, DesktopMcpFormFieldKind, DesktopMcpTransport, DesktopMemory,
+    DesktopNavigationTarget, DesktopOptionalTextUpdate, DesktopProjectCreate,
     DesktopProjectDashboardSummary, DesktopProjectPatch, DesktopProjectRemovalPreview,
     DesktopProjectSettings, DesktopProjectTaskCatalog, DesktopProjectTaskError,
     DesktopPromptOptimizeInput, DesktopPromptOptimizeResult, DesktopPromptRoute,
     DesktopProviderCredentialInput, DesktopProviderError, DesktopProviderSnapshot, DesktopSecret,
-    DesktopSessionBranchAnchor, DesktopSessionBranchMode,
-    DesktopSlashCommand, DesktopSlashCommandAction,
-    DesktopSuggestionItem, DesktopTaskCreate, DesktopTaskMove, DesktopTaskPatch,
-    DesktopTaskRuntimeSnapshot, DesktopTaskTodo, DesktopTerminalRestoration, DesktopTerminalScope,
-    DesktopTerminalSessionId, DesktopTerminalSnapshot, DesktopTodoCreate, DesktopTodoPriority,
-    DesktopTodoSource, DesktopTodoUpdate, DesktopToolConsent, DesktopToolConsentDecision,
-    DesktopTurnDispatchKind, DesktopTurnExecutor, DesktopTurnRequest, DesktopTurnState,
-    DesktopUpdateState, DesktopWorkspaceCodeSearchHit, DesktopWorkspaceCodeSearchResult,
-    DesktopWorkspaceListing, DesktopWorkspaceProject, DesktopWorkspaceSession,
-    DesktopWorkspaceSessionId, DesktopWorkspaceSnapshot, DesktopWorkspaceTask,
-    DesktopWorktreeSelectionMode, DiagnosticSeverity, DockSlot, DocumentSnapshot, MemoryScope,
-    MemoryUpsertInput, MilestoneDueDateUpdate, MilestoneStatus, PaneId, PaneNode, PanelId,
-    PanelLayoutSnapshot, PanelState, ProjectArchitectureChange, ProjectArchitectureGraph,
-    ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery, ProjectRoadmap,
-    ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput, RemoteControlStatus, SplitAxis,
-    TaskQuery, WorkspaceItem, WorkspaceItemId, WorkspaceItemResolve, CODING_TOOLS_PANEL_ID, IAB_PANEL_ID,
-    MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES, TASK_INSPECTOR_PANEL_ID, TASK_WORKSPACE_ITEM_KIND,
-    TITLE_UPDATE_ACTION_KIND,
+    DesktopSessionBranchAnchor, DesktopSessionBranchMode, DesktopSlashCommand,
+    DesktopSlashCommandAction, DesktopSuggestionItem, DesktopTaskCreate, DesktopTaskMove,
+    DesktopTaskPatch, DesktopTaskRuntimeSnapshot, DesktopTaskTodo, DesktopTerminalRestoration,
+    DesktopTerminalScope, DesktopTerminalSessionId, DesktopTerminalSnapshot, DesktopTodoCreate,
+    DesktopTodoPriority, DesktopTodoSource, DesktopTodoUpdate, DesktopToolConsent,
+    DesktopToolConsentDecision, DesktopTurnDispatchKind, DesktopTurnExecutor, DesktopTurnRequest,
+    DesktopTurnState, DesktopUpdateState, DesktopWorkspaceCodeSearchHit,
+    DesktopWorkspaceCodeSearchResult, DesktopWorkspaceListing, DesktopWorkspaceProject,
+    DesktopWorkspaceSession, DesktopWorkspaceSessionId, DesktopWorkspaceSnapshot,
+    DesktopWorkspaceTask, DesktopWorktreeSelectionMode, DiagnosticSeverity, DockSlot,
+    DocumentSnapshot, MemoryScope, MemoryUpsertInput, MilestoneDueDateUpdate, MilestoneStatus,
+    PaneId, PaneNode, PanelId, PanelLayoutSnapshot, PanelState, ProjectArchitectureChange,
+    ProjectArchitectureGraph, ProjectFilesSnapshot, ProjectFilesViewState, ProjectQuery,
+    ProjectRoadmap, ProjectWorkspaceSurface, QuotaUsageStats, QuotaUsageStatsInput,
+    RemoteControlStatus, SplitAxis, TaskQuery, WorkspaceItem, WorkspaceItemId,
+    WorkspaceItemResolve, CODING_TOOLS_PANEL_ID, IAB_PANEL_ID, MAX_CLIPBOARD_TEXT_ATTACHMENT_BYTES,
+    TASK_INSPECTOR_PANEL_ID, TASK_WORKSPACE_ITEM_KIND, TERMINAL_WORKSPACE_ITEM_KIND,
+    TITLE_UPDATE_ACTION_KIND, DOCUMENT_WORKSPACE_ITEM_KIND,
 };
 use crate::application::{
     ApprovalChanged, ArchitectureChanged, AssistantAiSettingsChanged, AutomationChanged,
-    AutomationRunChanged, ComposerChanged, ConversationSuggestionSettingsChanged, CredentialChanged,
-    GitHubBindingChanged, GoalChanged, InteractionChanged, MemoryChanged,
+    AutomationRunChanged, ComposerChanged, ConversationSuggestionSettingsChanged,
+    CredentialChanged, GitHubBindingChanged, GoalChanged, InteractionChanged, MemoryChanged,
     ModelFeatureSettingsChanged, NavigationRequested, ProjectFilesChanged, ProjectSettingsChanged,
     ProjectsChanged, ProviderChanged, RoadmapChanged, RouterModeSettingsChanged, TasksChanged,
     TerminalChanged, TimelineChanged, TodosChanged, TurnRecoveryIssue, TurnStateChanged,
     UpdateStateChanged, WorktreeChanged, WorktreeOperationCompleted, WorktreeOperationFailed,
 };
-use crate::iab_panel::HostedBrowserId;
+
 use crate::module::extensions::{
     load_native_hooks, mcp_credential_draft_key, mcp_credential_kind_key, mcp_prompt_preview,
     mcp_resource_preview, parse_hook_handlers_draft, ExtensionsCommand, ExtensionsJob,
-    ExtensionsModule, ExtensionsModuleMessage, ExtensionsOutcome, McpContentKind,
-    McpContentOperation, McpRegistryOperation, PluginRegistryOperation, SkillRegistryOperation,
-    HookSourceOperation,
+    ExtensionsModule, ExtensionsModuleMessage, ExtensionsOutcome, HookSourceOperation,
+    McpContentKind, McpContentOperation, McpRegistryOperation, PluginRegistryOperation,
+    SkillRegistryOperation,
 };
 use crate::module::task::{TaskMoveTarget, TaskParentTarget};
 use crate::runtime_compat::{
     tool_window_settings, window_event_id, HostedProgramContext, HostedProgramUpdate,
-    HostedUiCommand, HostedUpdateExt, HostedWindowAction, HostedWindowCaptureId,
-    HostedWindowCommand, HostedWindowEvent, HostedWindowGeometry, HostedWindowId,
-    HostedWindowSettings,
+    HostedUiCommand, HostedUpdateExt, HostedWindowAction, HostedWindowCommand, HostedWindowEvent,
+    HostedWindowGeometry, HostedWindowId, HostedWindowSettings,
 };
 use crate::text_editor_state::TextEditorState;
 use lilia_contracts::{
@@ -130,16 +126,15 @@ use crate::document_editor::{
     select_document_editor_range, DocumentEditorViewState,
 };
 use crate::host::NativeDesktopHost;
-use crate::iab_panel::{IabPanelMessage, IabPanelState};
-use crate::iab_window::{IabWindowMessage, IabWindowState};
+use crate::iab_panel::IabPanelState;
 use crate::markdown_images::{load_markdown_image, LoadedMarkdownImage};
 use crate::module::documents::{DocumentDefinitionOutcome, DocumentMessage, DocumentsModule};
 use crate::project_files_panel;
 use crate::provider_ai_settings::ProviderAiSettingsState;
 use crate::shell::{
-    ExtensionsMessage, GitHubMessage, HookHandlerDraftField, ImportMessage,
-    ProjectCloneMessage, ProjectMessage, PromptOptimizeMessage, ProviderMessage, QuotaMessage,
-    RemoteMessage, SidebarMessage, SuggestionsMessage, TaskMessage, UpdateMessage, WorktreeMessage,
+    ExtensionsMessage, GitHubMessage, HookHandlerDraftField, ImportMessage, ProjectCloneMessage,
+    ProjectMessage, PromptOptimizeMessage, ProviderMessage, QuotaMessage, RemoteMessage,
+    SidebarMessage, SuggestionsMessage, TaskMessage, UpdateMessage, WorktreeMessage,
 };
 use crate::shell_integration::{NativeShellIntegration, ShellCommand};
 use crate::storage::{
@@ -388,6 +383,7 @@ enum InspectorSurface {
     Task,
     CodingTools,
     Iab,
+    Architecture,
 }
 
 #[derive(Debug, Clone)]
@@ -863,7 +859,6 @@ pub(crate) enum TitlebarMenuAction {
     CloseCurrentItem,
     OpenCommandPalette,
     OpenConversationStatus,
-    OpenTaskBrowser,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -950,10 +945,6 @@ pub enum ConversationStatusMessage {
 
 #[derive(Debug, Clone)]
 pub enum WorkspaceWindowMessage {
-    IabWindow {
-        window_id: HostedWindowId,
-        message: IabWindowMessage,
-    },
     OpenChildQuestionPopup {
         source_window: HostedWindowId,
         parent_task_id: TaskId,
@@ -1382,7 +1373,6 @@ pub enum Message {
     Memory(MemoryMessage),
     Document(DocumentMessage),
     Coding(CodingMessage),
-    Iab(IabPanelMessage),
     WorkspaceWindow(WorkspaceWindowMessage),
     Architecture(ArchitectureMessage),
     Terminal(TerminalViewMessage),
@@ -1437,8 +1427,6 @@ pub struct DesktopProgram {
     command_source_item: Option<WorkspaceItemId>,
     inspector_surface: InspectorSurface,
     iab: IabPanelState,
-    iab_windows: BTreeMap<HostedWindowId, IabWindowState>,
-    abandoned_iab_captures: BTreeMap<(u64, u64), PathBuf>,
     workspace_tab_drag_group: TabDragGroup<Option<WorkspaceItemId>>,
     main_window_geometry: Option<NativeWindowState>,
     main_window_scale_factor: f32,
@@ -1842,6 +1830,23 @@ impl DesktopProgram {
                 }),
                 Err(_) => return None,
             },
+            crate::runtime_shell::ShellIntent::ReorderSidebar { source, before } => {
+                match TaskId::new(&source) {
+                    Ok(task_id) => Message::Task(TaskMessage::ReorderTask {
+                        task_id,
+                        before_task_id: before.and_then(|id| TaskId::new(&id).ok()),
+                    }),
+                    Err(_) => return None,
+                }
+            }
+            crate::runtime_shell::ShellIntent::SidebarTreeDrop {
+                source,
+                target,
+                position,
+            } => match self.sidebar_tree_drop_message(source, target, position) {
+                Some(message) => message,
+                None => return None,
+            },
             crate::runtime_shell::ShellIntent::OpenProjectDraft(id) => {
                 match self
                     .projects
@@ -2002,19 +2007,6 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::MarkdownImageViewerInteraction => {
                 Message::Timeline(TimelineMessage::MarkdownImageViewerInteraction)
             }
-            crate::runtime_shell::ShellIntent::IabUrlChanged(value) => {
-                Message::Iab(IabPanelMessage::DraftUrlChanged(value))
-            }
-            crate::runtime_shell::ShellIntent::IabNavigate => {
-                Message::Iab(IabPanelMessage::Navigate)
-            }
-            crate::runtime_shell::ShellIntent::IabOpenWindow => {
-                Message::Iab(IabPanelMessage::OpenWindow)
-            }
-            crate::runtime_shell::ShellIntent::OpenTaskBrowser => {
-                self.open_iab();
-                return None;
-            }
             crate::runtime_shell::ShellIntent::ToggleComposerPlus => Message::Composer(
                 ComposerMessage::ToggleComposerActionMenu(HostedWindowId::PRIMARY),
             ),
@@ -2045,7 +2037,8 @@ impl DesktopProgram {
                 Message::Composer(ComposerMessage::PickDraftWorktree(HostedWindowId::PRIMARY))
             }
             crate::runtime_shell::ShellIntent::ApplySlash(name) => {
-                match self.composer_slash_commands(HostedWindowId::PRIMARY)
+                match self
+                    .composer_slash_commands(HostedWindowId::PRIMARY)
                     .iter()
                     .find(|item| item.command.name == name)
                     .map(|item| item.command.clone())
@@ -2062,6 +2055,14 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::ToggleTimelineExpand(event_id) => {
                 Message::Timeline(TimelineMessage::ToggleTimelineEvent(event_id))
             }
+            crate::runtime_shell::ShellIntent::TimelineScrolled {
+                offset,
+                viewport_extent,
+            } => Message::Timeline(TimelineMessage::TimelineScrolled {
+                surface: TimelineSurfaceKey::Main,
+                offset,
+                viewport_extent,
+            }),
             crate::runtime_shell::ShellIntent::StartGitHubBinding => {
                 Message::GitHub(GitHubMessage::StartBinding)
             }
@@ -2322,11 +2323,46 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::MilestoneTitleChanged(value) => {
                 Message::Roadmap(RoadmapMessage::TitleChanged(value))
             }
+            crate::runtime_shell::ShellIntent::MilestoneDescriptionChanged(value) => {
+                Message::Roadmap(RoadmapMessage::DescriptionChanged(value))
+            }
+            crate::runtime_shell::ShellIntent::MilestoneDueDateChanged(value) => {
+                Message::Roadmap(RoadmapMessage::DueDateChanged(value))
+            }
+            crate::runtime_shell::ShellIntent::CycleMilestoneStatus => {
+                Message::Roadmap(RoadmapMessage::CycleStatus)
+            }
+            crate::runtime_shell::ShellIntent::MoveMilestone(offset) => {
+                Message::Roadmap(RoadmapMessage::Move(offset))
+            }
+            crate::runtime_shell::ShellIntent::DeleteMilestone => {
+                Message::Roadmap(RoadmapMessage::Delete)
+            }
             crate::runtime_shell::ShellIntent::CreateMilestone => {
                 Message::Roadmap(RoadmapMessage::Create)
             }
             crate::runtime_shell::ShellIntent::SaveMilestone => {
                 Message::Roadmap(RoadmapMessage::Save)
+            }
+            crate::runtime_shell::ShellIntent::SelectMemory(id) => {
+                Message::Memory(MemoryMessage::Select(id))
+            }
+            crate::runtime_shell::ShellIntent::MemoryTitleChanged(value) => {
+                Message::Memory(MemoryMessage::TitleChanged(value))
+            }
+            crate::runtime_shell::ShellIntent::MemoryBodyChanged(value) => {
+                Message::Memory(MemoryMessage::BodyReplaced(value))
+            }
+            crate::runtime_shell::ShellIntent::MemoryTagsChanged(value) => {
+                Message::Memory(MemoryMessage::TagsChanged(value))
+            }
+            crate::runtime_shell::ShellIntent::ToggleMemoryScope => {
+                Message::Memory(MemoryMessage::ToggleScope)
+            }
+            crate::runtime_shell::ShellIntent::NewMemory => Message::Memory(MemoryMessage::New),
+            crate::runtime_shell::ShellIntent::SaveMemory => Message::Memory(MemoryMessage::Save),
+            crate::runtime_shell::ShellIntent::DeleteMemory => {
+                Message::Memory(MemoryMessage::Delete)
             }
             crate::runtime_shell::ShellIntent::LoadEarlierTimeline => {
                 Message::Timeline(TimelineMessage::LoadEarlierTimeline)
@@ -2639,6 +2675,9 @@ impl DesktopProgram {
                 ));
                 return None;
             }
+            crate::runtime_shell::ShellIntent::CloseInspectorDock => {
+                Message::Project(ProjectMessage::CloseInspectorDock)
+            }
             crate::runtime_shell::ShellIntent::SplitWorkspaceHorizontal => {
                 self.update_titlebar_menu(HostedContextMenuEvent::Select(
                     TitlebarMenuAction::SplitHorizontal,
@@ -2649,6 +2688,23 @@ impl DesktopProgram {
                 self.update_titlebar_menu(HostedContextMenuEvent::Select(
                     TitlebarMenuAction::SplitVertical,
                 ));
+                return None;
+            }
+            crate::runtime_shell::ShellIntent::ResizeWorkspaceSplit {
+                first_pane_id,
+                second_pane_id,
+                ratio,
+            } => {
+                if let (Ok(first_pane_id), Ok(second_pane_id)) = (
+                    PaneId::new(first_pane_id),
+                    PaneId::new(second_pane_id),
+                ) {
+                    self.execute_workspace_command(DesktopCommand::ResizePaneSplit {
+                        first_pane_id,
+                        second_pane_id,
+                        ratio,
+                    });
+                }
                 return None;
             }
             crate::runtime_shell::ShellIntent::CloseCurrentWorkspaceItem => {
@@ -2728,6 +2784,206 @@ impl DesktopProgram {
             }
             crate::runtime_shell::ShellIntent::TaskPopupInterrupt(window_id) => {
                 Message::Composer(ComposerMessage::TaskPopupInterruptTurn(window_id))
+            }
+            crate::runtime_shell::ShellIntent::TaskPopupPending { window_id, intent } => {
+                match *intent {
+                    crate::runtime_shell::ShellIntent::RespondApproval {
+                        request_id,
+                        approved,
+                    } => Message::Composer(ComposerMessage::TaskPopupRespondApproval {
+                        window_id,
+                        request_id,
+                        approved,
+                    }),
+                    crate::runtime_shell::ShellIntent::RespondTitle {
+                        request_id,
+                        accepted,
+                    } => Message::Composer(ComposerMessage::TaskPopupRespondTitleUpdate {
+                        window_id,
+                        request_id,
+                        accepted,
+                    }),
+                    crate::runtime_shell::ShellIntent::RespondPlan { request_id, action } => {
+                        let draft = self
+                            .task_popups
+                            .get(&window_id)
+                            .and_then(|popup| popup.interaction_drafts.get(&request_id).cloned())
+                            .unwrap_or_default();
+                        let (accepted, response) = match action.as_str() {
+                            "revise" => (
+                                true,
+                                serde_json::json!({ "action": "revise", "feedback": draft }),
+                            ),
+                            "decline" => (false, serde_json::json!({ "action": "decline" })),
+                            _ => (true, serde_json::json!({ "action": "approve" })),
+                        };
+                        Message::Composer(ComposerMessage::TaskPopupRespondInteraction {
+                            window_id,
+                            request_id,
+                            accepted,
+                            response,
+                        })
+                    }
+                    crate::runtime_shell::ShellIntent::RespondToolConsent {
+                        request_id,
+                        approved,
+                    } => Message::Composer(ComposerMessage::RespondToolConsent {
+                        window_id,
+                        request_id,
+                        decision: if approved {
+                            DesktopToolConsentDecision::Allow
+                        } else {
+                            DesktopToolConsentDecision::Deny
+                        },
+                    }),
+                    crate::runtime_shell::ShellIntent::RespondArchitecture {
+                        request_id,
+                        approved,
+                    } => Message::Composer(ComposerMessage::TaskPopupRespondArchitecture {
+                        window_id,
+                        request_id,
+                        decision: if approved {
+                            DesktopArchitectureInteractionDecision::Allow
+                        } else {
+                            DesktopArchitectureInteractionDecision::Deny
+                        },
+                    }),
+                    crate::runtime_shell::ShellIntent::RespondMcp { request_id, action } => {
+                        let mcp_action = match action.as_str() {
+                            "accept" => DesktopMcpElicitationAction::Accept,
+                            "decline" => DesktopMcpElicitationAction::Decline,
+                            _ => DesktopMcpElicitationAction::Cancel,
+                        };
+                        let popup = self.task_popups.get(&window_id);
+                        let pending = popup.and_then(|popup| {
+                            popup.session.as_ref().and_then(|session| {
+                                session.pending.iter().find(|pending| {
+                                    pending.request_id == request_id
+                                        && pending.kind == "mcp_elicitation"
+                                })
+                            })
+                        });
+                        if let Some(pending) = pending {
+                            let draft = mcp_elicitation_draft(
+                                pending,
+                                popup.and_then(|popup| {
+                                    popup.mcp_elicitation_drafts.get(&request_id)
+                                }),
+                            );
+                            match mcp_elicitation_response(pending, &draft, mcp_action) {
+                                Ok((accepted, response)) => Message::Composer(
+                                    ComposerMessage::TaskPopupRespondInteraction {
+                                        window_id,
+                                        request_id,
+                                        accepted,
+                                        response,
+                                    },
+                                ),
+                                Err(_) => Message::Composer(
+                                    ComposerMessage::TaskPopupRespondInteraction {
+                                        window_id,
+                                        request_id,
+                                        accepted: false,
+                                        response: serde_json::json!({ "action": "cancel" }),
+                                    },
+                                ),
+                            }
+                        } else {
+                            Message::Composer(ComposerMessage::TaskPopupRespondInteraction {
+                                window_id,
+                                request_id,
+                                accepted: false,
+                                response: serde_json::json!({ "action": mcp_action.as_str() }),
+                            })
+                        }
+                    }
+                    crate::runtime_shell::ShellIntent::McpFieldChanged {
+                        request_id,
+                        field_key,
+                        value,
+                    } => Message::Composer(ComposerMessage::McpFieldChanged {
+                        window_id,
+                        request_id,
+                        field_key,
+                        value,
+                    }),
+                    crate::runtime_shell::ShellIntent::McpRawJsonChanged { request_id, value } => {
+                        Message::Composer(ComposerMessage::McpRawJsonChanged {
+                            window_id,
+                            request_id,
+                            value,
+                        })
+                    }
+                    crate::runtime_shell::ShellIntent::McpToggleOption {
+                        request_id,
+                        field_key,
+                        value,
+                        multi,
+                    } => Message::Composer(ComposerMessage::McpToggleOption {
+                        window_id,
+                        request_id,
+                        field_key,
+                        value,
+                        multi,
+                    }),
+                    crate::runtime_shell::ShellIntent::McpToggleBoolean {
+                        request_id,
+                        field_key,
+                    } => Message::Composer(ComposerMessage::McpToggleBoolean {
+                        window_id,
+                        request_id,
+                        field_key,
+                    }),
+                    crate::runtime_shell::ShellIntent::ToolConsentDraftChanged {
+                        request_id,
+                        command,
+                        message,
+                    } => Message::Composer(ComposerMessage::ToolConsentDraftChanged {
+                        window_id,
+                        request_id,
+                        command,
+                        message,
+                    }),
+                    crate::runtime_shell::ShellIntent::PendingDraftChanged {
+                        request_id,
+                        value,
+                    } => Message::Composer(ComposerMessage::TaskPopupInteractionDraftChanged {
+                        window_id,
+                        request_id,
+                        value,
+                    }),
+                    crate::runtime_shell::ShellIntent::SelectPendingOption {
+                        request_id,
+                        option_id,
+                    } => Message::Composer(ComposerMessage::AskUserDraftAction {
+                        window_id,
+                        request_id,
+                        action: AskUserAction::Select(option_id),
+                    }),
+                    crate::runtime_shell::ShellIntent::AskUserPending {
+                        request_id,
+                        action,
+                        value,
+                    } => Message::Composer(ComposerMessage::AskUserDraftAction {
+                        window_id,
+                        request_id,
+                        action: match action.as_str() {
+                            "submit" => AskUserAction::Submit,
+                            "skip" => AskUserAction::Skip,
+                            "back" => AskUserAction::Back,
+                            "cancel" => AskUserAction::Cancel,
+                            "reject" => AskUserAction::Reject,
+                            "freeform" => AskUserAction::SetFreeform(value),
+                            _ => AskUserAction::Select(value),
+                        },
+                    }),
+                    crate::runtime_shell::ShellIntent::InterruptTurn => {
+                        Message::Composer(ComposerMessage::TaskPopupInterruptTurn(window_id))
+                    }
+                    other => {
+                        return self.apply_shell_intent(other);
+                    }
+                }
             }
         };
         self.update_message(message)
@@ -3054,7 +3310,8 @@ impl DesktopProgram {
             id: "inbox".to_owned(),
             label: "收集箱".to_owned(),
             kind: ShellSidebarKind::Inbox,
-            selected: self.current_selected_project().is_none() && self.current_selected_task().is_none(),
+            selected: self.current_selected_project().is_none()
+                && self.current_selected_task().is_none(),
             ancestor: false,
             depth: 0,
             expanded: Some(self.sidebar_inbox_expanded()),
@@ -3200,8 +3457,24 @@ impl DesktopProgram {
     }
 
     fn shell_pending(&self) -> Option<crate::runtime_shell::ShellPending> {
+        self.pending_from_session(
+            self.task_session.as_ref()?,
+            &self.ask_user_drafts,
+            &self.interaction_drafts,
+            &self.mcp_elicitation_drafts,
+            &self.tool_consent_drafts,
+        )
+    }
+
+    fn pending_from_session(
+        &self,
+        session: &TaskSessionView,
+        ask_user_drafts: &BTreeMap<String, AskUserDraft>,
+        interaction_drafts: &BTreeMap<String, String>,
+        mcp_elicitation_drafts: &BTreeMap<String, Map<String, Value>>,
+        tool_consent_drafts: &BTreeMap<String, ToolConsentDraft>,
+    ) -> Option<crate::runtime_shell::ShellPending> {
         use crate::runtime_shell::{ShellPending, ShellPendingKind};
-        let session = self.task_session.as_ref()?;
         let pending = session.pending.iter().find(|item| {
             item.status == PendingProjectionStatus::Open
                 && matches!(
@@ -3234,13 +3507,11 @@ impl DesktopProgram {
             ShellPendingKind::TitleUpdate => "更新标题",
         };
         let spec = AskUserSpec::from_payload(&pending.payload);
-        let ask_draft = self
-            .ask_user_drafts
+        let ask_draft = ask_user_drafts
             .get(&pending.request_id)
             .cloned()
             .unwrap_or_default();
-        let plan_draft = self
-            .interaction_drafts
+        let plan_draft = interaction_drafts
             .get(&pending.request_id)
             .cloned()
             .unwrap_or_default();
@@ -3314,8 +3585,7 @@ impl DesktopProgram {
         let tool = if kind == ShellPendingKind::ToolConsent {
             let consent =
                 crate::application::DesktopToolConsent::from_payload(&pending.payload).ok();
-            let draft =
-                tool_consent_draft(pending, self.tool_consent_drafts.get(&pending.request_id));
+            let draft = tool_consent_draft(pending, tool_consent_drafts.get(&pending.request_id));
             let command_editable = consent
                 .as_ref()
                 .is_some_and(|consent| consent.editable_command().is_some());
@@ -3330,7 +3600,7 @@ impl DesktopProgram {
             None
         };
         let mcp = if kind == ShellPendingKind::McpElicitation {
-            let stored = self.mcp_elicitation_drafts.get(&pending.request_id);
+            let stored = mcp_elicitation_drafts.get(&pending.request_id);
             let draft = mcp_elicitation_draft(pending, stored);
             let elicitation =
                 crate::application::DesktopMcpElicitation::from_payload(&pending.payload).ok();
@@ -3439,7 +3709,7 @@ impl DesktopProgram {
             return String::new();
         }
         match self.inspector_surface {
-            InspectorSurface::CodingTools => String::new(),
+            InspectorSurface::CodingTools | InspectorSurface::Architecture => String::new(),
             InspectorSurface::Task => self
                 .task_session
                 .as_ref()
@@ -3716,6 +3986,13 @@ impl DesktopProgram {
         // shell's value for exactly the fields it claims and nothing else.
         let cx = self.primary_module_context();
         self.ui_modules.project(&cx, &mut snapshot);
+        if snapshot.project_page == Some(crate::runtime_shell::ShellProjectPage::Architecture)
+            && self.inspector_region_is_visible()
+        {
+            snapshot.inspector_kind = "architecture".to_owned();
+            snapshot.inspector_title = "节点".to_owned();
+            snapshot.inspector_body = architecture_inspector_body(&snapshot);
+        }
         snapshot
     }
 
@@ -3920,12 +4197,15 @@ impl DesktopProgram {
             && !pending_blocks_send
             && (self.main_conversation_draft.is_some() || !self.composer_is_locked());
         let (title_parent, title_context) = self.shell_titlebar_copy();
-        let location_name = self.current_selected_project().as_ref().and_then(|project_id| {
-            self.projects
-                .iter()
-                .find(|project| &project.id == project_id)
-                .map(|project| project.name.as_str())
-        });
+        let location_name = self
+            .current_selected_project()
+            .as_ref()
+            .and_then(|project_id| {
+                self.projects
+                    .iter()
+                    .find(|project| &project.id == project_id)
+                    .map(|project| project.name.as_str())
+            });
         let heading = if self.settings_open || self.automations_open {
             String::new()
         } else if self.main_conversation_draft.is_some() {
@@ -3981,6 +4261,17 @@ impl DesktopProgram {
             workspace: self.workspace.model().clone(),
             tasks: Vec::new(),
             timeline: Vec::new(),
+            timeline_layout: nana_ui::VirtualListLayout::default(),
+            timeline_scroll_offset: self
+                .timeline_viewports
+                .get(&TimelineSurfaceKey::Main)
+                .map(|viewport| viewport.offset)
+                .unwrap_or(0.0),
+            timeline_viewport_extent: self
+                .timeline_viewports
+                .get(&TimelineSurfaceKey::Main)
+                .map(|viewport| viewport.extent)
+                .unwrap_or(TIMELINE_DEFAULT_VIEWPORT_EXTENT),
             composer: String::new(),
             composer_task_id: None,
             composer_revision: 0,
@@ -3998,6 +4289,9 @@ impl DesktopProgram {
             clone_repository: self.project_clone_repository.clone(),
             clone_parent: self.project_clone_parent.clone(),
             milestone_title: String::new(),
+            milestone_description: String::new(),
+            milestone_due_date: String::new(),
+            milestone_status_label: String::new(),
             attachments: Vec::new(),
             plan_mode: false,
             goal_mode: false,
@@ -4037,6 +4331,7 @@ impl DesktopProgram {
                     InspectorSurface::CodingTools => "编码工具".to_owned(),
                     InspectorSurface::Task => "会话详情".to_owned(),
                     InspectorSurface::Iab => "浏览器".to_owned(),
+                    InspectorSurface::Architecture => "节点".to_owned(),
                 }
             } else {
                 String::new()
@@ -4107,11 +4402,14 @@ impl DesktopProgram {
                     panes.push(crate::runtime_shell::ShellPaneRow {
                         active: *self.panel_layout.active_pane() == pane_id,
                         id: pane_id.as_str().to_owned(),
+                        document: self.shell_document_for_pane(&pane_id),
+                        terminal: self.shell_terminal_for_pane(&pane_id),
                         items,
                     });
                 }
                 panes
             },
+            pane_layout: shell_pane_layout(&self.panel_layout.panes),
             inspector_body: self.shell_inspector_body(),
             inspector_todos: self.shell_inspector_todos(),
             iab_url: self.iab.draft_url().to_owned(),
@@ -4152,15 +4450,22 @@ impl DesktopProgram {
                 Vec::new()
             },
             roadmap_cards: Vec::new(),
+            memory_cards: Vec::new(),
+            memory_title: String::new(),
+            memory_body: String::new(),
+            memory_tags: String::new(),
+            memory_scope_label: String::new(),
             // Written by the architecture module's own projection.
             architecture_records: Vec::new(),
             architecture_graph: nana_ui::GraphModel::default(),
             architecture_viewport: nana_ui::GraphViewport::default(),
             architecture_selection: None,
+            architecture_can_rollback: self.architecture_can_roll_back() && !self.tasks.is_empty(),
             inspector_kind: if self.inspector_region_is_visible() {
                 match self.inspector_surface {
                     InspectorSurface::CodingTools => "coding".to_owned(),
                     InspectorSurface::Iab => "iab".to_owned(),
+                    InspectorSurface::Architecture => "architecture".to_owned(),
                     InspectorSurface::Task => "task".to_owned(),
                 }
             } else {
@@ -4401,7 +4706,21 @@ impl DesktopProgram {
     fn active_terminal_shell_snapshot(
         &self,
     ) -> Option<crate::runtime_shell::ShellTerminalSnapshot> {
-        if self.active_document_item_id().is_some() || self.project_surface == ProjectSurface::Files
+        if self.project_surface == ProjectSurface::Files {
+            return None;
+        }
+        if self
+            .panel_layout
+            .active_workspace_item()
+            .ok()
+            .flatten()
+            .and_then(|item_id| {
+                self.workspace_items
+                    .iter()
+                    .find(|item| &item.id == item_id)
+                    .map(|item| item.kind.as_str() == DOCUMENT_WORKSPACE_ITEM_KIND)
+            })
+            == Some(true)
         {
             return None;
         }
@@ -4559,11 +4878,24 @@ impl DesktopProgram {
             composer_disabled,
             can_send: self
                 .window_composer(window_id)
-                .is_some_and(composer_has_turn_payload),
+                .is_some_and(composer_has_turn_payload)
+                && popup
+                    .session
+                    .as_ref()
+                    .is_none_or(|session| session.blocking_pending_count == 0),
             can_interrupt: popup
                 .turn_state
                 .as_ref()
                 .is_some_and(|(_, state)| turn_state_is_active(state)),
+            pending: popup.session.as_ref().and_then(|session| {
+                self.pending_from_session(
+                    session,
+                    &popup.ask_user_drafts,
+                    &popup.interaction_drafts,
+                    &popup.mcp_elicitation_drafts,
+                    &popup.tool_consent_drafts,
+                )
+            }),
         })
     }
 
@@ -4657,7 +4989,10 @@ impl DesktopProgram {
         if self.current_selected_project().is_some() {
             context.insert("project");
         }
-        if item_id.is_some_and(|item_id| self.documents_module().is_some_and(|m| m.has_editor(item_id))) {
+        if item_id.is_some_and(|item_id| {
+            self.documents_module()
+                .is_some_and(|m| m.has_editor(item_id))
+        }) {
             context.insert("document");
         }
         context
@@ -4718,7 +5053,10 @@ impl DesktopProgram {
         }
         let restore_focus = item_id
             .as_ref()
-            .filter(|item_id| self.documents_module().is_some_and(|m| m.has_editor(item_id)))
+            .filter(|item_id| {
+                self.documents_module()
+                    .is_some_and(|m| m.has_editor(item_id))
+            })
             .map(|item_id| target_ids::document_editor_input(item_id.as_str()));
         self.command_source_window = window_id;
         self.command_source_item = item_id;
@@ -4995,20 +5333,26 @@ impl DesktopProgram {
             .expanded_project_ids
             .iter()
             .any(|candidate| candidate == project_id.as_str())
-            || self.current_selected_task().as_ref().is_some_and(|selected_task| {
-                self.task_move_candidates.iter().any(|task| {
-                    &task.id == selected_task && task.project_id.as_ref() == Some(project_id)
+            || self
+                .current_selected_task()
+                .as_ref()
+                .is_some_and(|selected_task| {
+                    self.task_move_candidates.iter().any(|task| {
+                        &task.id == selected_task && task.project_id.as_ref() == Some(project_id)
+                    })
                 })
-            })
     }
 
     fn sidebar_inbox_expanded(&self) -> bool {
         self.sidebar_tree_state.inbox_expanded
-            || self.current_selected_task().as_ref().is_some_and(|selected_task| {
-                self.task_move_candidates
-                    .iter()
-                    .any(|task| &task.id == selected_task && task.project_id.is_none())
-            })
+            || self
+                .current_selected_task()
+                .as_ref()
+                .is_some_and(|selected_task| {
+                    self.task_move_candidates
+                        .iter()
+                        .any(|task| &task.id == selected_task && task.project_id.is_none())
+                })
     }
 
     fn update_sidebar_menu(&mut self, event: HostedContextMenuEvent<SidebarMenuAction>) {
@@ -5152,7 +5496,6 @@ impl DesktopProgram {
                     TitlebarMenuAction::OpenConversationStatus => {
                         self.refresh_conversation_status();
                     }
-                    TitlebarMenuAction::OpenTaskBrowser => self.open_iab(),
                 }
             }
         }
@@ -5991,7 +6334,7 @@ impl DesktopProgram {
                 self.apply_conversation_suggestion_job(event.job_id, event.state)
             }
             lilia_feature_document::DIAGNOSTICS_PROTOCOL
-                | lilia_feature_document::DEFINITION_PROTOCOL => {
+            | lilia_feature_document::DEFINITION_PROTOCOL => {
                 self.route_documents_message(DocumentMessage::Job(event));
             }
             lilia_feature_github::BIND_PROTOCOL
@@ -6913,6 +7256,70 @@ impl DesktopProgram {
         reordered_before(&ids, task_id, before_task_id)
     }
 
+    fn sidebar_tree_drop_message(
+        &self,
+        source: String,
+        target: String,
+        position: crate::runtime_shell::SidebarDropPosition,
+    ) -> Option<Message> {
+        use crate::runtime_shell::SidebarDropPosition;
+        let task_id = TaskId::new(&source).ok()?;
+        let project_id = self
+            .projects
+            .iter()
+            .find(|project| project.id.as_str() == target)
+            .map(|project| project.id.clone());
+        if project_id.is_some() || position == SidebarDropPosition::Inside {
+            if let Some(project_id) = project_id {
+                return Some(Message::Task(TaskMessage::DropTask {
+                    source: TaskDropItem::Source(task_id),
+                    before: Some(TaskDropItem::Destination {
+                        project_id: Some(project_id),
+                        parent_id: None,
+                    }),
+                }));
+            }
+            let parent_id = TaskId::new(&target).ok()?;
+            let project_id = self
+                .task_move_candidates
+                .iter()
+                .find(|task| task.id == parent_id)
+                .and_then(|task| task.project_id.clone());
+            return Some(Message::Task(TaskMessage::DropTask {
+                source: TaskDropItem::Source(task_id),
+                before: Some(TaskDropItem::Destination {
+                    project_id,
+                    parent_id: Some(parent_id),
+                }),
+            }));
+        }
+        let before_task_id = match position {
+            SidebarDropPosition::Before => TaskId::new(&target).ok(),
+            SidebarDropPosition::After => self.next_sidebar_task_after(&target),
+            SidebarDropPosition::Inside => None,
+        };
+        Some(Message::Task(TaskMessage::ReorderTask {
+            task_id,
+            before_task_id,
+        }))
+    }
+
+    fn next_sidebar_task_after(&self, id: &str) -> Option<TaskId> {
+        self.shell_sidebar_rows()
+            .into_iter()
+            .skip_while(|row| row.id != id)
+            .skip(1)
+            .find_map(|row| {
+                matches!(
+                    row.kind,
+                    crate::runtime_shell::ShellSidebarKind::Task
+                        | crate::runtime_shell::ShellSidebarKind::Running
+                )
+                .then(|| TaskId::new(&row.id).ok())
+                .flatten()
+            })
+    }
+
     fn reorder_task(&mut self, task_id: TaskId, before_task_id: Option<TaskId>) {
         if !self.tasks.iter().any(|task| task.id == task_id) {
             return;
@@ -6958,7 +7365,11 @@ impl DesktopProgram {
                 .map(|project| (Some(project.id.clone()), project.name.clone())),
         );
         let mut destinations = Vec::new();
-        let query = self.task_module().task_drop_search().trim().to_ascii_lowercase();
+        let query = self
+            .task_module()
+            .task_drop_search()
+            .trim()
+            .to_ascii_lowercase();
         for (project_id, location_name) in locations {
             if selected_task.project_id != project_id || selected_task.parent_id.is_some() {
                 destinations.push((
@@ -7006,9 +7417,6 @@ impl DesktopProgram {
         let TaskDropItem::Source(task_id) = source else {
             return;
         };
-        if self.current_selected_task().as_ref() != Some(&task_id) {
-            return;
-        }
         let target = before.or_else(|| {
             self.task_drop_destinations()
                 .last()
@@ -7780,9 +8188,7 @@ impl DesktopProgram {
         window_id: HostedWindowId,
     ) -> Option<&crate::module::timeline::TimelineModule> {
         if window_id == HostedWindowId::PRIMARY {
-            Some(self.primary_module(
-                &crate::module::timeline::TimelineModule::feature_id(),
-            ))
+            Some(self.primary_module(&crate::module::timeline::TimelineModule::feature_id()))
         } else {
             self.window_module(
                 window_id,
@@ -7842,9 +8248,7 @@ impl DesktopProgram {
         window_id: HostedWindowId,
     ) -> Option<&crate::module::composer::ComposerModule> {
         if window_id == HostedWindowId::PRIMARY {
-            Some(self.primary_module(
-                &crate::module::composer::ComposerModule::feature_id(),
-            ))
+            Some(self.primary_module(&crate::module::composer::ComposerModule::feature_id()))
         } else {
             self.window_module(
                 window_id,
@@ -7853,10 +8257,7 @@ impl DesktopProgram {
         }
     }
 
-    fn window_composer(
-        &self,
-        window_id: HostedWindowId,
-    ) -> Option<&DesktopComposerState> {
+    fn window_composer(&self, window_id: HostedWindowId) -> Option<&DesktopComposerState> {
         self.window_composer_module(window_id)
             .and_then(crate::module::composer::ComposerModule::composer)
     }
@@ -7952,11 +8353,7 @@ impl DesktopProgram {
         ok
     }
 
-    fn publish_task_session(
-        &self,
-        task_id: &TaskId,
-        session: Option<&TaskSessionView>,
-    ) {
+    fn publish_task_session(&self, task_id: &TaskId, session: Option<&TaskSessionView>) {
         let sessions = crate::shell_service::task_sessions(self.kernel.kernel());
         match session {
             Some(session) => sessions.install(task_id.clone(), Arc::new(session.clone())),
@@ -7985,10 +8382,13 @@ impl DesktopProgram {
             }
             match panel_id.as_str() {
                 TASK_INSPECTOR_PANEL_ID => {
-                    self.current_selected_task().is_some() && self.project_surface == ProjectSurface::Tasks
+                    (self.current_selected_task().is_some()
+                        && self.project_surface == ProjectSurface::Tasks)
+                        || self.project_surface == ProjectSurface::Architecture
                 }
                 CODING_TOOLS_PANEL_ID => {
-                    self.current_selected_project().is_some() && self.project_surface == ProjectSurface::Tasks
+                    self.current_selected_project().is_some()
+                        && self.project_surface == ProjectSurface::Tasks
                 }
                 IAB_PANEL_ID => self.current_selected_task().is_some(),
                 _ => false,
@@ -7998,6 +8398,9 @@ impl DesktopProgram {
             self.inspector_surface = match panel_id.as_str() {
                 CODING_TOOLS_PANEL_ID => InspectorSurface::CodingTools,
                 IAB_PANEL_ID => InspectorSurface::Iab,
+                _ if self.project_surface == ProjectSurface::Architecture => {
+                    InspectorSurface::Architecture
+                }
                 _ => InspectorSurface::Task,
             };
             self.workspace
@@ -8076,152 +8479,6 @@ impl DesktopProgram {
         }
         self.project_surface = ProjectSurface::Tasks;
         self.activate_inspector_panel(IAB_PANEL_ID);
-    }
-
-    fn update_iab(&mut self, message: IabPanelMessage) {
-        match message {
-            IabPanelMessage::Close => {
-                self.close_inspector_dock();
-                return;
-            }
-            IabPanelMessage::OpenWindow => {
-                self.open_iab_window();
-                return;
-            }
-            _ => {}
-        }
-        self.iab.update(message, HostedWindowId::PRIMARY);
-    }
-
-    fn open_iab_window(&mut self) {
-        let Some(task_id) = self.current_selected_task() else {
-            return;
-        };
-        if let Some(window_id) = self
-            .iab_windows
-            .values()
-            .find_map(|window| (window.task_id == task_id).then_some(window.id))
-        {
-            let url = self.iab.active_url().to_owned();
-            if let Some(window) = self.iab_windows.get_mut(&window_id) {
-                window.update_browser(IabPanelMessage::DraftUrlChanged(url));
-                window.update_browser(IabPanelMessage::Navigate);
-            }
-            self.pending_window_commands
-                .push(HostedWindowCommand::Focus(window_id));
-            return;
-        }
-        let task = match self.kernel.session().get_task(&task_id) {
-            Ok(task) => task,
-            Err(error) => {
-                eprintln!("failed to open Native IAB window: {error}");
-                self.task_action_error = Some("无法打开浏览器窗口，请重试。".to_owned());
-                return;
-            }
-        };
-        let window_id = WindowId(self.next_task_popup_window_id);
-        self.next_task_popup_window_id = self.next_task_popup_window_id.saturating_add(1);
-        self.iab_windows.insert(
-            window_id,
-            IabWindowState::new(
-                window_id,
-                iab_browser_id(window_id),
-                task_id,
-                self.iab.active_url(),
-            ),
-        );
-        self.pending_window_commands
-            .push(HostedWindowCommand::Open {
-                id: window_id,
-                settings: iab_window_settings(&task.title),
-            });
-        self.task_action_error = None;
-    }
-
-    fn update_iab_window(&mut self, window_id: HostedWindowId, message: IabWindowMessage) {
-        match message {
-            IabWindowMessage::Browser(IabPanelMessage::Close) => {
-                self.close_iab_window(window_id);
-            }
-            IabWindowMessage::Browser(IabPanelMessage::OpenWindow) => {
-                self.pending_window_commands
-                    .push(HostedWindowCommand::Focus(window_id));
-            }
-            IabWindowMessage::Browser(message) => {
-                if let Some(window) = self.iab_windows.get_mut(&window_id) {
-                    window.update_browser(message);
-                }
-            }
-            IabWindowMessage::NoteChanged(note) => {
-                if let Some(window) = self.iab_windows.get_mut(&window_id) {
-                    window.set_note(note);
-                }
-            }
-            IabWindowMessage::Submit => {
-                if let Some(window) = self.iab_windows.get_mut(&window_id) {
-                    let _ = window.begin_capture(&self.home);
-                }
-            }
-        }
-    }
-
-    fn close_iab_window(&mut self, window_id: HostedWindowId) {
-        let Some(mut window) = self.iab_windows.remove(&window_id) else {
-            return;
-        };
-        self.abandon_iab_capture(window_id, &mut window);
-        self.pending_window_commands
-            .extend([HostedWindowCommand::Close(window_id)]);
-    }
-
-    fn abandon_iab_capture(&mut self, window_id: HostedWindowId, window: &mut IabWindowState) {
-        let Some((capture_id, path)) = window.cancel_pending_capture() else {
-            return;
-        };
-        remove_abandoned_iab_snapshot(&path);
-        self.abandoned_iab_captures
-            .insert((window_id.0, capture_id.0), path);
-    }
-
-    fn finish_iab_capture(
-        &mut self,
-        window_id: HostedWindowId,
-        capture_id: HostedWindowCaptureId,
-        screenshot_path: Option<PathBuf>,
-        warning: Option<String>,
-    ) {
-        let captured_path = screenshot_path.clone();
-        let input = self
-            .iab_windows
-            .get_mut(&window_id)
-            .and_then(|window| window.finish_capture(capture_id, screenshot_path, warning));
-        let Some(input) = input else {
-            if let Some(path) = captured_path {
-                remove_abandoned_iab_snapshot(&path);
-            }
-            return;
-        };
-        let attachment_path = input.screenshot_path.clone();
-        match self.kernel.session().submit_iab_snapshot(input) {
-            Ok(submission) => {
-                if let Some(window) = self.iab_windows.get_mut(&window_id) {
-                    window.complete_submission(&submission);
-                }
-                self.refresh_task_session();
-                for popup_id in self.task_popups.keys().copied().collect::<Vec<_>>() {
-                    self.refresh_task_popup(popup_id);
-                }
-            }
-            Err(error) => {
-                if let Some(path) = attachment_path {
-                    remove_abandoned_iab_snapshot(&path);
-                }
-                eprintln!("failed to submit Native IAB result: {error}");
-                if let Some(window) = self.iab_windows.get_mut(&window_id) {
-                    window.fail_submission("无法提交浏览结果，请重试。");
-                }
-            }
-        }
     }
 
     fn sync_iab_browser_visibility(&mut self) {
@@ -10098,6 +10355,7 @@ impl DesktopProgram {
                     self.restore_primary_architecture_layout(
                         next_architecture_workspace_state.as_ref(),
                     );
+                    self.activate_inspector_panel(TASK_INSPECTOR_PANEL_ID);
                 }
                 ProjectSurface::Files => self.refresh_project_files(),
                 ProjectSurface::Tasks | ProjectSurface::Settings | ProjectSurface::Clone => {}
@@ -10216,11 +10474,7 @@ impl DesktopProgram {
             .expect("every window is furnished with the same modules");
         let jobs = self.kernel.kernel().jobs();
         module.start_diagnostics(target.document_id, Some(project_id), jobs);
-        if !module.apply_definition_selection(
-            &item_id,
-            target.start_offset,
-            target.end_offset,
-        ) {
+        if !module.apply_definition_selection(&item_id, target.start_offset, target.end_offset) {
             return;
         }
         self.pending_ui_commands.push(HostedUiCommand::Focus {
@@ -10312,7 +10566,6 @@ impl DesktopProgram {
             Message::Extensions(message) => return self.apply_extensions_message(message),
             Message::Remote(message) => return self.apply_remote_message(message),
             Message::Update(message) => return self.apply_update_message(message),
-            Message::Iab(message) => return self.apply_iab_message(message),
             Message::KernelJob(event) => self.apply_kernel_job(event),
             Message::KernelEvent(event) => self.apply_kernel_event(event),
             Message::RequestTitleUpdate { task_id, turn_id } => {
@@ -10427,9 +10680,19 @@ impl DesktopProgram {
             ArchitectureMessage::Graph(event) => architecture_layout_event_committed(event),
             _ => false,
         };
+        let selection_changed = matches!(
+            &message,
+            ArchitectureMessage::Graph(nana_ui::GraphCanvasEvent::SelectionChanged(_))
+        );
         self.route_architecture_message(message);
         if layout_changed {
             self.persist_main_architecture_layout();
+        }
+        if selection_changed
+            && self.project_surface == ProjectSurface::Architecture
+            && !self.inspector_region_is_visible()
+        {
+            self.activate_inspector_panel(TASK_INSPECTOR_PANEL_ID);
         }
         None
     }
@@ -10544,9 +10807,6 @@ impl DesktopProgram {
         message: WorkspaceWindowMessage,
     ) -> Option<HostedWindowAction> {
         match message {
-            WorkspaceWindowMessage::IabWindow { window_id, message } => {
-                self.update_iab_window(window_id, message)
-            }
             WorkspaceWindowMessage::OpenChildQuestionPopup {
                 source_window,
                 parent_task_id,
@@ -10687,7 +10947,11 @@ impl DesktopProgram {
                     window_id,
                     crate::module::composer::ComposerMessage::SetContent(value),
                 );
-                if self.task_popups.get(&window_id).is_some_and(|popup| popup.draft.is_some()) {
+                if self
+                    .task_popups
+                    .get(&window_id)
+                    .is_some_and(|popup| popup.draft.is_some())
+                {
                     self.refresh_conversation_suggestions(window_id, false);
                 }
             }
@@ -11830,13 +12094,6 @@ impl DesktopProgram {
         None
     }
 
-    fn apply_iab_message(&mut self, message: IabPanelMessage) -> Option<HostedWindowAction> {
-        match message {
-            message => self.update_iab(message),
-        }
-        None
-    }
-
     fn apply_suggestions_message(
         &mut self,
         message: SuggestionsMessage,
@@ -12295,6 +12552,77 @@ impl DesktopProgram {
         }
     }
 
+    fn shell_document_for_pane(
+        &self,
+        pane_id: &PaneId,
+    ) -> Option<crate::runtime_shell::ShellDocumentSnapshot> {
+        let item_id = self.panel_layout.active_item(pane_id).ok().flatten()?;
+        let item = self
+            .workspace_items
+            .iter()
+            .find(|item| item.id == *item_id)?;
+        if item.kind.as_str() != DOCUMENT_WORKSPACE_ITEM_KIND {
+            return None;
+        }
+        let state = self.documents_module()?.editor(item_id)?;
+        Some(crate::runtime_shell::ShellDocumentSnapshot {
+            item_id: item_id.as_str().to_owned(),
+            title: state.path_label.clone(),
+            text: state.editor.text(),
+            language: state.language_label.clone(),
+            status: state
+                .conflict_message
+                .clone()
+                .or_else(|| state.status_message.clone())
+                .unwrap_or_else(|| {
+                    if state.dirty {
+                        "未保存".to_owned()
+                    } else {
+                        state.language_label.clone()
+                    }
+                }),
+            read_only: state.read_only,
+            dirty: state.dirty,
+            diagnostics: state
+                .diagnostics
+                .iter()
+                .map(|diagnostic| crate::runtime_shell::ShellDiagnosticRow {
+                    severity: match diagnostic.severity {
+                        DiagnosticSeverity::Error => "错误".to_owned(),
+                        DiagnosticSeverity::Warning => "警告".to_owned(),
+                        DiagnosticSeverity::Information => "信息".to_owned(),
+                        DiagnosticSeverity::Hint => "提示".to_owned(),
+                    },
+                    message: diagnostic.message.clone(),
+                })
+                .collect(),
+        })
+    }
+
+    fn shell_terminal_for_pane(
+        &self,
+        pane_id: &PaneId,
+    ) -> Option<crate::runtime_shell::ShellTerminalSnapshot> {
+        let item_id = self.panel_layout.active_item(pane_id).ok().flatten()?;
+        let item = self
+            .workspace_items
+            .iter()
+            .find(|item| item.id == *item_id)?;
+        if item.kind.as_str() != TERMINAL_WORKSPACE_ITEM_KIND {
+            return None;
+        }
+        let snapshot = self.terminal_snapshot_for_item(item)?;
+        Some(crate::runtime_shell::ShellTerminalSnapshot {
+            output: terminal_plain_text(&snapshot),
+            input: self
+                .terminal_inputs
+                .get(&snapshot.id)
+                .cloned()
+                .unwrap_or_default(),
+            notice: self.terminal_notices.get(&snapshot.id).cloned(),
+        })
+    }
+
     fn split_workspace_pane(&mut self, pane_id: PaneId, axis: SplitAxis) {
         let new_pane_id = PaneId::new(format!("pane-{}", uuid::Uuid::new_v4()))
             .expect("UUID-backed pane ids are valid");
@@ -12461,8 +12789,9 @@ impl DesktopProgram {
         let mut documents_to_close = BTreeSet::new();
         for item in closing {
             if !remaining_resources.contains(item.resource_id.as_str()) {
-                if let Some(document_id) =
-                    self.documents_module().and_then(|m| m.editor_document_id(&item.id))
+                if let Some(document_id) = self
+                    .documents_module()
+                    .and_then(|m| m.editor_document_id(&item.id))
                 {
                     documents_to_close.insert(document_id);
                 }
@@ -14214,7 +14543,7 @@ impl DesktopProgram {
                 paths,
                 position,
             } => {
-                if *id == CONVERSATION_STATUS_WINDOW_ID || self.iab_windows.contains_key(id) {
+                if *id == CONVERSATION_STATUS_WINDOW_ID {
                     return Some(HostedProgramUpdate::default());
                 }
                 self.apply_file_hover(*id, paths, *position);
@@ -14225,7 +14554,7 @@ impl DesktopProgram {
                 paths,
                 position,
             } => {
-                if *id == CONVERSATION_STATUS_WINDOW_ID || self.iab_windows.contains_key(id) {
+                if *id == CONVERSATION_STATUS_WINDOW_ID {
                     return Some(HostedProgramUpdate::default());
                 }
                 self.apply_file_drop(*id, paths, *position);
@@ -15954,17 +16283,13 @@ impl DesktopProgram {
                 self.route_settings(crate::module::settings::SettingsModuleMessage::SetCatalog(
                     catalog,
                 ));
-                if self
-                    .settings_module()
-                    .editing_id()
-                    .is_some_and(|agent_id| {
-                        !self
-                            .custom_agents
-                            .agents
-                            .iter()
-                            .any(|agent| agent.id == agent_id)
-                    })
-                {
+                if self.settings_module().editing_id().is_some_and(|agent_id| {
+                    !self
+                        .custom_agents
+                        .agents
+                        .iter()
+                        .any(|agent| agent.id == agent_id)
+                }) {
                     self.clear_custom_agent_editor();
                 }
                 self.agent_interaction_error = None;
@@ -16604,10 +16929,11 @@ impl DesktopProgram {
                     "目录选择器返回了无法识别的结果。".to_owned(),
                 ));
             }
-            Err(error) => self.route_extensions(ExtensionsModuleMessage::JobFailed(error.to_string())),
+            Err(error) => {
+                self.route_extensions(ExtensionsModuleMessage::JobFailed(error.to_string()))
+            }
         }
     }
-
 
     fn start_remote_operation(&mut self, request: RemoteRequest) {
         if self.remote_busy() {
@@ -16933,45 +17259,26 @@ impl DesktopProgram {
                     let _ = reply.send(success_response("input", &self.debug_observation()));
                     return;
                 }
-                let iab_window_url = self
-                    .iab_windows
-                    .keys()
-                    .copied()
-                    .find(|window_id| target_ids::iab_window_url(window_id.0) == target_id);
-                let iab_window_note = self
-                    .iab_windows
-                    .keys()
-                    .copied()
-                    .find(|window_id| target_ids::iab_window_note(window_id.0) == target_id);
-                if let Some(window_id) = iab_window_url {
-                    self.update_iab_window(
-                        window_id,
-                        IabWindowMessage::Browser(IabPanelMessage::DraftUrlChanged(text)),
-                    );
-                    let _ = reply.send(success_response("input", &self.debug_observation()));
-                    return;
-                } else if let Some(window_id) = iab_window_note {
-                    self.update_iab_window(window_id, IabWindowMessage::NoteChanged(text));
-                    let _ = reply.send(success_response("input", &self.debug_observation()));
-                    return;
-                } else if self.application_surface_is_visible(ApplicationWorkspaceSurface::Settings)
+                if self.application_surface_is_visible(ApplicationWorkspaceSurface::Settings)
                     && self.settings_state.active_tab().as_str() == "extensions"
                     && !self.extensions_busy()
                 {
                     let hook_handler_input =
-                        self.extensions_module().hook_drafts().iter().find_map(|(source_id, draft)| {
-                            let handler_count = parse_hook_handlers_draft(draft).ok()?.len();
-                            (0..handler_count).find_map(|index| {
-                                HookHandlerDraftField::ALL.into_iter().find_map(|field| {
-                                    (target_ids::extensions_hook_handler_field(
-                                        source_id,
-                                        index,
-                                        field.target_key(),
-                                    ) == target_id)
-                                        .then(|| (source_id.clone(), index, field))
+                        self.extensions_module().hook_drafts().iter().find_map(
+                            |(source_id, draft)| {
+                                let handler_count = parse_hook_handlers_draft(draft).ok()?.len();
+                                (0..handler_count).find_map(|index| {
+                                    HookHandlerDraftField::ALL.into_iter().find_map(|field| {
+                                        (target_ids::extensions_hook_handler_field(
+                                            source_id,
+                                            index,
+                                            field.target_key(),
+                                        ) == target_id)
+                                            .then(|| (source_id.clone(), index, field))
+                                    })
                                 })
-                            })
-                        });
+                            },
+                        );
                     if let Some((source_id, index, field)) = hook_handler_input {
                         self.update_message(Message::Extensions(
                             ExtensionsMessage::HookHandlerDraftChanged {
@@ -17004,14 +17311,20 @@ impl DesktopProgram {
                                 text.clone(),
                             )))
                         }
-                        target_ids::EXTENSIONS_MCP_LOCATION if self.extensions_module().mcp_editor().is_some() => {
+                        target_ids::EXTENSIONS_MCP_LOCATION
+                            if self.extensions_module().mcp_editor().is_some() =>
+                        {
                             Some(Message::Extensions(ExtensionsMessage::McpLocationChanged(
                                 text.clone(),
                             )))
                         }
-                        target_ids::EXTENSIONS_MCP_ARGS if self.extensions_module().mcp_editor().is_some() => Some(
-                            Message::Extensions(ExtensionsMessage::McpArgsChanged(text.clone())),
-                        ),
+                        target_ids::EXTENSIONS_MCP_ARGS
+                            if self.extensions_module().mcp_editor().is_some() =>
+                        {
+                            Some(Message::Extensions(ExtensionsMessage::McpArgsChanged(
+                                text.clone(),
+                            )))
+                        }
                         target_ids::EXTENSIONS_MCP_CREDENTIAL_NAMES
                             if self.extensions_module().mcp_editor().is_some() =>
                         {
@@ -17267,12 +17580,6 @@ impl DesktopProgram {
                     && self.project_surface == ProjectSurface::Memory
                 {
                     self.route_memory_message(MemoryMessage::CooldownChanged(text));
-                    success_response("input", &self.debug_observation())
-                } else if target_id == target_ids::IAB_URL
-                    && self.inspector_surface == InspectorSurface::Iab
-                    && self.inspector_region_is_visible()
-                {
-                    self.update_iab(IabPanelMessage::DraftUrlChanged(text));
                     success_response("input", &self.debug_observation())
                 } else if target_id == target_ids::CODING_TOOLS_QUERY
                     && self.inspector_surface == InspectorSurface::CodingTools
@@ -18222,7 +18529,10 @@ impl DesktopProgram {
             }) else {
                 continue;
             };
-            if self.documents_module().is_some_and(|m| m.has_editor(&item_id)) {
+            if self
+                .documents_module()
+                .is_some_and(|m| m.has_editor(&item_id))
+            {
                 locations.push((popup.id, item_id));
             }
         }
@@ -18318,16 +18628,16 @@ impl DesktopProgram {
                 .documents_module()
                 .and_then(|m| m.editor(&item_id))
                 .and_then(|state| {
-                state
-                    .definition_targets
-                    .iter()
-                    .enumerate()
-                    .find_map(|(index, _)| {
-                        (target_ids::document_editor_definition_target(item_id.as_str(), index)
-                            == target_id)
-                            .then_some(index)
-                    })
-            });
+                    state
+                        .definition_targets
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, _)| {
+                            (target_ids::document_editor_definition_target(item_id.as_str(), index)
+                                == target_id)
+                                .then_some(index)
+                        })
+                });
             if let Some(index) = definition_target {
                 self.route_documents_message(DocumentMessage::OpenDefinitionTarget {
                     item_id,
@@ -18336,42 +18646,6 @@ impl DesktopProgram {
                 });
                 return true;
             }
-        }
-        if let Some(window_id) = self
-            .iab_windows
-            .keys()
-            .copied()
-            .find(|window_id| target_ids::iab_window_navigate(window_id.0) == target_id)
-        {
-            self.update_iab_window(
-                window_id,
-                IabWindowMessage::Browser(IabPanelMessage::Navigate),
-            );
-            return true;
-        }
-        if let Some(window_id) = self
-            .iab_windows
-            .keys()
-            .copied()
-            .find(|window_id| target_ids::iab_window_submit(window_id.0) == target_id)
-        {
-            let can_submit = self
-                .iab_windows
-                .get(&window_id)
-                .is_some_and(|window| window.browser_ready() && !window.capture_pending());
-            if can_submit {
-                self.update_iab_window(window_id, IabWindowMessage::Submit);
-            }
-            return can_submit;
-        }
-        if let Some(window_id) = self
-            .iab_windows
-            .keys()
-            .copied()
-            .find(|window_id| target_ids::iab_window_close(window_id.0) == target_id)
-        {
-            self.close_iab_window(window_id);
-            return true;
         }
         if let Some(session_id) = self
             .terminal_snapshots
@@ -18444,7 +18718,11 @@ impl DesktopProgram {
                 self.update_message(message);
                 return true;
             }
-            if let Some(skill_id) = self.extensions_module().skill_delete_confirmation().map(str::to_owned) {
+            if let Some(skill_id) = self
+                .extensions_module()
+                .skill_delete_confirmation()
+                .map(str::to_owned)
+            {
                 if target_ids::extensions_skill_delete_confirm(&skill_id) == target_id {
                     self.update_message(Message::Extensions(ExtensionsMessage::ConfirmDeleteSkill));
                     return true;
@@ -18456,7 +18734,11 @@ impl DesktopProgram {
             }
             if target_id == target_ids::EXTENSIONS_PLUGIN_INSTALL
                 && !self.extensions_busy()
-                && !self.extensions_module().plugin_source_input().trim().is_empty()
+                && !self
+                    .extensions_module()
+                    .plugin_source_input()
+                    .trim()
+                    .is_empty()
             {
                 self.update_message(Message::Extensions(ExtensionsMessage::InstallPlugin));
                 return true;
@@ -18482,7 +18764,11 @@ impl DesktopProgram {
                 self.update_message(message);
                 return true;
             }
-            if let Some(plugin_id) = self.extensions_module().plugin_delete_confirmation().map(str::to_owned) {
+            if let Some(plugin_id) = self
+                .extensions_module()
+                .plugin_delete_confirmation()
+                .map(str::to_owned)
+            {
                 if target_ids::extensions_plugin_delete_confirm(&plugin_id) == target_id {
                     self.update_message(Message::Extensions(
                         ExtensionsMessage::ConfirmDeletePlugin,
@@ -18518,8 +18804,11 @@ impl DesktopProgram {
                 self.update_message(message);
                 return true;
             }
-            if let Some((source_id, index)) =
-                self.extensions_module().hook_drafts().iter().find_map(|(source_id, draft)| {
+            if let Some((source_id, index)) = self
+                .extensions_module()
+                .hook_drafts()
+                .iter()
+                .find_map(|(source_id, draft)| {
                     let handler_count = parse_hook_handlers_draft(draft).ok()?.len();
                     (0..handler_count).find_map(|index| {
                         (target_ids::extensions_hook_remove_handler(source_id, index) == target_id)
@@ -18533,7 +18822,11 @@ impl DesktopProgram {
                 }));
                 return true;
             }
-            if let Some(source_id) = self.extensions_module().hook_delete_confirmation().map(str::to_owned) {
+            if let Some(source_id) = self
+                .extensions_module()
+                .hook_delete_confirmation()
+                .map(str::to_owned)
+            {
                 if target_ids::extensions_hook_delete_confirm(&source_id) == target_id {
                     self.update_message(Message::Extensions(
                         ExtensionsMessage::ConfirmDeleteHookSource,
@@ -18625,30 +18918,36 @@ impl DesktopProgram {
                 });
                 return true;
             }
-            if let Some((server_id, uri)) = self.extensions_module().snapshot().and_then(|snapshot| {
-                snapshot.mcp_servers.iter().find_map(|server| {
-                    server.resources.iter().find_map(|resource| {
-                        (target_ids::extensions_mcp_resource_read(&server.server_id, &resource.uri)
-                            == target_id)
-                            .then(|| (server.server_id.clone(), resource.uri.clone()))
+            if let Some((server_id, uri)) =
+                self.extensions_module().snapshot().and_then(|snapshot| {
+                    snapshot.mcp_servers.iter().find_map(|server| {
+                        server.resources.iter().find_map(|resource| {
+                            (target_ids::extensions_mcp_resource_read(
+                                &server.server_id,
+                                &resource.uri,
+                            ) == target_id)
+                                .then(|| (server.server_id.clone(), resource.uri.clone()))
+                        })
                     })
                 })
-            }) {
+            {
                 self.update_message(Message::Extensions(ExtensionsMessage::ReadMcpResource {
                     server_id,
                     uri,
                 }));
                 return true;
             }
-            if let Some(namespaced_name) = self.extensions_module().snapshot().and_then(|snapshot| {
-                snapshot.mcp_servers.iter().find_map(|server| {
-                    server.prompts.iter().find_map(|prompt| {
-                        (target_ids::extensions_mcp_prompt_get(&server.server_id, &prompt.name)
-                            == target_id)
-                            .then(|| prompt.namespaced_name.clone())
+            if let Some(namespaced_name) =
+                self.extensions_module().snapshot().and_then(|snapshot| {
+                    snapshot.mcp_servers.iter().find_map(|server| {
+                        server.prompts.iter().find_map(|prompt| {
+                            (target_ids::extensions_mcp_prompt_get(&server.server_id, &prompt.name)
+                                == target_id)
+                                .then(|| prompt.namespaced_name.clone())
+                        })
                     })
                 })
-            }) {
+            {
                 self.update_message(Message::Extensions(ExtensionsMessage::GetMcpPrompt(
                     namespaced_name,
                 )));
@@ -18673,7 +18972,11 @@ impl DesktopProgram {
                 self.update_message(message);
                 return true;
             }
-            if let Some(server_id) = self.extensions_module().mcp_delete_confirmation().map(str::to_owned) {
+            if let Some(server_id) = self
+                .extensions_module()
+                .mcp_delete_confirmation()
+                .map(str::to_owned)
+            {
                 if target_ids::extensions_mcp_delete_confirm(&server_id) == target_id {
                     self.update_message(Message::Extensions(
                         ExtensionsMessage::ConfirmDeleteMcpServer,
@@ -18851,21 +19154,27 @@ impl DesktopProgram {
             }));
             return true;
         }
-        if let Some(command) = self.composer_slash_commands(HostedWindowId::PRIMARY).iter().find_map(|result| {
-            (target_ids::composer_slash_command(&result.command.name) == target_id)
-                .then(|| result.command.clone())
-        }) {
+        if let Some(command) = self
+            .composer_slash_commands(HostedWindowId::PRIMARY)
+            .iter()
+            .find_map(|result| {
+                (target_ids::composer_slash_command(&result.command.name) == target_id)
+                    .then(|| result.command.clone())
+            })
+        {
             self.update_message(Message::Composer(ComposerMessage::SelectSlashCommand(
                 command,
             )));
             return true;
         }
         if let Some((window_id, command)) = self.task_popups.values().find_map(|popup| {
-            self.composer_slash_commands(popup.id).iter().find_map(|result| {
-                (target_ids::task_popup_slash_command(popup.id.0, &result.command.name)
-                    == target_id)
-                    .then(|| (popup.id, result.command.clone()))
-            })
+            self.composer_slash_commands(popup.id)
+                .iter()
+                .find_map(|result| {
+                    (target_ids::task_popup_slash_command(popup.id.0, &result.command.name)
+                        == target_id)
+                        .then(|| (popup.id, result.command.clone()))
+                })
         }) {
             self.update_message(Message::Composer(
                 ComposerMessage::TaskPopupSelectSlashCommand { window_id, command },
@@ -18914,7 +19223,8 @@ impl DesktopProgram {
             self.clear_review_slash_workflow(window_id);
             return true;
         }
-        if let Some(task_id) = self.composer_conversation_references(HostedWindowId::PRIMARY)
+        if let Some(task_id) = self
+            .composer_conversation_references(HostedWindowId::PRIMARY)
             .iter()
             .find_map(|reference| {
                 (target_ids::composer_conversation_reference(&reference.task_id) == target_id)
@@ -18926,25 +19236,32 @@ impl DesktopProgram {
             ));
             return true;
         }
-        if let Some(relative_path) = self.composer_context_attachments(HostedWindowId::PRIMARY).iter().find_map(|result| {
-            (target_ids::composer_context_attachment(&result.relative_path) == target_id)
-                .then(|| result.relative_path.clone())
-        }) {
+        if let Some(relative_path) = self
+            .composer_context_attachments(HostedWindowId::PRIMARY)
+            .iter()
+            .find_map(|result| {
+                (target_ids::composer_context_attachment(&result.relative_path) == target_id)
+                    .then(|| result.relative_path.clone())
+            })
+        {
             self.update_message(Message::Composer(ComposerMessage::SelectContextAttachment(
                 relative_path,
             )));
             return true;
         }
-        if let Some(task_id) = self.window_composer(HostedWindowId::PRIMARY).and_then(|composer| {
-            composer
-                .conversation_references
-                .iter()
-                .find_map(|reference| {
-                    (target_ids::composer_conversation_reference_remove(&reference.task_id)
-                        == target_id)
-                        .then(|| reference.task_id.clone())
-                })
-        }) {
+        if let Some(task_id) = self
+            .window_composer(HostedWindowId::PRIMARY)
+            .and_then(|composer| {
+                composer
+                    .conversation_references
+                    .iter()
+                    .find_map(|reference| {
+                        (target_ids::composer_conversation_reference_remove(&reference.task_id)
+                            == target_id)
+                            .then(|| reference.task_id.clone())
+                    })
+            })
+        {
             self.update_message(Message::Composer(
                 ComposerMessage::RemoveConversationReference(task_id),
             ));
@@ -18965,11 +19282,13 @@ impl DesktopProgram {
             return true;
         }
         if let Some((window_id, relative_path)) = self.task_popups.values().find_map(|popup| {
-            self.composer_context_attachments(popup.id).iter().find_map(|result| {
-                (target_ids::task_popup_context_attachment(popup.id.0, &result.relative_path)
-                    == target_id)
-                    .then(|| (popup.id, result.relative_path.clone()))
-            })
+            self.composer_context_attachments(popup.id)
+                .iter()
+                .find_map(|result| {
+                    (target_ids::task_popup_context_attachment(popup.id.0, &result.relative_path)
+                        == target_id)
+                        .then(|| (popup.id, result.relative_path.clone()))
+                })
         }) {
             self.update_message(Message::Composer(
                 ComposerMessage::TaskPopupSelectContextAttachment {
@@ -19352,7 +19671,9 @@ impl DesktopProgram {
                     ),
                 ]
                 .into_iter()
-                .find_map(|(candidate, action)| (candidate == target_id).then_some((window_id, action)))
+                .find_map(|(candidate, action)| {
+                    (candidate == target_id).then_some((window_id, action))
+                })
             })
         } {
             match action {
@@ -19666,28 +19987,26 @@ impl DesktopProgram {
             && self.current_selected_task().is_none()
             && self.task_module().task_search().trim().is_empty()
             && (self.current_selected_project().is_some() || self.current_inbox_selected()))
-            .then(|| {
-                self.tasks.iter().find_map(|task| {
-                    self.tasks
-                        .iter()
-                        .filter(|candidate| {
-                            candidate.pinned == task.pinned && candidate.id != task.id
-                        })
-                        .map(|candidate| Some(candidate.id.clone()))
-                        .chain(std::iter::once(None))
-                        .find_map(|before_task_id| {
-                            (self
-                                .reordered_task_ids(&task.id, before_task_id.as_ref())
-                                .is_some()
-                                && target_ids::task_reorder_before(
-                                    task.id.as_str(),
-                                    before_task_id.as_ref().map(TaskId::as_str),
-                                ) == target_id)
-                                .then(|| (task.id.clone(), before_task_id))
-                        })
-                })
+        .then(|| {
+            self.tasks.iter().find_map(|task| {
+                self.tasks
+                    .iter()
+                    .filter(|candidate| candidate.pinned == task.pinned && candidate.id != task.id)
+                    .map(|candidate| Some(candidate.id.clone()))
+                    .chain(std::iter::once(None))
+                    .find_map(|before_task_id| {
+                        (self
+                            .reordered_task_ids(&task.id, before_task_id.as_ref())
+                            .is_some()
+                            && target_ids::task_reorder_before(
+                                task.id.as_str(),
+                                before_task_id.as_ref().map(TaskId::as_str),
+                            ) == target_id)
+                            .then(|| (task.id.clone(), before_task_id))
+                    })
             })
-            .flatten();
+        })
+        .flatten();
         if let Some((task_id, before_task_id)) = task_reorder {
             self.update_message(Message::Task(TaskMessage::ReorderTask {
                 task_id,
@@ -19897,7 +20216,8 @@ impl DesktopProgram {
             }
             target_ids::TASK_CREATE
                 if self.project_surface == ProjectSurface::Tasks
-                    && (self.current_selected_project().is_some() || self.current_inbox_selected())
+                    && (self.current_selected_project().is_some()
+                        || self.current_inbox_selected())
                     && self.current_selected_task().is_none()
                     && !self.task_module().new_task_title().trim().is_empty() =>
             {
@@ -20037,19 +20357,6 @@ impl DesktopProgram {
                     && self.current_selected_task().is_some() =>
             {
                 self.open_iab();
-            }
-            target_ids::IAB_NAVIGATE
-                if self.inspector_surface == InspectorSurface::Iab
-                    && self.inspector_region_is_visible() =>
-            {
-                self.update_iab(IabPanelMessage::Navigate);
-            }
-            target_ids::IAB_OPEN_WINDOW
-                if self.inspector_surface == InspectorSurface::Iab
-                    && self.inspector_region_is_visible()
-                    && self.current_selected_task().is_some() =>
-            {
-                self.open_iab_window();
             }
             target_ids::IAB_CLOSE
                 if self.inspector_surface == InspectorSurface::Iab
@@ -20446,7 +20753,12 @@ impl DesktopProgram {
                     && self.settings_state.active_tab().as_str() == "agent"
                     && self.settings_module().editor_open()
                     && !self.settings_module().name().trim().is_empty()
-                    && !self.settings_module().instruction().text().trim().is_empty() =>
+                    && !self
+                        .settings_module()
+                        .instruction()
+                        .text()
+                        .trim()
+                        .is_empty() =>
             {
                 self.save_custom_agent();
             }
@@ -20703,7 +21015,9 @@ impl DesktopProgram {
                         snapshot.mcp_servers.iter().any(|server| server.enabled)
                     }) =>
             {
-                self.route_extensions(ExtensionsModuleMessage::Ui(ExtensionsMessage::ActivateRegisteredMcp));
+                self.route_extensions(ExtensionsModuleMessage::Ui(
+                    ExtensionsMessage::ActivateRegisteredMcp,
+                ));
             }
             target_ids::REMOTE_REFRESH
                 if settings_visible
@@ -20853,6 +21167,9 @@ impl DesktopProgram {
             {
                 self.toggle_task_inspector();
             }
+            target_ids::TASK_SESSION_INSPECTOR_CLOSE if self.inspector_region_is_visible() => {
+                self.close_inspector_dock();
+            }
             target_ids::TASK_SAVE
                 if self.current_selected_task().is_some()
                     && !self.composer_is_locked()
@@ -20884,7 +21201,9 @@ impl DesktopProgram {
             {
                 self.cycle_task_priority();
             }
-            target_ids::TASK_PIN if self.current_selected_task().is_some() && !self.composer_is_locked() => {
+            target_ids::TASK_PIN
+                if self.current_selected_task().is_some() && !self.composer_is_locked() =>
+            {
                 self.toggle_task_pinned();
             }
             target_ids::TASK_MOVE_UP
@@ -21114,9 +21433,12 @@ impl DesktopProgram {
                 self.pick_draft_worktree(HostedWindowId::PRIMARY);
             }
             target_ids::COMPOSER_WORKTREE_RETRY
-                if self.current_selected_task().as_ref().is_some_and(|task_id| {
-                    self.pending_initial_worktrees.contains_key(task_id)
-                }) =>
+                if self
+                    .current_selected_task()
+                    .as_ref()
+                    .is_some_and(|task_id| {
+                        self.pending_initial_worktrees.contains_key(task_id)
+                    }) =>
             {
                 self.retry_initial_worktree(HostedWindowId::PRIMARY);
             }
@@ -21171,7 +21493,8 @@ impl DesktopProgram {
             target_ids::COMPOSER_SEND
                 if !self.settings_open
                     && !self.automations_open
-                    && (self.current_selected_task().is_some() || self.main_conversation_draft.is_some())
+                    && (self.current_selected_task().is_some()
+                        || self.main_conversation_draft.is_some())
                     && self
                         .main_surface_composer()
                         .is_some_and(composer_has_turn_payload)
@@ -22130,10 +22453,13 @@ impl DesktopProgram {
             archived_project_count: self.archived_projects.len(),
             task_count: self.tasks.len(),
             visible_task_count: {
-                let session_hits = session_search_hit_ids(self.kernel.session(), self.task_module().task_search());
+                let session_hits =
+                    session_search_hit_ids(self.kernel.session(), self.task_module().task_search());
                 self.tasks
                     .iter()
-                    .filter(|task| task_matches_search(task, self.task_module().task_search(), &session_hits))
+                    .filter(|task| {
+                        task_matches_search(task, self.task_module().task_search(), &session_hits)
+                    })
                     .count()
             },
             archived_task_count: self.archived_tasks.len(),
@@ -22301,35 +22627,13 @@ impl DesktopProgram {
             iab_browser_ready: self.iab.browser_ready(),
             iab_url: self.iab.active_url().to_owned(),
             iab_error: self.iab.error().map(str::to_owned),
-            iab_window_count: self.iab_windows.len(),
-            iab_window_ready_count: self
-                .iab_windows
-                .values()
-                .filter(|window| window.browser_ready())
-                .count(),
-            iab_window_task_ids: self
-                .iab_windows
-                .values()
-                .map(|window| window.task_id.as_str().to_owned())
-                .collect(),
-            iab_window_urls: self
-                .iab_windows
-                .values()
-                .map(|window| window.active_url().to_owned())
-                .collect(),
-            iab_window_capture_pending_count: self
-                .iab_windows
-                .values()
-                .filter(|window| window.capture_pending())
-                .count(),
-            iab_window_notice: self
-                .iab_windows
-                .values()
-                .find_map(|window| window.notice().map(str::to_owned)),
-            iab_window_error: self
-                .iab_windows
-                .values()
-                .find_map(|window| window.error().map(str::to_owned)),
+            iab_window_count: 0,
+            iab_window_ready_count: 0,
+            iab_window_task_ids: Vec::new(),
+            iab_window_urls: Vec::new(),
+            iab_window_capture_pending_count: 0,
+            iab_window_notice: None,
+            iab_window_error: None,
             coding_tools_busy: self.coding_busy(),
             coding_tools_shared_identity: self
                 .coding_tools
@@ -22552,7 +22856,10 @@ impl DesktopProgram {
                         .count()
                 })
                 .unwrap_or_default(),
-            extensions_skill_delete_confirmation: self.extensions_module().skill_delete_confirmation().map(str::to_owned),
+            extensions_skill_delete_confirmation: self
+                .extensions_module()
+                .skill_delete_confirmation()
+                .map(str::to_owned),
             extensions_plugin_count: self
                 .extensions_module()
                 .snapshot()
@@ -22585,8 +22892,14 @@ impl DesktopProgram {
                         .count()
                 })
                 .unwrap_or_default(),
-            extensions_plugin_source_input: self.extensions_module().plugin_source_input().to_owned(),
-            extensions_plugin_delete_confirmation: self.extensions_module().plugin_delete_confirmation().map(str::to_owned),
+            extensions_plugin_source_input: self
+                .extensions_module()
+                .plugin_source_input()
+                .to_owned(),
+            extensions_plugin_delete_confirmation: self
+                .extensions_module()
+                .plugin_delete_confirmation()
+                .map(str::to_owned),
             extensions_hook_source_count: self
                 .extensions_module()
                 .hooks()
@@ -22636,7 +22949,10 @@ impl DesktopProgram {
                         .collect()
                 })
                 .unwrap_or_default(),
-            extensions_hook_delete_confirmation: self.extensions_module().hook_delete_confirmation().map(str::to_owned),
+            extensions_hook_delete_confirmation: self
+                .extensions_module()
+                .hook_delete_confirmation()
+                .map(str::to_owned),
             extensions_mcp_count: self
                 .extensions_module()
                 .snapshot()
@@ -22713,12 +23029,12 @@ impl DesktopProgram {
                         .sum()
                 })
                 .unwrap_or_default(),
-            extensions_mcp_content_kind: self.extensions_module().content_preview().map(|preview| {
-                match preview.kind {
+            extensions_mcp_content_kind: self.extensions_module().content_preview().map(
+                |preview| match preview.kind {
                     McpContentKind::Resource => "resource".to_owned(),
                     McpContentKind::Prompt => "prompt".to_owned(),
-                }
-            }),
+                },
+            ),
             extensions_mcp_content_title: self
                 .extensions_module()
                 .content_preview()
@@ -22770,7 +23086,10 @@ impl DesktopProgram {
                 .extensions_module()
                 .mcp_editor()
                 .map(|editor| editor.transport.as_registry().to_owned()),
-            extensions_mcp_delete_confirmation: self.extensions_module().mcp_delete_confirmation().map(str::to_owned),
+            extensions_mcp_delete_confirmation: self
+                .extensions_module()
+                .mcp_delete_confirmation()
+                .map(str::to_owned),
             extensions_error: self.extensions_module().error().map(str::to_owned),
             remote_busy: self.remote_busy(),
             remote_host_enabled: self
@@ -22854,9 +23173,11 @@ impl DesktopProgram {
                 .as_ref()
                 .and_then(|session| session.context_usage.as_ref())
                 .and_then(|usage| usage.used_percent),
-            composer_plan_mode: self.window_composer(HostedWindowId::PRIMARY)
+            composer_plan_mode: self
+                .window_composer(HostedWindowId::PRIMARY)
                 .is_some_and(|composer| composer.plan_mode),
-            composer_goal_mode: self.window_composer(HostedWindowId::PRIMARY)
+            composer_goal_mode: self
+                .window_composer(HostedWindowId::PRIMARY)
                 .is_some_and(|composer| composer.goal_mode),
             composer_permission: permission_key(
                 self.window_composer(HostedWindowId::PRIMARY)
@@ -23618,19 +23939,18 @@ impl DesktopProgram {
             if let Some(pending) = &popup.pending_review_slash_workflow {
                 targets.extend(review_workflow_target_ids(popup.id, pending));
             }
+            targets.extend(self.composer_conversation_references(popup.id).iter().map(
+                |reference| {
+                    target_ids::task_popup_conversation_reference(popup.id.0, &reference.task_id)
+                },
+            ));
             targets.extend(
-                self.composer_conversation_references(popup.id)
+                self.composer_context_attachments(popup.id)
                     .iter()
-                    .map(|reference| {
-                        target_ids::task_popup_conversation_reference(
-                            popup.id.0,
-                            &reference.task_id,
-                        )
+                    .map(|result| {
+                        target_ids::task_popup_context_attachment(popup.id.0, &result.relative_path)
                     }),
             );
-            targets.extend(self.composer_context_attachments(popup.id).iter().map(|result| {
-                target_ids::task_popup_context_attachment(popup.id.0, &result.relative_path)
-            }));
             targets.extend(
                 self.window_composer(popup.id)
                     .into_iter()
@@ -23944,7 +24264,12 @@ impl DesktopProgram {
                         target_ids::AGENT_CANCEL_EDIT.to_owned(),
                     ]);
                     if !self.settings_module().name().trim().is_empty()
-                        && !self.settings_module().instruction().text().trim().is_empty()
+                        && !self
+                            .settings_module()
+                            .instruction()
+                            .text()
+                            .trim()
+                            .is_empty()
                     {
                         targets.push(target_ids::AGENT_SAVE.to_owned());
                     }
@@ -23969,7 +24294,12 @@ impl DesktopProgram {
                     if !self.extensions_module().skill_id_input().trim().is_empty() {
                         targets.push(target_ids::EXTENSIONS_SKILL_CREATE.to_owned());
                     }
-                    if !self.extensions_module().plugin_source_input().trim().is_empty() {
+                    if !self
+                        .extensions_module()
+                        .plugin_source_input()
+                        .trim()
+                        .is_empty()
+                    {
                         targets.push(target_ids::EXTENSIONS_PLUGIN_INSTALL.to_owned());
                     }
                     if self.extensions_module().mcp_editor().is_none() {
@@ -24650,22 +24980,13 @@ impl DesktopProgram {
                 );
             }
         }
-        for (window_id, window) in &self.iab_windows {
-            targets.extend([
-                target_ids::iab_window(window_id.0),
-                target_ids::iab_window_url(window_id.0),
-                target_ids::iab_window_navigate(window_id.0),
-                target_ids::iab_window_note(window_id.0),
-                target_ids::iab_window_close(window_id.0),
-            ]);
-            if window.browser_ready() && !window.capture_pending() {
-                targets.push(target_ids::iab_window_submit(window_id.0));
-            }
-        }
         if self.project_surface == ProjectSurface::Architecture {
             targets.push(target_ids::ARCHITECTURE_REFRESH.to_owned());
             if !self.tasks.is_empty() && self.architecture_can_roll_back() {
                 targets.push(target_ids::ARCHITECTURE_ROLLBACK.to_owned());
+            }
+            if self.inspector_region_is_visible() {
+                targets.push(target_ids::TASK_SESSION_INSPECTOR_CLOSE.to_owned());
             }
             return targets;
         }
@@ -24692,6 +25013,12 @@ impl DesktopProgram {
                         &selection.event_id,
                     ),
                 ]);
+            }
+            if self.inspector_region_is_visible() {
+                targets.push(target_ids::TASK_SESSION_INSPECTOR_CLOSE.to_owned());
+            }
+            if self.shell_pending().is_some() {
+                targets.push(target_ids::TASK_SESSION_PENDING.to_owned());
             }
             if self.inspector_surface == InspectorSurface::Task
                 && self.inspector_region_is_visible()
@@ -24796,13 +25123,19 @@ impl DesktopProgram {
                         .iter()
                         .map(|result| target_ids::composer_slash_command(&result.command.name)),
                 );
-                targets.extend(self.composer_conversation_references(HostedWindowId::PRIMARY).iter().map(|reference| {
-                    target_ids::composer_conversation_reference(&reference.task_id)
-                }));
                 targets.extend(
-                    self.composer_context_attachments(HostedWindowId::PRIMARY).iter().map(|result| {
-                        target_ids::composer_context_attachment(&result.relative_path)
-                    }),
+                    self.composer_conversation_references(HostedWindowId::PRIMARY)
+                        .iter()
+                        .map(|reference| {
+                            target_ids::composer_conversation_reference(&reference.task_id)
+                        }),
+                );
+                targets.extend(
+                    self.composer_context_attachments(HostedWindowId::PRIMARY)
+                        .iter()
+                        .map(|result| {
+                            target_ids::composer_context_attachment(&result.relative_path)
+                        }),
                 );
                 targets.extend(
                     self.window_composer(HostedWindowId::PRIMARY)
@@ -24835,7 +25168,9 @@ impl DesktopProgram {
                     targets.push(target_ids::COMPOSER_ROUTE_DISMISS.to_owned());
                     if self
                         .window_composer(HostedWindowId::PRIMARY)
-                        .is_some_and(|composer| composer.workflow.as_ref() != route.workflow.as_ref())
+                        .is_some_and(|composer| {
+                            composer.workflow.as_ref() != route.workflow.as_ref()
+                        })
                     {
                         targets.push(target_ids::COMPOSER_ROUTE_APPLY.to_owned());
                     }
@@ -25032,12 +25367,20 @@ impl DesktopProgram {
                         targets
                             .extend(review_workflow_target_ids(HostedWindowId::PRIMARY, pending));
                     }
-                    targets.extend(self.composer_conversation_references(HostedWindowId::PRIMARY).iter().map(|reference| {
-                        target_ids::composer_conversation_reference(&reference.task_id)
-                    }));
-                    targets.extend(self.composer_context_attachments(HostedWindowId::PRIMARY).iter().map(|result| {
-                        target_ids::composer_context_attachment(&result.relative_path)
-                    }));
+                    targets.extend(
+                        self.composer_conversation_references(HostedWindowId::PRIMARY)
+                            .iter()
+                            .map(|reference| {
+                                target_ids::composer_conversation_reference(&reference.task_id)
+                            }),
+                    );
+                    targets.extend(
+                        self.composer_context_attachments(HostedWindowId::PRIMARY)
+                            .iter()
+                            .map(|result| {
+                                target_ids::composer_context_attachment(&result.relative_path)
+                            }),
+                    );
                     targets.extend(
                         self.window_composer(HostedWindowId::PRIMARY)
                             .into_iter()
@@ -25049,7 +25392,8 @@ impl DesktopProgram {
                             }),
                     );
                 }
-                let has_payload = self.window_composer(HostedWindowId::PRIMARY)
+                let has_payload = self
+                    .window_composer(HostedWindowId::PRIMARY)
                     .is_some_and(composer_has_turn_payload);
                 let turn_active = self
                     .turn_state
@@ -25062,24 +25406,28 @@ impl DesktopProgram {
                 {
                     targets.push(target_ids::COMPOSER_WORKTREE_RETRY.to_owned());
                 }
-                if let Some(route) = self
-                    .prompt_route_suggestion(HostedWindowId::PRIMARY, self.current_selected_task().as_ref())
-                {
+                if let Some(route) = self.prompt_route_suggestion(
+                    HostedWindowId::PRIMARY,
+                    self.current_selected_task().as_ref(),
+                ) {
                     targets.push(target_ids::COMPOSER_ROUTE_DISMISS.to_owned());
-                    if self.window_composer(HostedWindowId::PRIMARY)
+                    if self
+                        .window_composer(HostedWindowId::PRIMARY)
                         .and_then(|composer| composer.workflow.as_ref())
                         != route.workflow.as_ref()
                     {
                         targets.push(target_ids::COMPOSER_ROUTE_APPLY.to_owned());
                     }
-                } else if self.window_composer(HostedWindowId::PRIMARY)
+                } else if self
+                    .window_composer(HostedWindowId::PRIMARY)
                     .is_some_and(|composer| composer.workflow.is_some())
                 {
                     targets.push(target_ids::COMPOSER_ROUTE_DISMISS.to_owned());
                 }
                 if !turn_active
                     && session.blocking_pending_count == 0
-                    && self.window_composer(HostedWindowId::PRIMARY)
+                    && self
+                        .window_composer(HostedWindowId::PRIMARY)
                         .is_some_and(|composer| !composer.content.trim().is_empty())
                     && !self.prompt_optimization_is_busy(
                         HostedWindowId::PRIMARY,
@@ -25257,11 +25605,14 @@ impl DesktopProgram {
             && (self.current_selected_project().is_some() || self.current_inbox_selected())
         {
             targets.push(target_ids::TASKS_LIST.to_owned());
-            let session_hits = session_search_hit_ids(self.kernel.session(), self.task_module().task_search());
+            let session_hits =
+                session_search_hit_ids(self.kernel.session(), self.task_module().task_search());
             targets.extend(
                 self.tasks
                     .iter()
-                    .filter(|task| task_matches_search(task, self.task_module().task_search(), &session_hits))
+                    .filter(|task| {
+                        task_matches_search(task, self.task_module().task_search(), &session_hits)
+                    })
                     .map(|task| target_ids::task(task.id.as_str())),
             );
             if self.task_module().task_search().trim().is_empty() {
@@ -25473,7 +25824,11 @@ impl DesktopProgram {
                 self.refresh_github_binding_status();
             }
         } else if let Some(event) = envelope.downcast::<TurnStateChanged>() {
-            self.apply_turn_state_changed(event.task_id.clone(), event.turn_id.clone(), event.state.clone());
+            self.apply_turn_state_changed(
+                event.task_id.clone(),
+                event.turn_id.clone(),
+                event.state.clone(),
+            );
         } else if let Some(event) = envelope.downcast::<TurnRecoveryIssue>() {
             if event
                 .task_id
@@ -26672,10 +27027,7 @@ impl DesktopProgram {
                     session_error.then(|| "部分窗格内容暂时无法读取，请稍后重试。".to_owned());
                 popup.ready = true;
             }
-            self.route_composer_message(
-                window_id,
-                crate::module::composer::ComposerMessage::Clear,
-            );
+            self.route_composer_message(window_id, crate::module::composer::ComposerMessage::Clear);
             self.sync_markdown_images();
             return;
         };
@@ -26788,10 +27140,7 @@ impl DesktopProgram {
                 crate::module::composer::ComposerMessage::Refresh,
             );
         } else {
-            self.route_composer_message(
-                window_id,
-                crate::module::composer::ComposerMessage::Clear,
-            );
+            self.route_composer_message(window_id, crate::module::composer::ComposerMessage::Clear);
         }
         self.refresh_task_popup_composer_suggestions(window_id);
         if let Some(content_extent) = timeline_follow_extent {
@@ -29229,8 +29578,6 @@ impl RuntimeProgram for DesktopProgram {
             command_source_item: None,
             inspector_surface: InspectorSurface::Task,
             iab: IabPanelState::default(),
-            iab_windows: BTreeMap::new(),
-            abandoned_iab_captures: BTreeMap::new(),
             workspace_tab_drag_group: TabDragGroup::new(),
             main_window_geometry,
             main_window_scale_factor: 1.0,
@@ -29508,10 +29855,7 @@ impl RuntimeProgram for DesktopProgram {
             }
         }
         HostedProgramUpdate {
-            redraw: if self.conversation_status_open
-                || !self.task_popups.is_empty()
-                || !self.iab_windows.is_empty()
-            {
+            redraw: if self.conversation_status_open || !self.task_popups.is_empty() {
                 RuntimeRedraw::All
             } else {
                 RuntimeRedraw::Window(WindowId::PRIMARY)
@@ -29616,38 +29960,6 @@ impl RuntimeProgram for DesktopProgram {
                         HostedWindowCommand::Close(CONVERSATION_STATUS_WINDOW_ID),
                     ])
                 }
-            };
-        }
-        if self.iab_windows.contains_key(&window_event_id(&event)) {
-            return match event {
-                HostedWindowEvent::Ready { id, .. } => {
-                    if let Some(window) = self.iab_windows.get_mut(&id) {
-                        window.set_visible(true);
-                    }
-                    HostedProgramUpdate::redraw_window(id)
-                }
-                HostedWindowEvent::Resized { id, .. } => HostedProgramUpdate::redraw_window(id),
-                HostedWindowEvent::VisibilityChanged { id, hidden, .. } => {
-                    if let Some(window) = self.iab_windows.get_mut(&id) {
-                        window.set_visible(!hidden);
-                    }
-                    HostedProgramUpdate::default()
-                }
-                HostedWindowEvent::CloseRequested { id, .. } => {
-                    let Some(mut window) = self.iab_windows.remove(&id) else {
-                        return HostedProgramUpdate::default();
-                    };
-                    self.abandon_iab_capture(id, &mut window);
-                    HostedProgramUpdate::default()
-                        .with_window_commands([HostedWindowCommand::Close(id)])
-                }
-                HostedWindowEvent::Moved { .. }
-                | HostedWindowEvent::FocusChanged { .. }
-                | HostedWindowEvent::Ime { .. }
-                | HostedWindowEvent::Closed { .. }
-                | HostedWindowEvent::FileHovered { .. }
-                | HostedWindowEvent::FileDropped { .. }
-                | HostedWindowEvent::FileHoverCancelled { .. } => HostedProgramUpdate::default(),
             };
         }
         if self.task_popups.contains_key(&window_event_id(&event)) {
@@ -29827,20 +30139,6 @@ fn task_popup_window_settings(
         Some(geometry) => geometry.apply_to_settings(settings),
         None => settings,
     }
-}
-
-fn iab_window_settings(task_title: &str) -> HostedWindowSettings {
-    tool_window_settings(
-        format!("Lilia IAB · {task_title}"),
-        1180.0,
-        760.0,
-        720.0,
-        480.0,
-    )
-}
-
-fn iab_browser_id(window_id: HostedWindowId) -> HostedBrowserId {
-    HostedBrowserId(window_id.0.saturating_add(1_000))
 }
 
 fn main_workspace_tab_strip_id(pane_id: &PaneId) -> String {
@@ -32176,14 +32474,6 @@ fn update_download_percent(progress: Option<f32>) -> Option<u8> {
         .map(|progress| (progress.clamp(0.0, 1.0) * 100.0).round() as u8)
 }
 
-fn remove_abandoned_iab_snapshot(path: &std::path::Path) {
-    if let Err(error) = std::fs::remove_file(path) {
-        if error.kind() != std::io::ErrorKind::NotFound {
-            eprintln!("failed to remove abandoned Native IAB snapshot: {error}");
-        }
-    }
-}
-
 #[cfg(debug_assertions)]
 fn update_state_key(state: &DesktopUpdateState) -> &'static str {
     match state {
@@ -32963,6 +33253,40 @@ fn restore_architecture_workspace_layout(
     Ok(())
 }
 
+fn architecture_inspector_body(snapshot: &crate::runtime_shell::PrimaryShellSnapshot) -> String {
+    match snapshot.architecture_selection.as_ref() {
+        Some(GraphSelection::Node(node_id)) => snapshot
+            .architecture_graph
+            .node(node_id)
+            .map(|node| {
+                if node.label.is_empty() {
+                    node.id.to_string()
+                } else {
+                    node.label.clone()
+                }
+            })
+            .unwrap_or_else(|| node_id.to_string()),
+        Some(GraphSelection::Edge(edge_id)) => snapshot
+            .architecture_graph
+            .edge(edge_id)
+            .and_then(|edge| {
+                edge.label
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|label| !label.is_empty())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| "关系".to_owned()),
+        Some(GraphSelection::Port { node, .. }) => snapshot
+            .architecture_graph
+            .node(node)
+            .map(|graph_node| graph_node.label.clone())
+            .filter(|label| !label.is_empty())
+            .unwrap_or_else(|| node.to_string()),
+        None => "选择图中的节点。".to_owned(),
+    }
+}
+
 pub(crate) fn architecture_graph_model(
     graph: &ProjectArchitectureGraph,
 ) -> Result<GraphModel, String> {
@@ -33062,6 +33386,25 @@ fn git_file_status_label(status: DesktopGitFileStatus) -> &'static str {
         DesktopGitFileStatus::Copied => "复制",
         DesktopGitFileStatus::Conflicted => "冲突",
         DesktopGitFileStatus::Ignored => "忽略",
+    }
+}
+
+fn shell_pane_layout(node: &PaneNode) -> crate::runtime_shell::ShellPaneLayout {
+    match node {
+        PaneNode::Leaf { id, .. } => {
+            crate::runtime_shell::ShellPaneLayout::Leaf(id.as_str().to_owned())
+        }
+        PaneNode::Split {
+            axis,
+            ratio,
+            first,
+            second,
+        } => crate::runtime_shell::ShellPaneLayout::Split {
+            horizontal: matches!(axis, SplitAxis::Horizontal),
+            ratio: *ratio,
+            first: Box::new(shell_pane_layout(first)),
+            second: Box::new(shell_pane_layout(second)),
+        },
     }
 }
 

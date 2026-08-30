@@ -17,7 +17,6 @@ mod desktop;
 mod document_editor;
 mod host;
 mod iab_panel;
-mod iab_window;
 mod journal_export;
 mod kernel_host;
 mod markdown_images;

@@ -141,10 +141,12 @@ impl UiModule for TimelineModule {
         }
         let Some(session) = cx.task_session() else {
             into.timeline.clear();
+            into.timeline_layout = nana_ui::VirtualListLayout::default();
             into.timeline_can_load_earlier = false;
             return;
         };
         into.timeline_can_load_earlier = session.timeline_has_more_before;
+        into.timeline_layout = session.timeline_layout.clone();
         into.timeline = session
             .timeline
             .iter()

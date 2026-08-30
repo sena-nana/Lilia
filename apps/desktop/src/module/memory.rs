@@ -11,7 +11,7 @@ use crate::application::{
     DesktopMemory, MemoryInjectionState, MemoryScope, MemorySettings, MemoryUpsertInput,
     ProjectWorkspaceSurface,
 };
-use crate::runtime_shell::{PrimaryShellSnapshot, ShellProjectPage};
+use crate::runtime_shell::{PrimaryShellSnapshot, ShellMemoryCard, ShellProjectPage};
 use crate::text_editor_state::TextEditorState;
 use crate::ui_module::{ShellEffect, UiModule, UiModuleContext, UiModuleOutcome};
 
@@ -365,7 +365,8 @@ impl MemoryModule {
                 return UiModuleOutcome::dirty();
             }
         };
-        match application.set_task_memory_enabled(&task_id, !state.enabled, Some(state.updated_at)) {
+        match application.set_task_memory_enabled(&task_id, !state.enabled, Some(state.updated_at))
+        {
             Ok(state) => {
                 self.injection = Some(state);
                 self.error = None;
@@ -496,12 +497,29 @@ impl UiModule for MemoryModule {
         if !cx.shows(ShellProjectPage::Memory) {
             return;
         }
-        into.project_page_body = self.error.clone().unwrap_or_else(|| {
-            self.memories
-                .iter()
-                .map(|memory| memory.title.clone())
-                .collect::<Vec<_>>()
-                .join("\n")
-        });
+        into.project_page_body = self.error.clone().unwrap_or_default();
+        into.memory_title = self.title.clone();
+        into.memory_body = self.body.text();
+        into.memory_tags = self.tags.clone();
+        into.memory_scope_label = match self.scope {
+            MemoryScope::User => "用户".to_owned(),
+            MemoryScope::Project => "项目".to_owned(),
+        };
+        into.memory_cards = self
+            .memories
+            .iter()
+            .map(|memory| ShellMemoryCard {
+                id: memory.id.clone(),
+                title: memory.title.clone(),
+                subtitle: format!(
+                    "{} · {}",
+                    match memory.scope {
+                        MemoryScope::User => "用户",
+                        MemoryScope::Project => "项目",
+                    },
+                    if memory.enabled { "启用" } else { "停用" }
+                ),
+            })
+            .collect();
     }
 }

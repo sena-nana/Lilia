@@ -4,7 +4,7 @@ use std::sync::Arc;
 use nana_ui::runtime::{
     AlignSpec, AppContext, Button, ComponentView, FlexDirection, FrameworkError, IconButton,
     InteractionState, JustifySpec, LengthSpec, MutationQueue, NodeKind, NodeStyle,
-    SemanticColorRole, StableNodeId, TextArea,
+    SemanticColorRole, StableNodeId, Stack, TextArea,
 };
 use nana_ui::{ButtonKind, ControlSize, Icon, UI_METRICS};
 
@@ -234,6 +234,22 @@ impl HostStack {
     }
 }
 
+pub(crate) fn pending_interaction_card() -> Stack {
+    Stack::column(8.0)
+        .padding(UI_METRICS.control_padding_x)
+        .surface(SemanticColorRole::Surface)
+        .outline(SemanticColorRole::Border, 1.0)
+        .radius(COMPOSER_CARD_RADIUS)
+}
+
+pub(crate) fn pending_actions_row() -> Stack {
+    Stack::row(6.0)
+}
+
+pub(crate) fn inspector_header_bar() -> Stack {
+    Stack::bar(6.0).justify(JustifySpec::SpaceBetween)
+}
+
 impl ComponentView for HostStack {
     fn node_kind(&self) -> NodeKind {
         NodeKind::Element {
@@ -331,7 +347,7 @@ pub(crate) fn reconcile_children(
 }
 
 fn round_icon_button(icon: Icon, label: &'static str, kind: ButtonKind) -> IconButton {
-    let mut button = IconButton::new(icon, label).kind(kind);
+    let mut button = IconButton::new(icon, label).kind(kind).with_tooltip(label);
     let layout = Arc::make_mut(&mut button.style.layout);
     let edge = LengthSpec::Px(COMPOSER_SEND_SIZE);
     layout.min_width = Some(edge);
@@ -363,7 +379,8 @@ pub(crate) fn window_control(icon: Icon, label: &'static str, kind: ButtonKind) 
 fn sized_icon_button(icon: Icon, label: &'static str, kind: ButtonKind, edge: f32) -> IconButton {
     let mut button = IconButton::new(icon, label)
         .kind(kind)
-        .size(ControlSize::Small);
+        .size(ControlSize::Small)
+        .with_tooltip(label);
     let layout = Arc::make_mut(&mut button.style.layout);
     let edge = LengthSpec::Px(edge);
     layout.min_width = Some(edge);

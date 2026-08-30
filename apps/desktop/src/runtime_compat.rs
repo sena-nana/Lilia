@@ -68,9 +68,6 @@ impl HostedWindowAction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct HostedWindowCaptureId(pub u64);
-
 pub fn window_event_id(event: &WindowEvent) -> WindowId {
     match event {
         WindowEvent::Ready { id, .. }

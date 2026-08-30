@@ -5,21 +5,11 @@ pub struct HostedBrowserId(pub u64);
 
 pub const SIDEBAR_BROWSER_ID: HostedBrowserId = HostedBrowserId(1);
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum IabPanelMessage {
-    DraftUrlChanged(String),
-    Navigate,
-    OpenWindow,
-    Close,
-}
-
 #[derive(Debug, Clone)]
 pub struct IabPanelState {
     browser_id: HostedBrowserId,
     draft_url: String,
     active_url: String,
-    title: Option<String>,
-    error: Option<String>,
 }
 
 impl Default for IabPanelState {
@@ -35,8 +25,6 @@ impl IabPanelState {
             browser_id,
             draft_url: initial_url.clone(),
             active_url: initial_url,
-            title: None,
-            error: None,
         }
     }
 
@@ -44,11 +32,11 @@ impl IabPanelState {
         self.browser_id
     }
 
-    pub fn browser_attached(&self) -> bool {
+    pub const fn browser_attached(&self) -> bool {
         false
     }
 
-    pub fn browser_ready(&self) -> bool {
+    pub const fn browser_ready(&self) -> bool {
         false
     }
 
@@ -60,25 +48,8 @@ impl IabPanelState {
         &self.active_url
     }
 
-    pub fn title(&self) -> Option<&str> {
-        self.title.as_deref()
-    }
-
     pub fn error(&self) -> Option<&str> {
-        self.error.as_deref()
-    }
-
-    pub fn update(&mut self, message: IabPanelMessage, _window_id: HostedWindowId) {
-        match message {
-            IabPanelMessage::DraftUrlChanged(value) => {
-                self.draft_url = value;
-                self.error = None;
-            }
-            IabPanelMessage::Navigate => {
-                self.active_url = self.draft_url.clone();
-            }
-            IabPanelMessage::OpenWindow | IabPanelMessage::Close => {}
-        }
+        None
     }
 
     pub fn set_panel_visible(&mut self, _visible: bool, _window_id: HostedWindowId) {}

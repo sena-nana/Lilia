@@ -112,35 +112,7 @@ pub const CODING_TOOLS_DIFF_SCOPE: &str = "lilia.coding-tools.diff-scope";
 pub const CODING_TOOLS_SEARCH_HIT_PREFIX: &str = "lilia.coding-tools.search-hit.";
 pub const CODING_TOOLS_TASK_PREFIX: &str = "lilia.coding-tools.task.";
 pub const IAB_OPEN: &str = "lilia.task-session.iab.open";
-pub const IAB_PANEL: &str = "lilia.task-session.iab";
-pub const IAB_URL: &str = "lilia.task-session.iab.url";
-pub const IAB_NAVIGATE: &str = "lilia.task-session.iab.navigate";
-pub const IAB_OPEN_WINDOW: &str = "lilia.task-session.iab.open-window";
 pub const IAB_CLOSE: &str = "lilia.task-session.iab.close";
-
-pub fn iab_window(window_id: u64) -> String {
-    format!("lilia.iab-window.{window_id}")
-}
-
-pub fn iab_window_url(window_id: u64) -> String {
-    format!("{}.url", iab_window(window_id))
-}
-
-pub fn iab_window_navigate(window_id: u64) -> String {
-    format!("{}.navigate", iab_window(window_id))
-}
-
-pub fn iab_window_note(window_id: u64) -> String {
-    format!("{}.note", iab_window(window_id))
-}
-
-pub fn iab_window_submit(window_id: u64) -> String {
-    format!("{}.submit", iab_window(window_id))
-}
-
-pub fn iab_window_close(window_id: u64) -> String {
-    format!("{}.close", iab_window(window_id))
-}
 
 pub fn coding_project_task(task_id: &str) -> String {
     let encoded_id = task_id
@@ -268,6 +240,8 @@ pub const TASK_SESSION_TIMELINE_LOAD_EARLIER: &str = "lilia.task-session.timelin
 pub const TASK_SESSION_TIMELINE_LATEST: &str = "lilia.task-session.timeline.latest";
 pub const TASK_SESSION_INSPECTOR: &str = "lilia.task-session.inspector";
 pub const TASK_SESSION_INSPECTOR_TOGGLE: &str = "lilia.task-session.inspector.toggle";
+pub const TASK_SESSION_INSPECTOR_CLOSE: &str = "lilia.task-session.inspector.close";
+pub const TASK_SESSION_PENDING: &str = "lilia.task-session.pending";
 pub const TASK_TITLE: &str = "lilia.task-session.task.title";
 pub const TASK_SAVE: &str = "lilia.task-session.task.save";
 pub const TASK_DEPENDENCY_TARGET: &str = "lilia.task-session.task.dependency-target";

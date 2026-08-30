@@ -401,6 +401,12 @@ impl UiModule for RoadmapModule {
         // The editor title is a composer-region input, rendered outside the
         // roadmap page's own body, so it travels regardless of the active page.
         into.milestone_title = self.title.clone();
+        into.milestone_description = self.description.clone();
+        into.milestone_due_date = self.due_date.clone();
+        into.milestone_status_label = self
+            .milestone()
+            .map(|milestone| crate::desktop::milestone_status_label(milestone.status).to_owned())
+            .unwrap_or_default();
         if !cx.shows(ShellProjectPage::Roadmap) {
             return;
         }
