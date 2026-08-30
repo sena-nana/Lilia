@@ -7,13 +7,15 @@ Chat Composer is a focused input workspace: the main editor keeps inline context
 ## Behavior Model
 
 - Normal state shows one rich input surface. Text, inline file references, pasted images, pasted paths, and long pasted text all flow through the same context model.
-- Pending state takes over the input surface. AskUser, tool consent, and plan approval continue to use the composer entry area for answers, rejection notes, or modification requests.
+- Pending interactions occupy a sibling card above the composer. AskUser, tool consent, and plan approval keep their own fields and actions; they do not replace the composer.
+- Blocking pending (`blocking_pending_count > 0`) disables send. Title-update and other non-blocking pending leave the composer usable.
 - Running state with an empty composer turns the send action into interrupt. Running state with content still queues a new message.
 
 ## Layout
 
-- Stage: pending panel or rich input, followed by the context search panel when active.
-- Toolbar: image previews first, then attachment, permission, plan, and send/interrupt controls.
+- Conversation column: timeline body, optional pending card, composer card. Pending is not a child of the composer card.
+- Pending card: NanaUI `Stack::column` with `surface` / `outline` / `radius`, actions in `Stack::row`.
+- Composer toolbar: image previews first, then attachment, permission, plan, and send/interrupt controls. Slash/mention completion stays inside the composer card.
 - Compose with `HostStack::composer_card()` in `apps/desktop/src/runtime_layout.rs` and NanaUI `Stack` presets. Do not introduce a second visual language for the composer.
 
 ## Confirmation Notes
