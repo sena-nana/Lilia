@@ -11,7 +11,7 @@ use nana_ui_platform::WindowId;
 
 use crate::runtime_layout::{
     composer_interrupt_button, composer_send_button, pending_actions_row, pending_interaction_card,
-    reconcile_children, window_control, HostStack,
+    reconcile_children, window_control,
 };
 use crate::runtime_shell::{
     bind_activate, composer_is_focused, emit, pending_action_specs, ComposerGeneration,
@@ -87,7 +87,7 @@ pub struct ConversationStatusHandles {
     title: Entity<Text>,
     error: Entity<Text>,
     list: Entity<List>,
-    rows: HashMap<String, Entity<HostStack>>,
+    rows: HashMap<String, Entity<Stack>>,
     pin: Entity<Button>,
 }
 
@@ -100,7 +100,7 @@ pub struct TaskPopupHandles {
     timeline_scroll: Entity<ScrollView>,
     timeline_items: HashMap<String, Entity<NativeMarkdown>>,
     timeline_sources: HashMap<String, u64>,
-    page: Entity<HostStack>,
+    page: Entity<Stack>,
     pending_panel: Entity<Stack>,
     pending_title: Entity<Text>,
     pending_prompt: Entity<Text>,
@@ -114,7 +114,7 @@ pub struct TaskPopupHandles {
     pending_tool_command_value: Arc<Mutex<String>>,
     pending_tool_message_value: Arc<Mutex<String>>,
     composer: Entity<TextArea>,
-    composer_actions: Entity<HostStack>,
+    composer_actions: Entity<Stack>,
     composer_generation: ComposerGeneration,
     send: Entity<IconButton>,
     interrupt: Entity<IconButton>,
@@ -139,7 +139,7 @@ pub fn mount_conversation_status(
         Text::new(snapshot.error.clone().unwrap_or_default()),
     )?;
     let list = context.create_detached_component(document_id, List::new())?;
-    let actions = context.create_detached_component(document_id, HostStack::leading_row(8.0))?;
+    let actions = context.create_detached_component(document_id, Stack::row(8.0))?;
     let pin = context.create_detached_component(
         document_id,
         action_button(
@@ -178,13 +178,13 @@ pub fn mount_conversation_status(
     context.append_child(actions, close)?;
 
     let page = context
-        .create_detached_component(document_id, HostStack::fill_column(10.0).padding(16.0))?;
+        .create_detached_component(document_id, Stack::fill_column(10.0).padding(16.0))?;
     context.append_child(page, title)?;
     context.append_child(page, error)?;
     context.append_child(page, list)?;
     context.append_child(page, actions)?;
 
-    let title_trailing = context.create_detached_component(document_id, HostStack::row(6.0))?;
+    let title_trailing = context.create_detached_component(document_id, Stack::row(6.0))?;
     if WindowChrome::platform_default().uses_custom_controls() {
         let close_win = context.create_detached_component(
             document_id,
@@ -271,7 +271,7 @@ impl ConversationStatusHandles {
                 row
             } else {
                 let row =
-                    context.create_detached_component(document_id, HostStack::fill_column(4.0))?;
+                    context.create_detached_component(document_id, Stack::fill_column(4.0))?;
                 let text =
                     context.create_detached_component(document_id, Text::new(label.clone()))?;
                 let open = context.create_detached_component(
@@ -395,7 +395,7 @@ pub fn mount_task_popup(
         })?;
     }
 
-    let actions = context.create_detached_component(document_id, HostStack::leading_row(8.0))?;
+    let actions = context.create_detached_component(document_id, Stack::row(8.0))?;
     context.append_child(actions, send)?;
     context.append_child(actions, interrupt)?;
     context.append_child(actions, close)?;
@@ -503,7 +503,7 @@ pub fn mount_task_popup(
     context.append_child(pending_panel, pending_title)?;
     context.append_child(pending_panel, pending_prompt)?;
     let page = context
-        .create_detached_component(document_id, HostStack::fill_column(10.0).padding(16.0))?;
+        .create_detached_component(document_id, Stack::fill_column(10.0).padding(16.0))?;
     context.append_child(page, heading)?;
     context.append_child(page, error)?;
     context.append_child(page, timeline_scroll)?;

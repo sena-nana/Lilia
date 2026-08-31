@@ -28,9 +28,9 @@ use nana_ui::{
 
 use crate::runtime_compat::{HostedUiCommand, HostedWindowId};
 use crate::runtime_layout::{
-    composer_interrupt_button, composer_send_button, flatten_composer_textarea,
-    inspector_header_bar, pending_actions_row, pending_interaction_card, pill_button,
-    reconcile_children, sidebar_icon_button, window_control, HostStack,
+    composer_card, composer_interrupt_button, composer_send_button, flatten_composer_textarea,
+    headline_slot, inspector_header_bar, pending_actions_row, pending_interaction_card,
+    pill_button, reconcile_children, sidebar_icon_button, trigger_slot, window_control,
 };
 use crate::target_ids;
 
@@ -963,25 +963,25 @@ pub struct ShellHandles {
     form_switches: HashMap<String, Entity<Switch>>,
     settings_card: Entity<SettingsCard>,
     quota_chart: Option<Entity<TimeSeriesChart>>,
-    pane_bar: Entity<HostStack>,
+    pane_bar: Entity<Stack>,
     pane_buttons: HashMap<String, Entity<Button>>,
-    automations_page: Entity<HostStack>,
-    automation_list: Entity<HostStack>,
-    automation_actions: Entity<HostStack>,
+    automations_page: Entity<Stack>,
+    automation_list: Entity<Stack>,
+    automation_actions: Entity<Stack>,
     automation_canvas: Entity<GraphCanvas>,
-    title_center: Entity<HostStack>,
+    title_center: Entity<Stack>,
     title_parent: Entity<Text>,
     title_separator: Entity<Text>,
     title_context: Entity<Text>,
-    title_leading: Entity<HostStack>,
-    title_trailing: Entity<HostStack>,
+    title_leading: Entity<Stack>,
+    title_trailing: Entity<Stack>,
     conversation_sidebar: Entity<SidebarFrame>,
     automations_sidebar: Entity<SidebarFrame>,
     automations_back: Entity<SidebarRow>,
     automations_section: Entity<SidebarSection>,
-    automations_body: Entity<HostStack>,
+    automations_body: Entity<Stack>,
     automations_footer: Entity<SidebarFooter>,
-    sidebar_top: Entity<HostStack>,
+    sidebar_top: Entity<Stack>,
     new_conversation: Entity<SidebarRow>,
     search_toggle: Entity<IconButton>,
     search_input: Entity<TextArea>,
@@ -1000,18 +1000,18 @@ pub struct ShellHandles {
     inbox_reorder: Entity<ReorderList>,
     task_rows: HashMap<String, Entity<SidebarRow>>,
     row_kinds: HashMap<String, ShellSidebarKind>,
-    row_tools: HashMap<String, Entity<HostStack>>,
+    row_tools: HashMap<String, Entity<Stack>>,
     row_tool_buttons: HashMap<String, Entity<Button>>,
     footer_nav: HashMap<String, Entity<SidebarFooterButton>>,
     provider_badge: Entity<SidebarFooterButton>,
-    conversation: Entity<HostStack>,
-    conversation_column: Entity<HostStack>,
-    conversation_body: Entity<HostStack>,
+    conversation: Entity<Stack>,
+    conversation_column: Entity<Stack>,
+    conversation_body: Entity<Stack>,
     settings_sidebar: Entity<SettingsSidebar>,
     settings_page: Entity<SettingsPage>,
     appearance: Entity<AppearanceSection>,
     about: Entity<AboutSection>,
-    product_settings: Entity<HostStack>,
+    product_settings: Entity<Stack>,
     product_heading: Entity<Text>,
     product_body: Entity<Text>,
     product_error: Entity<Text>,
@@ -1021,12 +1021,12 @@ pub struct ShellHandles {
     project_workspace_row: Entity<SettingsRow>,
     product_actions: HashMap<String, Entity<Button>>,
     provider_rows: HashMap<String, Entity<Button>>,
-    heading_slot: Entity<HostStack>,
+    heading_slot: Entity<Stack>,
     heading: Entity<EmptyState>,
     error: Entity<Text>,
     timeline_scroll: Entity<ScrollView>,
     timeline_list: Entity<List>,
-    timeline_virtual: VirtualListItems<String, HostStack>,
+    timeline_virtual: VirtualListItems<String, Stack>,
     timeline_markdown: HashMap<String, Entity<NativeMarkdown>>,
     timeline_markdown_source: HashMap<String, u64>,
     timeline_actions: HashMap<String, Entity<Button>>,
@@ -1034,21 +1034,21 @@ pub struct ShellHandles {
     composer_generation: ComposerGeneration,
     shell_assembled: bool,
     load_earlier: Option<Entity<Button>>,
-    composer_dock: Entity<HostStack>,
+    composer_dock: Entity<Stack>,
     composer: Entity<TextArea>,
-    composer_toolbar: Entity<HostStack>,
-    extras: Entity<HostStack>,
+    composer_toolbar: Entity<Stack>,
+    extras: Entity<Stack>,
     extra_buttons: HashMap<String, Entity<Button>>,
     plus_items: HashMap<String, Entity<ActionMenuItem>>,
-    completion_slot: Entity<HostStack>,
+    completion_slot: Entity<Stack>,
     completion_items: HashMap<String, Entity<ActionMenuItem>>,
-    plus_slot: Entity<HostStack>,
+    plus_slot: Entity<Stack>,
     plus_menu: Entity<ActionMenu>,
     attach: Entity<IconButton>,
-    permission_slot: Entity<HostStack>,
+    permission_slot: Entity<Stack>,
     permission_icon: Entity<IconGlyph>,
     permission: Entity<Button>,
-    worktree_slot: Entity<HostStack>,
+    worktree_slot: Entity<Stack>,
     worktree_icon: Entity<IconGlyph>,
     worktree: Entity<Button>,
     worktree_pick: Entity<IconButton>,
@@ -1062,41 +1062,41 @@ pub struct ShellHandles {
     pending_request: Arc<Mutex<String>>,
     pending_tool_command_value: Arc<Mutex<String>>,
     pending_tool_message_value: Arc<Mutex<String>>,
-    composer_actions: Entity<HostStack>,
+    composer_actions: Entity<Stack>,
     send: Entity<IconButton>,
     interrupt: Option<Entity<IconButton>>,
-    project_page: Entity<HostStack>,
+    project_page: Entity<Stack>,
     project_page_title: Entity<Text>,
     project_page_body: Entity<Text>,
     project_cards: HashMap<String, Entity<InteractiveCard>>,
     architecture_canvas: Entity<GraphCanvas>,
     automations_empty: Entity<EmptyState>,
-    workspace_page: Entity<HostStack>,
+    workspace_page: Entity<Stack>,
     conversation_workspace: Entity<SplitPane>,
     pane_chrome: Entity<PaneChrome>,
-    pane_header: Entity<HostStack>,
+    pane_header: Entity<Stack>,
     pane_tabs: Entity<Tabs>,
-    pane_body: Entity<HostStack>,
-    workspace_content: Entity<HostStack>,
+    pane_body: Entity<Stack>,
+    workspace_content: Entity<Stack>,
     workspace_heading: Entity<Text>,
     workspace_status: Entity<Text>,
     workspace_editor: Entity<TextArea>,
     workspace_log: Entity<TextArea>,
     workspace_input: Entity<TextArea>,
-    diagnostics_panel: Entity<HostStack>,
+    diagnostics_panel: Entity<Stack>,
     diagnostic_rows: HashMap<String, Entity<Text>>,
     image_viewer: Option<Entity<ImageViewer>>,
-    workspace_actions: Entity<HostStack>,
+    workspace_actions: Entity<Stack>,
     workspace_buttons: HashMap<String, Entity<Button>>,
     workspace_tree: Entity<TreeView>,
-    inspector: Entity<HostStack>,
+    inspector: Entity<Stack>,
     inspector_header: Entity<Stack>,
     inspector_close: Entity<IconButton>,
     inspector_heading: Entity<Text>,
     inspector_body: Entity<Text>,
-    inspector_todos: Entity<HostStack>,
+    inspector_todos: Entity<Stack>,
     inspector_todo_rows: HashMap<String, Entity<Text>>,
-    coding_panel: Entity<HostStack>,
+    coding_panel: Entity<Stack>,
     coding_query: Entity<TextArea>,
     coding_rows: HashMap<String, Entity<Button>>,
     shortcut_capture: Entity<KeyCaptureLayer>,
@@ -1104,7 +1104,7 @@ pub struct ShellHandles {
     pane_move_next: Entity<Button>,
     extra_workspace_panes: HashMap<String, WorkspacePaneView>,
     workspace_splits: HashMap<String, Entity<SplitPane>>,
-    workspace_split_handles: HashMap<String, Entity<HostStack>>,
+    workspace_split_handles: HashMap<String, Entity<Stack>>,
     iab_empty: Entity<EmptyState>,
     confirm: Option<Entity<ConfirmDialog>>,
     confirm_cancel: Option<Entity<Button>>,
@@ -1116,14 +1116,14 @@ pub struct ShellHandles {
 struct WorkspacePaneView {
     chrome: Entity<PaneChrome>,
     tabs: Entity<Tabs>,
-    content: Entity<HostStack>,
+    content: Entity<Stack>,
     heading: Entity<Text>,
     status: Entity<Text>,
     editor: Entity<TextArea>,
     log: Entity<TextArea>,
     input: Entity<TextArea>,
     tree: Entity<TreeView>,
-    actions: Entity<HostStack>,
+    actions: Entity<Stack>,
 }
 
 pub(crate) fn emit(sink: &IntentSink, intent: ShellIntent) {
@@ -1240,7 +1240,7 @@ fn mount_workspace_pane_view(
     pane_id: &str,
     sink: &IntentSink,
 ) -> Result<WorkspacePaneView, FrameworkError> {
-    let header = context.create_detached_component(document_id, HostStack::bar(6.0))?;
+    let header = context.create_detached_component(document_id, Stack::bar(6.0))?;
     let (selected, options) = (String::new(), Vec::new());
     let tabs = context.create_detached_component(
         document_id,
@@ -1289,7 +1289,7 @@ fn mount_workspace_pane_view(
         Arc::clone(sink),
         ShellIntent::MovePaneToNext,
     )?;
-    let body = context.create_detached_component(document_id, HostStack::fill_column(0.0))?;
+    let body = context.create_detached_component(document_id, Stack::fill_column(0.0))?;
     let chrome = context.create_detached_component(
         document_id,
         PaneChrome::new()
@@ -1311,7 +1311,7 @@ fn mount_workspace_pane_view(
     context.append_child(chrome, header)?;
     context.append_child(chrome, body)?;
     let content =
-        context.create_detached_component(document_id, HostStack::fill_column(12.0).padding(16.0))?;
+        context.create_detached_component(document_id, Stack::fill_column(12.0).padding(16.0))?;
     let heading = context.create_detached_component(document_id, Text::new(String::new()))?;
     let status = context.create_detached_component(document_id, Text::new(String::new()))?;
     let editor =
@@ -1334,7 +1334,7 @@ fn mount_workspace_pane_view(
             ShellIntent::TerminalInput(event.value.clone()),
         );
     })?;
-    let actions = context.create_detached_component(document_id, HostStack::row(8.0))?;
+    let actions = context.create_detached_component(document_id, Stack::row(8.0))?;
     context.append_child(content, heading)?;
     context.append_child(content, status)?;
     context.append_child(body, content)?;
@@ -1829,7 +1829,7 @@ pub fn mount_primary_shell(
     let _ = context.set_theme(snapshot.theme);
 
     let title_leading =
-        context.create_detached_component(document_id, HostStack::leading_row(0.0))?;
+        context.create_detached_component(document_id, Stack::row(0.0))?;
     let sidebar_toggle = context.create_detached_component(
         document_id,
         sidebar_toggle_button(snapshot.sidebar_collapsed),
@@ -1842,7 +1842,7 @@ pub fn mount_primary_shell(
         ShellIntent::ToggleSidebar,
     )?;
 
-    let title_center = context.create_detached_component(document_id, HostStack::bar(6.0))?;
+    let title_center = context.create_detached_component(document_id, Stack::bar(6.0))?;
     let title_parent = context
         .create_detached_component(document_id, breadcrumb_parent(&snapshot.title_parent))?;
     let title_separator = context.create_detached_component(document_id, breadcrumb_separator())?;
@@ -1854,7 +1854,7 @@ pub fn mount_primary_shell(
     // The reference chrome keeps window controls alone on the trailing edge; the
     // command palette and inspector already live in the titlebar more menu, which
     // now hangs off the sidebar footer.
-    let title_trailing = context.create_detached_component(document_id, HostStack::row(6.0))?;
+    let title_trailing = context.create_detached_component(document_id, Stack::row(6.0))?;
     if WindowChrome::platform_default().uses_custom_controls() {
         let minimize = context.create_detached_component(
             document_id,
@@ -1893,7 +1893,7 @@ pub fn mount_primary_shell(
         )?;
     }
 
-    let sidebar_top = context.create_detached_component(document_id, HostStack::bar(6.0))?;
+    let sidebar_top = context.create_detached_component(document_id, Stack::bar(6.0))?;
     let new_conversation_icon = context
         .create_detached_component(document_id, SidebarRowIcon::new(Icon::MessageSquarePlus))?;
     let new_conversation = context.create_detached_component(
@@ -2042,13 +2042,13 @@ pub fn mount_primary_shell(
     let conversation = context.create_detached_component(document_id, conversation_root())?;
     let conversation_column = context.create_detached_component(
         document_id,
-        HostStack::fill_column(12.0).max_width(CHAT_CONTENT_MAX_WIDTH),
+        Stack::fill_column(12.0).max_width(CHAT_CONTENT_MAX_WIDTH),
     )?;
     let conversation_body =
-        context.create_detached_component(document_id, HostStack::fill_column(12.0))?;
+        context.create_detached_component(document_id, Stack::fill_column(12.0))?;
     let heading_slot = context.create_detached_component(
         document_id,
-        HostStack::headline_slot(!snapshot.heading.trim().is_empty()),
+        headline_slot(!snapshot.heading.trim().is_empty()),
     )?;
     let heading = context.create_detached_component(
         document_id,
@@ -2084,7 +2084,7 @@ pub fn mount_primary_shell(
     context.append_child(conversation_body, error)?;
     context.append_child(conversation_body, timeline_scroll)?;
     let composer_dock =
-        context.create_detached_component(document_id, HostStack::composer_card())?;
+        context.create_detached_component(document_id, composer_card())?;
     let composer = context.create_detached_component(document_id, composer_view(snapshot))?;
     let composer_sink = Arc::clone(&sink);
     context.on(composer, move |_, event: &TextChanged, _| {
@@ -2093,10 +2093,10 @@ pub fn mount_primary_shell(
             ShellIntent::ComposerChanged(event.value.clone()),
         );
     })?;
-    let extras = context.create_detached_component(document_id, HostStack::fill_row(6.0))?;
+    let extras = context.create_detached_component(document_id, Stack::fill_row(6.0))?;
     let plus_slot = context.create_detached_component(
         document_id,
-        HostStack::trigger_slot(PLUS_SLOT_SIZE, PLUS_SLOT_SIZE),
+        trigger_slot(PLUS_SLOT_SIZE, PLUS_SLOT_SIZE),
     )?;
     let plus_menu = context
         .create_detached_component(document_id, composer_plus_menu(snapshot.composer_plus_open))?;
@@ -2112,7 +2112,7 @@ pub fn mount_primary_shell(
         ShellIntent::ComposerPlus("add-file".to_owned()),
     )?;
     let permission_slot =
-        context.create_detached_component(document_id, HostStack::leading_row(4.0))?;
+        context.create_detached_component(document_id, Stack::row(4.0))?;
     let permission_icon =
         context.create_detached_component(document_id, IconGlyph::new(Icon::ShieldCheck))?;
     let permission = context.create_detached_component(
@@ -2126,7 +2126,7 @@ pub fn mount_primary_shell(
         ShellIntent::CyclePermission,
     )?;
     let worktree_slot =
-        context.create_detached_component(document_id, HostStack::leading_row(4.0))?;
+        context.create_detached_component(document_id, Stack::row(4.0))?;
     let worktree_icon =
         context.create_detached_component(document_id, IconGlyph::new(Icon::GitBranch))?;
     let worktree = context.create_detached_component(
@@ -2245,18 +2245,18 @@ pub fn mount_primary_shell(
     context.append_child(pending_panel, pending_title)?;
     context.append_child(pending_panel, pending_prompt)?;
     let pending_actions = context.create_detached_component(document_id, pending_actions_row())?;
-    let actions = context.create_detached_component(document_id, HostStack::row(6.0))?;
+    let actions = context.create_detached_component(document_id, Stack::row(6.0))?;
     let send =
         context.create_detached_component(document_id, composer_send_button(snapshot.can_send))?;
     bind_activate(context, send, Arc::clone(&sink), ShellIntent::SubmitTurn)?;
     context.append_child(actions, send)?;
     let composer_toolbar = context.create_detached_component(
         document_id,
-        HostStack::bar(8.0).justify(JustifySpec::SpaceBetween),
+        Stack::bar(8.0).justify(JustifySpec::SpaceBetween),
     )?;
     context.append_child(composer_toolbar, extras)?;
     context.append_child(composer_toolbar, actions)?;
-    let completion_slot = context.create_detached_component(document_id, HostStack::column(1.0))?;
+    let completion_slot = context.create_detached_component(document_id, Stack::column(1.0))?;
     context.append_child(composer_dock, composer)?;
     context.append_child(composer_dock, composer_toolbar)?;
     context.append_child(conversation_column, conversation_body)?;
@@ -2296,7 +2296,7 @@ pub fn mount_primary_shell(
         ),
     )?;
     let product_settings = context
-        .create_detached_component(document_id, HostStack::fill_column(10.0).padding(4.0))?;
+        .create_detached_component(document_id, Stack::fill_column(10.0).padding(4.0))?;
     let settings_card =
         context.create_detached_component(document_id, SettingsCard::new(String::new()))?;
     let product_heading =
@@ -2346,8 +2346,8 @@ pub fn mount_primary_shell(
     )?;
 
     let workspace_page =
-        context.create_detached_component(document_id, HostStack::fill_column(0.0))?;
-    let pane_header = context.create_detached_component(document_id, HostStack::bar(6.0))?;
+        context.create_detached_component(document_id, Stack::fill_column(0.0))?;
+    let pane_header = context.create_detached_component(document_id, Stack::bar(6.0))?;
     let (pane_selected, pane_options) = pane_tab_options(snapshot);
     let pane_tabs = context.create_detached_component(
         document_id,
@@ -2392,7 +2392,7 @@ pub fn mount_primary_shell(
         Arc::clone(&sink),
         ShellIntent::MovePaneToNext,
     )?;
-    let pane_body = context.create_detached_component(document_id, HostStack::fill_column(0.0))?;
+    let pane_body = context.create_detached_component(document_id, Stack::fill_column(0.0))?;
     let pane_chrome = context.create_detached_component(
         document_id,
         PaneChrome::new()
@@ -2414,10 +2414,10 @@ pub fn mount_primary_shell(
     context.append_child(pane_chrome, pane_header)?;
     context.append_child(pane_chrome, pane_body)?;
     context.append_child(workspace_page, pane_chrome)?;
-    let pane_bar = context.create_detached_component(document_id, HostStack::leading_row(8.0))?;
+    let pane_bar = context.create_detached_component(document_id, Stack::row(8.0))?;
     context.append_child(workspace_page, pane_bar)?;
     let workspace_content = context
-        .create_detached_component(document_id, HostStack::fill_column(12.0).padding(16.0))?;
+        .create_detached_component(document_id, Stack::fill_column(12.0).padding(16.0))?;
     let workspace_heading =
         context.create_detached_component(document_id, Text::new(String::new()))?;
     let workspace_status =
@@ -2456,13 +2456,13 @@ pub fn mount_primary_shell(
             ShellIntent::TerminalInput(event.value.clone()),
         );
     })?;
-    let workspace_actions = context.create_detached_component(document_id, HostStack::row(8.0))?;
+    let workspace_actions = context.create_detached_component(document_id, Stack::row(8.0))?;
     context.append_child(workspace_content, workspace_heading)?;
     context.append_child(workspace_content, workspace_status)?;
     context.append_child(pane_body, workspace_content)?;
 
     let inspector = context
-        .create_detached_component(document_id, HostStack::fill_column(8.0).padding(12.0))?;
+        .create_detached_component(document_id, Stack::fill_column(8.0).padding(12.0))?;
     let inspector_header =
         context.create_detached_component(document_id, inspector_header_bar())?;
     let inspector_heading = context
@@ -2481,14 +2481,14 @@ pub fn mount_primary_shell(
         .create_detached_component(document_id, Text::new(snapshot.inspector_body.clone()))?;
     context.append_child(inspector, inspector_header)?;
     context.append_child(inspector, inspector_body)?;
-    let inspector_todos = context.create_detached_component(document_id, HostStack::column(4.0))?;
+    let inspector_todos = context.create_detached_component(document_id, Stack::column(4.0))?;
     context.append_child(inspector, inspector_todos)?;
     let iab_empty = context.create_detached_component(document_id, iab_unavailable_state())?;
     context.append_child(inspector, iab_empty)?;
     let diagnostics_panel =
-        context.create_detached_component(document_id, HostStack::column(4.0).padding(8.0))?;
+        context.create_detached_component(document_id, Stack::column(4.0).padding(8.0))?;
     let coding_panel =
-        context.create_detached_component(document_id, HostStack::fill_column(8.0))?;
+        context.create_detached_component(document_id, Stack::fill_column(8.0))?;
     let coding_query = context.create_detached_component(
         document_id,
         TextArea::new(String::new())
@@ -2505,11 +2505,11 @@ pub fn mount_primary_shell(
     context.append_child(inspector, coding_panel)?;
 
     let automations_page = context
-        .create_detached_component(document_id, HostStack::fill_column(10.0).padding(16.0))?;
+        .create_detached_component(document_id, Stack::fill_column(10.0).padding(16.0))?;
     let automation_list =
-        context.create_detached_component(document_id, HostStack::leading_row(8.0))?;
+        context.create_detached_component(document_id, Stack::row(8.0))?;
     let automation_actions =
-        context.create_detached_component(document_id, HostStack::leading_row(8.0))?;
+        context.create_detached_component(document_id, Stack::row(8.0))?;
     let automation_canvas = context.create_detached_component(
         document_id,
         GraphCanvas::new("automations", snapshot.automation_graph.clone())
@@ -2541,7 +2541,7 @@ pub fn mount_primary_shell(
         ShellIntent::CloseAutomations,
     )?;
     let automations_body =
-        context.create_detached_component(document_id, HostStack::fill_column(4.0))?;
+        context.create_detached_component(document_id, Stack::fill_column(4.0))?;
     let automations_section = context.create_detached_component(
         document_id,
         SidebarSection::new("自动化").count(snapshot.automations.len()),
@@ -2581,7 +2581,7 @@ pub fn mount_primary_shell(
     context.append_child(automations_sidebar, automations_footer)?;
 
     let project_page = context
-        .create_detached_component(document_id, HostStack::fill_column(12.0).padding(16.0))?;
+        .create_detached_component(document_id, Stack::fill_column(12.0).padding(16.0))?;
     let project_page_title =
         context.create_detached_component(document_id, Text::new(String::new()))?;
     let project_page_body =
@@ -2905,8 +2905,8 @@ fn has_workspace_primary_content(snapshot: &PrimaryShellSnapshot) -> bool {
     }
 }
 
-fn conversation_root() -> HostStack {
-    HostStack::fill_column(0.0)
+fn conversation_root() -> Stack {
+    Stack::fill_column(0.0)
         .padding_xy(24.0, 20.0)
         .radius(UI_METRICS.radius_lg)
         .align(AlignSpec::Center)
@@ -2915,8 +2915,8 @@ fn conversation_root() -> HostStack {
 fn assemble_conversation_workspace(
     context: &mut AppContext,
     split: Entity<SplitPane>,
-    conversation: Entity<HostStack>,
-    workspace_page: Entity<HostStack>,
+    conversation: Entity<Stack>,
+    workspace_page: Entity<Stack>,
 ) -> Result<(), FrameworkError> {
     context.update_component(split, |pane, _| {
         pane.first = Some(conversation.stable_id());
@@ -2928,11 +2928,11 @@ fn assemble_conversation_workspace(
 
 fn primary_content_id(
     snapshot: &PrimaryShellSnapshot,
-    conversation: Entity<HostStack>,
+    conversation: Entity<Stack>,
     settings_page: Entity<SettingsPage>,
     conversation_workspace: Entity<SplitPane>,
-    automations_page: Entity<HostStack>,
-    project_page: Entity<HostStack>,
+    automations_page: Entity<Stack>,
+    project_page: Entity<Stack>,
 ) -> StableNodeId {
     if snapshot.settings_open {
         settings_page.stable_id()
@@ -3015,7 +3015,7 @@ impl ShellHandles {
         })?;
         let headline_active = !snapshot.heading.trim().is_empty();
         context.update_component(self.heading_slot, |slot, _| {
-            *slot = HostStack::headline_slot(headline_active);
+            *slot = headline_slot(headline_active);
         })?;
         context.update_component(self.error, |error, _| {
             *error = Text::new(snapshot.error.clone().unwrap_or_default());
@@ -3407,7 +3407,7 @@ impl ShellHandles {
         let host = if let Some(host) = self.row_tools.get(&item.id).copied() {
             host
         } else {
-            let host = context.create_detached_component(document_id, HostStack::row(2.0))?;
+            let host = context.create_detached_component(document_id, Stack::row(2.0))?;
             context.update_component(row, |row, _| {
                 row.tools = Some(host.stable_id());
             })?;
@@ -4659,7 +4659,7 @@ impl ShellHandles {
                     .map(|row| row.id.clone())
                     .unwrap_or_else(|| format!("missing-{index}"))
             },
-            |_, _| HostStack::fill_column(6.0),
+            |_, _| Stack::fill_column(6.0),
         )?;
         context.update_component(self.timeline_list, |list, _| {
             list.style = timeline_list_style(
@@ -5917,7 +5917,7 @@ impl ShellHandles {
                     handle
                 } else {
                     let handle = context
-                        .create_detached_component(document_id, HostStack::bar(0.0))?;
+                        .create_detached_component(document_id, Stack::bar(0.0))?;
                     self.workspace_split_handles.insert(key.clone(), handle);
                     handle
                 };
