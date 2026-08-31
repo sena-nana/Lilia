@@ -23,7 +23,7 @@ The desktop is a NanaUI retained tree (`apps/desktop/src/desktop.rs` + `runtime_
 
 - Compose rows with the `Stack` presets from `nana-ui::runtime::Stack`: `row` (toolbar, shrink to content), `fill_row` (span leftover width), `bar` (full-width, no grow: top/bottom bars), `column` (vertical, height from content), `fill_column` (main content area: fill leftover height, grow 1, shrink 1).
 - The most common composition bug: using `column` where `fill_column` is needed — the main pane stops stretching and bottom composers stop hugging the bottom. Main content areas and composer-pane bodies use `fill_column`.
-- `apps/desktop/src/runtime_layout.rs` (`HostStack`) is the app-shell composition idiom and mirrors these presets; its `reconcile_children` pattern is how ordered children get mounted. Keep using it for existing shell surfaces; prefer `Stack` for new standalone containers.
+- `apps/desktop/src/runtime_layout.rs` is the app-shell composition idiom built on these presets; its `reconcile_children` pattern is how ordered children get mounted.
 - Authoritative framework references: NanaUI `docs/rust-layout.md` (layout + border recipes), `docs/components.md`, `docs/look.md` — found in the NanaUI checkout (`~/.cargo/git/checkouts/nanaui-*/<rev>/docs/`) or the sibling workspace checkout.
 - Shrink is opt-in: unwritten `flex_shrink` behaves as 0 (not CSS's 1) and `align_items` defaults to `Start`. The presets already encode this; do not "fix" a preset by hand-editing raw layout fields.
 
@@ -31,7 +31,7 @@ The desktop is a NanaUI retained tree (`apps/desktop/src/desktop.rs` + `runtime_
 
 Border color and border width live in different fields; if either is missing the border silently does not draw. Always write them as one unit:
 
-- Container cards: `Stack::column(gap).padding(x).surface(SemanticColorRole::Surface).outline(SemanticColorRole::Border, 1.0).radius(r)` — see `composer_card()` in `apps/desktop/src/runtime_layout.rs:61` for the canonical card.
+- Container cards: `Stack::column(gap).padding(x).surface(SemanticColorRole::Surface).outline(SemanticColorRole::Border, 1.0).radius(r)` — see `composer_card()` in `apps/desktop/src/runtime_layout.rs` for the canonical card.
 - `Card` control: pick `kind(CardKind::Outlined)` for the 1px outline instead of hand-assembling borders. An explicit `.style(...)` border/background/radius now wins over the kind default.
 - Never set `border` without `border_width`, or the reverse. Colors always come from `SemanticColorRole` tokens, never raw `[f32;4]` values.
 
@@ -67,7 +67,7 @@ Use `$lilia-agent-debug` for detailed Agent debug implementation and validation 
 ## Review Checklist
 
 - The UI still feels like a restrained engineering tool.
-- Rows/panels use `Stack` presets (or `HostStack` helpers) with correct fill vs. shrink semantics; nothing stacks vertically by accident.
+- Rows/panels use `Stack` presets with correct fill vs. shrink semantics; nothing stacks vertically by accident.
 - Every border pairs color + width through `outline(...)` or `CardKind`; no silent zero-width or colorless borders.
 - Colors come from `SemanticColorRole`; no new private color system.
 - Navigation and actions are real, reachable, and wired.

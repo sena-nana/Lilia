@@ -16,7 +16,7 @@ Chat Composer is a focused input workspace: the main editor keeps inline context
 - Conversation column: timeline body, optional pending card, composer card. Pending is not a child of the composer card.
 - Pending card: NanaUI `Stack::column` with `surface` / `outline` / `radius`, actions in `Stack::row`.
 - Composer toolbar: image previews first, then attachment, permission, plan, and send/interrupt controls. Slash/mention completion stays inside the composer card.
-- Compose with `HostStack::composer_card()` in `apps/desktop/src/runtime_layout.rs` and NanaUI `Stack` presets. Do not introduce a second visual language for the composer.
+- Compose with `composer_card()` in `apps/desktop/src/runtime_layout.rs` and NanaUI `Stack` presets. Do not introduce a second visual language for the composer.
 
 ## Confirmation Notes
 

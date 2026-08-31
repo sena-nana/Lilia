@@ -1,12 +1,12 @@
 # 桌面交互重设计
 
-对照当前 Native 装配（`apps/desktop/src/runtime_shell.rs`、`runtime_windows.rs`、`module/*`）与 NanaUI pin `a75e26fbf`。场景规则：任务对话走聊天桌面；文件 / 终端 / 架构 / 路线图走 IDE 工作台。
+对照当前 Native 装配（`apps/desktop/src/runtime_shell.rs`、`runtime_windows.rs`、`module/*`）与 NanaUI pin `d3cdc1c63`。场景规则：任务对话走聊天桌面；文件 / 终端 / 架构 / 路线图走 IDE 工作台。
 
 本文件覆盖全部表面。**第一批落地**只改主窗口：侧栏、任务聊天、Composer、待处理带、检查器分区。其余表面按批次实施。
 
 ## 当前壳结构
 
-主窗口用 NanaUI `DesktopShell`：标题栏槽、`SidebarFrame` 导航、primary 内容、可选 inspector、可选 bottom 诊断。产品自己用 `HostStack` 拼出对话列、Composer 卡、项目页和工作区页。
+主窗口用 NanaUI `DesktopShell`：标题栏槽、`SidebarFrame` 导航、primary 内容、可选 inspector、可选 bottom 诊断。产品自己用 `Stack` 预设拼出对话列、Composer 卡、项目页和工作区页。
 
 进出规则：`settings_open` / `automations_open` / 非 Files 的 `project_page`（架构、路线图、记忆）仍整页替换 primary。打开文档、终端或 Files 时，`primary` 是 `SplitPane(conversation, workspace_page)`，对话列留在左侧。
 
@@ -69,7 +69,7 @@ conversation (fill_column, 水平居中)
 
 ## 后续批次
 
-已落地：Files 树可见、pane 按 kind 互斥、Roadmap/Memory 编辑器、任务弹窗 pending、待处理卡与检查器顶栏、IAB 检查器 EmptyState 且去掉未接线窗口/打开/导航、架构图占满 primary 且节点/历史进检查器、任务弹窗 MCP 字段、NanaUI pin `a75e26fbf`、侧栏行挂进 `ReorderList`、时间线 `materialize_virtual_list`、工作区不同 kind 双 live pane（`SplitPane`）、对话与文档/终端/文件并排（S2：`primary` 为 `SplitPane(conversation, workspace_page)`，sash 仅 UI 状态）。
+已落地：Files 树可见、pane 按 kind 互斥、Roadmap/Memory 编辑器、任务弹窗 pending、待处理卡与检查器顶栏、IAB 检查器 EmptyState 且去掉未接线窗口/打开/导航、架构图占满 primary 且节点/历史进检查器、任务弹窗 MCP 字段、侧栏行挂进 `ReorderList`、时间线 `materialize_virtual_list`、工作区不同 kind 双 live pane（`SplitPane`）、对话与文档/终端/文件并排（S2：`primary` 为 `SplitPane(conversation, workspace_page)`，sash 仅 UI 状态）。
 
 仍待：
 
@@ -80,5 +80,5 @@ conversation (fill_column, 水平居中)
 
 - 不把整个壳一次性换成 `DockWorkspace`。`DesktopShell` 已提供 navigation / primary / inspector / bottom，第一批只修正分区内容。
 - 待处理与 Composer 分离是产品「非打断交互」的布局兑现；发送是否锁定仍由 `blocking_pending_count` 决定，不改契约。
-- 新容器用 NanaUI `Stack`；已有 shell 装配继续 `HostStack` + `reconcile_children`。
+- 壳层装配统一用 NanaUI `Stack` 预设 + `reconcile_children`。
 - 通用缺口写入 `nanaui-api-gaps.md`，不在 app 里复制 Dock / 终端 / 编辑器。

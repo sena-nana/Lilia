@@ -1,6 +1,6 @@
 # NanaUI API 缺口提案
 
-对照：LiliaCode 桌面（pin `nana-ui` `a75e26fbf670fdf0a267dd7d0fcb5da5a1b18a3f`）、聊天桌面（Claude / ChatGPT）与 IDE 工作台（VS Code / Cursor）。权威文档：该 pin 的 `docs/rust-layout.md`、`docs/components.md`、`docs/workspace.md`。
+对照：LiliaCode 桌面（pin `nana-ui` `d3cdc1c638730583a8b2c0fb04907c490c4144de`）、聊天桌面（Claude / ChatGPT）与 IDE 工作台（VS Code / Cursor）。权威文档：该 pin 的 `docs/rust-layout.md`、`docs/components.md`、`docs/workspace.md`。
 
 不修改 cargo git checkout。下列「建议 API」是给 NanaUI 仓库的提案草稿。
 
@@ -14,8 +14,8 @@
 
 | 能力 | NanaUI API | Lilia 现状 | 建议 |
 | --- | --- | --- | --- |
-| Flex 预设 | `Stack::{row,fill_row,column,fill_column,bar}` + `outline` | 壳层自写 `HostStack`，手填 `LayoutStyle` | 新容器改用 `Stack`。`HostStack` 仅保留现有 reconcile 装配。 |
-| 描边卡片 | `Card` + `CardKind::Outlined`，或 `Stack.surface.outline.radius` | Composer 用 `HostStack::composer_card()` | 待处理卡改 `Stack` 三件套；重复卡片再升 `Card`。 |
+| Flex 预设 | `Stack::{row,fill_row,column,fill_column,bar}` + `outline` | 已全部迁移 `Stack` 预设（`runtime_layout.rs`） | 已完成；`reconcile_children` 继续负责子节点对账。 |
+| 描边卡片 | `Card` + `CardKind::Outlined`，或 `Stack.surface.outline.radius` | `composer_card()` 已是 `Stack` 三件套 | 已完成；重复卡片再升 `Card`。 |
 | 桌面壳分区 | `DesktopShell` navigation / primary / inspector / bottom | 已用 | 继续。不要再手写四栏。 |
 | 工作区区域 | `Workspace` / `WorkspaceModel` / 可折叠 inspector | `DesktopShell.from_model` 已接 model；内容仍是自拼 column | 项目页批次再绑 Region 内容。 |
 | Dock 拆出 | `Dock` / `DockWorkspace` / `DockController` | 应用层有 `DockSlot` 与分栏状态，**不用** Runtime `Dock` 控件 | 完整 IDE 停靠列入后续；先 `PaneChrome`。 |
@@ -35,7 +35,7 @@
 
 | 正常 GUI | 当前 API | 缺口 | 应用能否绕过 | 建议 API |
 | --- | --- | --- | --- | --- |
-| `Stack::row` 默认起点对齐 | `HostStack::row` 默认 `JustifySpec::End` | 应用平行实现与框架预设不一致，工具条容易排反 | 新容器只用 `Stack`；不要再复制 HostStack 默认值 | 无需新 API；删除平行实现 |
+| `Stack::row` 默认起点对齐 | `Stack` 预设统一默认起点对齐 | 历史平行实现与框架预设不一致，工具条容易排反 | 平行实现已删除，`Stack::row` 是唯一水平预设 | 无需新 API；已完成 |
 | 侧栏任务行：拖拽排序 + 行内停止/菜单 | `ReorderItem::tools` + live 行子节点 | 已接到 Lilia 侧栏；跨列表拖到收集箱仍不能一次完成 | 任务/运行中会话可拖；项目是 drop target | 无需新 API |
 | 补全列表贴着输入框 | `ActionMenu` / `Popover` 可锚定；应用把补全做成 Composer 内 `column` | 键盘上下 + 锚定宽度跟输入框走不完整 | 继续槽位列表 | `Popover`/`SearchDropdown` 支持 textarea 插车锚点与 Arrow 导航 |
 | 代码编辑器 | `TextArea` + 可选 `syntax-highlighting` presenter | 无行号、诊断沟、 minimap、多光标 | 继续 `TextArea`，诊断放 bottom | `TextEditor`：gutter、diagnostics、revision 仍由应用拥有 |
@@ -57,7 +57,7 @@
 
 ## 第一批对 Lilia 的约束
 
-1. 新容器用 `Stack` 预设，禁止再复制一套 `HostStack` 字段。
+1. 新容器用 `Stack` 预设，不手写 `LayoutStyle` 布局字段。
 2. 边框必须 `outline(role, width)`。
 3. 浮层只用已有 overlay 控件，不绝对定位。
 4. 不在 app 里实现 Dock 算法、终端仿真或代码编辑器。
@@ -73,6 +73,6 @@
 
 应用侧先修、不必等 NanaUI 的：`Stack` 替换新容器（pending/检查器顶栏已做）、菜单锚定槽而不是 `(420, 48)`、对话与 IAB 检查器 `EmptyState`（已做）、图标 `IconButton::with_tooltip`、时间线 `materialize_virtual_list`（已做）。
 
-Lilia 已钉 NanaUI `a75e26fbf`：`IconButton::with_tooltip`、侧栏 `ReorderList` + `ReorderItem::tools`。
+Lilia 已钉 NanaUI `d3cdc1c63`：`IconButton::with_tooltip`、侧栏 `ReorderList` + `ReorderItem::tools`。
 
 每条提案应对 NanaUI：现有类型、缺的方法/事件、应用侧绕过、以及一个最小 example。

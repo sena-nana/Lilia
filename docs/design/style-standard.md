@@ -13,7 +13,7 @@ LiliaCode 使用 NanaUI 控件、主题令牌与 WGPU 渲染能力。通用控�
 
 ## 布局标准写法
 
-- 容器默认竖排（`FlexDirection::Column` 是缺省值）；水平排列必须显式使用 `Stack` 预设（`row` / `fill_row` / `bar`）。已有 shell 装配可继续 `HostStack`；新的独立容器用 `Stack`，不手写 `LayoutStyle` 布局字段。
+- 容器默认竖排（`FlexDirection::Column` 是缺省值）；水平排列必须显式使用 `Stack` 预设（`row` / `fill_row` / `bar`）。所有壳层装配统一走 `Stack` 预设（见 `runtime_layout.rs`），不手写 `LayoutStyle` 布局字段。
 - 主内容区用 `fill_column`（Fill 高 + grow 1）；`column` 只用于高度随内容的纵向结构。主区不伸展、底部输入区不贴底，基本都是这里用错。
 - 需要收缩的子项显式写 `shrink(1.0)`：未写 `flex_shrink` 按 0 处理，不是 CSS 的 1；`align_items` 缺省也是 `Start` 而非 `stretch`。
 - 对话框、菜单、抽屉、气泡用 NanaUI 浮层控件（`Dialog`、`ActionMenu`、`Popover`、`Drawer`）并锚定触发控件槽位，不用绝对定位自摆。
@@ -28,7 +28,7 @@ LiliaCode 使用 NanaUI 控件、主题令牌与 WGPU 渲染能力。通用控�
 ## 评审清单
 
 - 控件、间距、排版、状态色是否复用 NanaUI 公共能力。
-- 行列排布是否用 `Stack`/`HostStack` 预设，fill 与 shrink 语义是否正确，无误竖排。
+- 行列排布是否用 `Stack` 预设，fill 与 shrink 语义是否正确，无误竖排。
 - 边框是否成对（颜色+宽度）书写，深浅主题下均可见。
 - 主操作、状态和辅助信息层级是否清楚。
 - hover、active、disabled、focus 与窗口焦点行为是否完整。

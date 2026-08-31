@@ -27,7 +27,7 @@ description: Coding workflow for the LiliaCode native desktop app. Use when impl
 - Before changing a cross-boundary contract, define the boundary first, then update contracts, Rust APIs, consumers, and tests together.
 - Do not display technical explanations in the UI.
 - Do not add controls, sidebar entries, commands, or disabled placeholders that are not connected to real behavior.
-- UI composition follows `$lilia-app-design`: `Stack` presets / `HostStack` helpers for layout, `outline(role, width)` for borders, `SemanticColorRole` for color.
+- UI composition follows `$lilia-app-design`: `Stack` presets for layout, `outline(role, width)` for borders, `SemanticColorRole` for color.
 - Use `$lilia-agent-debug` when adding or changing stable target IDs, the debug protocol, or desktop replay support.
 - When adding Agent, automation, timeline, permission, or approval behavior, define the user-visible workflow, runtime command, event shape, persistence, and fallback before wiring UI.
 - Keep provider-specific or experimental payloads behind adapter/runtime boundaries.
@@ -38,7 +38,7 @@ description: Coding workflow for the LiliaCode native desktop app. Use when impl
 ## Native UI Pattern
 
 - Shell and view assembly live in `apps/desktop/src/runtime_shell.rs` with per-domain UiModules under `src/ui_module.rs` + `src/module/`.
-- Layout composition uses `apps/desktop/src/runtime_layout.rs` (`HostStack` presets, `reconcile_children`, shared control builders such as `composer_send_button`, `pill_button`).
+- Layout composition uses `apps/desktop/src/runtime_layout.rs` (`Stack` presets, `reconcile_children`, shared control builders such as `composer_send_button`, `pill_button`).
 - Style controls through `NodeStyle` builders (`surface`/`outline`/`radius`) or component builders; never write raw `LayoutStyle` fields when a preset exists.
 - New messages flow through the `DesktopProgram` message enum in `src/desktop.rs`; keep snapshot assembly and mutations inside the retained-tree API, no second render path.
 
