@@ -364,7 +364,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, ComposerChanged, TodosChanged};
+        DesktopHostError, DesktopHostResult, ComposerChanged};
 
     static NEXT_COMPOSER_ID: AtomicU64 = AtomicU64::new(1);
 

@@ -601,7 +601,7 @@ mod tests {
     use lilia_service::ServiceAuthority;
 
     use super::*;
-    use crate::application::{DesktopApplicationConfig, DesktopHost, DesktopHostContext, DesktopHostError, GitHubBindingChanged};
+    use crate::application::{DesktopApplicationConfig, DesktopHost, DesktopHostContext, DesktopHostError};
 
     #[derive(Default)]
     struct MemoryCredentialHost {

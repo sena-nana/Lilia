@@ -212,20 +212,6 @@ impl DesktopApplication {
         self.inner.remote.store_bridge_port(port)?;
         Ok(advertised_bridge_url(port))
     }
-
-    fn remote_timeline_snapshot(
-        &self,
-        request: &Value,
-    ) -> Result<Value, DesktopRemoteControlError> {
-        lilia_feature_remote::remote_timeline_snapshot(self, request)
-    }
-
-    fn remote_interaction_respond(
-        &self,
-        request: &Value,
-    ) -> Result<Value, DesktopRemoteControlError> {
-        lilia_feature_remote::remote_interaction_respond(self, request)
-    }
 }
 
 impl RemoteHost for DesktopApplication {
@@ -631,11 +617,10 @@ mod tests {
     };
 
     use super::*;
-    use lilia_contracts::ProductTaskStatus;
     use uuid::Uuid;
     use crate::application::{
         DesktopApplicationConfig, DesktopHostError, DesktopHostResult, DesktopProjectCreate,
-        DesktopTaskCreate, DesktopTaskPatch,
+        DesktopTaskCreate,
     };
 
     #[derive(Default)]
@@ -783,14 +768,16 @@ mod tests {
                 )
                 .unwrap();
         }
-        let payload = application
-            .remote_timeline_snapshot(&json!({
+        let payload = lilia_feature_remote::remote_timeline_snapshot(
+            &application,
+            &json!({
                 "type": "timeline.snapshot",
                 "taskId": task.id.as_str(),
                 "limit": 2,
                 "direction": "latest",
-            }))
-            .unwrap();
+            }),
+        )
+        .unwrap();
         assert_eq!(payload["events"].as_array().unwrap().len(), 2);
         assert_eq!(payload["page"]["hasMoreBefore"], true);
         assert_eq!(payload["page"]["afterCursor"], "remote-session:3");
@@ -1101,16 +1088,18 @@ mod tests {
             .restore_task_runtime_from_projection(&task.id)
             .unwrap();
 
-        let response = application
-            .remote_interaction_respond(&json!({
+        let response = lilia_feature_remote::remote_interaction_respond(
+            &application,
+            &json!({
                 "response": {
                     "taskId": task.id.as_str(),
                     "requestId": "remote-architecture-request",
                     "kind": "architecture_change",
                     "result": { "decision": "allow" }
                 }
-            }))
-            .unwrap();
+            }),
+        )
+        .unwrap();
 
         assert_eq!(response["accepted"], true);
         let graph = application.project_architecture(&project.id).unwrap();

@@ -189,7 +189,7 @@ mod tests {
 
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, TimelineChanged};
+        DesktopHostError, DesktopHostResult};
 
     struct NoopHost;
 

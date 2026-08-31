@@ -398,7 +398,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, WorktreeChanged};
+        DesktopHostError, DesktopHostResult};
 
     struct NoopHost;
 

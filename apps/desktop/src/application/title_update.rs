@@ -10,9 +10,9 @@ use lilia_contracts::{
     PendingProjection, ProjectId, TaskId, TimelineProjectionCommand, TimelineProjectionEvent,
 };
 use lilia_feature_agent_session::{
-    apply_title_proposal, build_title_prompt_for_job, persist_task_title,
-    respond_title_update, respond_title_update_review, run_title_update_after_turn,
-    schedule_title_update, task_title_state, TitleError, TitleHost, TitleModelRequest,
+    apply_title_proposal, build_title_prompt_for_job, respond_title_update,
+    respond_title_update_review, run_title_update_after_turn, task_title_state, TitleError,
+    TitleHost, TitleModelRequest,
 };
 use lilia_storage::ProjectionApplyResult;
 
@@ -251,35 +251,6 @@ impl DesktopApplication {
     ) -> Result<(), String> {
         run_title_update_after_turn(self, &self.title_update_coordinator(), task_id, turn_id)
     }
-
-    pub(crate) fn persist_task_title(
-        &self,
-        task_id: &TaskId,
-        title: &str,
-        source: DesktopTaskTitleSource,
-        expected_title: &str,
-    ) -> Result<bool, DesktopApplicationError> {
-        Ok(persist_task_title(
-            self,
-            task_id,
-            title,
-            source,
-            expected_title,
-        )?)
-    }
-
-    fn schedule_title_update(
-        &self,
-        task_id: &TaskId,
-        turn_id: Option<String>,
-    ) -> Result<Option<DesktopTitleUpdateJob>, DesktopApplicationError> {
-        Ok(schedule_title_update(
-            self,
-            &self.title_update_coordinator(),
-            task_id,
-            turn_id,
-        )?)
-    }
 }
 
 #[cfg(test)]
@@ -288,6 +259,7 @@ mod tests {
 
     use super::*;
     use lilia_contracts::{PendingProjectionStatus, TaskId};
+    use lilia_feature_agent_session::persist_task_title;
     use serde_json::Value as JsonValue;
     use tempfile::TempDir;
 
@@ -434,14 +406,14 @@ mod tests {
         let task = application
             .create_task(DesktopTaskCreate::new(None, "初始标题"))
             .unwrap();
-        application
-            .persist_task_title(
-                &task.id,
-                "手动标题",
-                DesktopTaskTitleSource::Manual,
-                "初始标题",
-            )
-            .unwrap();
+        persist_task_title(
+            &application,
+            &task.id,
+            "手动标题",
+            DesktopTaskTitleSource::Manual,
+            "初始标题",
+        )
+        .unwrap();
 
         let first_job = application
             .title_update_coordinator()

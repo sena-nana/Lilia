@@ -611,7 +611,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, AgentInteractionChanged};
+        DesktopHostError, DesktopHostResult};
 
     struct TestHost;
 

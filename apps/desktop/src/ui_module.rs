@@ -458,7 +458,7 @@ mod tests {
     /// Writes one snapshot field, so a test can tell whose slice landed.
     struct Titler {
         feature: &'static str,
-        title: String,
+        title_parent: String,
     }
 
     enum TitlerMessage {
@@ -474,16 +474,18 @@ mod tests {
 
         fn reduce(&mut self, message: Self::Message, _cx: &UiModuleContext<'_>) -> UiModuleOutcome {
             match message {
-                TitlerMessage::Set(title) if title == self.title => UiModuleOutcome::clean(),
-                TitlerMessage::Set(title) => {
-                    self.title = title;
+                TitlerMessage::Set(title_parent) if title_parent == self.title_parent => {
+                    UiModuleOutcome::clean()
+                }
+                TitlerMessage::Set(title_parent) => {
+                    self.title_parent = title_parent;
                     UiModuleOutcome::dirty()
                 }
             }
         }
 
         fn project(&self, _cx: &UiModuleContext<'_>, into: &mut PrimaryShellSnapshot) {
-            into.title = self.title.clone();
+            into.title_parent = self.title_parent.clone();
         }
     }
 
@@ -520,7 +522,7 @@ mod tests {
     fn titler(feature: &'static str) -> Box<dyn ErasedUiModule> {
         Box::new(Titler {
             feature,
-            title: String::new(),
+            title_parent: String::new(),
         })
     }
 
@@ -548,7 +550,7 @@ mod tests {
 
         let mut snapshot = crate::runtime_shell::empty_snapshot();
         host.project(&cx, &mut snapshot);
-        assert_eq!(snapshot.title, "moved");
+        assert_eq!(snapshot.title_parent, "moved");
         assert_eq!(snapshot.heading, "untouched");
     }
 
@@ -650,7 +652,7 @@ mod tests {
         let mut host = UiModuleHost::new();
         host.register(Box::new(Titler {
             feature: "test.titler",
-            title: "a title".to_owned(),
+            title_parent: "a title".to_owned(),
         }))
         .expect("the slot is free");
         host.register(Box::new(Header {
@@ -661,7 +663,7 @@ mod tests {
         let mut snapshot = crate::runtime_shell::empty_snapshot();
         host.project(&cx, &mut snapshot);
 
-        assert_eq!(snapshot.title, "a title");
+        assert_eq!(snapshot.title_parent, "a title");
         assert_eq!(snapshot.heading, "a heading");
     }
 }

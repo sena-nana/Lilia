@@ -51,22 +51,6 @@ impl DebugTimelineAction {
             Self::FileChange => "file-change",
         }
     }
-
-    pub(crate) const fn label(self) -> &'static str {
-        match self {
-            Self::Plan => "计划",
-            Self::AskUser => "单选提问",
-            Self::AskUserMulti => "多选提问",
-            Self::AskUserPreview => "示例提问",
-            Self::AskUserFlow => "多题提问",
-            Self::Permission => "权限申请",
-            Self::TodoTool => "Todo 工具",
-            Self::Todo => "待办卡片",
-            Self::Command => "命令",
-            Self::FileRead => "读文件",
-            Self::FileChange => "改文件",
-        }
-    }
 }
 
 #[derive(Debug, Default)]

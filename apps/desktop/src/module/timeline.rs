@@ -1,12 +1,11 @@
 //! Timeline view state as a UI module.
 //!
 //! The events themselves live on the task session the shell publishes. This
-//! module owns expansion, hover and text-selection for its window.
+//! module owns expansion state for its window.
 
 use std::collections::BTreeSet;
 
 use lilia_kernel::FeatureId;
-use nana_ui::TextSelectionSnapshot;
 
 use crate::runtime_shell::{PrimaryShellSnapshot, ShellTimelineRow};
 use crate::task_session::TaskTimelineItem;
@@ -21,17 +20,11 @@ pub struct TimelineTextSelection {
 #[derive(Debug, Clone)]
 pub enum TimelineModuleMessage {
     Toggle(String),
-    Hover(Option<String>),
-    TextSelectionChanged {
-        event_id: String,
-        selection: Option<TextSelectionSnapshot>,
-    },
     ClearTextSelection,
 }
 
 pub struct TimelineModule {
     toggled_events: BTreeSet<String>,
-    hovered_event: Option<String>,
     text_selection: Option<TimelineTextSelection>,
 }
 
@@ -39,7 +32,6 @@ impl Default for TimelineModule {
     fn default() -> Self {
         Self {
             toggled_events: BTreeSet::new(),
-            hovered_event: None,
             text_selection: None,
         }
     }
@@ -103,28 +95,6 @@ impl UiModule for TimelineModule {
             TimelineModuleMessage::Toggle(event_id) => {
                 if !self.toggled_events.remove(&event_id) {
                     self.toggled_events.insert(event_id);
-                }
-                UiModuleOutcome::dirty()
-            }
-            TimelineModuleMessage::Hover(event_id) => {
-                self.hovered_event = event_id;
-                UiModuleOutcome::dirty()
-            }
-            TimelineModuleMessage::TextSelectionChanged {
-                event_id,
-                selection,
-            } => {
-                if let Some(selection) = selection.filter(|value| !value.text.trim().is_empty()) {
-                    self.text_selection = Some(TimelineTextSelection {
-                        event_id,
-                        text: selection.text,
-                    });
-                } else if self
-                    .text_selection
-                    .as_ref()
-                    .is_some_and(|current| current.event_id == event_id)
-                {
-                    self.text_selection = None;
                 }
                 UiModuleOutcome::dirty()
             }

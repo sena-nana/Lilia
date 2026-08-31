@@ -79,19 +79,6 @@ impl AskUserSpec {
         (!spec.questions.is_empty()).then_some(spec)
     }
 
-    pub(crate) fn title(&self) -> String {
-        self.title
-            .clone()
-            .filter(|title| !title.trim().is_empty())
-            .unwrap_or_else(|| {
-                if self.questions.len() > 1 {
-                    format!("Lilia 想确认 {} 件事", self.questions.len())
-                } else {
-                    "Lilia 想确认一下".to_owned()
-                }
-            })
-    }
-
     pub(crate) fn is_dismissable(&self) -> bool {
         self.dismissable != Some(false)
     }
@@ -154,19 +141,6 @@ impl AskUserDraft {
 
     pub(crate) fn can_submit(&self, spec: &AskUserSpec) -> bool {
         self.answer_for_current(spec).is_some()
-    }
-
-    pub(crate) fn selected_preview<'a>(&self, spec: &'a AskUserSpec) -> Option<&'a str> {
-        let question = self.question(spec)?;
-        question
-            .options
-            .iter()
-            .enumerate()
-            .find_map(|(index, option)| {
-                self.selected(&option.id(index))
-                    .then_some(option.preview.as_deref())
-                    .flatten()
-            })
     }
 
     pub(crate) fn apply(&mut self, spec: &AskUserSpec, action: AskUserAction) -> AskUserOutcome {

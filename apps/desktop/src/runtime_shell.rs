@@ -534,7 +534,6 @@ pub struct SettingsSnapshot {
 #[derive(Debug, Clone)]
 pub struct PrimaryShellSnapshot {
     pub theme: ThemeMode,
-    pub title: String,
     pub title_parent: String,
     pub title_context: String,
     pub heading: String,
@@ -590,7 +589,6 @@ pub struct PrimaryShellSnapshot {
     pub inspector_title: String,
     pub inspector_body: String,
     pub inspector_todos: Vec<ShellTodoRow>,
-    pub iab_url: String,
     pub confirm: Option<ShellConfirm>,
     pub pending: Option<ShellPending>,
     pub slash_items: Vec<ShellSlashItem>,
@@ -672,7 +670,6 @@ pub enum ShellIntent {
         before: Option<String>,
     },
     ClosePaneTab {
-        pane_id: String,
         item_id: String,
     },
     TransferPaneTab {
@@ -892,7 +889,6 @@ pub enum ShellIntent {
     OpenConversationStatusNewChat,
     OpenStatusTask(TaskId),
     StopStatusTask(TaskId),
-    ActivateWorkspaceItem(String),
     FocusWorkspacePane(String),
     SelectAutomation(String),
     CreateAutomation,
@@ -966,7 +962,6 @@ pub struct ShellHandles {
     pane_bar: Entity<Stack>,
     pane_buttons: HashMap<String, Entity<Button>>,
     automations_page: Entity<Stack>,
-    automation_list: Entity<Stack>,
     automation_actions: Entity<Stack>,
     automation_canvas: Entity<GraphCanvas>,
     title_center: Entity<Stack>,
@@ -977,10 +972,7 @@ pub struct ShellHandles {
     title_trailing: Entity<Stack>,
     conversation_sidebar: Entity<SidebarFrame>,
     automations_sidebar: Entity<SidebarFrame>,
-    automations_back: Entity<SidebarRow>,
-    automations_section: Entity<SidebarSection>,
     automations_body: Entity<Stack>,
-    automations_footer: Entity<SidebarFooter>,
     sidebar_top: Entity<Stack>,
     new_conversation: Entity<SidebarRow>,
     search_toggle: Entity<IconButton>,
@@ -991,6 +983,7 @@ pub struct ShellHandles {
     task_body: Entity<List>,
     task_reorder: Entity<ReorderList>,
     project_section: Entity<SidebarSection>,
+    #[cfg(test)]
     project_header: Entity<ListItem>,
     project_body: Entity<List>,
     project_reorder: Entity<ReorderList>,
@@ -1046,6 +1039,7 @@ pub struct ShellHandles {
     plus_menu: Entity<ActionMenu>,
     attach: Entity<IconButton>,
     permission_slot: Entity<Stack>,
+    #[cfg(test)]
     permission_icon: Entity<IconGlyph>,
     permission: Entity<Button>,
     worktree_slot: Entity<Stack>,
@@ -1074,9 +1068,7 @@ pub struct ShellHandles {
     workspace_page: Entity<Stack>,
     conversation_workspace: Entity<SplitPane>,
     pane_chrome: Entity<PaneChrome>,
-    pane_header: Entity<Stack>,
     pane_tabs: Entity<Tabs>,
-    pane_body: Entity<Stack>,
     workspace_content: Entity<Stack>,
     workspace_heading: Entity<Text>,
     workspace_status: Entity<Text>,
@@ -1520,7 +1512,6 @@ fn workspace_tabs_intent_for(pane_id: &str, event: &TabsEvent) -> ShellIntent {
             before: before.as_ref().map(|value| value.to_string()),
         },
         TabsEvent::Close(value) => ShellIntent::ClosePaneTab {
-            pane_id: pane_id.to_owned(),
             item_id: value.to_string(),
         },
         TabsEvent::Transfer {
@@ -2689,7 +2680,6 @@ pub fn mount_primary_shell(
         pane_bar,
         pane_buttons: HashMap::new(),
         automations_page,
-        automation_list,
         automation_actions,
         automation_canvas,
         title_center,
@@ -2700,10 +2690,7 @@ pub fn mount_primary_shell(
         title_trailing,
         conversation_sidebar,
         automations_sidebar,
-        automations_back,
-        automations_section,
         automations_body,
-        automations_footer,
         sidebar_top,
         new_conversation,
         search_toggle,
@@ -2714,6 +2701,7 @@ pub fn mount_primary_shell(
         task_body,
         task_reorder,
         project_section,
+        #[cfg(test)]
         project_header,
         project_body,
         project_reorder,
@@ -2769,6 +2757,7 @@ pub fn mount_primary_shell(
         plus_menu,
         attach,
         permission_slot,
+        #[cfg(test)]
         permission_icon,
         permission,
         worktree_slot,
@@ -2797,9 +2786,7 @@ pub fn mount_primary_shell(
         workspace_page,
         conversation_workspace,
         pane_chrome,
-        pane_header,
         pane_tabs,
-        pane_body,
         workspace_content,
         workspace_heading,
         workspace_status,
@@ -7171,7 +7158,6 @@ fn settings_tab_copy(
 pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
     PrimaryShellSnapshot {
         theme: ThemeMode::Light,
-        title: "LiliaCode".to_owned(),
         title_parent: "LiliaCode".to_owned(),
         title_context: "今天想做什么？".to_owned(),
         heading: "今天想做什么？".to_owned(),
@@ -7281,7 +7267,6 @@ pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
         inspector_title: String::new(),
         inspector_body: String::new(),
         inspector_todos: Vec::new(),
-        iab_url: String::new(),
         confirm: None,
         pending: None,
         slash_items: Vec::new(),
@@ -7632,7 +7617,6 @@ mod tests {
         let mut snapshot = snapshot_with_empty_primary_pane();
         snapshot.inspector_title = "浏览器".to_owned();
         snapshot.inspector_kind = "iab".to_owned();
-        snapshot.iab_url = "https://example.com".to_owned();
         let (document, handles, _primary) = mounted_primary(&snapshot);
         let inspector = document
             .context()
@@ -8187,40 +8171,6 @@ mod tests {
             handles
                 .completion_items
                 .get("slash-status")
-                .map(|item| item.stable_id())
-        );
-    }
-
-    fn composer_plus_items_mount_inside_the_open_menu() {
-        let mut snapshot = snapshot_with_empty_primary_pane();
-        snapshot.composer_plus_open = true;
-        let (document, handles, _primary) = mounted_primary(&snapshot);
-        let extras = document
-            .context()
-            .world()
-            .node(handles.extras.stable_id())
-            .map(|node| node.children.clone())
-            .unwrap_or_default();
-        assert_eq!(
-            extras,
-            vec![
-                handles.plus_slot.stable_id(),
-                handles.attach.stable_id(),
-                handles.permission_slot.stable_id()
-            ]
-        );
-        let plus_children = document
-            .context()
-            .world()
-            .node(handles.plus_menu.stable_id())
-            .map(|node| node.children.clone())
-            .unwrap_or_default();
-        assert_eq!(plus_children.len(), plus_menu_items(&snapshot).len());
-        assert_eq!(
-            plus_children.first().copied(),
-            handles
-                .plus_items
-                .get("add-file")
                 .map(|item| item.stable_id())
         );
     }

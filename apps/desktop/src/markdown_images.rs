@@ -17,20 +17,12 @@ pub(crate) struct LoadedMarkdownImage {
 }
 
 impl LoadedMarkdownImage {
-    pub(crate) fn bytes(&self) -> Arc<[u8]> {
-        Arc::clone(&self.bytes)
-    }
-
     pub(crate) fn media_type(&self) -> &str {
         &self.media_type
     }
 
     pub(crate) fn encoded_len(&self) -> usize {
         self.bytes.len()
-    }
-
-    pub(crate) fn is_svg(&self) -> bool {
-        self.media_type == "image/svg+xml"
     }
 }
 
@@ -250,7 +242,7 @@ mod tests {
         );
         let loaded = load_markdown_image(png).unwrap();
         assert_eq!(loaded.media_type(), "image/png");
-        assert!(!loaded.bytes().is_empty());
+        assert!(loaded.encoded_len() > 0);
 
         assert!(
             load_markdown_image("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB").is_err()

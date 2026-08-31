@@ -10,7 +10,6 @@ pub enum TerminalViewMessage {
     Eof(DesktopTerminalSessionId),
     CopyVisible(DesktopTerminalSessionId),
     Resize(DesktopTerminalSessionId, u16, u16),
-    Scroll(DesktopTerminalSessionId, usize),
     Terminate(DesktopTerminalSessionId),
     Reveal(DesktopTerminalSessionId),
     NewSession(DesktopTerminalScope),

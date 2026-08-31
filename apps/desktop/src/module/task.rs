@@ -135,7 +135,6 @@ impl TaskModule {
                 self.task_drop_search = value;
                 UiModuleOutcome::dirty()
             }
-            TaskMessage::TaskDropInteraction => UiModuleOutcome::clean(),
             _ => UiModuleOutcome::clean(),
         }
     }

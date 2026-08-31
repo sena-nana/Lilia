@@ -454,6 +454,7 @@ impl DesktopApplication {
         self.with_extension_registry(|host| Ok(delete_mcp_credentials_for_entries(host, entries)?))
     }
 
+    #[cfg(test)]
     fn read_mcp_credential(
         &self,
         server_id: &str,

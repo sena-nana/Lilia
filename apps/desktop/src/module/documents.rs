@@ -782,7 +782,7 @@ mod tests {
         ) -> Result<(), lilia_kernel::KernelError> {
             cx.provide::<crate::shell_service::WorkspaceSessionsKey>(std::sync::Arc::new(
                 crate::shell_service::WorkspaceSessions::new(),
-            ));
+            ))?;
             Ok(())
         }
     }

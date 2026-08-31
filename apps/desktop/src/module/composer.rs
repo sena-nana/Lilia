@@ -32,7 +32,6 @@ pub enum ComposerMessage {
     },
     Clear,
     SetContent(String),
-    Edited(String),
     ApplyCommand(DesktopComposerCommand),
     SelectConversationReference(String),
     SelectContextAttachment(String),
@@ -89,10 +88,6 @@ impl ComposerModule {
 
     pub fn context_attachment_results(&self) -> &[ChatContextSearchResult] {
         &self.context_attachment_results
-    }
-
-    pub fn is_transient(&self) -> bool {
-        self.transient
     }
 
     fn apply_state(&mut self, composer: DesktopComposerState) {
@@ -450,10 +445,6 @@ impl UiModule for ComposerModule {
                 UiModuleOutcome::dirty()
             }
             ComposerMessage::SetContent(value) => self.set_content(value, cx),
-            ComposerMessage::Edited(action) => {
-                self.composer_editor.perform(action);
-                self.set_content(self.composer_editor.text(), cx)
-            }
             ComposerMessage::ApplyCommand(command) => self.apply_command(command, cx, false),
             ComposerMessage::SelectConversationReference(task_id) => {
                 self.select_conversation_reference(&task_id, cx)
@@ -584,7 +575,7 @@ mod tests {
         assert_eq!(snapshot.composer, "hello");
         assert_eq!(snapshot.composer_task_id.as_deref(), Some("draft-task"));
         assert_eq!(snapshot.composer_revision, 0);
-        assert!(module.is_transient());
+        assert!(module.transient);
     }
 
     #[test]
@@ -646,6 +637,6 @@ mod tests {
         let mut snapshot = empty_snapshot();
         module.project(&cx, &mut snapshot);
         assert_eq!(snapshot.composer, "first question");
-        assert!(module.is_transient());
+        assert!(module.transient);
     }
 }

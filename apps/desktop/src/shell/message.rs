@@ -1,9 +1,9 @@
 use lilia_contracts::{ProjectId, SidebarNavigationTarget, TaskId};
-use crate::application::{DesktopMcpCredentialKind, WorkspaceItemId};
+use crate::application::DesktopMcpCredentialKind;
 use crate::runtime_compat::HostedWindowId;
 
 use crate::desktop::{
-    HostedContextMenuEvent, Point, SidebarMenuAction, SidebarMenuTarget, SidebarTreeDropPosition,
+    HostedContextMenuEvent, SidebarMenuAction, SidebarMenuTarget, SidebarTreeDropPosition,
     SidebarTreeNode, TaskDropItem,
 };
 
@@ -44,7 +44,6 @@ impl HookHandlerDraftField {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProjectCloneMessage {
-    Close,
     RepositoryChanged(String),
     ParentChanged(String),
     PickParent,
@@ -56,35 +55,7 @@ pub enum ProjectCloneMessage {
 pub enum GitHubMessage {
     StartBinding,
     CancelBinding,
-    OpenVerification,
-    CopyUserCode,
-    Unbind,
-    RefreshRepositories,
-    LoadMoreRepositories,
     SelectRepository { full_name: String },
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum DocumentMessage {
-    EditorEdited {
-        item_id: WorkspaceItemId,
-        action: String,
-    },
-    GoToDefinition {
-        item_id: WorkspaceItemId,
-        window_id: HostedWindowId,
-    },
-    OpenDefinitionTarget {
-        item_id: WorkspaceItemId,
-        window_id: HostedWindowId,
-        index: usize,
-    },
-    SaveEditor(WorkspaceItemId),
-    DiscardEditor(WorkspaceItemId),
-    SelectDiagnostic {
-        item_id: WorkspaceItemId,
-        index: usize,
-    },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -100,20 +71,7 @@ pub enum SuggestionsMessage {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum PromptOptimizeMessage {
-    Optimize(HostedWindowId),
-    ApplyRoute(HostedWindowId),
-    DismissRoute(HostedWindowId),
-}
-
-#[derive(Clone, Debug, PartialEq)]
 pub enum WorktreeMessage {
-    Create,
-    Pick,
-    Open,
-    Clear,
-    RequestCleanup,
-    RequestMerge,
     ConfirmAction,
     CancelAction,
 }
@@ -121,10 +79,8 @@ pub enum WorktreeMessage {
 #[derive(Clone, Debug, PartialEq)]
 pub enum ImportMessage {
     PickSource,
-    ToggleCredentials,
     Execute,
     Reset,
-    RestartAfter,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -152,10 +108,6 @@ pub enum ProviderMessage {
         model_id: String,
         value: String,
     },
-    FetchAssistantModels,
-    TestAssistantConnection,
-    SaveAssistantConfiguration,
-    ClearAssistantSecret,
     TitleModelChanged(String),
     SuggestionModelChanged(String),
     PromptRouterModelChanged(String),
@@ -165,15 +117,12 @@ pub enum ProviderMessage {
         preset_id: String,
         value: String,
     },
-    CycleFeaturePresetEffort(String),
     CustomPresetDraftChanged(String),
     AddCustomPreset,
     RenameCustomPreset {
         preset_id: String,
         value: String,
     },
-    RemoveCustomPreset(String),
-    SaveModelFeatureSettings,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -265,9 +214,7 @@ pub enum ExtensionsMessage {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum RemoteMessage {
-    Refresh,
     ToggleHost,
-    PcNameChanged(String),
     SavePcName,
     ToggleKeepAwake,
     StartPairing,
@@ -281,55 +228,33 @@ pub enum UpdateMessage {
     Check,
     Install,
     DismissPrompt,
-    PromptDialogInteraction,
     OpenReleases,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProjectMessage {
-    RefreshProjects,
     OpenProjectsOverview,
-    RefreshProjectsOverview,
-    CreateProject,
     ProjectNameChanged(String),
     ProjectWorkspaceChanged(String),
     PickProjectWorkspace,
-    ClearProjectWorkspace,
-    SaveProject,
-    ToggleProjectPinned,
-    MoveProjectUp,
-    MoveProjectDown,
     ReorderProject {
         project_id: ProjectId,
         before_project_id: Option<ProjectId>,
     },
-    RequestProjectRemoval,
     ConfirmProjectRemoval,
     CancelProjectRemoval,
-    ProjectRemovalDialogInteraction,
-    RequestProjectConversationArchive,
     ConfirmProjectConversationArchive,
     CancelProjectConversationArchive,
-    ProjectConversationArchiveDialogInteraction,
+    ProjectWorktreeParentChanged(String),
     RestoreProject(ProjectId),
     SelectProject(ProjectId),
-    CycleProjectWorktreeMode,
-    ProjectWorktreeParentChanged(String),
-    PickProjectWorktreeParent,
-    ProjectWorktreeInstructionsEdited(String),
-    ToggleProjectWorktreeCleanup,
     SaveProjectSettings,
-    OpenProjectSettings,
     OpenProjectWorkspace,
-    OpenProjectCodeEditor,
-    OpenProjectTerminal,
     OpenNativeProjectTerminal,
     OpenProjectFiles,
     RefreshProjectFiles,
     ToggleProjectFileExpand(String),
     OpenProjectFile(String),
-    OpenProjectTasks,
-    RunProjectTask(String),
     CloseInspectorDock,
 }
 
@@ -337,17 +262,8 @@ pub enum ProjectMessage {
 pub enum TaskMessage {
     TaskSearchChanged(String),
     NewTaskTitleChanged(String),
-    CreateTask,
-    CloseMainConversationDraft,
     TaskTitleChanged(String),
-    SaveTask,
-    CycleTaskDependency,
-    ToggleTaskDependency,
-    CycleTaskStatus,
-    CycleTaskPriority,
-    ToggleTaskPinned,
-    MoveTaskUp,
-    MoveTaskDown,
+    TaskDropSearchChanged(String),
     ReorderTask {
         task_id: TaskId,
         before_task_id: Option<TaskId>,
@@ -356,15 +272,6 @@ pub enum TaskMessage {
         source: TaskDropItem,
         before: Option<TaskDropItem>,
     },
-    TaskDropInteraction,
-    TaskDropSearchChanged(String),
-    CycleTaskMoveTarget,
-    MoveTaskToProject,
-    CycleTaskParentTarget,
-    ReparentTask,
-    ClearTaskParent,
-    ArchiveTask,
-    RestoreTask(TaskId),
     SelectInbox,
     SelectTask(TaskId),
 }
@@ -373,36 +280,27 @@ pub enum TaskMessage {
 pub enum SidebarMessage {
     ToggleSidebarSearch,
     SidebarSearchChanged(String),
-    SidebarSearchSelectionChanged(usize),
     ToggleSidebarProject(ProjectId),
     ToggleAllSidebarProjects,
     ToggleSidebarInbox,
     RevealSidebarInboxTasks,
     RevealSidebarProjectTasks(ProjectId),
-    OpenSidebarMenuAt {
-        target: SidebarMenuTarget,
-        anchor: Point,
-    },
     OpenSidebarMenu {
         target: SidebarMenuTarget,
         anchor_y: f32,
     },
     SidebarMenu(HostedContextMenuEvent<SidebarMenuAction>),
-    OpenSidebarProjectPopup(ProjectId),
     OpenSidebarProjectDraft(ProjectId),
     OpenSidebarInboxDraft,
     OpenSidebarTaskPopup(TaskId),
     SidebarToggleTaskPinned(TaskId),
     SidebarRequestTaskWorktreeMerge(TaskId),
     SidebarArchiveTask(TaskId),
-    CancelSidebarTaskArchive(TaskId),
     SidebarStopTask(TaskId),
     SidebarTreeDrop {
         source: SidebarTreeNode,
         target: SidebarTreeNode,
         position: SidebarTreeDropPosition,
     },
-    SidebarTreeInteraction,
-    DismissSidebarError,
     OpenSidebarNavigation(SidebarNavigationTarget),
 }

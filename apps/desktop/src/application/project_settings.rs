@@ -229,7 +229,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, ProjectSettingsChanged};
+        DesktopHostError, DesktopHostResult};
     use lilia_service::ServiceAuthority;
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);

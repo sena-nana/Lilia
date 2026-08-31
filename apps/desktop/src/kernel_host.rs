@@ -137,10 +137,6 @@ impl KernelHost {
             .expect("the composition root attached a desktop session")
     }
 
-    pub fn try_session(&self) -> Option<&DesktopApplication> {
-        self.session.as_ref()
-    }
-
     /// The only job submit the shell uses. Features and the session never hold
     /// this facade.
     pub fn jobs(&self) -> &Jobs {
@@ -239,7 +235,7 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, ProjectsChanged};
+        DesktopHostError, DesktopHostResult};
     use crate::shell_service::WorkspaceSessionsKey;
 
     /// Stands in for the shell's own broadcast sink so a test can tell whether
@@ -596,7 +592,7 @@ mod tests {
         let host = KernelHost::start(test_services("in-memory:no-session"), |_| {})
             .expect("the composition root should boot from idle ports");
         assert!(
-            host.try_session().is_none(),
+            host.session.is_none(),
             "assembly tests must not require a desktop session"
         );
     }

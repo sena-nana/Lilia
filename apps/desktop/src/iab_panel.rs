@@ -1,35 +1,21 @@
 use crate::runtime_compat::HostedWindowId;
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
-pub struct HostedBrowserId(pub u64);
-
-pub const SIDEBAR_BROWSER_ID: HostedBrowserId = HostedBrowserId(1);
-
 #[derive(Debug, Clone)]
 pub struct IabPanelState {
-    browser_id: HostedBrowserId,
-    draft_url: String,
     active_url: String,
 }
 
 impl Default for IabPanelState {
     fn default() -> Self {
-        Self::new(SIDEBAR_BROWSER_ID, "about:blank")
+        Self::new("about:blank")
     }
 }
 
 impl IabPanelState {
-    pub fn new(browser_id: HostedBrowserId, initial_url: impl Into<String>) -> Self {
-        let initial_url = initial_url.into();
+    pub fn new(initial_url: impl Into<String>) -> Self {
         Self {
-            browser_id,
-            draft_url: initial_url.clone(),
-            active_url: initial_url,
+            active_url: initial_url.into(),
         }
-    }
-
-    pub const fn browser_id(&self) -> HostedBrowserId {
-        self.browser_id
     }
 
     pub const fn browser_attached(&self) -> bool {
@@ -38,10 +24,6 @@ impl IabPanelState {
 
     pub const fn browser_ready(&self) -> bool {
         false
-    }
-
-    pub fn draft_url(&self) -> &str {
-        &self.draft_url
     }
 
     pub fn active_url(&self) -> &str {

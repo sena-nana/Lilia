@@ -1,10 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::application::{
-    DesktopDatabaseKind, DesktopImportItemKind, DesktopImportPlan, DesktopImportPlanItemStatus,
-    DesktopImportPlanStatus, DesktopImportReport, DesktopImportReportItemStatus,
-    DesktopImportReportStatus,
-};
+use crate::application::{DesktopImportPlan, DesktopImportPlanStatus, DesktopImportReport};
 use lilia_kernel::JobId;
 use sha2::{Digest, Sha256};
 
@@ -134,68 +130,12 @@ impl NativeDataImportState {
     }
 }
 
-pub fn item_label(kind: &DesktopImportItemKind) -> &'static str {
-    match kind {
-        DesktopImportItemKind::Database(DesktopDatabaseKind::ProductProjections) => "项目与任务",
-        DesktopImportItemKind::Database(DesktopDatabaseKind::Product) => "产品数据",
-        DesktopImportItemKind::Database(DesktopDatabaseKind::AgentRuntime) => "Agent 运行记录",
-        DesktopImportItemKind::Database(DesktopDatabaseKind::LegacyDesktop) => "旧版设置",
-        DesktopImportItemKind::Credentials => "登录凭据",
-    }
-}
-
-pub fn plan_status_label(status: DesktopImportPlanStatus) -> &'static str {
-    match status {
-        DesktopImportPlanStatus::Ready => "可以导入",
-        DesktopImportPlanStatus::Empty => "没有可导入的数据",
-        DesktopImportPlanStatus::Partial => "部分内容可以导入",
-        DesktopImportPlanStatus::Blocked => "暂时无法导入",
-    }
-}
-
-pub fn plan_item_status_label(status: DesktopImportPlanItemStatus) -> &'static str {
-    match status {
-        DesktopImportPlanItemStatus::Ready => "准备就绪",
-        DesktopImportPlanItemStatus::MissingSource => "未找到",
-        DesktopImportPlanItemStatus::Conflict => "目标已有数据",
-        DesktopImportPlanItemStatus::Incompatible => "版本不兼容",
-        DesktopImportPlanItemStatus::SourceBusy => "旧版正在使用",
-        DesktopImportPlanItemStatus::InspectionFailed => "检查失败",
-        DesktopImportPlanItemStatus::RequiresCredentialConfirmation => "等待确认",
-    }
-}
-
-pub fn report_status_label(status: DesktopImportReportStatus) -> &'static str {
-    match status {
-        DesktopImportReportStatus::Completed => "导入完成",
-        DesktopImportReportStatus::NothingToImport => "没有内容需要导入",
-        DesktopImportReportStatus::AwaitingCredentialConfirmation => "等待凭据确认",
-        DesktopImportReportStatus::PartialFailure => "部分内容未完成",
-        DesktopImportReportStatus::Failed => "导入未完成",
-    }
-}
-
-pub fn report_item_status_label(status: &DesktopImportReportItemStatus) -> String {
-    match status {
-        DesktopImportReportItemStatus::Copied => "已复制".to_owned(),
-        DesktopImportReportItemStatus::MissingSource => "未找到，已跳过".to_owned(),
-        DesktopImportReportItemStatus::Conflict => "目标已有数据，未覆盖".to_owned(),
-        DesktopImportReportItemStatus::AwaitingCredentialConfirmation => "等待确认".to_owned(),
-        DesktopImportReportItemStatus::SkippedCredentialDenied => "未选择，已跳过".to_owned(),
-        DesktopImportReportItemStatus::CredentialsImported {
-            imported,
-            skipped,
-            failed,
-        } => format!("已复制 {imported}，跳过 {skipped}，失败 {failed}"),
-        DesktopImportReportItemStatus::Failed => "失败".to_owned(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::application::{
-        DesktopCredentialImportEntry, DesktopImportPlanItem, DesktopImportReportItem,
+        DesktopCredentialImportEntry, DesktopImportItemKind, DesktopImportPlanItem,
+        DesktopImportPlanItemStatus, DesktopImportReportItem, DesktopImportReportItemStatus,
         DesktopImportReportStatus, DesktopLegacyConfigurationImport,
     };
 
