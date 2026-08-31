@@ -2608,6 +2608,7 @@ pub fn mount_primary_shell(
 
     let conversation_workspace = context.create_detached_component(
         document_id,
+        // SplitPane 每次装配会全量重投影根节点，自带 Background 承接 Primary 区域底色。
         SplitPane::from_model(
             &SplitPaneModel::new(
                 SplitAxis::Horizontal,
@@ -2617,7 +2618,8 @@ pub fn mount_primary_shell(
             ),
             conversation.stable_id(),
             workspace_page.stable_id(),
-        ),
+        )
+        .surface(SemanticColorRole::Background),
     )?;
     let navigation = if snapshot.settings_open {
         settings_sidebar.stable_id()
@@ -2906,10 +2908,12 @@ fn has_workspace_primary_content(snapshot: &PrimaryShellSnapshot) -> bool {
 }
 
 fn conversation_root() -> Stack {
+    // 每帧整体重投影会抹掉 Primary 区域涂在节点上的底色，因此自带 Background。
     Stack::fill_column(0.0)
         .padding_xy(24.0, 20.0)
         .radius(UI_METRICS.radius_lg)
         .align(AlignSpec::Center)
+        .surface(SemanticColorRole::Background)
 }
 
 fn assemble_conversation_workspace(
