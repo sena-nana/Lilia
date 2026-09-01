@@ -53,7 +53,9 @@ impl Feature for ShellUiFeature {
         cx.contribute::<UiModules>(Box::new(|| Box::new(roadmap::RoadmapModule::default())));
         cx.contribute::<UiModules>(Box::new(|| Box::new(memory::MemoryModule::default())));
         cx.contribute::<UiModules>(Box::new(|| Box::new(composer::ComposerModule::default())));
-        cx.contribute::<UiModules>(Box::new(|| Box::new(extensions::ExtensionsModule::default())));
+        cx.contribute::<UiModules>(Box::new(|| {
+            Box::new(extensions::ExtensionsModule::default())
+        }));
         cx.contribute::<UiModules>(Box::new(|| Box::new(task::TaskModule::default())));
         cx.contribute::<UiModules>(Box::new(|| Box::new(timeline::TimelineModule::default())));
         cx.contribute::<UiModules>(Box::new(|| Box::new(settings::SettingsModule::default())));

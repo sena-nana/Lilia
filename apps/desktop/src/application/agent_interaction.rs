@@ -5,8 +5,8 @@ use lilia_storage::SqliteAgentRuntimeStateStore;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::application::AgentInteractionChanged;
 use crate::application::{DesktopApplication, DesktopApplicationError};
-use crate::application::{AgentInteractionChanged};
 
 const AGENT_INTERACTION_SETTINGS_KEY: &str = "agent.interaction.v1";
 const AGENT_INTERACTION_SCHEMA_VERSION: u32 = 1;
@@ -611,7 +611,8 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult};
+        DesktopHostError, DesktopHostResult,
+    };
 
     struct TestHost;
 

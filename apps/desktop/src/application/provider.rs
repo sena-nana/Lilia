@@ -7,8 +7,8 @@ use lilia_agent::{
 };
 use mutsuki_agent_contracts::{AgentError, AgentResult, CredentialKind, CredentialRef};
 
+use crate::application::{CredentialChanged, ProviderChanged};
 use crate::application::{DesktopApplication, DesktopApplicationError, DesktopSecret};
-use crate::application::{ProviderChanged, CredentialChanged};
 use crate::application::{
     DesktopCredentialAction, DesktopHost, DesktopHostAction, DesktopHostContext, DesktopHostResult,
 };
@@ -471,8 +471,9 @@ mod tests {
 
     use super::*;
     use crate::application::{
-        DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, ProviderChanged, CredentialChanged};
+        CredentialChanged, DesktopApplicationConfig, DesktopHost, DesktopHostAction,
+        DesktopHostContext, DesktopHostError, DesktopHostResult, ProviderChanged,
+    };
 
     #[derive(Debug)]
     struct TestHost;

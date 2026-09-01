@@ -170,9 +170,12 @@ mod tests {
     use tempfile::tempdir;
 
     use crate::application::{
-        DesktopApplication, DesktopApplicationConfig, DesktopApplicationError, DesktopCommand, DesktopHost, DesktopHostAction, DesktopHostContext, DesktopHostError,
-        DesktopHostResult, DesktopProjectCreate, DesktopProjectPatch, DesktopTaskCreate,
-        DesktopTaskMove, DesktopTaskPatch, DesktopTaskRunBlock, ProjectQuery, TaskQuery, ProjectsChanged, TasksChanged};
+        DesktopApplication, DesktopApplicationConfig, DesktopApplicationError, DesktopCommand,
+        DesktopHost, DesktopHostAction, DesktopHostContext, DesktopHostError, DesktopHostResult,
+        DesktopProjectCreate, DesktopProjectPatch, DesktopTaskCreate, DesktopTaskMove,
+        DesktopTaskPatch, DesktopTaskRunBlock, ProjectQuery, ProjectsChanged, TaskQuery,
+        TasksChanged,
+    };
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 

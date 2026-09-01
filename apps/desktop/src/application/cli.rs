@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 
 use lilia_contracts::ProjectArchiveState;
 
+use crate::application::NavigationRequested;
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopCliRequest, DesktopCliResult, DesktopNavigationTarget, DesktopProjectCreate, DesktopProjectPatch,
-    ProjectQuery,
+    DesktopApplication, DesktopApplicationError, DesktopCliRequest, DesktopCliResult,
+    DesktopNavigationTarget, DesktopProjectCreate, DesktopProjectPatch, ProjectQuery,
 };
-use crate::application::{NavigationRequested};
 
 impl DesktopApplication {
     pub fn handle_cli_request(
@@ -203,7 +203,8 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, NavigationRequested};
+        DesktopHostError, DesktopHostResult, NavigationRequested,
+    };
 
     struct TestHost;
 
@@ -321,7 +322,9 @@ mod tests {
 
         assert!(result.accepted, "{result:?}");
         assert_eq!(
-            app.query_tasks(crate::application::TaskQuery::default()).unwrap().len(),
+            app.query_tasks(crate::application::TaskQuery::default())
+                .unwrap()
+                .len(),
             1
         );
         assert!(

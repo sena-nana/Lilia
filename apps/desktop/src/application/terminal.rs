@@ -104,9 +104,11 @@ impl DesktopApplication {
                     let project_id = task
                         .project_id
                         .ok_or(DesktopTerminalError::MissingWorkspace)?;
-                    crate::application::ProjectContext::from_project(&self.get_project(&project_id)?)?
-                        .active_root()
-                        .to_path_buf()
+                    crate::application::ProjectContext::from_project(
+                        &self.get_project(&project_id)?,
+                    )?
+                    .active_root()
+                    .to_path_buf()
                 }
             }
         };

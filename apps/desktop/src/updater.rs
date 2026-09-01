@@ -6,11 +6,11 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::Engine;
 use crate::application::{
     DesktopHostContext, DesktopHostError, DesktopHostResult, DesktopUpdateAction,
     DesktopUpdateResult,
 };
+use base64::Engine;
 use minisign_verify::{PublicKey, Signature};
 use reqwest::blocking::{Client, Response};
 use reqwest::header::{ACCEPT, CONTENT_LENGTH};

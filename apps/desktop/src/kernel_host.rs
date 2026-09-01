@@ -235,7 +235,8 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult};
+        DesktopHostError, DesktopHostResult,
+    };
     use crate::shell_service::WorkspaceSessionsKey;
 
     /// Stands in for the shell's own broadcast sink so a test can tell whether

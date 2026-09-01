@@ -66,7 +66,10 @@ fn corpus_fingerprint(projects: &[Project], tasks: &[ProductTask]) -> u64 {
     for task in tasks {
         task.id.as_str().hash(&mut hasher);
         task.title.hash(&mut hasher);
-        task.project_id.as_ref().map(ProjectId::as_str).hash(&mut hasher);
+        task.project_id
+            .as_ref()
+            .map(ProjectId::as_str)
+            .hash(&mut hasher);
     }
     hasher.finish()
 }
@@ -112,9 +115,7 @@ impl DesktopApplication {
         Ok(results)
     }
 
-    fn session_search_corpus(
-        &self,
-    ) -> Result<Arc<SessionSearchCorpus>, DesktopApplicationError> {
+    fn session_search_corpus(&self) -> Result<Arc<SessionSearchCorpus>, DesktopApplicationError> {
         let projects = self.query_projects(ProjectQuery::default())?;
         let tasks = self.query_tasks(TaskQuery::default())?;
         let fingerprint = corpus_fingerprint(&projects, &tasks);

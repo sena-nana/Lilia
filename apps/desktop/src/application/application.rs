@@ -66,26 +66,33 @@ pub(crate) struct DesktopApplicationInner {
     pub(crate) update_state: Mutex<crate::application::DesktopUpdateState>,
     pub(crate) update_operation: Mutex<()>,
     pub(crate) provider_revision: AtomicU64,
-    pub(crate) provider_settings: Mutex<crate::application::provider::DesktopAgentRuntimeSettingsState>,
-    pub(crate) agent_interaction: Mutex<crate::application::agent_interaction::DesktopAgentInteractionState>,
+    pub(crate) provider_settings:
+        Mutex<crate::application::provider::DesktopAgentRuntimeSettingsState>,
+    pub(crate) agent_interaction:
+        Mutex<crate::application::agent_interaction::DesktopAgentInteractionState>,
     pub(crate) documents: lilia_feature_document::SharedDocumentStore,
     pub(crate) languages: lilia_feature_document::SharedLanguageRegistry,
-    pub(crate) language_services: Mutex<crate::application::language_service::DesktopLanguageServiceState>,
+    pub(crate) language_services:
+        Mutex<crate::application::language_service::DesktopLanguageServiceState>,
     pub(crate) language_service_operations: Mutex<()>,
-    pub(crate) project_files_watchers:
-        Mutex<std::collections::BTreeMap<String, crate::application::project_files::ProjectFilesWatcher>>,
+    pub(crate) project_files_watchers: Mutex<
+        std::collections::BTreeMap<String, crate::application::project_files::ProjectFilesWatcher>,
+    >,
     pub(crate) project_files_revisions: Arc<Mutex<std::collections::BTreeMap<String, AtomicU64>>>,
-    pub(crate) project_task_runs:
-        Mutex<std::collections::BTreeMap<(String, String), crate::application::DesktopTerminalSessionId>>,
+    pub(crate) project_task_runs: Mutex<
+        std::collections::BTreeMap<(String, String), crate::application::DesktopTerminalSessionId>,
+    >,
     pub(crate) conversation_suggestion_generation: Mutex<()>,
     pub(crate) session_search_cache:
         Mutex<Option<Arc<crate::application::session_search::SessionSearchCorpus>>>,
     pub(crate) product_change_feed: crate::application::change_feed::ProductChangeFeed,
     pub(crate) registry_file_watch: crate::application::registry_watch::RegistryFileWatch,
-    pub(crate) title_update: std::sync::Arc<crate::application::title_update::DesktopTitleUpdateCoordinator>,
+    pub(crate) title_update:
+        std::sync::Arc<crate::application::title_update::DesktopTitleUpdateCoordinator>,
     pub(crate) title_update_scheduler:
         std::sync::OnceLock<Arc<dyn crate::application::title_update::DesktopTitleUpdateScheduler>>,
-    pub(crate) turn_executor: std::sync::OnceLock<Arc<dyn crate::application::agent::DesktopTurnExecutor>>,
+    pub(crate) turn_executor:
+        std::sync::OnceLock<Arc<dyn crate::application::agent::DesktopTurnExecutor>>,
     pub(crate) agent: DesktopAgentRuntime,
     pub(crate) cli_requests: Mutex<()>,
     pub(crate) extension_registry: Mutex<()>,
@@ -116,7 +123,8 @@ impl DesktopApplication {
         config: DesktopApplicationConfig,
         host: Arc<dyn DesktopHost>,
     ) -> Result<Self, DesktopApplicationError> {
-        let credentials = crate::application::provider::persistent_credential_bridge(&config, host.clone())?;
+        let credentials =
+            crate::application::provider::persistent_credential_bridge(&config, host.clone())?;
         let authority =
             ServiceAuthority::bootstrap_with_home_and_credentials(config.home(), credentials)?;
         Self::from_authority(config, authority, host)
@@ -127,7 +135,8 @@ impl DesktopApplication {
         host: Arc<dyn DesktopHost>,
         memory_settings: impl MemorySettingsStore + 'static,
     ) -> Result<Self, DesktopApplicationError> {
-        let credentials = crate::application::provider::persistent_credential_bridge(&config, host.clone())?;
+        let credentials =
+            crate::application::provider::persistent_credential_bridge(&config, host.clone())?;
         let authority =
             ServiceAuthority::bootstrap_with_home_and_credentials(config.home(), credentials)?;
         Self::from_authority_with_memory_settings(config, authority, host, memory_settings)
@@ -170,12 +179,14 @@ impl DesktopApplication {
         let composers = DesktopComposerStore::new(domain_connection.clone())?;
         let todos = DesktopTodoStore::from_shared(domain_connection.clone())?;
         let pending_turns = DesktopTurnQueueStore::from_shared(domain_connection.clone())?;
-        let hook_executions =
-            crate::application::hooks::DesktopHookExecutionStore::from_shared(domain_connection.clone())?;
+        let hook_executions = crate::application::hooks::DesktopHookExecutionStore::from_shared(
+            domain_connection.clone(),
+        )?;
         let submissions = DesktopSubmissionStore::new(domain_connection.clone());
         let worktrees = DesktopWorktreeStore::from_db(domain_connection.clone())?;
         let journal = lilia_kernel::Journal::new();
-        let events = DesktopEventBus::from_bus(lilia_kernel::EventBus::with_journal(journal.clone()));
+        let events =
+            DesktopEventBus::from_bus(lilia_kernel::EventBus::with_journal(journal.clone()));
         let automation = DesktopAutomationService::from_db(
             domain_connection.clone(),
             Arc::new(lilia_feature_automation::KernelAutomationEvents::new(
@@ -190,7 +201,8 @@ impl DesktopApplication {
             DesktopMemoryService::from_db_with_settings(domain_connection.clone(), memory_settings)?
         } else {
             DesktopMemoryService::from_stores(
-                SqliteMemoryStore::in_memory().map_err(crate::application::DesktopMemoryError::from)?,
+                SqliteMemoryStore::in_memory()
+                    .map_err(crate::application::DesktopMemoryError::from)?,
                 memory_settings,
             )
         };
@@ -202,10 +214,12 @@ impl DesktopApplication {
         let architecture = DesktopArchitectureService::from_db(domain_connection.clone())?;
         let remote = DesktopRemoteControlService::from_db(
             domain_connection.clone(),
-            Arc::new(crate::application::remote::DesktopRemoteWakeHost::from_host(
-                host.clone(),
-                host_context.clone(),
-            )),
+            Arc::new(
+                crate::application::remote::DesktopRemoteWakeHost::from_host(
+                    host.clone(),
+                    host_context.clone(),
+                ),
+            ),
         )?;
         let provider_settings_store = if authority.data_paths().is_some() {
             lilia_storage::SqliteAgentRuntimeStateStore::open(
@@ -214,16 +228,22 @@ impl DesktopApplication {
         } else {
             lilia_storage::SqliteAgentRuntimeStateStore::open_in_memory()
         }
-        .map_err(|error| crate::application::DesktopProviderError::Persistence(error.to_string()))?;
+        .map_err(|error| {
+            crate::application::DesktopProviderError::Persistence(error.to_string())
+        })?;
         let provider_settings =
-            crate::application::provider::DesktopAgentRuntimeSettingsState::open(provider_settings_store)?;
+            crate::application::provider::DesktopAgentRuntimeSettingsState::open(
+                provider_settings_store,
+            )?;
         authority
             .shared_runtime()
             .inner()
             .configure_model_runtime(crate::application::provider::runtime_configuration(
                 &provider_settings.current(),
             ))
-            .map_err(|error| crate::application::DesktopProviderError::Runtime(error.to_string()))?;
+            .map_err(|error| {
+                crate::application::DesktopProviderError::Runtime(error.to_string())
+            })?;
         let agent_interaction_store = if authority.data_paths().is_some() {
             lilia_storage::SqliteAgentRuntimeStateStore::open(
                 config.data_paths().agent_runtime_db(),
@@ -231,9 +251,13 @@ impl DesktopApplication {
         } else {
             lilia_storage::SqliteAgentRuntimeStateStore::open_in_memory()
         }
-        .map_err(|error| crate::application::DesktopAgentInteractionError::Persistence(error.to_string()))?;
+        .map_err(|error| {
+            crate::application::DesktopAgentInteractionError::Persistence(error.to_string())
+        })?;
         let agent_interaction =
-            crate::application::agent_interaction::DesktopAgentInteractionState::open(agent_interaction_store)?;
+            crate::application::agent_interaction::DesktopAgentInteractionState::open(
+                agent_interaction_store,
+            )?;
         authority
             .shared_runtime()
             .inner()
@@ -248,9 +272,9 @@ impl DesktopApplication {
                 rollback_failed: None,
             })?;
         let project_task_events = Arc::new(lilia_feature_task::ProjectTaskEventFanout::default());
-        project_task_events.install(Arc::new(
-            lilia_feature_task::KernelProjectTaskEvents::new(events.bus().clone()),
-        ));
+        project_task_events.install(Arc::new(lilia_feature_task::KernelProjectTaskEvents::new(
+            events.bus().clone(),
+        )));
         // The journal is built here rather than by the kernel because services
         // bootstrapped alongside storage already write facts worth recording; the
         // shell hands this instance to `Kernel::with_events` so one ordered log
@@ -261,8 +285,9 @@ impl DesktopApplication {
             project_task_events.clone(),
         )
         .with_journal(journal.clone());
-        let contribution_host = crate::application::contributions::LiliaContributionHost::bootstrap()
-            .map_err(|error| DesktopApplicationError::Contribution(error.to_string()))?;
+        let contribution_host =
+            crate::application::contributions::LiliaContributionHost::bootstrap()
+                .map_err(|error| DesktopApplicationError::Contribution(error.to_string()))?;
         let timeline = lilia_feature_timeline::TimelineService::new(authority.clone());
         Ok(Self {
             inner: Arc::new(DesktopApplicationInner {
@@ -280,7 +305,9 @@ impl DesktopApplication {
                 domain_db: domain_connection,
                 composers,
                 submissions: Mutex::new(submissions),
-                terminals: Arc::new(crate::application::terminal::DesktopTerminalService::default()),
+                terminals: Arc::new(
+                    crate::application::terminal::DesktopTerminalService::default(),
+                ),
                 pending_turns: Mutex::new(pending_turns),
                 turn_submission: Mutex::new(()),
                 guide_dispatch: Mutex::new(()),
@@ -306,7 +333,8 @@ impl DesktopApplication {
                 conversation_suggestion_generation: Mutex::new(()),
                 session_search_cache: Mutex::new(None),
                 product_change_feed: crate::application::change_feed::ProductChangeFeed::default(),
-                registry_file_watch: crate::application::registry_watch::RegistryFileWatch::default(),
+                registry_file_watch: crate::application::registry_watch::RegistryFileWatch::default(
+                ),
                 title_update: std::sync::Arc::new(
                     crate::application::title_update::DesktopTitleUpdateCoordinator::default(),
                 ),
@@ -466,10 +494,8 @@ impl DesktopApplication {
             todos: runtime.inner().product_todos_for_task(task_id),
             task_todos: self.list_task_todos(task_id)?,
             worktree: self.task_worktree(task_id)?,
-            pending: self.merge_task_pending(
-                task_id,
-                runtime.inner().product_pending_for_task(task_id),
-            ),
+            pending: self
+                .merge_task_pending(task_id, runtime.inner().product_pending_for_task(task_id)),
         })
     }
 
@@ -666,7 +692,10 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::application::{DesktopCredentialAction, DesktopHostResult, DesktopSecret, DesktopWindowAction, ProjectsChanged, TurnStateChanged};
+    use crate::application::{
+        DesktopCredentialAction, DesktopHostResult, DesktopSecret, DesktopWindowAction,
+        ProjectsChanged, TurnStateChanged,
+    };
 
     static NEXT_APPLICATION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -748,7 +777,9 @@ mod tests {
                 DesktopApplication::bootstrap(config.clone(), Arc::new(RecordingHost::default()))
                     .unwrap();
             let project = app
-                .create_project(crate::application::DesktopProjectCreate::new("Native project"))
+                .create_project(crate::application::DesktopProjectCreate::new(
+                    "Native project",
+                ))
                 .unwrap();
             let task = app
                 .create_task(crate::application::DesktopTaskCreate::new(
@@ -1153,7 +1184,10 @@ mod tests {
                 "complete this turn",
             ))
             .unwrap();
-        assert_eq!(dispatch.kind, crate::application::DesktopTurnDispatchKind::Started);
+        assert_eq!(
+            dispatch.kind,
+            crate::application::DesktopTurnDispatchKind::Started
+        );
 
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut completed = false;
@@ -1443,9 +1477,7 @@ mod tests {
                     crate::application::DesktopTurnState::Failed { message }
                         if changed.task_id.as_str() == "task-native-rejection" =>
                     {
-                        panic!(
-                            "permission rejection surfaced as an application failure: {message}"
-                        )
+                        panic!("permission rejection surfaced as an application failure: {message}")
                     }
                     _ => {}
                 }

@@ -368,7 +368,8 @@ mod tests {
             &self,
             _context: &crate::application::DesktopHostContext,
             _action: crate::application::DesktopHostAction,
-        ) -> Result<crate::application::DesktopHostResult, crate::application::DesktopHostError> {
+        ) -> Result<crate::application::DesktopHostResult, crate::application::DesktopHostError>
+        {
             Ok(crate::application::DesktopHostResult::Completed)
         }
     }

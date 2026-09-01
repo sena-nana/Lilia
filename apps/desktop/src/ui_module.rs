@@ -120,15 +120,7 @@ impl<'a> UiModuleContext<'a> {
     /// The window's first task, which is what a project-scoped write is
     /// attributed to when the user did not pick one.
     pub fn first_task(&self) -> Option<lilia_contracts::TaskId> {
-        Some(
-            self.workspace()?
-                .snapshot()
-                .ok()?
-                .tasks
-                .first()?
-                .id
-                .clone(),
-        )
+        Some(self.workspace()?.snapshot().ok()?.tasks.first()?.id.clone())
     }
 
     /// The selected task's session view, published by the shell after refresh.
@@ -261,11 +253,8 @@ pub trait ErasedUiModule {
     /// Applies a message already routed to this module. A payload of the wrong
     /// type means the shell's routing table disagrees with the module's message
     /// type, which is a wiring bug rather than a runtime condition.
-    fn reduce_erased(
-        &mut self,
-        message: Box<dyn Any>,
-        cx: &UiModuleContext<'_>,
-    ) -> UiModuleOutcome;
+    fn reduce_erased(&mut self, message: Box<dyn Any>, cx: &UiModuleContext<'_>)
+        -> UiModuleOutcome;
 
     fn project(&self, cx: &UiModuleContext<'_>, into: &mut PrimaryShellSnapshot);
 
@@ -559,7 +548,8 @@ mod tests {
         let kernel = Kernel::new();
         let cx = UiModuleContext::new(&kernel, WindowId::PRIMARY);
         let mut host = UiModuleHost::new();
-        host.register(titler("test.left")).expect("the slot is free");
+        host.register(titler("test.left"))
+            .expect("the slot is free");
 
         let absent = FeatureId::new("test.absent").unwrap();
         assert!(host
@@ -594,7 +584,7 @@ mod tests {
         let kernel = Kernel::new();
         kernel
             .mount_all(vec![
-                std::sync::Arc::new(HeaderFeature) as std::sync::Arc<dyn lilia_kernel::Feature>,
+                std::sync::Arc::new(HeaderFeature) as std::sync::Arc<dyn lilia_kernel::Feature>
             ])
             .expect("the feature mounts");
 
@@ -615,7 +605,7 @@ mod tests {
         let kernel = Kernel::new();
         kernel
             .mount_all(vec![
-                std::sync::Arc::new(HeaderFeature) as std::sync::Arc<dyn lilia_kernel::Feature>,
+                std::sync::Arc::new(HeaderFeature) as std::sync::Arc<dyn lilia_kernel::Feature>
             ])
             .expect("the feature mounts");
         let registry = UiModuleRegistry::from_kernel(&kernel);
@@ -640,7 +630,8 @@ mod tests {
     #[test]
     fn two_modules_cannot_claim_one_domain() {
         let mut host = UiModuleHost::new();
-        host.register(titler("test.left")).expect("the slot is free");
+        host.register(titler("test.left"))
+            .expect("the slot is free");
 
         assert!(host.register(titler("test.left")).is_err());
     }

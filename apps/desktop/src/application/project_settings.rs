@@ -4,8 +4,8 @@ use lilia_storage::SqliteAgentRuntimeStateStore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::application::ProjectSettingsChanged;
 use crate::application::{DesktopApplication, DesktopApplicationError};
-use crate::application::{ProjectSettingsChanged};
 
 pub const PROJECT_SETTINGS_KEY: &str = "desktop.project.settings.v1";
 const PROJECT_SETTINGS_SCHEMA_VERSION: u32 = 1;
@@ -229,7 +229,8 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult};
+        DesktopHostError, DesktopHostResult,
+    };
     use lilia_service::ServiceAuthority;
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);

@@ -7,9 +7,10 @@ use serde_json::json;
 
 use super::*;
 use crate::application::{
-    DesktopApplication, DesktopApplicationConfig, DesktopHost, DesktopHostAction,
-    DesktopHostContext, DesktopHostError, DesktopHostResult, DesktopProjectCreate,
-    DesktopTaskCreate, ArchitectureChanged};
+    ArchitectureChanged, DesktopApplication, DesktopApplicationConfig, DesktopHost,
+    DesktopHostAction, DesktopHostContext, DesktopHostError, DesktopHostResult,
+    DesktopProjectCreate, DesktopTaskCreate,
+};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 

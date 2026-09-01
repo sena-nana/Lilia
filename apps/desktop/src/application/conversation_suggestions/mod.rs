@@ -24,8 +24,8 @@ use lilia_feature_suggestions::generation::{
 };
 use scope::summarize_scope_sources;
 
+use crate::application::ConversationSuggestionsChanged;
 use crate::application::{DesktopApplication, DesktopApplicationError};
-use crate::application::{ConversationSuggestionsChanged};
 
 impl DesktopApplication {
     pub fn conversation_suggestion_sources(

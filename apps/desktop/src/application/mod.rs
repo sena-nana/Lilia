@@ -66,6 +66,19 @@ mod workspace;
 mod workspace_item;
 mod worktree;
 
+pub use crate::ports::github::{
+    DesktopGitHubBindingMetadata, DesktopGitHubBindingStatus, DesktopGitHubClientIdSource,
+    DesktopGitHubDeviceFlowPollResult, DesktopGitHubDeviceFlowStart, DesktopGitHubError,
+    DesktopGitHubRepoPage, DesktopGitHubRepoSummary,
+};
+pub use crate::ports::import::{
+    CredentialImportDecision, DesktopDataImportService, DesktopDatabaseKind, DesktopImportError,
+    DesktopImportErrorCode, DesktopImportExecutionOptions, DesktopImportFile,
+    DesktopImportFileMetadata, DesktopImportFileRole, DesktopImportItemError,
+    DesktopImportItemKind, DesktopImportPlan, DesktopImportPlanItem, DesktopImportPlanItemStatus,
+    DesktopImportPlanStatus, DesktopImportReport, DesktopImportReportItem,
+    DesktopImportReportItemStatus, DesktopImportReportStatus, DesktopLegacyConfigurationImport,
+};
 pub use agent::{
     DesktopApprovalResponse, DesktopArchitectureInteractionDecision,
     DesktopArchitectureInteractionResponse, DesktopAutomaticTurnSelection,
@@ -140,12 +153,13 @@ pub use equivalence::{
 };
 pub use events::{
     AgentInteractionChanged, ApprovalChanged, ArchitectureChanged, AssistantAiSettingsChanged,
-    AutomationChanged, AutomationRunChanged, ComposerChanged, ConversationSuggestionSettingsChanged,
-    ConversationSuggestionsChanged, CredentialChanged, DesktopApprovalState, DesktopEvent,
-    DesktopEventBus, DesktopEventSubscription, DesktopInteractionState, DesktopNavigationTarget,
-    DesktopTurnState, DesktopUpdateState, GitHubBindingChanged, GoalChanged, HooksRegistryChanged,
-    InteractionChanged, McpRegistryChanged, MemoryChanged, MemoryInjectionChanged,
-    MemorySettingsChanged, ModelFeatureSettingsChanged, NavigationRequested, PluginsRegistryChanged,
+    AutomationChanged, AutomationRunChanged, ComposerChanged,
+    ConversationSuggestionSettingsChanged, ConversationSuggestionsChanged, CredentialChanged,
+    DesktopApprovalState, DesktopEvent, DesktopEventBus, DesktopEventSubscription,
+    DesktopInteractionState, DesktopNavigationTarget, DesktopTurnState, DesktopUpdateState,
+    GitHubBindingChanged, GoalChanged, HooksRegistryChanged, InteractionChanged,
+    McpRegistryChanged, MemoryChanged, MemoryInjectionChanged, MemorySettingsChanged,
+    ModelFeatureSettingsChanged, NavigationRequested, PluginsRegistryChanged,
     PopupWindowSettingsChanged, ProjectFilesChanged, ProjectSettingsChanged, ProjectsChanged,
     ProviderChanged, RoadmapChanged, RouterModeSettingsChanged, SkillsRegistryChanged,
     TasksChanged, TerminalChanged, TimelineChanged, TodosChanged, TurnRecoveryIssue,
@@ -159,11 +173,6 @@ pub use extensions::{
     DesktopMcpResourceContentView, DesktopMcpResourceReadView, DesktopMcpResourceView,
     DesktopMcpServerUpsert, DesktopMcpServerView, DesktopMcpToolView, DesktopMcpTransport,
     DesktopRuntimeServiceView, DesktopSkillCreate, DesktopSkillPackageView, DesktopSkillScope,
-};
-pub use crate::ports::github::{
-    DesktopGitHubBindingMetadata, DesktopGitHubBindingStatus, DesktopGitHubClientIdSource,
-    DesktopGitHubDeviceFlowPollResult, DesktopGitHubDeviceFlowStart, DesktopGitHubError,
-    DesktopGitHubRepoPage, DesktopGitHubRepoSummary,
 };
 pub use goal::{DesktopGoalSnapshot, DesktopGoalStatus};
 pub use handoff::{
@@ -183,14 +192,6 @@ pub use host::{
 };
 pub use iab::{
     DesktopIabSnapshot, DesktopIabSnapshotInput, DesktopIabSnapshotStatus, DesktopIabSubmission,
-};
-pub use crate::ports::import::{
-    CredentialImportDecision, DesktopDataImportService, DesktopDatabaseKind, DesktopImportError,
-    DesktopImportErrorCode, DesktopImportExecutionOptions, DesktopImportFile,
-    DesktopImportFileMetadata, DesktopImportFileRole, DesktopImportItemError,
-    DesktopImportItemKind, DesktopImportPlan, DesktopImportPlanItem, DesktopImportPlanItemStatus,
-    DesktopImportPlanStatus, DesktopImportReport, DesktopImportReportItem,
-    DesktopImportReportItemStatus, DesktopImportReportStatus, DesktopLegacyConfigurationImport,
 };
 pub use language_service::{
     DesktopDocumentDefinitionResult, DesktopDocumentDefinitionTarget,

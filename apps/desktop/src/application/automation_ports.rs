@@ -21,9 +21,9 @@ use super::{
 };
 use crate::application::agent::DesktopIdempotentTurnStart;
 use crate::application::{
-    DesktopApplication, DesktopAutomationTurnCorrelation,
-    DesktopExecutionPermission, DesktopTodoCreate, DesktopTodoGuideStatus, DesktopTodoPriority,
-    DesktopTodoSource, DesktopTurnDispatchKind, DesktopTurnRequest, TaskQuery,
+    DesktopApplication, DesktopAutomationTurnCorrelation, DesktopExecutionPermission,
+    DesktopTodoCreate, DesktopTodoGuideStatus, DesktopTodoPriority, DesktopTodoSource,
+    DesktopTurnDispatchKind, DesktopTurnRequest, TaskQuery,
 };
 use crate::application::{TasksChanged, TimelineChanged};
 
@@ -520,7 +520,8 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, TasksChanged, TimelineChanged, TodosChanged};
+        DesktopHostError, DesktopHostResult, TasksChanged, TimelineChanged, TodosChanged,
+    };
 
     static NEXT_APPLICATION_ID: AtomicU64 = AtomicU64::new(1);
 

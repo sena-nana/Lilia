@@ -294,17 +294,15 @@ mod tests {
         .unwrap();
         assert_eq!(
             result,
-            DesktopHostResult::CredentialImport(
-                crate::application::HostCredentialImportResult {
-                    imported: 1,
-                    skipped: 1,
-                    failed: 2,
-                    available_target_keys: vec![
-                        "agentkit.new-target".to_owned(),
-                        "agentkit.same-target".to_owned(),
-                    ],
-                }
-            )
+            DesktopHostResult::CredentialImport(crate::application::HostCredentialImportResult {
+                imported: 1,
+                skipped: 1,
+                failed: 2,
+                available_target_keys: vec![
+                    "agentkit.new-target".to_owned(),
+                    "agentkit.same-target".to_owned(),
+                ],
+            })
         );
         assert_eq!(target_existing.read().unwrap().unwrap(), b"keep-target");
         assert_eq!(target_new.read().unwrap().unwrap(), b"source-new");

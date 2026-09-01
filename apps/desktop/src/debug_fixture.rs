@@ -1,12 +1,12 @@
-use lilia_agent::ProductCredentialLoginInput;
-use lilia_contracts::{
-    AgentSessionRef, ExpectedRevision, ProductEntity, ProjectId, ProjectionEventId, TaskId,
-    TimelineProjectionCommand, TimelineProjectionEvent,
-};
 use crate::application::{
     ArchitectureBackend, ArchitecturePermission, DesktopApplication, ProjectArchitectureApplyInput,
     ProjectArchitectureChange, ProjectArchitectureEdge, ProjectArchitectureNode,
     RemoteEndpointAddress, RemotePairDeviceInput,
+};
+use lilia_agent::ProductCredentialLoginInput;
+use lilia_contracts::{
+    AgentSessionRef, ExpectedRevision, ProductEntity, ProjectId, ProjectionEventId, TaskId,
+    TimelineProjectionCommand, TimelineProjectionEvent,
 };
 use lilia_storage::{
     mcp_registry_path, save_mcp_registry, skills_registry_path, AgentkitMcpRegistry,
@@ -133,11 +133,7 @@ pub fn prepare(application: &DesktopApplication) -> Result<(), String> {
                         node: node("native-ui", "NanaUI Workspace", "apps/desktop"),
                     },
                     ProjectArchitectureChange::UpsertNode {
-                        node: node(
-                            "desktop-application",
-                            "DesktopApplication",
-                            "apps/desktop",
-                        ),
+                        node: node("desktop-application", "DesktopApplication", "apps/desktop"),
                     },
                     ProjectArchitectureChange::UpsertEdge {
                         edge: ProjectArchitectureEdge {

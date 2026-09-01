@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
 
-use lilia_contracts::auto_model_for_provider_family_tier;
 use crate::application::{
     normalize_model_pool, DesktopApplication, DesktopAssistantAiConfigurationUpdate,
     DesktopAssistantAiModelPoolItem, DesktopAssistantAiSecretUpdate, DesktopAssistantAiSettings,
@@ -8,6 +7,7 @@ use crate::application::{
     DesktopModelFeatureSettings, DesktopModelFeatureSettingsUpdate, DesktopModelPresetGroup,
     DesktopSecret,
 };
+use lilia_contracts::auto_model_for_provider_family_tier;
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProviderAiSettingsState {

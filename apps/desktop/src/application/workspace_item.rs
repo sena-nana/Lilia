@@ -153,13 +153,10 @@ impl DesktopApplication {
         restoration: &WorkspaceItemRestoration,
     ) -> Result<Option<WorkspaceItem>, DesktopApplicationError> {
         if restoration.kind.as_str() == DOCUMENT_WORKSPACE_ITEM_KIND {
-            let resource_id = restoration
-                .resource_id
-                .clone()
-                .unwrap_or_else(|| {
-                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
-                        .expect("restored workspace item ids are already validated")
-                });
+            let resource_id = restoration.resource_id.clone().unwrap_or_else(|| {
+                WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                    .expect("restored workspace item ids are already validated")
+            });
             let path = match path_from_document_resource_key(resource_id.as_str()) {
                 Ok(path) => path,
                 Err(_) => {
@@ -172,8 +169,12 @@ impl DesktopApplication {
             };
             let (snapshot, _) = match self.open_document_at_path(&path) {
                 Ok(opened) => opened,
-                Err(DesktopApplicationError::Document(crate::application::DocumentError::Io { .. }))
-                | Err(DesktopApplicationError::Document(crate::application::DocumentError::NotAFile(_))) => {
+                Err(DesktopApplicationError::Document(crate::application::DocumentError::Io {
+                    ..
+                }))
+                | Err(DesktopApplicationError::Document(
+                    crate::application::DocumentError::NotAFile(_),
+                )) => {
                     return Ok(None);
                 }
                 Err(error) => return Err(error),
@@ -185,13 +186,10 @@ impl DesktopApplication {
         }
 
         if restoration.kind.as_str() == TERMINAL_WORKSPACE_ITEM_KIND {
-            let resource_id = restoration
-                .resource_id
-                .clone()
-                .unwrap_or_else(|| {
-                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
-                        .expect("restored workspace item ids are already validated")
-                });
+            let resource_id = restoration.resource_id.clone().unwrap_or_else(|| {
+                WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                    .expect("restored workspace item ids are already validated")
+            });
             let session_id = terminal_session_id_from_resource_identity(&resource_id)?;
             let state = restoration.serialized_state.clone().ok_or_else(|| {
                 WorkspaceItemError::InvalidRestorationIdentity {
@@ -199,10 +197,12 @@ impl DesktopApplication {
                     kind: TERMINAL_WORKSPACE_ITEM_KIND.to_owned(),
                 }
             })?;
-            let terminal: crate::application::DesktopTerminalRestoration = serde_json::from_value(state)
-                .map_err(|_| WorkspaceItemError::InvalidRestorationIdentity {
-                    item_id: resource_id.as_str().to_owned(),
-                    kind: TERMINAL_WORKSPACE_ITEM_KIND.to_owned(),
+            let terminal: crate::application::DesktopTerminalRestoration =
+                serde_json::from_value(state).map_err(|_| {
+                    WorkspaceItemError::InvalidRestorationIdentity {
+                        item_id: resource_id.as_str().to_owned(),
+                        kind: TERMINAL_WORKSPACE_ITEM_KIND.to_owned(),
+                    }
                 })?;
             if terminal.id != session_id {
                 return Err(WorkspaceItemError::InvalidRestorationIdentity {
@@ -217,13 +217,10 @@ impl DesktopApplication {
         }
 
         if restoration.kind.as_str() == TASK_WORKSPACE_ITEM_KIND {
-            let resource_id = restoration
-                .resource_id
-                .clone()
-                .unwrap_or_else(|| {
-                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
-                        .expect("restored workspace item ids are already validated")
-                });
+            let resource_id = restoration.resource_id.clone().unwrap_or_else(|| {
+                WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                    .expect("restored workspace item ids are already validated")
+            });
             let task_id = task_id_from_resource_identity(&resource_id)?;
             let task = match self.get_task(&task_id) {
                 Ok(task) => task,
@@ -242,13 +239,10 @@ impl DesktopApplication {
         }
 
         if let Some(surface) = ApplicationWorkspaceSurface::from_kind(&restoration.kind) {
-            let resource_id = restoration
-                .resource_id
-                .clone()
-                .unwrap_or_else(|| {
-                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
-                        .expect("restored workspace item ids are already validated")
-                });
+            let resource_id = restoration.resource_id.clone().unwrap_or_else(|| {
+                WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                    .expect("restored workspace item ids are already validated")
+            });
             if resource_id.as_str() != surface.resource_id() {
                 return Err(WorkspaceItemError::InvalidRestorationIdentity {
                     item_id: resource_id.as_str().to_owned(),
@@ -265,13 +259,10 @@ impl DesktopApplication {
         let Some(surface) = ProjectWorkspaceSurface::from_kind(&restoration.kind) else {
             return Ok(None);
         };
-        let resource_id = restoration
-            .resource_id
-            .clone()
-            .unwrap_or_else(|| {
-                    WorkspaceResourceId::new(restoration.id.as_str().to_owned())
-                        .expect("restored workspace item ids are already validated")
-                });
+        let resource_id = restoration.resource_id.clone().unwrap_or_else(|| {
+            WorkspaceResourceId::new(restoration.id.as_str().to_owned())
+                .expect("restored workspace item ids are already validated")
+        });
         let project_id = project_id_from_resource_identity(&resource_id, surface)?;
         let project = match self.get_project(&project_id) {
             Ok(project) => project,
@@ -535,7 +526,10 @@ fn terminal_item_with_instance_id(
     .with_icon("terminal")
     .map(|item| {
         item.with_serialized_state(
-            serde_json::to_value(crate::application::DesktopTerminalRestoration::from_snapshot(snapshot)).ok(),
+            serde_json::to_value(
+                crate::application::DesktopTerminalRestoration::from_snapshot(snapshot),
+            )
+            .ok(),
         )
     })
 }

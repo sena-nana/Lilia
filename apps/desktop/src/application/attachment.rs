@@ -586,7 +586,8 @@ mod tests {
         let directory = home.path().join("sources");
         fs::create_dir(&directory).unwrap();
         let application = DesktopApplication::bootstrap(
-            crate::application::DesktopApplicationConfig::new(home.path(), "attachment-test").unwrap(),
+            crate::application::DesktopApplicationConfig::new(home.path(), "attachment-test")
+                .unwrap(),
             Arc::new(ClipboardFileHost {
                 paths: vec![
                     file.clone(),

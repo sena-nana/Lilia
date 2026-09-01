@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 
 use lilia_contracts::{ProjectId, TaskId};
 
+use crate::application::WorktreeChanged;
 use crate::application::{DesktopApplication, DesktopApplicationError};
-use crate::application::{WorktreeChanged};
 
 pub use lilia_feature_worktree::*;
 
@@ -398,7 +398,8 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult};
+        DesktopHostError, DesktopHostResult,
+    };
 
     struct NoopHost;
 

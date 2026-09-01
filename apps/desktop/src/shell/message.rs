@@ -1,6 +1,6 @@
-use lilia_contracts::{ProjectId, SidebarNavigationTarget, TaskId};
 use crate::application::DesktopMcpCredentialKind;
 use crate::runtime_compat::HostedWindowId;
+use lilia_contracts::{ProjectId, SidebarNavigationTarget, TaskId};
 
 use crate::desktop::{
     HostedContextMenuEvent, SidebarMenuAction, SidebarMenuTarget, SidebarTreeDropPosition,

@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
-use fs2::FileExt;
 use crate::application::{DesktopCliRequest, DesktopCliResult};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 const PROTOCOL: &str = "liliacode-single-instance";

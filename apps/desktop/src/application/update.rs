@@ -1,10 +1,10 @@
 use std::sync::TryLockError;
 
+use crate::application::UpdateStateChanged;
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopHostAction,
-    DesktopHostResult, DesktopUpdateAction, DesktopUpdateResult, DesktopUpdateState,
+    DesktopApplication, DesktopApplicationError, DesktopHostAction, DesktopHostResult,
+    DesktopUpdateAction, DesktopUpdateResult, DesktopUpdateState,
 };
-use crate::application::{UpdateStateChanged};
 
 const UPDATE_CHANNEL_FIELD: &str = "update.channel";
 const UPDATE_VERSION_FIELD: &str = "update.version";
@@ -193,7 +193,8 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostContext, DesktopHostError,
-        DesktopUpdateResult, UpdateStateChanged};
+        DesktopUpdateResult, UpdateStateChanged,
+    };
 
     static NEXT_UPDATE_TEST: AtomicU64 = AtomicU64::new(1);
 

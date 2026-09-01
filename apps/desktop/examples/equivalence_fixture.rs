@@ -6,6 +6,7 @@ use lilia_contracts::{
     AgentSessionRef, ProductTaskPriority, ProductTaskStatus, ProjectId, ProjectionEventId, TaskId,
     TimelineProjectionCommand, TimelineProjectionEvent,
 };
+use lilia_storage::{LiliaDataPaths, LiliaPluginContributions, LiliaPluginManifest};
 use liliacode_host::application::{
     DesktopApplication, DesktopApplicationConfig, DesktopHookDocumentUpdate,
     DesktopHookHandlerUpdate, DesktopHookScope, DesktopHost, DesktopHostAction, DesktopHostContext,
@@ -14,7 +15,6 @@ use liliacode_host::application::{
     DesktopSkillCreate, DesktopSkillScope, DesktopTaskCreate, DesktopTaskMove, DesktopTaskPatch,
     DesktopTodoCreate, DesktopTodoPriority,
 };
-use lilia_storage::{LiliaDataPaths, LiliaPluginContributions, LiliaPluginManifest};
 use serde::Deserialize;
 use serde_json::Value as JsonValue;
 use sha2::{Digest, Sha256};

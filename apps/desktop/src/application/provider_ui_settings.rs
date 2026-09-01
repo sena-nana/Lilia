@@ -10,10 +10,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopCredentialAction,
-    DesktopHostAction, DesktopHostResult, DesktopSecret,
+    AssistantAiSettingsChanged, ModelFeatureSettingsChanged, RouterModeSettingsChanged,
 };
-use crate::application::{ModelFeatureSettingsChanged, AssistantAiSettingsChanged, RouterModeSettingsChanged};
+use crate::application::{
+    DesktopApplication, DesktopApplicationError, DesktopCredentialAction, DesktopHostAction,
+    DesktopHostResult, DesktopSecret,
+};
 
 pub const MODEL_FEATURE_SETTINGS_KEY: &str = "desktop.model-feature.settings.v1";
 pub const ASSISTANT_AI_SETTINGS_KEY: &str = "desktop.assistant-ai.settings.v1";
@@ -830,7 +832,8 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult};
+        DesktopHostError, DesktopHostResult,
+    };
     use lilia_service::ServiceAuthority;
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);

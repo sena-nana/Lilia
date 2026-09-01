@@ -5,11 +5,11 @@ use reqwest::blocking::{Client, RequestBuilder};
 use reqwest::header::{ACCEPT, LINK, USER_AGENT};
 use serde::{Deserialize, Serialize};
 
+use crate::application::GitHubBindingChanged;
 use crate::application::{
-    DesktopApplication, DesktopCredentialAction, DesktopHostAction,
-    DesktopHostResult, DesktopSecret,
+    DesktopApplication, DesktopCredentialAction, DesktopHostAction, DesktopHostResult,
+    DesktopSecret,
 };
-use crate::application::{GitHubBindingChanged};
 
 pub use lilia_feature_github::{
     DesktopGitHubBindingMetadata, DesktopGitHubBindingStatus, DesktopGitHubClientIdSource,
@@ -601,7 +601,9 @@ mod tests {
     use lilia_service::ServiceAuthority;
 
     use super::*;
-    use crate::application::{DesktopApplicationConfig, DesktopHost, DesktopHostContext, DesktopHostError};
+    use crate::application::{
+        DesktopApplicationConfig, DesktopHost, DesktopHostContext, DesktopHostError,
+    };
 
     #[derive(Default)]
     struct MemoryCredentialHost {

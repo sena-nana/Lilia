@@ -1,6 +1,4 @@
-use crate::application::{
-    DesktopTerminalScope, DesktopTerminalSessionId, DesktopTerminalSnapshot,
-};
+use crate::application::{DesktopTerminalScope, DesktopTerminalSessionId, DesktopTerminalSnapshot};
 
 #[derive(Clone, Debug)]
 pub enum TerminalViewMessage {

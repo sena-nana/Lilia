@@ -9,8 +9,12 @@ use lilia_contracts::{
 use serde::Deserialize;
 use serde_json::{json, Value as JsonValue};
 
-use crate::application::auxiliary_model::{request_auxiliary_model_text, DesktopAuxiliaryModelRequest};
-use crate::application::{DesktopApplication, DesktopApplicationError, ASSISTANT_AI_CREDENTIAL_KEY};
+use crate::application::auxiliary_model::{
+    request_auxiliary_model_text, DesktopAuxiliaryModelRequest,
+};
+use crate::application::{
+    DesktopApplication, DesktopApplicationError, ASSISTANT_AI_CREDENTIAL_KEY,
+};
 
 const PROMPT_OPTIMIZE_TIMEOUT: Duration = Duration::from_secs(12);
 const PROMPT_ROUTE_CONFIDENCE_THRESHOLD: f64 = 0.6;

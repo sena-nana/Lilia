@@ -10,11 +10,11 @@ use lilia_contracts::{ProjectArchiveState, ProjectId};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 
+use crate::application::ProjectFilesChanged;
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DocumentSnapshot,
-    ProjectContext, ProjectContextError,
+    DesktopApplication, DesktopApplicationError, DocumentSnapshot, ProjectContext,
+    ProjectContextError,
 };
-use crate::application::{ProjectFilesChanged};
 
 const MAX_DIRECTORY_ENTRIES: usize = 2_000;
 const MAX_OPEN_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -499,8 +499,9 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, DesktopProjectCreate, ProjectWorkspaceSurface,
-        WorkspaceItemRestoration, ProjectFilesChanged};
+        DesktopHostError, DesktopHostResult, DesktopProjectCreate, ProjectFilesChanged,
+        ProjectWorkspaceSurface, WorkspaceItemRestoration,
+    };
     use lilia_service::ServiceAuthority;
     use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
     use std::sync::Arc;
@@ -666,7 +667,10 @@ mod tests {
                     selected_path: Some("b.txt".to_owned()),
                 },
             )));
-        assert_eq!(item.kind.as_str(), crate::application::PROJECT_FILES_WORKSPACE_ITEM_KIND);
+        assert_eq!(
+            item.kind.as_str(),
+            crate::application::PROJECT_FILES_WORKSPACE_ITEM_KIND
+        );
         let restored = app
             .restore_workspace_item(&WorkspaceItemRestoration {
                 id: item.id.clone(),

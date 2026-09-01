@@ -1,11 +1,11 @@
-use lilia_contracts::{
-    PendingProjectionStatus, TimelineProjectionCursor, TimelineProjectionEvent,
-    TimelineProjectionPage,
-};
 use crate::application::{
     timeline_retry_context, ChatAttachment, ChatContextUsage, DesktopGoalSnapshot,
     DesktopTaskRunBlock, DesktopTaskSessionSnapshot, DesktopTaskTodo, DesktopTaskWorktree,
     TITLE_UPDATE_ACTION_KIND,
+};
+use lilia_contracts::{
+    PendingProjectionStatus, TimelineProjectionCursor, TimelineProjectionEvent,
+    TimelineProjectionPage,
 };
 use nana_ui::{MarkdownBlock, NativeMarkdown, VirtualListLayout};
 use serde_json::Value;
@@ -231,10 +231,12 @@ impl TaskSessionView {
         &mut self,
         mut snapshot: DesktopTaskSessionSnapshot,
     ) -> bool {
-        let after = self.timeline.last().map(|event| event.sequence).unwrap_or(0);
-        snapshot
+        let after = self
             .timeline
-            .retain(|event| event.sequence > after);
+            .last()
+            .map(|event| event.sequence)
+            .unwrap_or(0);
+        snapshot.timeline.retain(|event| event.sequence > after);
         let previous_tail = self.timeline.last().map(|event| event.id.clone());
         let previous = self.clone();
         *self = Self::refresh_preserving_history(snapshot, Some(&previous));
@@ -472,8 +474,8 @@ fn timeline_attachments(payload: &Value) -> Vec<ChatAttachment> {
 
 #[cfg(test)]
 mod tests {
-    use lilia_contracts::{AgentSessionRef, ProjectionEventId, TaskId, TimelineProjectionEvent};
     use crate::application::ChatAttachmentKind;
+    use lilia_contracts::{AgentSessionRef, ProjectionEventId, TaskId, TimelineProjectionEvent};
     use serde_json::json;
 
     use super::*;
@@ -809,7 +811,10 @@ mod tests {
         );
         assert!(state.timeline_has_more_before);
         assert_eq!(
-            state.timeline_before_cursor.as_ref().map(|cursor| cursor.sequence),
+            state
+                .timeline_before_cursor
+                .as_ref()
+                .map(|cursor| cursor.sequence),
             Some(3)
         );
     }

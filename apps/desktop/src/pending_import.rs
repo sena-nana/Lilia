@@ -5,11 +5,11 @@ use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use fs2::FileExt;
 use crate::application::{
     DesktopDatabaseKind, DesktopImportItemKind, DesktopImportReport, DesktopImportReportItemStatus,
     DesktopImportReportStatus,
 };
+use fs2::FileExt;
 use lilia_storage::LiliaDataPaths;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};

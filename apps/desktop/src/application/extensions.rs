@@ -3,13 +3,11 @@ use lilia_feature_extensions::{
     activate_mcp_entry, activate_registered_mcp_servers, create_skill_package,
     delete_mcp_credentials_for_entries, delete_mcp_server, delete_mcp_server_credential,
     delete_skill_package, extensions_snapshot, get_mcp_prompt, mcp_state_key, read_mcp_resource,
-    set_mcp_server_credential, set_mcp_server_enabled, set_skill_package_enabled, upsert_mcp_server,
-    CodingRuntimeFacts, ExtensionsHost, LoadedPluginFacts, McpPromptRead,
+    set_mcp_server_credential, set_mcp_server_enabled, set_skill_package_enabled,
+    upsert_mcp_server, CodingRuntimeFacts, ExtensionsHost, LoadedPluginFacts, McpPromptRead,
 };
 use lilia_storage::{AgentkitMcpRegistryEntry, LiliaDataPaths};
-use mutsuki_agent_contracts::{
-    McpCatalog, McpServerStatus, SkillDiscoverResult, SkillLoadResult,
-};
+use mutsuki_agent_contracts::{McpCatalog, McpServerStatus, SkillDiscoverResult, SkillLoadResult};
 
 use crate::application::{
     DesktopApplication, DesktopApplicationError, DesktopCredentialAction, DesktopHostAction,
@@ -58,7 +56,11 @@ impl ExtensionsHost for DesktopApplication {
     fn plugin_packages(
         &self,
     ) -> Result<
-        (u64, String, Vec<lilia_feature_extensions::PluginPackageView>),
+        (
+            u64,
+            String,
+            Vec<lilia_feature_extensions::PluginPackageView>,
+        ),
         lilia_feature_extensions::ExtensionsError,
     > {
         desktop_plugin_packages(self)
@@ -140,9 +142,8 @@ impl ExtensionsHost for DesktopApplication {
     }
 
     fn reload_registered_skills(&self) -> Result<(), lilia_feature_extensions::ExtensionsError> {
-        DesktopApplication::reload_registered_skills(self).map_err(|error| {
-            lilia_feature_extensions::ExtensionsError::Agent(error.to_string())
-        })
+        DesktopApplication::reload_registered_skills(self)
+            .map_err(|error| lilia_feature_extensions::ExtensionsError::Agent(error.to_string()))
     }
 
     fn disconnect_mcp(&self, server_id: &str) -> Result<(), String> {
@@ -217,7 +218,9 @@ impl ExtensionsHost for DesktopApplication {
     ) -> Result<Option<Vec<u8>>, lilia_feature_extensions::ExtensionsError> {
         match self
             .execute_host(DesktopHostAction::Credential(
-                DesktopCredentialAction::Read { key: key.to_owned() },
+                DesktopCredentialAction::Read {
+                    key: key.to_owned(),
+                },
             ))
             .map_err(|error| lilia_feature_extensions::ExtensionsError::Agent(error.to_string()))?
         {
@@ -252,7 +255,9 @@ impl ExtensionsHost for DesktopApplication {
     fn delete_secret(&self, key: &str) -> Result<(), lilia_feature_extensions::ExtensionsError> {
         match self
             .execute_host(DesktopHostAction::Credential(
-                DesktopCredentialAction::Delete { key: key.to_owned() },
+                DesktopCredentialAction::Delete {
+                    key: key.to_owned(),
+                },
             ))
             .map_err(|error| lilia_feature_extensions::ExtensionsError::Agent(error.to_string()))?
         {
@@ -312,7 +317,11 @@ impl DesktopApplication {
         expected_registry_revision: u64,
     ) -> Result<DesktopExtensionsSnapshot, DesktopApplicationError> {
         self.with_extension_registry(|host| {
-            Ok(delete_skill_package(host, skill_id, expected_registry_revision)?)
+            Ok(delete_skill_package(
+                host,
+                skill_id,
+                expected_registry_revision,
+            )?)
         })
     }
 
@@ -392,7 +401,11 @@ impl DesktopApplication {
         expected_registry_revision: u64,
     ) -> Result<DesktopMcpActivationReport, DesktopApplicationError> {
         self.with_extension_registry(|host| {
-            Ok(delete_mcp_server(host, server_id, expected_registry_revision)?)
+            Ok(delete_mcp_server(
+                host,
+                server_id,
+                expected_registry_revision,
+            )?)
         })
     }
 
@@ -471,8 +484,14 @@ impl DesktopApplication {
 
 fn desktop_plugin_packages(
     application: &DesktopApplication,
-) -> Result<(u64, String, Vec<lilia_feature_extensions::PluginPackageView>), DesktopApplicationError>
-{
+) -> Result<
+    (
+        u64,
+        String,
+        Vec<lilia_feature_extensions::PluginPackageView>,
+    ),
+    DesktopApplicationError,
+> {
     application.plugin_packages()
 }
 

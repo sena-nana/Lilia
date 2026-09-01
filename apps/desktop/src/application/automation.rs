@@ -1,9 +1,9 @@
 //! Desktop delegation for the automation domain.
 
 use lilia_feature_automation::{
-    AutomationBeginRunInput, AutomationRunDetail, AutomationRunSummary,
-    AutomationSaveDraftInput, AutomationWorkflow, AutomationWorkflowVersion,
-    DesktopAutomationError, DesktopAutomationService,
+    AutomationBeginRunInput, AutomationRunDetail, AutomationRunSummary, AutomationSaveDraftInput,
+    AutomationWorkflow, AutomationWorkflowVersion, DesktopAutomationError,
+    DesktopAutomationService,
 };
 
 use crate::application::DesktopApplication;

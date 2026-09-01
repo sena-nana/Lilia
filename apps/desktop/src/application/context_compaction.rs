@@ -9,8 +9,8 @@ use mutsuki_agent_contracts::{AgentEventEnvelope, AgentRole};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use crate::application::TimelineChanged;
 use crate::application::{DesktopApplication, DesktopApplicationError};
-use crate::application::{TimelineChanged};
 
 const CONTEXT_COMPACTION_INPUT_TOKEN_BUDGET: u64 = 48_000;
 const CONTEXT_COMPACTION_OUTPUT_TOKEN_BUDGET: u64 = 2_048;
@@ -189,7 +189,8 @@ mod tests {
 
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult};
+        DesktopHostError, DesktopHostResult,
+    };
 
     struct NoopHost;
 

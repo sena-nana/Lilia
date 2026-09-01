@@ -37,9 +37,13 @@ impl From<TitleError> for DesktopApplicationError {
                 message: "任务不存在".to_owned(),
             },
             TitleError::Product(error) => Self::Product(error),
-            TitleError::PendingInteractionNotFound { task_id, request_id } => {
-                Self::PendingInteractionNotFound { task_id, request_id }
-            }
+            TitleError::PendingInteractionNotFound {
+                task_id,
+                request_id,
+            } => Self::PendingInteractionNotFound {
+                task_id,
+                request_id,
+            },
             TitleError::InvalidPendingInteraction {
                 request_id,
                 message,
@@ -135,7 +139,10 @@ impl TitleHost for DesktopApplication {
         let features = self.model_feature_settings().ok()?;
         let base_url = assistant.base_url?.trim().trim_end_matches('/').to_string();
         let model = features.title.or(assistant.model)?.trim().to_string();
-        let api_key = self.read_host_credential_text(ASSISTANT_AI_CREDENTIAL_KEY)?.trim().to_string();
+        let api_key = self
+            .read_host_credential_text(ASSISTANT_AI_CREDENTIAL_KEY)?
+            .trim()
+            .to_string();
         if base_url.is_empty() || model.is_empty() || api_key.is_empty() {
             return None;
         }
@@ -153,9 +160,13 @@ fn title_host_error(error: DesktopApplicationError) -> TitleError {
         DesktopApplicationError::InvalidInput { field, message } => {
             TitleError::InvalidInput { field, message }
         }
-        DesktopApplicationError::PendingInteractionNotFound { task_id, request_id } => {
-            TitleError::PendingInteractionNotFound { task_id, request_id }
-        }
+        DesktopApplicationError::PendingInteractionNotFound {
+            task_id,
+            request_id,
+        } => TitleError::PendingInteractionNotFound {
+            task_id,
+            request_id,
+        },
         DesktopApplicationError::InvalidPendingInteraction {
             request_id,
             message,
@@ -230,7 +241,9 @@ impl DesktopApplication {
         request_id: &str,
         accept: bool,
     ) -> Result<DesktopTaskTitleState, DesktopApplicationError> {
-        Ok(respond_title_update_review(self, task_id, request_id, accept)?)
+        Ok(respond_title_update_review(
+            self, task_id, request_id, accept,
+        )?)
     }
 
     pub fn normalize_generated_title(input: String) -> Result<String, String> {

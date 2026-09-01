@@ -10,10 +10,10 @@ use serde::Serialize;
 use uuid::Uuid;
 
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopNavigationTarget,
-    DesktopProjectPatch, ProjectQuery, TaskQuery,
+    DesktopApplication, DesktopApplicationError, DesktopNavigationTarget, DesktopProjectPatch,
+    ProjectQuery, TaskQuery,
 };
-use crate::application::{ProjectsChanged, TasksChanged, NavigationRequested};
+use crate::application::{NavigationRequested, ProjectsChanged, TasksChanged};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -507,7 +507,8 @@ mod tests {
     use super::*;
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult};
+        DesktopHostError, DesktopHostResult,
+    };
 
     struct TestHost;
 

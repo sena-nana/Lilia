@@ -234,11 +234,9 @@ impl RemoteHost for DesktopApplication {
         if request_type == "connection.capabilities.read" {
             return Ok(());
         }
-        self.inner
-            .remote
-            .with_connection(|connection| {
-                lilia_feature_remote::authorize_request(connection, device_id, request_type)
-            })?;
+        self.inner.remote.with_connection(|connection| {
+            lilia_feature_remote::authorize_request(connection, device_id, request_type)
+        })?;
         self.inner.remote.record_activity()
     }
 
@@ -378,9 +376,8 @@ impl RemoteHost for DesktopApplication {
         event_id: Option<&str>,
     ) -> Result<Value, DesktopRemoteControlError> {
         let events = self.task_session_snapshot(task_id)?.timeline;
-        let selected = event_id.and_then(|event_id| {
-            events.iter().find(|event| event.id.as_str() == event_id)
-        });
+        let selected =
+            event_id.and_then(|event_id| events.iter().find(|event| event.id.as_str() == event_id));
         let error = selected.or_else(|| events.iter().rev().find(|event| event.kind == "error"));
         let error = error
             .filter(|event| timeline_retry_context(event, &events).is_some())
@@ -539,17 +536,23 @@ impl RemoteHost for DesktopApplication {
     ) -> Result<Value, DesktopRemoteControlError> {
         let session_id = DesktopTerminalSessionId::from_stored(session_id);
         self.write_terminal(&session_id, input.as_bytes())?;
-        Ok(remote_process_snapshot(&self.terminal_snapshot(&session_id, 0)?))
+        Ok(remote_process_snapshot(
+            &self.terminal_snapshot(&session_id, 0)?,
+        ))
     }
 
     fn kill_process(&self, session_id: &str) -> Result<Value, DesktopRemoteControlError> {
         let session_id = DesktopTerminalSessionId::from_stored(session_id);
         self.terminate_terminal(&session_id)?;
-        Ok(remote_process_snapshot(&self.terminal_snapshot(&session_id, 0)?))
+        Ok(remote_process_snapshot(
+            &self.terminal_snapshot(&session_id, 0)?,
+        ))
     }
 
     fn remember_process(&self, task_id: TaskId, session_id: String) {
-        self.inner.remote.remember_process_session(task_id, session_id);
+        self.inner
+            .remote
+            .remember_process_session(task_id, session_id);
     }
 
     fn forget_process(&self, task_id: &TaskId) {
@@ -617,11 +620,12 @@ mod tests {
     };
 
     use super::*;
-    use uuid::Uuid;
     use crate::application::{
         DesktopApplicationConfig, DesktopHostError, DesktopHostResult, DesktopProjectCreate,
-        DesktopTaskCreate,
+        DesktopTaskCreate, DesktopTaskPatch,
     };
+    use lilia_contracts::ProductTaskStatus;
+    use uuid::Uuid;
 
     #[derive(Default)]
     struct TestHost {

@@ -5,9 +5,7 @@
 
 use lilia_kernel::FeatureId;
 
-use crate::application::{
-    DesktopAgentInteractionSettings, DesktopCustomSubagentCatalog,
-};
+use crate::application::{DesktopAgentInteractionSettings, DesktopCustomSubagentCatalog};
 use crate::runtime_shell::{PrimaryShellSnapshot, ShellActionRow, ShellAgentRow};
 use crate::text_editor_state::TextEditorState;
 use crate::ui_module::{UiModule, UiModuleContext, UiModuleOutcome};

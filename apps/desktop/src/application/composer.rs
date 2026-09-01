@@ -2,12 +2,12 @@ use lilia_contracts::{ProductTask, ProductTaskStatus, TaskId};
 use uuid::Uuid;
 
 use crate::application::submission::DesktopGuideQueueInput;
+use crate::application::{ComposerChanged, TodosChanged};
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopSessionBranchAnchor,
-    DesktopTaskPatch, DesktopTaskTodo, DesktopTodoCreate, DesktopTodoPriority, DesktopTurnDispatch,
+    DesktopApplication, DesktopApplicationError, DesktopSessionBranchAnchor, DesktopTaskPatch,
+    DesktopTaskTodo, DesktopTodoCreate, DesktopTodoPriority, DesktopTurnDispatch,
     DesktopTurnRequest,
 };
-use crate::application::{ComposerChanged, TodosChanged};
 
 pub(crate) use lilia_feature_composer::ComposerStore as DesktopComposerStore;
 pub use lilia_feature_composer::{
@@ -212,7 +212,8 @@ impl DesktopApplication {
             });
         }
 
-        let guide_text = crate::application::agent::turn_content_with_references(&composer.turn_request());
+        let guide_text =
+            crate::application::agent::turn_content_with_references(&composer.turn_request());
         let attachments = composer
             .attachments
             .iter()
@@ -363,8 +364,9 @@ mod tests {
 
     use super::*;
     use crate::application::{
-        DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
-        DesktopHostError, DesktopHostResult, ComposerChanged};
+        ComposerChanged, DesktopApplicationConfig, DesktopHost, DesktopHostAction,
+        DesktopHostContext, DesktopHostError, DesktopHostResult,
+    };
 
     static NEXT_COMPOSER_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -443,7 +445,8 @@ mod tests {
     #[test]
     fn transient_composer_materializes_only_when_the_host_promotes_it() {
         let (application, _, parent_id) = application();
-        let input = crate::application::DesktopTaskCreate::new(None, "新对话").with_parent(parent_id.clone());
+        let input = crate::application::DesktopTaskCreate::new(None, "新对话")
+            .with_parent(parent_id.clone());
         let task_id = input.id.clone();
         let mut draft = DesktopComposerState::transient(task_id.clone());
         assert!(draft

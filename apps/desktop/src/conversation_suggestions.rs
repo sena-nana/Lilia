@@ -1,5 +1,5 @@
-use lilia_contracts::TaskId;
 use crate::application::DesktopSuggestionItem;
+use lilia_contracts::TaskId;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct ConversationSuggestionState {

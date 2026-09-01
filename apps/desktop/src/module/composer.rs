@@ -240,7 +240,8 @@ impl ComposerModule {
         let Some(composer) = self.composer.clone() else {
             return UiModuleOutcome::clean();
         };
-        let Some(content) = crate::desktop::composer_content_without_trigger(&composer.content, '#')
+        let Some(content) =
+            crate::desktop::composer_content_without_trigger(&composer.content, '#')
         else {
             return UiModuleOutcome::clean();
         };
@@ -275,7 +276,8 @@ impl ComposerModule {
         let Some(composer) = self.composer.clone() else {
             return UiModuleOutcome::clean();
         };
-        let Some(content) = crate::desktop::composer_content_without_trigger(&composer.content, '@')
+        let Some(content) =
+            crate::desktop::composer_content_without_trigger(&composer.content, '@')
         else {
             return UiModuleOutcome::clean();
         };
@@ -383,8 +385,14 @@ impl ComposerModule {
             };
             application.search_project_context_attachments(project_id, &query, 8)
         } else {
-            match application.get_task(&composer.task_id).ok().and_then(|task| task.project_id) {
-                Some(_) => application.search_task_context_attachments(&composer.task_id, &query, 8),
+            match application
+                .get_task(&composer.task_id)
+                .ok()
+                .and_then(|task| task.project_id)
+            {
+                Some(_) => {
+                    application.search_task_context_attachments(&composer.task_id, &query, 8)
+                }
                 None => {
                     self.context_attachment_results.clear();
                     return;
@@ -549,8 +557,9 @@ mod tests {
 
     fn loaded_draft() -> ComposerModule {
         let mut module = ComposerModule::default();
-        let mut composer =
-            DesktopComposerState::transient(TaskId::new("draft-task").expect("the id is not blank"));
+        let mut composer = DesktopComposerState::transient(
+            TaskId::new("draft-task").expect("the id is not blank"),
+        );
         composer.content = "hello".to_owned();
         let kernel = Kernel::new();
         let cx = UiModuleContext::new(&kernel, WindowId::PRIMARY);

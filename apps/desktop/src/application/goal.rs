@@ -216,7 +216,8 @@ mod tests {
     use crate::application::{
         DesktopApplicationConfig, DesktopHost, DesktopHostAction, DesktopHostContext,
         DesktopHostError, DesktopHostResult, DesktopTodoCreate, DesktopTodoPriority,
-        DesktopTodoUpdate, TimelineChanged, GoalChanged};
+        DesktopTodoUpdate, GoalChanged, TimelineChanged,
+    };
 
     static NEXT_GOAL_ID: AtomicU64 = AtomicU64::new(1);
 

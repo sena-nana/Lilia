@@ -1,12 +1,15 @@
 use lilia_contracts::{ProjectId, TaskId};
 
 use crate::application::{
-    ArchitectureBackend, DesktopApplication, DesktopApplicationError, DesktopArchitectureService, DesktopMemory, DesktopMemoryService, DesktopRoadmapService,
-    MemoryInjectionState, MemorySettings, MemoryUpsertInput, Milestone, MilestoneUpdatePatch,
+    ArchitectureBackend, ArchitectureChanged, DesktopApplication, DesktopApplicationError,
+    DesktopArchitectureService, DesktopMemory, DesktopMemoryService, DesktopRoadmapService,
+    MemoryChanged, MemoryInjectionChanged, MemoryInjectionState, MemorySettings,
+    MemorySettingsChanged, MemoryUpsertInput, Milestone, MilestoneUpdatePatch,
     ProjectArchitectureApplyInput, ProjectArchitectureApplyResult, ProjectArchitectureChangeEvent,
     ProjectArchitectureChangeRecord, ProjectArchitectureGraph, ProjectArchitectureQuarantineRecord,
     ProjectArchitectureRejectInput, ProjectArchitectureRollbackResult, ProjectRoadmap,
-    TaskMilestoneLink, MemoryChanged, MemorySettingsChanged, MemoryInjectionChanged, RoadmapChanged, ArchitectureChanged};
+    RoadmapChanged, TaskMilestoneLink,
+};
 
 impl DesktopApplication {
     pub fn architecture_service(&self) -> DesktopArchitectureService {

@@ -1,4 +1,6 @@
-use crate::application::{DesktopApplication, DesktopApplicationError, DesktopConversationSuggestionError};
+use crate::application::{
+    DesktopApplication, DesktopApplicationError, DesktopConversationSuggestionError,
+};
 use lilia_feature_suggestions::types::{now_millis, DesktopSuggestionItem, SUGGESTION_CACHE_KEY};
 use lilia_storage::SqliteAgentRuntimeStateStore;
 

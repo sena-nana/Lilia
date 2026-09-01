@@ -13,7 +13,8 @@ use crate::application::{
     DesktopExtensionsSnapshot, DesktopHookDocumentUpdate, DesktopHookDocumentView,
     DesktopHookHandlerUpdate, DesktopHookScope, DesktopHookSourceView, DesktopHooksOverview,
     DesktopMcpActivationReport, DesktopMcpCredentialKind, DesktopMcpServerUpsert,
-    DesktopMcpTransport, DesktopPluginInstall, DesktopSecret, DesktopSkillCreate, DesktopSkillScope,
+    DesktopMcpTransport, DesktopPluginInstall, DesktopSecret, DesktopSkillCreate,
+    DesktopSkillScope,
 };
 use crate::runtime_shell::{PrimaryShellSnapshot, ShellMcpEditor, ShellMcpRow, ShellSkillRow};
 use crate::shell::{ExtensionsMessage, HookHandlerDraftField};
@@ -142,7 +143,10 @@ pub(crate) enum HookSourceOperation {
 
 #[derive(Debug, Clone)]
 pub(crate) enum McpContentOperation {
-    ReadResource { server_id: String, uri: String },
+    ReadResource {
+        server_id: String,
+        uri: String,
+    },
     GetPrompt {
         namespaced_name: String,
         arguments: Value,
@@ -562,9 +566,7 @@ impl ExtensionsModule {
                 self.error = None;
                 UiModuleOutcome::dirty()
             }
-            ExtensionsMessage::AddHookHandler(source_id) => {
-                self.add_hook_handler_draft(&source_id)
-            }
+            ExtensionsMessage::AddHookHandler(source_id) => self.add_hook_handler_draft(&source_id),
             ExtensionsMessage::HookHandlerDraftChanged {
                 source_id,
                 index,
@@ -868,12 +870,12 @@ impl ExtensionsModule {
             .as_ref()
             .map(|snapshot| snapshot.plugins_registry_revision)
             .unwrap_or_default();
-        self.queue(ExtensionsCommand::Plugin(
-            PluginRegistryOperation::Install(DesktopPluginInstall {
+        self.queue(ExtensionsCommand::Plugin(PluginRegistryOperation::Install(
+            DesktopPluginInstall {
                 expected_registry_revision: revision,
                 source_path: source_path.to_owned(),
-            }),
-        ))
+            },
+        )))
     }
 
     fn toggle_plugin(&mut self, plugin_id: &str) -> UiModuleOutcome {
@@ -916,11 +918,7 @@ impl ExtensionsModule {
         }))
     }
 
-    fn create_hook_source(
-        &mut self,
-        source_id: &str,
-        cx: &UiModuleContext<'_>,
-    ) -> UiModuleOutcome {
+    fn create_hook_source(&mut self, source_id: &str, cx: &UiModuleContext<'_>) -> UiModuleOutcome {
         let Some(source) = self.hook_source(source_id) else {
             return UiModuleOutcome::clean();
         };
@@ -968,11 +966,7 @@ impl ExtensionsModule {
         )
     }
 
-    fn toggle_hook_source(
-        &mut self,
-        source_id: &str,
-        cx: &UiModuleContext<'_>,
-    ) -> UiModuleOutcome {
+    fn toggle_hook_source(&mut self, source_id: &str, cx: &UiModuleContext<'_>) -> UiModuleOutcome {
         let Some(source) = self.hook_source(source_id) else {
             return UiModuleOutcome::clean();
         };

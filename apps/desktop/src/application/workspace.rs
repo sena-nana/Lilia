@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use lilia_contracts::{ProjectId, TaskId};
 
 use crate::application::{
-    DesktopApplication, DesktopApplicationError, DesktopCommand, DesktopCommandOutcome, ProjectQuery,
-    TaskQuery, WorkspaceItem, WorkspaceItemRestoration,
+    DesktopApplication, DesktopApplicationError, DesktopCommand, DesktopCommandOutcome,
+    ProjectQuery, TaskQuery, WorkspaceItem, WorkspaceItemRestoration,
 };
 
 #[cfg(test)]
@@ -12,9 +12,10 @@ use crate::application::{PanelLayoutSnapshot, WorkspaceItemError, WorkspaceItemI
 
 pub use lilia_feature_workspace::{
     DesktopWorkspaceProject, DesktopWorkspaceSession, DesktopWorkspaceSessionId,
-    DesktopWorkspaceSessionIdError, DesktopWorkspaceSessionState, DesktopWorkspaceSessionStateError,
-    DesktopWorkspaceSnapshot, DesktopWorkspaceState, DesktopWorkspaceTask,
-    DesktopWorkspaceTransferOutcome, WorkspaceCatalog, WorkspaceSessionError, WorkspaceTaskRef,
+    DesktopWorkspaceSessionIdError, DesktopWorkspaceSessionState,
+    DesktopWorkspaceSessionStateError, DesktopWorkspaceSnapshot, DesktopWorkspaceState,
+    DesktopWorkspaceTask, DesktopWorkspaceTransferOutcome, WorkspaceCatalog, WorkspaceSessionError,
+    WorkspaceTaskRef,
 };
 
 impl WorkspaceCatalog for DesktopApplication {
@@ -67,7 +68,8 @@ impl WorkspaceCatalog for DesktopApplication {
         &self,
         restoration: &WorkspaceItemRestoration,
     ) -> Result<Option<WorkspaceItem>, WorkspaceSessionError> {
-        self.restore_workspace_item(restoration).map_err(catalog_error)
+        self.restore_workspace_item(restoration)
+            .map_err(catalog_error)
     }
 
     fn lookup_task(&self, task_id: &TaskId) -> Result<WorkspaceTaskRef, WorkspaceSessionError> {
@@ -930,7 +932,8 @@ mod tests {
             app.create_workspace_session(DesktopWorkspaceSessionId::new("dock:first").unwrap());
         let second =
             app.create_workspace_session(DesktopWorkspaceSessionId::new("dock:second").unwrap());
-        let tools = crate::application::PanelId::new(crate::application::CODING_TOOLS_PANEL_ID).unwrap();
+        let tools =
+            crate::application::PanelId::new(crate::application::CODING_TOOLS_PANEL_ID).unwrap();
 
         first
             .execute(DesktopCommand::ActivatePanel(tools.clone()))
@@ -1076,7 +1079,10 @@ mod tests {
             .execute(DesktopCommand::SelectTask(task.clone()))
             .unwrap();
         let item = app.task_workspace_item(&task).unwrap();
-        assert_eq!(item.kind.as_str(), crate::application::TASK_WORKSPACE_ITEM_KIND);
+        assert_eq!(
+            item.kind.as_str(),
+            crate::application::TASK_WORKSPACE_ITEM_KIND
+        );
         assert_eq!(item.resource_id.as_str(), "task:task-item");
         assert_eq!(item.focus_target.as_str(), "composer");
         assert_eq!(item.title, "Original title");
