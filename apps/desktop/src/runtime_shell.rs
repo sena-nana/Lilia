@@ -1412,7 +1412,7 @@ fn composer_view(snapshot: &PrimaryShellSnapshot) -> TextArea {
 }
 
 fn composer_plus_menu(open: bool) -> ActionMenu {
-    ActionMenu::new().trigger("+").open(open)
+    ActionMenu::new().trigger_icon(Icon::Add, "添加").open(open)
 }
 
 fn composer_attach_button() -> IconButton {
