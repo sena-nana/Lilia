@@ -17,7 +17,8 @@ use nana_ui::runtime::{
     SidebarFooterButton, SidebarFrame, SidebarRow, SidebarRowIcon, SidebarRowState, SidebarSection,
     SidebarSectionState, StableNodeId, Stack, Switch, TabOption, Tabs, TabsEvent, Text, TextArea,
     ScrollChanged, TextChanged, TimeSeriesChart, ToggleChanged, TreeDropPosition, TreeView,
-    TreeViewEvent, View, VirtualListItems, VirtualListLayout,
+    TreeViewEvent, View, VirtualListItems, VirtualListLayout, sidebar_section_tool_button,
+    sidebar_top_bar_tool_button,
 };
 use nana_ui::{
     AppearanceEvent, AppearanceSettings, ButtonKind, CommandPaletteEvent, CommandPaletteItem,
@@ -1185,11 +1186,11 @@ fn sidebar_row_style() -> NodeStyle {
 }
 
 fn sidebar_search_toggle() -> IconButton {
-    sidebar_icon_button(Icon::Search, "搜索")
+    sidebar_top_bar_tool_button(Icon::Search, "搜索")
 }
 
 fn sidebar_search_close() -> IconButton {
-    sidebar_icon_button(Icon::Close, "关闭搜索")
+    sidebar_top_bar_tool_button(Icon::Close, "关闭搜索")
 }
 
 fn conversation_empty_state(title: String) -> EmptyState {
@@ -1934,7 +1935,7 @@ pub fn mount_primary_shell(
     }
 
     let add_project_menu = context
-        .create_detached_component(document_id, sidebar_icon_button(Icon::Add, "添加项目"))?;
+        .create_detached_component(document_id, sidebar_section_tool_button(Icon::Add, "添加项目"))?;
     bind_activate(
         context,
         add_project_menu,
