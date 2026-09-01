@@ -15,8 +15,13 @@ pub struct FileDialogRequest {
     pub multiple: bool,
 }
 
-/// Blocks on the OS picker. An empty result means the user cancelled, which is
-/// not an error.
+/// Blocks the calling thread on the OS picker. An empty result means the user
+/// cancelled, which is not an error.
+///
+/// Never call this on an event-loop thread: while the picker is up the window
+/// system re-enters event dispatch, which panics winit's re-entrancy guard or
+/// wedges the loop. Run it on a dedicated thread and deliver the result as a
+/// message.
 pub fn pick(request: FileDialogRequest) -> Vec<PathBuf> {
     let mut dialog = rfd::FileDialog::new();
     if let Some(title) = request.title {

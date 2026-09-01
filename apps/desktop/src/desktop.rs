@@ -1114,6 +1114,32 @@ pub enum ChromeMessage {
     AgentDebug(DebugRequest),
 }
 
+/// Which UI flow is waiting on an OS picker. Travels with the result so the
+/// completion needs no pending slot in the shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileDialogPurpose {
+    SidebarProjectFolder,
+    ProjectWorktreeParent,
+    ProjectCloneParent { project_settings_visible: bool },
+    ProjectWorkspace,
+    DraftWorktree { window_id: HostedWindowId },
+    AttachWorktree,
+    ComposerAttachments { select_directories: bool },
+    TaskPopupAttachments {
+        window_id: HostedWindowId,
+        select_directories: bool,
+    },
+    DataImportSource,
+    PluginDirectory,
+}
+
+/// Why an OS picker closed without a selection.
+#[derive(Debug, Clone)]
+pub enum FileDialogPickFailure {
+    UnrecognizedResult,
+    Host(String),
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     ProjectClone(ProjectCloneMessage),
@@ -1161,6 +1187,10 @@ pub enum Message {
     Remote(RemoteMessage),
     Update(UpdateMessage),
     WorkspaceLayout(WorkspaceLayoutMessage),
+    FileDialogPicked {
+        purpose: FileDialogPurpose,
+        outcome: Result<Vec<PathBuf>, FileDialogPickFailure>,
+    },
 }
 
 #[cfg(debug_assertions)]
@@ -4947,6 +4977,207 @@ impl DesktopProgram {
         }
     }
 
+    /// Runs the OS picker on a worker thread. A nested modal loop must never
+    /// run inside event dispatch — the windowing system re-enters event
+    /// handling while the picker is up, which panics the winit re-entrancy
+    /// guard — so the blocking pick runs off the UI thread and the selection
+    /// returns as a message.
+    fn spawn_file_dialog(&self, purpose: FileDialogPurpose, request: DesktopFileDialogRequest) {
+        let application = self.kernel.session().clone();
+        let message_sender = Arc::clone(&self.message_sender);
+        std::thread::spawn(move || {
+            let outcome = match application.execute_host(DesktopHostAction::FileDialog(request)) {
+                Ok(DesktopHostResult::FileDialogSelection(paths)) => Ok(paths),
+                Ok(_) => Err(FileDialogPickFailure::UnrecognizedResult),
+                Err(error) => Err(FileDialogPickFailure::Host(error.to_string())),
+            };
+            let _ = message_sender(Message::FileDialogPicked { purpose, outcome });
+        });
+    }
+
+    fn apply_file_dialog_pick(
+        &mut self,
+        purpose: FileDialogPurpose,
+        outcome: Result<Vec<PathBuf>, FileDialogPickFailure>,
+    ) {
+        match purpose {
+            FileDialogPurpose::SidebarProjectFolder => match outcome {
+                Ok(paths) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        self.add_sidebar_project_folder(path);
+                    }
+                }
+                Err(FileDialogPickFailure::UnrecognizedResult) => {
+                    self.error_message = Some("目录选择器返回了无法识别的结果。".to_owned());
+                }
+                Err(FileDialogPickFailure::Host(error)) => {
+                    eprintln!("failed to pick Native sidebar project folder: {error}");
+                    self.error_message = Some("无法打开目录选择器，请稍后重试。".to_owned());
+                }
+            },
+            FileDialogPurpose::ProjectWorktreeParent => match outcome {
+                Ok(paths) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        self.project_settings.worktree.parent_dir =
+                            Some(path.to_string_lossy().into_owned());
+                        self.project_settings_error = None;
+                    }
+                }
+                Err(FileDialogPickFailure::UnrecognizedResult) => {
+                    self.project_settings_error = Some("目录选择器返回了无法识别的结果。".to_owned());
+                }
+                Err(FileDialogPickFailure::Host(error)) => {
+                    eprintln!("failed to pick Native worktree parent: {error}");
+                    self.project_settings_error = Some("无法打开目录选择器，请稍后重试。".to_owned());
+                }
+            },
+            FileDialogPurpose::ProjectCloneParent {
+                project_settings_visible,
+            } => match outcome {
+                Ok(paths) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        self.project_clone_parent = path.to_string_lossy().into_owned();
+                        if project_settings_visible {
+                            self.project_settings_error = None;
+                        } else {
+                            self.project_action_error = None;
+                        }
+                        self.persist_project_clone_parent();
+                    }
+                }
+                Err(failure) => {
+                    let message = match failure {
+                        FileDialogPickFailure::UnrecognizedResult => {
+                            "目录选择器返回了无法识别的结果。".to_owned()
+                        }
+                        FileDialogPickFailure::Host(error) => {
+                            eprintln!("failed to pick Native project clone parent: {error}");
+                            "无法打开目录选择器，请稍后重试。".to_owned()
+                        }
+                    };
+                    if project_settings_visible {
+                        self.project_settings_error = Some(message);
+                    } else {
+                        self.project_action_error = Some(message);
+                    }
+                }
+            },
+            FileDialogPurpose::ProjectWorkspace => match outcome {
+                Ok(paths) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        self.project_workspace_edit = path.to_string_lossy().into_owned();
+                        self.project_action_error = None;
+                    }
+                }
+                Err(FileDialogPickFailure::UnrecognizedResult) => {
+                    self.project_action_error = Some("目录选择器返回了无法识别的结果。".to_owned());
+                }
+                Err(FileDialogPickFailure::Host(error)) => {
+                    eprintln!("failed to pick Native project workspace: {error}");
+                    self.project_action_error = Some("无法打开目录选择器，请稍后重试。".to_owned());
+                }
+            },
+            FileDialogPurpose::DraftWorktree { window_id } => match outcome {
+                Ok(paths) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        self.set_draft_worktree(
+                            window_id,
+                            DraftWorktreeSelection::Existing(Some(path)),
+                        );
+                    }
+                }
+                Err(FileDialogPickFailure::UnrecognizedResult) => {
+                    self.set_task_window_error(
+                        window_id,
+                        "目录选择器返回了无法识别的结果。".to_owned(),
+                    );
+                }
+                Err(FileDialogPickFailure::Host(error)) => {
+                    eprintln!("failed to pick Native draft worktree: {error}");
+                    self.set_task_window_error(
+                        window_id,
+                        "无法打开目录选择器，请稍后重试。".to_owned(),
+                    );
+                }
+            },
+            FileDialogPurpose::AttachWorktree => match outcome {
+                Ok(paths) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        self.start_worktree_operation(WorktreeOperation::Attach(path));
+                    }
+                }
+                Err(FileDialogPickFailure::UnrecognizedResult) => {
+                    self.task_action_error = Some("目录选择器返回了无法识别的结果。".to_owned());
+                }
+                Err(FileDialogPickFailure::Host(error)) => {
+                    self.task_action_error = Some(error);
+                }
+            },
+            FileDialogPurpose::ComposerAttachments { .. } => match outcome {
+                Ok(paths) => {
+                    self.add_composer_attachments(describe_attachment_paths(paths));
+                }
+                Err(FileDialogPickFailure::UnrecognizedResult) => {
+                    self.set_task_window_error(
+                        HostedWindowId::PRIMARY,
+                        "文件选择器返回了无法识别的结果，请重试。".to_owned(),
+                    );
+                }
+                Err(FileDialogPickFailure::Host(error)) => {
+                    self.set_task_window_error(HostedWindowId::PRIMARY, error);
+                }
+            },
+            FileDialogPurpose::TaskPopupAttachments { window_id, .. } => match outcome {
+                Ok(paths) => {
+                    self.add_task_popup_attachments(window_id, describe_attachment_paths(paths));
+                }
+                Err(FileDialogPickFailure::UnrecognizedResult) => {
+                    if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                        popup.error = Some("文件选择器返回了无法识别的结果，请重试。".to_owned());
+                    }
+                }
+                Err(FileDialogPickFailure::Host(error)) => {
+                    eprintln!("failed to add Native task popup attachment: {error}");
+                    if let Some(popup) = self.task_popups.get_mut(&window_id) {
+                        popup.error = Some("无法添加上下文，请重试。".to_owned());
+                    }
+                }
+            },
+            FileDialogPurpose::DataImportSource => match outcome {
+                Ok(paths) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        self.start_data_import_plan(path);
+                    }
+                }
+                Err(FileDialogPickFailure::UnrecognizedResult) => {
+                    self.data_import.set_error("无法读取所选目录，请重新选择。");
+                }
+                Err(FileDialogPickFailure::Host(error)) => {
+                    eprintln!("LiliaCode data import picker failed: {error}");
+                    self.data_import
+                        .set_error("无法打开目录选择器，请稍后重试。");
+                }
+            },
+            FileDialogPurpose::PluginDirectory => match outcome {
+                Ok(paths) => {
+                    if let Some(path) = paths.into_iter().next() {
+                        self.route_extensions(ExtensionsModuleMessage::PluginDirectoryPicked(
+                            path.to_string_lossy().into_owned(),
+                        ));
+                    }
+                }
+                Err(FileDialogPickFailure::UnrecognizedResult) => {
+                    self.route_extensions(ExtensionsModuleMessage::JobFailed(
+                        "目录选择器返回了无法识别的结果。".to_owned(),
+                    ));
+                }
+                Err(FileDialogPickFailure::Host(error)) => {
+                    self.route_extensions(ExtensionsModuleMessage::JobFailed(error));
+                }
+            },
+        }
+    }
+
     fn pick_sidebar_project_folder(&mut self) {
         let request = DesktopFileDialogRequest {
             dialog_id: "sidebar-project-folder".to_owned(),
@@ -4956,26 +5187,7 @@ impl DesktopProgram {
             select_directories: true,
             multiple: false,
         };
-        let path = match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => paths.into_iter().next(),
-            Ok(_) => {
-                self.error_message = Some("目录选择器返回了无法识别的结果。".to_owned());
-                return;
-            }
-            Err(error) => {
-                eprintln!("failed to pick Native sidebar project folder: {error}");
-                self.error_message = Some("无法打开目录选择器，请稍后重试。".to_owned());
-                return;
-            }
-        };
-        let Some(path) = path else {
-            return;
-        };
-        self.add_sidebar_project_folder(path);
+        self.spawn_file_dialog(FileDialogPurpose::SidebarProjectFolder, request);
     }
 
     fn add_sidebar_project_folder(&mut self, path: PathBuf) {
@@ -5856,26 +6068,7 @@ impl DesktopProgram {
             select_directories: true,
             multiple: false,
         };
-        match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
-                if let Some(path) = paths.into_iter().next() {
-                    self.project_settings.worktree.parent_dir =
-                        Some(path.to_string_lossy().into_owned());
-                    self.project_settings_error = None;
-                }
-            }
-            Ok(_) => {
-                self.project_settings_error = Some("目录选择器返回了无法识别的结果。".to_owned());
-            }
-            Err(error) => {
-                eprintln!("failed to pick Native worktree parent: {error}");
-                self.project_settings_error = Some("无法打开目录选择器，请稍后重试。".to_owned());
-            }
-        }
+        self.spawn_file_dialog(FileDialogPurpose::ProjectWorktreeParent, request);
     }
 
     fn pick_project_clone_parent(&mut self) {
@@ -5894,40 +6087,12 @@ impl DesktopProgram {
             select_directories: true,
             multiple: false,
         };
-        match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
-                if let Some(path) = paths.into_iter().next() {
-                    self.project_clone_parent = path.to_string_lossy().into_owned();
-                    if project_settings_visible {
-                        self.project_settings_error = None;
-                    } else {
-                        self.project_action_error = None;
-                    }
-                    self.persist_project_clone_parent();
-                }
-            }
-            Ok(_) => {
-                let message = "目录选择器返回了无法识别的结果。".to_owned();
-                if project_settings_visible {
-                    self.project_settings_error = Some(message);
-                } else {
-                    self.project_action_error = Some(message);
-                }
-            }
-            Err(error) => {
-                eprintln!("failed to pick Native project clone parent: {error}");
-                let message = "无法打开目录选择器，请稍后重试。".to_owned();
-                if project_settings_visible {
-                    self.project_settings_error = Some(message);
-                } else {
-                    self.project_action_error = Some(message);
-                }
-            }
-        }
+        self.spawn_file_dialog(
+            FileDialogPurpose::ProjectCloneParent {
+                project_settings_visible,
+            },
+            request,
+        );
     }
 
     fn start_project_clone(&mut self) {
@@ -6228,25 +6393,7 @@ impl DesktopProgram {
             select_directories: true,
             multiple: false,
         };
-        match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
-                if let Some(path) = paths.into_iter().next() {
-                    self.project_workspace_edit = path.to_string_lossy().into_owned();
-                    self.project_action_error = None;
-                }
-            }
-            Ok(_) => {
-                self.project_action_error = Some("目录选择器返回了无法识别的结果。".to_owned());
-            }
-            Err(error) => {
-                eprintln!("failed to pick Native project workspace: {error}");
-                self.project_action_error = Some("无法打开目录选择器，请稍后重试。".to_owned());
-            }
-        }
+        self.spawn_file_dialog(FileDialogPurpose::ProjectWorkspace, request);
     }
 
     fn toggle_project_pinned(&mut self) {
@@ -6553,30 +6700,10 @@ impl DesktopProgram {
             select_directories: true,
             multiple: false,
         };
-        match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
-                if let Some(path) = paths.into_iter().next() {
-                    self.set_draft_worktree(
-                        window_id,
-                        DraftWorktreeSelection::Existing(Some(path)),
-                    );
-                }
-            }
-            Ok(_) => {
-                self.set_task_window_error(window_id, "目录选择器返回了无法识别的结果。".to_owned())
-            }
-            Err(error) => {
-                eprintln!("failed to pick Native draft worktree: {error}");
-                self.set_task_window_error(
-                    window_id,
-                    "无法打开目录选择器，请稍后重试。".to_owned(),
-                );
-            }
-        }
+        self.spawn_file_dialog(
+            FileDialogPurpose::DraftWorktree { window_id },
+            request,
+        );
     }
 
     fn draft_worktree_intent(
@@ -10261,6 +10388,9 @@ impl DesktopProgram {
             Message::Update(message) => return self.apply_update_message(message),
             Message::KernelJob(event) => self.apply_kernel_job(event),
             Message::KernelEvent(event) => self.apply_kernel_event(event),
+            Message::FileDialogPicked { purpose, outcome } => {
+                self.apply_file_dialog_pick(purpose, outcome)
+            }
             Message::RequestTitleUpdate { task_id, turn_id } => {
                 self.start_title_update(task_id, turn_id)
             }
@@ -13331,21 +13461,7 @@ impl DesktopProgram {
             select_directories: true,
             multiple: false,
         };
-        match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
-                if let Some(path) = paths.into_iter().next() {
-                    self.start_worktree_operation(WorktreeOperation::Attach(path));
-                }
-            }
-            Ok(_) => {
-                self.task_action_error = Some("目录选择器返回了无法识别的结果。".to_owned());
-            }
-            Err(error) => self.task_action_error = Some(error.to_string()),
-        }
+        self.spawn_file_dialog(FileDialogPurpose::AttachWorktree, request);
     }
 
     fn open_worktree(&mut self) {
@@ -13687,24 +13803,12 @@ impl DesktopProgram {
             select_directories,
             multiple: true,
         };
-        match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
-                self.add_composer_attachments(describe_attachment_paths(paths));
-            }
-            Ok(_) => {
-                self.set_task_window_error(
-                    HostedWindowId::PRIMARY,
-                    "文件选择器返回了无法识别的结果，请重试。".to_owned(),
-                );
-            }
-            Err(error) => {
-                self.set_task_window_error(HostedWindowId::PRIMARY, error.to_string());
-            }
-        }
+        self.spawn_file_dialog(
+            FileDialogPurpose::ComposerAttachments {
+                select_directories,
+            },
+            request,
+        );
     }
 
     fn add_composer_attachments(&mut self, incoming: Vec<ChatAttachment>) -> bool {
@@ -15677,23 +15781,7 @@ impl DesktopProgram {
             select_directories: true,
             multiple: false,
         };
-        match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
-                if let Some(path) = paths.into_iter().next() {
-                    self.start_data_import_plan(path);
-                }
-            }
-            Ok(_) => self.data_import.set_error("无法读取所选目录，请重新选择。"),
-            Err(error) => {
-                eprintln!("LiliaCode data import picker failed: {error}");
-                self.data_import
-                    .set_error("无法打开目录选择器，请稍后重试。")
-            }
-        }
+        self.spawn_file_dialog(FileDialogPurpose::DataImportSource, request);
     }
 
     fn start_data_import_plan(&mut self, source_home: PathBuf) {
@@ -16082,27 +16170,7 @@ impl DesktopProgram {
             select_directories: true,
             multiple: false,
         };
-        match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
-                if let Some(path) = paths.into_iter().next() {
-                    self.route_extensions(ExtensionsModuleMessage::PluginDirectoryPicked(
-                        path.to_string_lossy().into_owned(),
-                    ));
-                }
-            }
-            Ok(_) => {
-                self.route_extensions(ExtensionsModuleMessage::JobFailed(
-                    "目录选择器返回了无法识别的结果。".to_owned(),
-                ));
-            }
-            Err(error) => {
-                self.route_extensions(ExtensionsModuleMessage::JobFailed(error.to_string()))
-            }
-        }
+        self.spawn_file_dialog(FileDialogPurpose::PluginDirectory, request);
     }
 
     fn start_remote_operation(&mut self, request: RemoteRequest) {
@@ -27187,26 +27255,13 @@ impl DesktopProgram {
             select_directories,
             multiple: true,
         };
-        match self
-            .kernel
-            .session()
-            .execute_host(DesktopHostAction::FileDialog(request))
-        {
-            Ok(DesktopHostResult::FileDialogSelection(paths)) => {
-                self.add_task_popup_attachments(window_id, describe_attachment_paths(paths));
-            }
-            Ok(_) => {
-                if let Some(popup) = self.task_popups.get_mut(&window_id) {
-                    popup.error = Some("文件选择器返回了无法识别的结果，请重试。".to_owned());
-                }
-            }
-            Err(error) => {
-                eprintln!("failed to add Native task popup attachment: {error}");
-                if let Some(popup) = self.task_popups.get_mut(&window_id) {
-                    popup.error = Some("无法添加上下文，请重试。".to_owned());
-                }
-            }
-        }
+        self.spawn_file_dialog(
+            FileDialogPurpose::TaskPopupAttachments {
+                window_id,
+                select_directories,
+            },
+            request,
+        );
     }
 
     fn add_task_popup_attachments(
