@@ -2962,6 +2962,18 @@ fn overlay_anchor(
 }
 
 impl ShellHandles {
+    /// 拖动工作区分隔条由 NanaUI 输入层直接改写 shell 模型且不通知宿主，
+    /// 宿主在每次同步前经此拉取，保持平行 controller 与 shell 一致。
+    pub fn live_workspace_model(
+        &self,
+        document: &mut nana_ui::runtime::RuntimeDocument,
+    ) -> Option<WorkspaceModel> {
+        document
+            .context_mut()
+            .read(self.shell, |shell| shell.model.clone())
+            .ok()
+    }
+
     pub fn sync(
         &mut self,
         document: &mut nana_ui::runtime::RuntimeDocument,

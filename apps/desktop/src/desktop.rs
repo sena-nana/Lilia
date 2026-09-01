@@ -102,6 +102,7 @@ use nana_ui::{
     SplitPaneAction, SplitPaneController,
     ThemeMode, ThemeModeExt, ThemeTokens, TreeDropPosition as NanaTreeDropPosition,
     WindowChromeEvent, WindowChromeState, WorkspaceAction, WorkspaceController, WorkspaceLayout,
+    WorkspaceModel,
 };
 use nana_ui_platform::WindowId;
 use serde::{Deserialize, Serialize};
@@ -1206,6 +1207,7 @@ pub struct DesktopProgram {
     data_import: NativeDataImportState,
     home: PathBuf,
     workspace: WorkspaceController,
+    pending_workspace_projection: bool,
     workspace_items: Vec<WorkspaceItem>,
     panel_layout: PanelLayoutSnapshot,
     action_registry: ActionRegistry,
@@ -4546,6 +4548,12 @@ impl DesktopProgram {
     }
 
     fn sync_primary_shell(&mut self) {
+        if self.pending_workspace_projection {
+            // 本周期应用侧已写 controller,投影以 controller 为准,跳过拉取。
+            self.pending_workspace_projection = false;
+        } else {
+            self.adopt_live_workspace_model();
+        }
         let snapshot = self.primary_shell_snapshot();
         let commands = std::mem::take(&mut self.pending_ui_commands);
         let Some(document) = self.documents.get_mut(&WindowId::PRIMARY) else {
@@ -5269,6 +5277,31 @@ impl DesktopProgram {
             as u16;
         self.sidebar_tree_state.sidebar_collapsed = sidebar.collapsed_value();
         self.persist_sidebar_tree_state();
+    }
+
+    /// NanaUI 侧拖动分隔条只改写 shell 模型；在投影前拉回平行 controller，
+    /// 让被拖出的宽度进入应用状态并落盘，否则会被旧 snapshot 覆盖回退。
+    fn adopt_live_workspace_model(&mut self) {
+        let Some(document) = self.documents.get_mut(&WindowId::PRIMARY) else {
+            return;
+        };
+        let Some(live) = self
+            .runtime_shell
+            .as_ref()
+            .and_then(|handles| handles.live_workspace_model(document))
+        else {
+            return;
+        };
+        let Some(adoption) = workspace_adoption(&self.workspace, live) else {
+            return;
+        };
+        self.workspace.adopt_model(adoption.model);
+        if adoption.sidebar_changed {
+            self.persist_sidebar_layout_state();
+        }
+        if adoption.inspector_changed {
+            self.persist_inspector_extent();
+        }
     }
 
     fn close_sidebar_search(&mut self) {
@@ -8238,10 +8271,12 @@ impl DesktopProgram {
                 }
                 _ => InspectorSurface::Task,
             };
-            self.workspace
-                .update(WorkspaceAction::SetRegionSize(RegionId::Inspector, extent));
+            self.apply_workspace_action(WorkspaceAction::SetRegionSize(
+                RegionId::Inspector,
+                extent,
+            ));
         }
-        self.workspace.update(WorkspaceAction::SetRegionVisible(
+        self.apply_workspace_action(WorkspaceAction::SetRegionVisible(
             RegionId::Inspector,
             visible,
         ));
@@ -11131,6 +11166,13 @@ impl DesktopProgram {
         None
     }
 
+    /// 应用侧 workspace 写入统一走这里：投影脏标记保证同周期 sync 以
+    /// controller 为准，不被拉取回的 shell 模型回退。
+    fn apply_workspace_action(&mut self, action: WorkspaceAction) -> bool {
+        self.pending_workspace_projection = true;
+        self.workspace.update(action)
+    }
+
     fn apply_workspace_layout_message(
         &mut self,
         message: WorkspaceLayoutMessage,
@@ -11147,7 +11189,7 @@ impl DesktopProgram {
                         | WorkspaceAction::ResetRegionSize(region)
                         if region == &RegionId::Resources
                 ) || matches!(action, WorkspaceAction::ResizeEnd);
-                let workspace_changed = self.workspace.update(action);
+                let workspace_changed = self.apply_workspace_action(action);
                 if window_resized {
                     self.sync_workspace_splits();
                 }
@@ -16451,10 +16493,10 @@ impl DesktopProgram {
                     )
                 } else if self.active_inspector_panel().is_some() {
                     let started_at = Instant::now();
-                    if self
-                        .workspace
-                        .update(WorkspaceAction::SetRegionSize(RegionId::Inspector, extent))
-                    {
+                    if self.apply_workspace_action(WorkspaceAction::SetRegionSize(
+                        RegionId::Inspector,
+                        extent,
+                    )) {
                         self.pending_debug_frame_response = Some(PendingDebugFrameResponse {
                             command: "resize-panel-frame",
                             started_at,
@@ -28663,6 +28705,7 @@ impl RuntimeProgram for DesktopProgram {
             data_import,
             home,
             workspace,
+            pending_workspace_projection: false,
             workspace_items: Vec::new(),
             panel_layout: PanelLayoutSnapshot::default(),
             action_registry,
@@ -29127,14 +29170,13 @@ impl RuntimeProgram for DesktopProgram {
                     }
                 }
                 self.window_chrome.set_maximized(geometry.maximized);
-                self.workspace.update(WorkspaceAction::WindowResized {
+                self.apply_workspace_action(WorkspaceAction::WindowResized {
                     width: geometry.logical_size.0,
                     height: geometry.logical_size.1,
                 });
-                self.workspace
-                    .update(WorkspaceAction::WindowScaleFactorChanged(
-                        geometry.scale_factor,
-                    ));
+                self.apply_workspace_action(WorkspaceAction::WindowScaleFactorChanged(
+                    geometry.scale_factor,
+                ));
                 self.sync_workspace_splits();
                 HostedProgramUpdate::redraw_primary()
             }
@@ -29221,6 +29263,50 @@ fn is_product_shell_workspace_item(item: &WorkspaceItem) -> bool {
         || item
             .project_surface()
             .is_ok_and(|surface| surface.is_some())
+}
+
+struct WorkspaceAdoption {
+    model: WorkspaceModel,
+    sidebar_changed: bool,
+    inspector_changed: bool,
+}
+
+/// shell live 模型与平行 controller 的合并决策：模型一致时返回 None，
+/// 否则标记哪些区域的持久化状态需要跟随更新。
+fn workspace_adoption(
+    controller: &WorkspaceController,
+    live: WorkspaceModel,
+) -> Option<WorkspaceAdoption> {
+    if live == *controller.model() {
+        return None;
+    }
+    Some(WorkspaceAdoption {
+        sidebar_changed: sidebar_layout_signature(live.layout())
+            != sidebar_layout_signature(controller.layout()),
+        inspector_changed: inspector_layout_signature(live.layout())
+            != inspector_layout_signature(controller.layout()),
+        model: live,
+    })
+}
+
+/// 与 `persist_sidebar_layout_state` 落盘值同构，拖动后仅在会改变落盘结果时写状态。
+fn sidebar_layout_signature(layout: &WorkspaceLayout) -> Option<(u16, bool)> {
+    layout.region(&RegionId::Resources).map(|region| {
+        (
+            region
+                .extent()
+                .round()
+                .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH)
+                as u16,
+            region.collapsed_value(),
+        )
+    })
+}
+
+fn inspector_layout_signature(layout: &WorkspaceLayout) -> Option<f32> {
+    layout
+        .region(&RegionId::Inspector)
+        .map(|region| region.extent())
 }
 
 fn initial_workspace(sidebar_state: &NativeSidebarTreeState) -> WorkspaceController {
@@ -32391,6 +32477,36 @@ mod tests {
             .expect("resources sidebar");
         assert_eq!(sidebar.extent(), SIDEBAR_MAX_WIDTH);
         assert!(sidebar.collapsed_value());
+    }
+
+    #[test]
+    fn workspace_adoption_merges_pointer_drag_and_flags_region_persistence() {
+        use nana_ui::WorkspaceMutation;
+        use std::time::Duration;
+
+        let controller = initial_workspace(&NativeSidebarTreeState::default());
+        assert!(workspace_adoption(&controller, controller.model().clone()).is_none());
+
+        let mut live = controller.model().clone();
+        live.update(
+            WorkspaceMutation::SetRegionSize(RegionId::Resources, 400.0),
+            Duration::ZERO,
+        );
+        let adoption = workspace_adoption(&controller, live.clone()).expect("sidebar drag");
+        assert!(adoption.sidebar_changed);
+        assert!(!adoption.inspector_changed);
+
+        live.update(
+            WorkspaceMutation::SetRegionCollapsed(RegionId::Resources, true),
+            Duration::ZERO,
+        );
+        live.update(
+            WorkspaceMutation::SetRegionSize(RegionId::Inspector, 360.0),
+            Duration::ZERO,
+        );
+        let adoption = workspace_adoption(&controller, live).expect("drag diverges");
+        assert!(adoption.sidebar_changed);
+        assert!(adoption.inspector_changed);
     }
 
     #[test]
