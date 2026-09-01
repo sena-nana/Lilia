@@ -1543,19 +1543,6 @@ impl DesktopProgram {
             crate::runtime_shell::ShellIntent::SidebarSearchChanged(value) => {
                 Message::Sidebar(SidebarMessage::SidebarSearchChanged(value))
             }
-            crate::runtime_shell::ShellIntent::ToggleSidebarProject(id) => {
-                match self
-                    .projects
-                    .iter()
-                    .find(|project| project.id.as_str() == id)
-                    .map(|project| project.id.clone())
-                {
-                    Some(project_id) => {
-                        Message::Sidebar(SidebarMessage::ToggleSidebarProject(project_id))
-                    }
-                    None => return None,
-                }
-            }
             crate::runtime_shell::ShellIntent::ToggleSidebarInbox => {
                 Message::Sidebar(SidebarMessage::ToggleSidebarInbox)
             }
@@ -11354,6 +11341,12 @@ impl DesktopProgram {
                 self.open_project_workspace(ExternalWorkspaceTarget::FileManager);
             }
             ProjectMessage::SelectProject(project_id) => {
+                if !self.sidebar_project_expanded(&project_id) {
+                    self.sidebar_tree_state
+                        .expanded_project_ids
+                        .push(project_id.as_str().to_owned());
+                    self.persist_sidebar_tree_state();
+                }
                 self.close_sidebar_search();
                 self.close_main_conversation_draft();
                 self.automations_open = false;
@@ -11426,20 +11419,6 @@ impl DesktopProgram {
             SidebarMessage::SidebarSearchChanged(value) => {
                 self.sidebar_search_query = value;
                 self.sidebar_search_selection = 0;
-            }
-            SidebarMessage::ToggleSidebarProject(project_id) => {
-                let key = project_id.as_str().to_owned();
-                if let Some(index) = self
-                    .sidebar_tree_state
-                    .expanded_project_ids
-                    .iter()
-                    .position(|candidate| candidate == &key)
-                {
-                    self.sidebar_tree_state.expanded_project_ids.remove(index);
-                } else {
-                    self.sidebar_tree_state.expanded_project_ids.push(key);
-                }
-                self.persist_sidebar_tree_state();
             }
             SidebarMessage::ToggleAllSidebarProjects => {
                 let all_expanded = self
@@ -18676,9 +18655,7 @@ impl DesktopProgram {
             (target_ids::sidebar_project(project.id.as_str()) == target_id)
                 .then(|| project.id.clone())
         }) {
-            self.update_message(Message::Sidebar(SidebarMessage::ToggleSidebarProject(
-                project_id,
-            )));
+            self.update_message(Message::Project(ProjectMessage::SelectProject(project_id)));
             return true;
         }
         if let Some(project_id) = self.projects.iter().find_map(|project| {

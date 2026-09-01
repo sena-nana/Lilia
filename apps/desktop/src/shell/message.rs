@@ -280,7 +280,6 @@ pub enum TaskMessage {
 pub enum SidebarMessage {
     ToggleSidebarSearch,
     SidebarSearchChanged(String),
-    ToggleSidebarProject(ProjectId),
     ToggleAllSidebarProjects,
     ToggleSidebarInbox,
     RevealSidebarInboxTasks,

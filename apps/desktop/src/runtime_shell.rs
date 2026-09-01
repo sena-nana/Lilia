@@ -635,7 +635,6 @@ pub enum ShellIntent {
     SelectTask(TaskId),
     ToggleSidebarSearch,
     SidebarSearchChanged(String),
-    ToggleSidebarProject(String),
     ToggleSidebarInbox,
     RevealSidebarProject(String),
     RevealSidebarInbox,
@@ -6844,8 +6843,9 @@ fn sidebar_row_intent(row: &ShellSidebarRow) -> Option<ShellIntent> {
         ShellSidebarKind::Header => None,
         ShellSidebarKind::DropHint => None,
         ShellSidebarKind::Empty => None,
-        ShellSidebarKind::Project => Some(ShellIntent::ToggleSidebarProject(row.id.clone())),
-        ShellSidebarKind::SearchProject => Some(ShellIntent::SelectProject(row.id.clone())),
+        ShellSidebarKind::Project | ShellSidebarKind::SearchProject => {
+            Some(ShellIntent::SelectProject(row.id.clone()))
+        }
         ShellSidebarKind::Task | ShellSidebarKind::SearchTask | ShellSidebarKind::Running => {
             TaskId::new(&row.id).ok().map(ShellIntent::SelectTask)
         }
@@ -7350,6 +7350,19 @@ mod tests {
             can_stop: false,
             can_menu: false,
             can_draft: false,
+        }
+    }
+
+    #[test]
+    fn project_and_search_rows_both_activate_the_project() {
+        let project = test_sidebar_row("project-lilia", "LiliaCode", ShellSidebarKind::Project);
+        let search =
+            test_sidebar_row("project-lilia", "LiliaCode", ShellSidebarKind::SearchProject);
+        for row in [project, search] {
+            assert!(matches!(
+                sidebar_row_intent(&row),
+                Some(ShellIntent::SelectProject(id)) if id == "project-lilia"
+            ));
         }
     }
 
