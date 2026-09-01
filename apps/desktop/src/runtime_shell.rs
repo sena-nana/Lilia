@@ -7378,18 +7378,44 @@ mod tests {
         (document, handles, primary)
     }
 
+    /// NanaUI SplitPane wraps each pane body in a split-owned `split-pane-slot`
+    /// shell and places the resize handle between the shells; the host content
+    /// sits one level inside the shells.
+    fn split_pane_content_children(
+        document: &nana_ui::runtime::RuntimeDocument,
+        pane: StableNodeId,
+    ) -> Vec<StableNodeId> {
+        let world = document.context().world();
+        world
+            .node(pane)
+            .map(|node| node.children.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|child| match world.node(child).map(|node| node.kind) {
+                Some(nana_ui::runtime::NodeKind::Element { tag })
+                    if tag == "split-pane-slot" =>
+                {
+                    world
+                        .node(child)
+                        .map(|node| node.children.clone())
+                        .unwrap_or_default()
+                }
+                Some(nana_ui::runtime::NodeKind::Element { tag }) if tag == "split-handle" => {
+                    Vec::new()
+                }
+                _ => vec![child],
+            })
+            .collect()
+    }
+
     fn assert_conversation_beside_workspace(
         document: &nana_ui::runtime::RuntimeDocument,
         handles: &ShellHandles,
         primary: Option<StableNodeId>,
     ) {
         assert_eq!(primary, Some(handles.conversation_workspace.stable_id()));
-        let children = document
-            .context()
-            .world()
-            .node(handles.conversation_workspace.stable_id())
-            .map(|node| node.children.clone())
-            .unwrap_or_default();
+        let children =
+            split_pane_content_children(document, handles.conversation_workspace.stable_id());
         assert_eq!(
             children.first().copied(),
             Some(handles.conversation.stable_id())
