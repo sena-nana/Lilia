@@ -20,7 +20,6 @@ const SIDEBAR_TREE_STATE_FILE: &str = "sidebar-tree-state.json";
 const MEMORY_SETTINGS_FILE: &str = "memory.settings.json";
 const WINDOW_STATE_FILE: &str = "main-window-state.json";
 const CONVERSATION_STATUS_STATE_FILE: &str = "conversation-status-window.json";
-const WORKSPACE_STATE_FILE: &str = "main-workspace-state.json";
 const WORKSPACE_TOPOLOGY_STATE_FILE: &str = "workspace-topology-state.json";
 const LEGACY_WORKSPACE_WINDOWS_STATE_FILE: &str = "workspace-windows-state.json";
 pub const LILIA_INSTANCE_IDENTITY: &str = "liliacode";
@@ -136,8 +135,6 @@ pub struct NativeWorkspaceWindowState {
 pub struct NativeWorkspaceTopologyState {
     pub schema_version: u32,
     pub revision: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub primary_workspace: Option<DesktopWorkspaceSessionState>,
     pub windows: Vec<NativeWorkspaceWindowState>,
 }
 
@@ -146,7 +143,6 @@ impl Default for NativeWorkspaceTopologyState {
         Self {
             schema_version: NATIVE_WORKSPACE_TOPOLOGY_SCHEMA_VERSION,
             revision: 0,
-            primary_workspace: None,
             windows: Vec::new(),
         }
     }
@@ -196,8 +192,6 @@ pub struct NativeWorkspaceTopologyStateWriter {
     worker: Option<JoinHandle<()>>,
     #[cfg(any(debug_assertions, test))]
     committed_revision: Arc<AtomicU64>,
-    #[cfg(any(debug_assertions, test))]
-    committed_primary_revision: Arc<AtomicU64>,
 }
 
 pub fn lilia_home() -> Result<PathBuf, String> {
@@ -596,19 +590,6 @@ fn persist_window_state(home: &Path, state: NativeWindowState) -> Result<(), Str
     Ok(())
 }
 
-pub fn load_workspace_state(home: &Path) -> Option<DesktopWorkspaceSessionState> {
-    [
-        home.join(WORKSPACE_STATE_FILE),
-        home.join(format!("{WORKSPACE_STATE_FILE}.bak")),
-    ]
-    .into_iter()
-    .find_map(|path| {
-        fs::read(&path)
-            .ok()
-            .and_then(|content| serde_json::from_slice(&content).ok())
-    })
-}
-
 pub fn load_workspace_topology_state(home: &Path) -> Option<NativeWorkspaceTopologyState> {
     [
         home.join(WORKSPACE_TOPOLOGY_STATE_FILE),
@@ -641,10 +622,7 @@ fn load_legacy_workspace_topology_state(home: &Path) -> Option<NativeWorkspaceTo
             .ok()
             .and_then(|content| serde_json::from_slice(&content).ok())
             .filter(|state: &NativeWorkspaceTopologyState| state.schema_version == 1)
-            .map(|mut state| {
-                state.primary_workspace = load_workspace_state(home);
-                normalize_workspace_topology_state(state)
-            })
+            .map(normalize_workspace_topology_state)
     })
 }
 
@@ -659,26 +637,15 @@ fn normalize_workspace_topology_state(
 }
 
 impl NativeWorkspaceTopologyStateWriter {
-    pub fn start(
-        home: impl Into<PathBuf>,
-        committed_revision: u64,
-        committed_primary_revision: u64,
-    ) -> Result<Self, String> {
+    pub fn start(home: impl Into<PathBuf>, committed_revision: u64) -> Result<Self, String> {
         let home = home.into();
         let (sender, receiver) = mpsc::channel();
         let committed_revision = Arc::new(AtomicU64::new(committed_revision));
         let worker_revision = Arc::clone(&committed_revision);
-        let committed_primary_revision = Arc::new(AtomicU64::new(committed_primary_revision));
-        let worker_primary_revision = Arc::clone(&committed_primary_revision);
         let worker = thread::Builder::new()
             .name("lilia-native-workspace-topology-state".to_owned())
             .spawn(move || {
-                run_workspace_topology_state_writer(
-                    home,
-                    receiver,
-                    worker_revision,
-                    worker_primary_revision,
-                )
+                run_workspace_topology_state_writer(home, receiver, worker_revision)
             })
             .map_err(|error| {
                 format!("failed to start Native workspace topology writer: {error}")
@@ -688,8 +655,6 @@ impl NativeWorkspaceTopologyStateWriter {
             worker: Some(worker),
             #[cfg(any(debug_assertions, test))]
             committed_revision,
-            #[cfg(any(debug_assertions, test))]
-            committed_primary_revision,
         })
     }
 
@@ -703,11 +668,6 @@ impl NativeWorkspaceTopologyStateWriter {
     pub fn committed_revision(&self) -> u64 {
         self.committed_revision.load(Ordering::Acquire)
     }
-
-    #[cfg(any(debug_assertions, test))]
-    pub fn committed_primary_revision(&self) -> u64 {
-        self.committed_primary_revision.load(Ordering::Acquire)
-    }
 }
 
 impl Drop for NativeWorkspaceTopologyStateWriter {
@@ -719,47 +679,10 @@ impl Drop for NativeWorkspaceTopologyStateWriter {
     }
 }
 
-#[cfg(test)]
-fn persist_workspace_state(
-    home: &Path,
-    state: &DesktopWorkspaceSessionState,
-) -> Result<(), String> {
-    fs::create_dir_all(home)
-        .map_err(|error| format!("failed to create LiliaCode home: {error}"))?;
-    let path = home.join(WORKSPACE_STATE_FILE);
-    let staging = home.join(format!("{WORKSPACE_STATE_FILE}.tmp"));
-    let backup = home.join(format!("{WORKSPACE_STATE_FILE}.bak"));
-    let content = serde_json::to_vec_pretty(state)
-        .map_err(|error| format!("failed to serialize Native workspace state: {error}"))?;
-    fs::write(&staging, content)
-        .map_err(|error| format!("failed to stage Native workspace state: {error}"))?;
-    if backup.exists() {
-        fs::remove_file(&backup).map_err(|error| {
-            format!("failed to remove stale Native workspace-state backup: {error}")
-        })?;
-    }
-    if path.exists() {
-        fs::rename(&path, &backup)
-            .map_err(|error| format!("failed to back up Native workspace state: {error}"))?;
-    }
-    if let Err(error) = fs::rename(&staging, &path) {
-        if backup.exists() && !path.exists() {
-            let _ = fs::rename(&backup, &path);
-        }
-        return Err(format!("failed to publish Native workspace state: {error}"));
-    }
-    if backup.exists() {
-        fs::remove_file(&backup)
-            .map_err(|error| format!("failed to remove Native workspace-state backup: {error}"))?;
-    }
-    Ok(())
-}
-
 fn run_workspace_topology_state_writer(
     home: PathBuf,
     receiver: Receiver<WorkspaceTopologyStateMessage>,
     committed_revision: Arc<AtomicU64>,
-    committed_primary_revision: Arc<AtomicU64>,
 ) {
     while let Ok(message) = receiver.recv() {
         let WorkspaceTopologyStateMessage::Persist(mut pending) = message else {
@@ -781,17 +704,7 @@ fn run_workspace_topology_state_writer(
             }
         }
         match persist_workspace_topology_state(&home, &pending) {
-            Ok(()) => {
-                committed_primary_revision.store(
-                    pending
-                        .primary_workspace
-                        .as_ref()
-                        .map(|workspace| workspace.revision)
-                        .unwrap_or_default(),
-                    Ordering::Release,
-                );
-                committed_revision.store(pending.revision, Ordering::Release);
-            }
+            Ok(()) => committed_revision.store(pending.revision, Ordering::Release),
             Err(error) => eprintln!("[native-workspace-topology-state] {error}"),
         }
         if shutdown {
@@ -1164,31 +1077,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_workspace_state_loads_and_recovers_from_backup() {
-        let directory = std::env::temp_dir().join(format!(
-            "lilia-native-workspace-state-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let state = DesktopWorkspaceSessionState {
-            revision: 4,
-            ..DesktopWorkspaceSessionState::default()
-        };
-        persist_workspace_state(&directory, &state).unwrap();
-        assert_eq!(load_workspace_state(&directory), Some(state.clone()));
-
-        let path = directory.join(WORKSPACE_STATE_FILE);
-        let backup = directory.join(format!("{WORKSPACE_STATE_FILE}.bak"));
-        fs::rename(&path, &backup).unwrap();
-        assert_eq!(load_workspace_state(&directory), Some(state));
-        fs::remove_dir_all(directory).unwrap();
-    }
-
-    #[test]
-    fn workspace_topology_round_trips_primary_and_windows_and_recovers_from_backup() {
+    fn workspace_topology_round_trips_windows_and_recovers_from_backup() {
         let directory = std::env::temp_dir().join(format!(
             "lilia-native-workspace-topology-state-{}-{}",
             std::process::id(),
@@ -1200,10 +1089,6 @@ mod tests {
         let state = NativeWorkspaceTopologyState {
             schema_version: NATIVE_WORKSPACE_TOPOLOGY_SCHEMA_VERSION,
             revision: 3,
-            primary_workspace: Some(DesktopWorkspaceSessionState {
-                revision: 7,
-                ..DesktopWorkspaceSessionState::default()
-            }),
             windows: vec![NativeWorkspaceWindowState {
                 window_id: 100,
                 session_id: "lilia.popup.task.one.100".to_owned(),
@@ -1222,7 +1107,7 @@ mod tests {
             }],
         };
         {
-            let writer = NativeWorkspaceTopologyStateWriter::start(&directory, 0, 0).unwrap();
+            let writer = NativeWorkspaceTopologyStateWriter::start(&directory, 0).unwrap();
             writer.record(state.clone()).unwrap();
             let deadline = std::time::Instant::now() + Duration::from_secs(1);
             while writer.committed_revision() != state.revision
@@ -1231,7 +1116,6 @@ mod tests {
                 thread::yield_now();
             }
             assert_eq!(writer.committed_revision(), state.revision);
-            assert_eq!(writer.committed_primary_revision(), 7);
             assert_eq!(
                 load_workspace_topology_state(&directory),
                 Some(state.clone())
@@ -1246,7 +1130,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_workspace_files_migrate_into_one_topology_snapshot() {
+    fn legacy_workspace_topology_migrates_to_current_schema() {
         let directory = std::env::temp_dir().join(format!(
             "lilia-native-workspace-topology-migration-{}-{}",
             std::process::id(),
@@ -1256,17 +1140,13 @@ mod tests {
                 .as_nanos()
         ));
         fs::create_dir_all(&directory).unwrap();
-        let primary_workspace = DesktopWorkspaceSessionState {
-            revision: 9,
-            ..DesktopWorkspaceSessionState::default()
-        };
-        persist_workspace_state(&directory, &primary_workspace).unwrap();
-        let legacy = NativeWorkspaceTopologyState {
+        let mut legacy = serde_json::to_value(NativeWorkspaceTopologyState {
             schema_version: 1,
             revision: 4,
-            primary_workspace: None,
             windows: Vec::new(),
-        };
+        })
+        .unwrap();
+        legacy["primaryWorkspace"] = serde_json::json!({ "revision": 9 });
         fs::write(
             directory.join(LEGACY_WORKSPACE_WINDOWS_STATE_FILE),
             serde_json::to_vec_pretty(&legacy).unwrap(),
@@ -1279,7 +1159,6 @@ mod tests {
             NATIVE_WORKSPACE_TOPOLOGY_SCHEMA_VERSION
         );
         assert_eq!(migrated.revision, 4);
-        assert_eq!(migrated.primary_workspace, Some(primary_workspace));
         fs::remove_dir_all(directory).unwrap();
     }
 
@@ -1297,7 +1176,6 @@ mod tests {
         let mut legacy = serde_json::to_value(NativeWorkspaceTopologyState {
             schema_version: 2,
             revision: 8,
-            primary_workspace: None,
             windows: vec![NativeWorkspaceWindowState {
                 window_id: 100,
                 session_id: "lilia.popup.task.one.100".to_owned(),

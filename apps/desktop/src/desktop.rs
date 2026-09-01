@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use crate::application::DesktopComposerTurnRequest;
 use crate::application::DesktopTodoGuideStatus;
 use crate::application::{
-    clipboard_text_should_be_attachment, default_panel_states, describe_attachment_paths,
+    clipboard_text_should_be_attachment, describe_attachment_paths,
     preview_automatic_turn_selection, ApplicationWorkspaceSurface, ArchitectureChangeStatus,
     ArchitecturePermission, AutomationBeginRunInput, AutomationNode, AutomationNodePosition,
     AutomationResumeRunInput, AutomationRunDetail, AutomationRunStatus, AutomationRunSummary,
@@ -135,10 +135,10 @@ use crate::shell::{
 use crate::shell_integration::{NativeShellIntegration, ShellCommand};
 use crate::storage::{
     lilia_home, load_appearance, load_conversation_status_state, load_sidebar_display_mode,
-    load_sidebar_tree_state, load_theme, load_window_state, load_workspace_state,
-    load_workspace_topology_state, merge_auxiliary_window_state,
-    merge_conversation_status_window_state, normalize_conversation_status_opacity, save_appearance,
-    save_sidebar_display_mode, save_sidebar_tree_state, save_theme,
+    load_sidebar_tree_state, load_theme, load_window_state, load_workspace_topology_state,
+    merge_auxiliary_window_state, merge_conversation_status_window_state,
+    normalize_conversation_status_opacity, save_appearance, save_sidebar_display_mode,
+    save_sidebar_tree_state, save_theme,
     NativeConversationStatusStateWriter, NativeConversationStatusWindowState,
     NativeMemorySettingsStore, NativeSidebarDisplayMode, NativeSidebarTreeState,
     NativeWindowSnapshot, NativeWindowState, NativeWindowStateWriter, NativeWorkspaceTopologyState,
@@ -9768,13 +9768,6 @@ impl DesktopProgram {
     }
 
     fn persist_workspace_topology(&mut self) {
-        let primary_workspace = match self.application_workspace.persisted_state() {
-            Ok(state) => state,
-            Err(error) => {
-                eprintln!("failed to snapshot Native primary workspace: {error}");
-                return;
-            }
-        };
         let mut windows = Vec::with_capacity(self.task_popups.len());
         for popup in self.task_popups.values() {
             if popup.draft.is_some() {
@@ -9801,7 +9794,6 @@ impl DesktopProgram {
         let state = NativeWorkspaceTopologyState {
             schema_version: NATIVE_WORKSPACE_TOPOLOGY_SCHEMA_VERSION,
             revision,
-            primary_workspace: Some(primary_workspace),
             windows,
         };
         match self.workspace_topology_state.record(state) {
@@ -21394,9 +21386,6 @@ impl DesktopProgram {
                 .as_ref()
                 .map(|snapshot| snapshot.revision)
                 .unwrap_or_default(),
-            workspace_persisted_revision: self
-                .workspace_topology_state
-                .committed_primary_revision(),
             workspace_windows_revision: self.workspace_topology_revision,
             workspace_windows_persisted_revision: self
                 .workspace_topology_state
@@ -28336,7 +28325,7 @@ impl RuntimeProgram for DesktopProgram {
         );
         #[cfg(debug_assertions)]
         crate::debug_fixture::prepare(&application)?;
-        let loaded_legacy_workspace_state = load_workspace_state(&home);
+        // 主工作区不随会话恢复，拓扑文件只在启动时用于恢复任务弹窗窗口。
         let loaded_workspace_topology = load_workspace_topology_state(&home);
         let topology_is_current = loaded_workspace_topology
             .as_ref()
@@ -28346,23 +28335,6 @@ impl RuntimeProgram for DesktopProgram {
             .filter(|_| topology_is_current)
             .map(|state| state.revision)
             .unwrap_or_default();
-        let persisted_primary_workspace_revision = loaded_workspace_topology
-            .as_ref()
-            .filter(|_| topology_is_current)
-            .and_then(|state| state.primary_workspace.as_ref())
-            .map(|state| state.revision)
-            .unwrap_or_default();
-        let loaded_primary_workspace_state = loaded_workspace_topology
-            .as_ref()
-            .and_then(|state| state.primary_workspace.as_ref())
-            .or(loaded_legacy_workspace_state.as_ref());
-        if let Some(state) = loaded_primary_workspace_state {
-            let mut state = state.clone();
-            ensure_native_dock_panels(&mut state.panel_layout)?;
-            if let Err(error) = application_workspace.restore(&state) {
-                eprintln!("failed to restore Native workspace state: {error}");
-            }
-        }
         let message_sender: MessageSender = {
             let dispatcher = context.clone();
             Arc::new(move |message| {
@@ -28611,7 +28583,6 @@ impl RuntimeProgram for DesktopProgram {
         let workspace_topology_state = NativeWorkspaceTopologyStateWriter::start(
             &home,
             persisted_workspace_topology_revision,
-            persisted_primary_workspace_revision,
         )?;
         let mut data_import = NativeDataImportState::default();
         data_import.set_restart_required(crate::pending_import::has_pending(&home));
@@ -29225,15 +29196,6 @@ fn initial_workspace(sidebar_state: &NativeSidebarTreeState) -> WorkspaceControl
     ])
     .expect("LiliaCode workspace regions are unique");
     WorkspaceController::with_layout(layout)
-}
-
-fn ensure_native_dock_panels(layout: &mut PanelLayoutSnapshot) -> Result<(), String> {
-    for panel in default_panel_states() {
-        layout
-            .ensure_panel(panel)
-            .map_err(|error| error.to_string())?;
-    }
-    Ok(())
 }
 
 fn collect_session_markdown_image_sources(

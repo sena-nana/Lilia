@@ -145,7 +145,6 @@ pub struct DebugObservation {
     pub page: String,
     pub workspace_session_id: String,
     pub workspace_revision: u64,
-    pub workspace_persisted_revision: u64,
     pub workspace_windows_revision: u64,
     pub workspace_windows_persisted_revision: u64,
     pub workspace_items: Vec<DebugWorkspaceItem>,
@@ -832,7 +831,6 @@ impl DebugObservation {
         let workspace = serde_json::json!({
             "workspaceSessionId": &self.workspace_session_id,
             "workspaceRevision": self.workspace_revision,
-            "workspacePersistedRevision": self.workspace_persisted_revision,
             "workspaceTopologyRevision": self.workspace_windows_revision,
             "workspaceTopologyPersistedRevision": self.workspace_windows_persisted_revision,
             "workspaceWindowsRevision": self.workspace_windows_revision,
@@ -1484,7 +1482,6 @@ mod tests {
             page: "projects".to_owned(),
             workspace_session_id: "lilia.primary".to_owned(),
             workspace_revision: 3,
-            workspace_persisted_revision: 3,
             workspace_windows_revision: 2,
             workspace_windows_persisted_revision: 2,
             workspace_items: vec![DebugWorkspaceItem {
