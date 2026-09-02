@@ -17,8 +17,8 @@ use nana_ui::runtime::{
     SidebarFooterButton, SidebarFrame, SidebarRow, SidebarRowIcon, SidebarRowState, SidebarSection,
     SidebarSectionState, StableNodeId, Stack, Switch, TabOption, Tabs, TabsEvent, Text, TextArea,
     ScrollChanged, TextChanged, TimeSeriesChart, ToggleChanged, TreeDropPosition, TreeView,
-    TreeViewEvent, View, VirtualListItems, VirtualListLayout, sidebar_section_tool_button,
-    sidebar_top_bar_tool_button,
+    TreeViewEvent, View, VirtualListItems, VirtualListLayout, sidebar_row_tool_button,
+    sidebar_section_tool_button, sidebar_top_bar_tool_button,
 };
 use nana_ui::{
     AppearanceEvent, AppearanceSettings, ButtonKind, CommandPaletteEvent, CommandPaletteItem,
@@ -994,7 +994,7 @@ pub struct ShellHandles {
     task_rows: HashMap<String, Entity<SidebarRow>>,
     row_kinds: HashMap<String, ShellSidebarKind>,
     row_tools: HashMap<String, Entity<Stack>>,
-    row_tool_buttons: HashMap<String, Entity<Button>>,
+    row_tool_buttons: HashMap<String, RowToolButton>,
     footer_nav: HashMap<String, Entity<SidebarFooterButton>>,
     provider_badge: Entity<SidebarFooterButton>,
     conversation: Entity<Stack>,
@@ -1380,10 +1380,37 @@ fn fill_workspace_surface(area: &mut TextArea) {
     layout.min_height = Some(LengthSpec::Px(0.0));
 }
 
-fn row_menu_button() -> Button {
-    Button::new("•••")
-        .kind(ButtonKind::Text)
-        .size(ControlSize::Small)
+#[derive(Clone, Copy)]
+enum RowToolButton {
+    Stop(Entity<Button>),
+    Tool(Entity<IconButton>),
+}
+
+impl RowToolButton {
+    fn stable_id(self) -> StableNodeId {
+        match self {
+            Self::Stop(button) => button.stable_id(),
+            Self::Tool(button) => button.stable_id(),
+        }
+    }
+
+    fn attach(self, context: &mut AppContext, host: Entity<Stack>) -> Result<(), FrameworkError> {
+        match self {
+            Self::Stop(button) => context.append_child(host, button),
+            Self::Tool(button) => context.append_child(host, button),
+        }
+    }
+
+    fn remove(self, context: &mut AppContext) -> Result<(), FrameworkError> {
+        match self {
+            Self::Stop(button) => context.remove_view(button).map(|_| ()),
+            Self::Tool(button) => context.remove_view(button).map(|_| ()),
+        }
+    }
+}
+
+fn row_menu_button() -> IconButton {
+    sidebar_row_tool_button(Icon::More, "更多")
 }
 
 fn row_stop_button() -> Button {
@@ -1392,10 +1419,8 @@ fn row_stop_button() -> Button {
         .size(ControlSize::Small)
 }
 
-fn row_draft_button() -> Button {
-    Button::new("＋")
-        .kind(ButtonKind::Text)
-        .size(ControlSize::Small)
+fn row_draft_button() -> IconButton {
+    sidebar_row_tool_button(Icon::Add, "新对话")
 }
 
 fn composer_view(snapshot: &PrimaryShellSnapshot) -> TextArea {
@@ -3352,57 +3377,62 @@ impl ShellHandles {
         if item.can_stop {
             if let Some(task_id) = TaskId::new(&item.id).ok() {
                 let id = format!("{}-stop", item.id);
-                let button = if let Some(button) = self.row_tool_buttons.get(&id).copied() {
-                    button
-                } else {
-                    let button =
-                        context.create_detached_component(document_id, row_stop_button())?;
-                    bind_activate(
-                        context,
-                        button,
-                        Arc::clone(&self.sink),
-                        ShellIntent::StopSidebarTask(task_id),
-                    )?;
-                    self.row_tool_buttons.insert(id, button);
-                    button
-                };
-                tools.push(button.stable_id());
+                let button =
+                    if let Some(RowToolButton::Stop(button)) = self.row_tool_buttons.get(&id) {
+                        *button
+                    } else {
+                        let button =
+                            context.create_detached_component(document_id, row_stop_button())?;
+                        bind_activate(
+                            context,
+                            button,
+                            Arc::clone(&self.sink),
+                            ShellIntent::StopSidebarTask(task_id),
+                        )?;
+                        self.row_tool_buttons.insert(id, RowToolButton::Stop(button));
+                        button
+                    };
+                tools.push(RowToolButton::Stop(button));
             }
         }
         if item.can_draft {
             let id = format!("{}-draft", item.id);
-            let button = if let Some(button) = self.row_tool_buttons.get(&id).copied() {
-                button
-            } else {
-                let button = context.create_detached_component(document_id, row_draft_button())?;
-                bind_activate(
-                    context,
-                    button,
-                    Arc::clone(&self.sink),
-                    ShellIntent::OpenProjectDraft(item.id.clone()),
-                )?;
-                self.row_tool_buttons.insert(id, button);
-                button
-            };
-            tools.push(button.stable_id());
+            let button =
+                if let Some(RowToolButton::Tool(button)) = self.row_tool_buttons.get(&id) {
+                    *button
+                } else {
+                    let button =
+                        context.create_detached_component(document_id, row_draft_button())?;
+                    bind_activate(
+                        context,
+                        button,
+                        Arc::clone(&self.sink),
+                        ShellIntent::OpenProjectDraft(item.id.clone()),
+                    )?;
+                    self.row_tool_buttons.insert(id, RowToolButton::Tool(button));
+                    button
+                };
+            tools.push(RowToolButton::Tool(button));
         }
         if item.can_menu {
             let id = format!("{}-menu", item.id);
-            let button = if let Some(button) = self.row_tool_buttons.get(&id).copied() {
-                button
-            } else {
-                let button = context.create_detached_component(document_id, row_menu_button())?;
-                let intent = match item.kind {
-                    ShellSidebarKind::Task
-                    | ShellSidebarKind::SearchTask
-                    | ShellSidebarKind::Running => ShellIntent::OpenTaskMenu(item.id.clone()),
-                    _ => ShellIntent::OpenProjectMenu(item.id.clone()),
+            let button =
+                if let Some(RowToolButton::Tool(button)) = self.row_tool_buttons.get(&id) {
+                    *button
+                } else {
+                    let button =
+                        context.create_detached_component(document_id, row_menu_button())?;
+                    let intent = match item.kind {
+                        ShellSidebarKind::Task
+                        | ShellSidebarKind::SearchTask
+                        | ShellSidebarKind::Running => ShellIntent::OpenTaskMenu(item.id.clone()),
+                        _ => ShellIntent::OpenProjectMenu(item.id.clone()),
+                    };
+                    bind_activate(context, button, Arc::clone(&self.sink), intent)?;
+                    self.row_tool_buttons.insert(id, RowToolButton::Tool(button));
+                    button
                 };
-                bind_activate(context, button, Arc::clone(&self.sink), intent)?;
-                self.row_tool_buttons.insert(id, button);
-                button
-            };
-            tools.push(button.stable_id());
+            tools.push(RowToolButton::Tool(button));
         }
         if tools.is_empty() {
             return self.clear_row_tools(context, &item.id, Some(row));
@@ -3418,12 +3448,15 @@ impl ShellHandles {
             self.row_tools.insert(item.id.clone(), host);
             host
         };
-        for tool in &tools {
-            if context.world().node(*tool).and_then(|node| node.parent) != Some(host.stable_id()) {
-                context.append_child(host, Entity::<Button>::from_stable_id(*tool))?;
+        let order = tools.iter().map(|tool| tool.stable_id()).collect::<Vec<_>>();
+        for tool in tools {
+            if context.world().node(tool.stable_id()).and_then(|node| node.parent)
+                != Some(host.stable_id())
+            {
+                tool.attach(context, host)?;
             }
         }
-        reconcile_children(context, host.stable_id(), &tools)
+        reconcile_children(context, host.stable_id(), &order)
     }
 
     fn sync_sidebar_row_group(
@@ -3515,7 +3548,7 @@ impl ShellHandles {
         }
         for suffix in ["stop", "draft", "menu"] {
             if let Some(button) = self.row_tool_buttons.remove(&format!("{id}-{suffix}")) {
-                let _ = context.remove_view(button);
+                let _ = button.remove(context);
             }
         }
         Ok(())

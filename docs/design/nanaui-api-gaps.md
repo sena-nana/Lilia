@@ -23,6 +23,7 @@
 | 浮层 | `Dialog` `ConfirmDialog` `Drawer` `Popover` `ActionMenu` `ContextMenu` `CommandPalette` | 确认框、命令面板、ActionMenu、ContextMenu 已用。**未用 Drawer / 通用 Dialog** | 窄宽度检查器可用 `Drawer`。AskUser 保持对话内卡片，不改成模态。 |
 | 锚定菜单 | `AnchoredActionMenu` | 标题栏/侧栏用 `ContextMenu::new(x, y)`，更多菜单曾落到 `(420, 48)` | 后续改锚定触发槽，禁止写死坐标。 |
 | 提示 | `Tooltip` / `IconButton::with_tooltip` | 图标按钮已接默认 tooltip | 保持。 |
+| 图标扩展 | `Icon::from_data(&'static IconData)`（pin `fde5c2bd2`） | 应用尚未持有宿主图标 | 通用 chrome 图标优先补 NanaUI 目录；产品专属图标用 `from_data` 包应用侧 static，不为此升 pin。 |
 | 状态徽标 | `StatusBadge` | 待处理/运行态靠文字或侧栏图标 | 任务行与待处理卡可用徽标，避免自绘 ✓/○。 |
 | 空状态 | `EmptyState` | 自动化已用；对话空状态是大号 `Text` | 对话空状态可改 `EmptyState`。 |
 | Toast / 进度 | `Toast` `Progress` `Spinner` `Skeleton` | 未用 | 长操作（clone、导入、更新）用框架反馈，不自画「处理中」按钮文案。 |
@@ -73,6 +74,6 @@
 
 应用侧先修、不必等 NanaUI 的：`Stack` 替换新容器（pending/检查器顶栏已做）、菜单锚定槽而不是 `(420, 48)`、对话与 IAB 检查器 `EmptyState`（已做）、图标 `IconButton::with_tooltip`、时间线 `materialize_virtual_list`（已做）。
 
-Lilia 已钉 NanaUI `d3cdc1c63`：`IconButton::with_tooltip`、侧栏 `ReorderList` + `ReorderItem::tools`。
+Lilia 已钉 NanaUI `fde5c2bd2`：`IconButton::with_tooltip`、侧栏 `ReorderList` + `ReorderItem::tools`、`sidebar_row_tool_button` 行级工具构造器、`Icon::More` 目录项、`Icon::from_data` 宿主图标扩展。
 
 每条提案应对 NanaUI：现有类型、缺的方法/事件、应用侧绕过、以及一个最小 example。
