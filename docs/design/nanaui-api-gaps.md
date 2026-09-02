@@ -74,6 +74,6 @@
 
 应用侧先修、不必等 NanaUI 的：`Stack` 替换新容器（pending/检查器顶栏已做）、菜单锚定槽而不是 `(420, 48)`、对话与 IAB 检查器 `EmptyState`（已做）、图标 `IconButton::with_tooltip`、时间线 `materialize_virtual_list`（已做）。
 
-Lilia 已钉 NanaUI `fde5c2bd2`：`IconButton::with_tooltip`、侧栏 `ReorderList` + `ReorderItem::tools`、`sidebar_row_tool_button` 行级工具构造器、`Icon::More` 目录项、`Icon::from_data` 宿主图标扩展。
+Lilia 已钉 NanaUI `cfacf76f3`：`IconButton::with_tooltip`、侧栏 `ReorderList` + `ReorderItem::tools`、`sidebar_row_tool_button` 行级工具构造器、`Icon::More` 目录项、`Icon::from_data` 宿主图标扩展、行工具槽统一承担图标列对齐（按钮簇间隔回归宿主 gap）。
 
 每条提案应对 NanaUI：现有类型、缺的方法/事件、应用侧绕过、以及一个最小 example。
