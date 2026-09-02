@@ -72,8 +72,8 @@
 4. **DiffView** — 挡住 Agent 补丁审阅。
 5. **StatusBar 槽** — 体验，可后做。
 
-应用侧先修、不必等 NanaUI 的：`Stack` 替换新容器（pending/检查器顶栏已做）、菜单锚定槽而不是 `(420, 48)`、对话与 IAB 检查器 `EmptyState`（已做）、图标 `IconButton::with_tooltip`、时间线 `materialize_virtual_list`（已做）。
+应用侧先修、不必等 NanaUI 的：`Stack` 替换新容器（pending/检查器顶栏已做）、菜单锚定槽而不是 `(420, 48)`（行菜单已改为按 more 按钮布局盒 / 右键光标点锚定，配合 `ContextMenu::place_in` 视口钳制）、对话与 IAB 检查器 `EmptyState`（已做）、图标 `IconButton::with_tooltip`、时间线 `materialize_virtual_list`（已做）。
 
-Lilia 已钉 NanaUI `cfacf76f3`：`IconButton::with_tooltip`、侧栏 `ReorderList` + `ReorderItem::tools`、`sidebar_row_tool_button` 行级工具构造器、`Icon::More` 目录项、`Icon::from_data` 宿主图标扩展、行工具槽统一承担图标列对齐（按钮簇间隔回归宿主 gap）。
+Lilia 已钉 NanaUI `180bac35c`：`IconButton::with_tooltip`、侧栏 `ReorderList` + `ReorderItem::tools`、`sidebar_row_tool_button` 行级工具构造器、`Icon::More` 目录项、`Icon::from_data` 宿主图标扩展、行工具槽统一承担图标列对齐（按钮簇间隔回归宿主 gap）、`ReorderListEvent::Secondary`（行表面 `pointer_events: none`，行体右键由 `secondary_press_at` 冒泡解析到行并发事件，`x`/`y` 为窗口坐标可直接作菜单锚点）。
 
 每条提案应对 NanaUI：现有类型、缺的方法/事件、应用侧绕过、以及一个最小 example。

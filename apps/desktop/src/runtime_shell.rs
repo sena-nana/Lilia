@@ -16,8 +16,8 @@ use nana_ui::runtime::{
     SettingsCard, SettingsPage, SettingsRow, SettingsSidebar, SettingsTabSelected, SidebarFooter,
     SidebarFooterButton, SidebarFrame, SidebarRow, SidebarRowIcon, SidebarRowState, SidebarSection,
     SidebarSectionState, StableNodeId, Stack, Switch, TabOption, Tabs, TabsEvent, Text, TextArea,
-    ScrollChanged, TextChanged, TimeSeriesChart, ToggleChanged, TreeDropPosition, TreeView,
-    TreeViewEvent, View, VirtualListItems, VirtualListLayout, sidebar_row_tool_button,
+    ScrollChanged, SecondaryPress, TextChanged, TimeSeriesChart, ToggleChanged, TreeDropPosition,
+    TreeView, TreeViewEvent, View, VirtualListItems, VirtualListLayout, sidebar_row_tool_button,
     sidebar_section_tool_button, sidebar_top_bar_tool_button,
 };
 use nana_ui::{
@@ -548,6 +548,7 @@ pub struct PrimaryShellSnapshot {
     pub sidebar_rows: Vec<ShellSidebarRow>,
     pub sidebar_menu: Vec<ShellMenuItem>,
     pub sidebar_menu_anchor: Option<(f32, f32)>,
+    pub sidebar_menu_owner: Option<String>,
     pub add_project_menu_open: bool,
     pub workspace: WorkspaceModel,
     pub tasks: Vec<ShellTaskRow>,
@@ -640,8 +641,16 @@ pub enum ShellIntent {
     RevealSidebarInbox,
     OpenProjectsOverview,
     OpenAddProjectMenu,
-    OpenProjectMenu(String),
-    OpenTaskMenu(String),
+    OpenProjectMenu {
+        id: String,
+        anchor: Option<(f32, f32)>,
+    },
+    OpenTaskMenu {
+        id: String,
+        anchor: Option<(f32, f32)>,
+    },
+    /// 行体右键（列表冒泡解析）弹同款菜单，锚点为光标点。
+    OpenRowMenu { id: String, anchor: (f32, f32) },
     ReorderSidebar {
         source: String,
         before: Option<String>,
@@ -1378,6 +1387,14 @@ fn fill_workspace_surface(area: &mut TextArea) {
     layout.height = Some(LengthSpec::Fill);
     layout.flex_grow = Some(1.0);
     layout.min_height = Some(LengthSpec::Px(0.0));
+}
+
+/// 侧边栏菜单锚定来源；节点变体在同步时解析为按钮下方（右下展开）坐标。
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SidebarMenuAnchor {
+    AddProjectButton(Option<(f32, f32)>),
+    RowMenuButton(StableNodeId),
+    Point((f32, f32)),
 }
 
 #[derive(Clone, Copy)]
@@ -2963,6 +2980,19 @@ fn primary_content_id(
     }
 }
 
+fn sidebar_menu_view(
+    context: &AppContext,
+    host: Entity<OverlayHost>,
+    anchor: (f32, f32),
+    items: Vec<ContextMenuItem>,
+) -> ContextMenu {
+    let mut view = ContextMenu::new(anchor.0, anchor.1).items(items).open(true);
+    if let Some(viewport) = context.world().layout_box(host.stable_id()) {
+        view.place_in(viewport);
+    }
+    view
+}
+
 fn overlay_anchor(
     context: &AppContext,
     node: StableNodeId,
@@ -3425,8 +3455,14 @@ impl ShellHandles {
                     let intent = match item.kind {
                         ShellSidebarKind::Task
                         | ShellSidebarKind::SearchTask
-                        | ShellSidebarKind::Running => ShellIntent::OpenTaskMenu(item.id.clone()),
-                        _ => ShellIntent::OpenProjectMenu(item.id.clone()),
+                        | ShellSidebarKind::Running => ShellIntent::OpenTaskMenu {
+                            id: item.id.clone(),
+                            anchor: None,
+                        },
+                        _ => ShellIntent::OpenProjectMenu {
+                            id: item.id.clone(),
+                            anchor: None,
+                        },
                     };
                     bind_activate(context, button, Arc::clone(&self.sink), intent)?;
                     self.row_tool_buttons.insert(id, RowToolButton::Tool(button));
@@ -3522,6 +3558,16 @@ impl ShellHandles {
                 if let Some(intent) = sidebar_row_intent(item) {
                     bind_activate(context, row, Arc::clone(&self.sink), intent)?;
                 }
+                let sink = Arc::clone(&self.sink);
+                let row_id = item.id.clone();
+                let row_kind = item.kind;
+                context.on(row, move |_, press: &SecondaryPress, _| {
+                    if let Some(intent) =
+                        sidebar_row_menu_intent(row_kind, row_id.as_str(), (press.x, press.y))
+                    {
+                        emit(&sink, intent);
+                    }
+                })?;
                 self.task_rows.insert(item.id.clone(), row);
                 self.row_kinds.insert(item.id.clone(), item.kind);
                 row
@@ -6290,6 +6336,28 @@ impl ShellHandles {
         items
     }
 
+    /// 侧边栏菜单锚点来源：加项目菜单锚在区块加号按钮下方；行菜单优先用
+    /// 右键光标点，否则锚在该行 more 按钮下方，向右下角展开。
+    fn sidebar_menu_anchor_source(&self, snapshot: &PrimaryShellSnapshot) -> SidebarMenuAnchor {
+        if snapshot.add_project_menu_open {
+            return SidebarMenuAnchor::AddProjectButton(snapshot.sidebar_menu_anchor);
+        }
+        if let Some(anchor) = snapshot.sidebar_menu_anchor {
+            return SidebarMenuAnchor::Point(anchor);
+        }
+        snapshot
+            .sidebar_menu_owner
+            .as_deref()
+            .and_then(|owner| match self.row_tool_buttons.get(format!("{owner}-menu").as_str()) {
+                Some(RowToolButton::Tool(button)) => Some(button.stable_id()),
+                _ => None,
+            })
+            .map_or(
+                SidebarMenuAnchor::AddProjectButton(None),
+                SidebarMenuAnchor::RowMenuButton,
+            )
+    }
+
     fn sync_overlay(
         &mut self,
         context: &mut AppContext,
@@ -6427,28 +6495,27 @@ impl ShellHandles {
                 .iter()
                 .map(|item| ContextMenuItem::new(item.id.clone(), item.label.clone()))
                 .collect();
-            let (anchor_x, anchor_y) = if snapshot.add_project_menu_open {
-                overlay_anchor(
+            let anchor = match self.sidebar_menu_anchor_source(snapshot) {
+                SidebarMenuAnchor::AddProjectButton(fallback) => overlay_anchor(
                     context,
                     self.add_project_menu.stable_id(),
                     true,
-                    snapshot.sidebar_menu_anchor,
-                )
-            } else {
-                snapshot.sidebar_menu_anchor.unwrap_or_else(|| {
-                    overlay_anchor(context, self.add_project_menu.stable_id(), true, None)
-                })
+                    fallback,
+                ),
+                SidebarMenuAnchor::RowMenuButton(button) => {
+                    overlay_anchor(context, button, true, None)
+                }
+                SidebarMenuAnchor::Point(point) => point,
             };
             let menu = if let Some(menu) = self.more_menu {
-                context.update_component(menu, |view, _| {
-                    *view = ContextMenu::new(anchor_x, anchor_y).items(items).open(true);
+                let view = sidebar_menu_view(context, host, anchor, items);
+                context.update_component(menu, |slot, _| {
+                    *slot = view;
                 })?;
                 menu
             } else {
-                let menu = context.create_detached_component(
-                    document_id,
-                    ContextMenu::new(anchor_x, anchor_y).items(items).open(true),
-                )?;
+                let view = sidebar_menu_view(context, host, anchor, items);
+                let menu = context.create_detached_component(document_id, view)?;
                 let sink = Arc::clone(&self.sink);
                 context.on(menu, move |_, event: &ContextMenuEvent, _| match event {
                     ContextMenuEvent::Select(value) => {
@@ -6806,6 +6873,10 @@ fn sidebar_reorder_intent(event: &ReorderListEvent) -> Option<ShellIntent> {
             source: source.to_string(),
             before: before.as_ref().map(|value| value.to_string()),
         }),
+        ReorderListEvent::Secondary { source, x, y } => Some(ShellIntent::OpenRowMenu {
+            id: source.to_string(),
+            anchor: (*x, *y),
+        }),
         ReorderListEvent::TreeDrop { source, intent } => Some(ShellIntent::SidebarTreeDrop {
             source: source.to_string(),
             target: intent.target.to_string(),
@@ -6866,6 +6937,32 @@ fn timeline_action_is_mounted(action_id: &str, mounted: &HashSet<String>) -> boo
         .into_iter()
         .find_map(|prefix| action_id.strip_prefix(prefix))
         .is_some_and(|id| mounted.contains(id))
+}
+
+/// 行右键菜单与行内 more 按钮同源：项目类行弹项目菜单，会话类行弹任务
+/// 菜单；`anchor` 为右键光标点，菜单从该点向右下角展开。
+fn sidebar_row_menu_intent(
+    kind: ShellSidebarKind,
+    id: &str,
+    anchor: (f32, f32),
+) -> Option<ShellIntent> {
+    match kind {
+        ShellSidebarKind::Project | ShellSidebarKind::SearchProject => {
+            Some(ShellIntent::OpenProjectMenu {
+                id: id.to_owned(),
+                anchor: Some(anchor),
+            })
+        }
+        ShellSidebarKind::Task | ShellSidebarKind::SearchTask | ShellSidebarKind::Running => {
+            TaskId::new(id)
+                .ok()
+                .map(|_| ShellIntent::OpenTaskMenu {
+                    id: id.to_owned(),
+                    anchor: Some(anchor),
+                })
+        }
+        _ => None,
+    }
 }
 
 fn sidebar_row_intent(row: &ShellSidebarRow) -> Option<ShellIntent> {
@@ -7217,6 +7314,7 @@ pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
         sidebar_rows: Vec::new(),
         sidebar_menu: Vec::new(),
         sidebar_menu_anchor: None,
+        sidebar_menu_owner: None,
         add_project_menu_open: false,
         workspace: WorkspaceModel::new(),
         tasks: Vec::new(),
@@ -8257,6 +8355,54 @@ mod tests {
                 .completion_items
                 .get("slash-status")
                 .map(|item| item.stable_id())
+        );
+    }
+
+    #[test]
+    fn project_row_menu_anchors_to_its_more_button() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        let mut project =
+            test_sidebar_row("project-lilia", "LiliaCode", ShellSidebarKind::Project);
+        project.can_menu = true;
+        snapshot.sidebar_rows = vec![project];
+        snapshot.sidebar_menu = vec![ShellMenuItem {
+            id: "open-project".to_owned(),
+            label: "进入项目".to_owned(),
+        }];
+        snapshot.sidebar_menu_owner = Some("project-lilia".to_owned());
+        let (mut document, mut handles, _primary) = mounted_primary(&snapshot);
+        handles.sync(&mut document, &snapshot).expect("sync shell");
+
+        let button = match handles.row_tool_buttons.get("project-lilia-menu") {
+            Some(RowToolButton::Tool(button)) => button.stable_id(),
+            _ => panic!("project row menu button must be mounted"),
+        };
+        assert_eq!(
+            handles.sidebar_menu_anchor_source(&snapshot),
+            SidebarMenuAnchor::RowMenuButton(button)
+        );
+    }
+
+    #[test]
+    fn right_click_anchor_wins_and_add_project_menu_keeps_its_button() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.sidebar_menu = vec![ShellMenuItem {
+            id: "open-project".to_owned(),
+            label: "进入项目".to_owned(),
+        }];
+        snapshot.sidebar_menu_owner = Some("project-lilia".to_owned());
+        snapshot.sidebar_menu_anchor = Some((40.0, 220.0));
+        let (_document, handles, _primary) = mounted_primary(&snapshot);
+        assert_eq!(
+            handles.sidebar_menu_anchor_source(&snapshot),
+            SidebarMenuAnchor::Point((40.0, 220.0))
+        );
+
+        snapshot.sidebar_menu_anchor = None;
+        snapshot.add_project_menu_open = true;
+        assert_eq!(
+            handles.sidebar_menu_anchor_source(&snapshot),
+            SidebarMenuAnchor::AddProjectButton(None)
         );
     }
 

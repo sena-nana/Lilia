@@ -652,6 +652,15 @@ impl SidebarMenuTarget {
             Self::Task(id) => format!("task-{}", id.as_str()),
         }
     }
+
+    /// 打开菜单的行 id；加项目菜单挂在区块头部，无所属行。
+    fn owner_row_id(&self) -> Option<String> {
+        match self {
+            Self::AddProject => None,
+            Self::Project(id) => Some(id.as_str().to_owned()),
+            Self::Task(id) => Some(id.as_str().to_owned()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -767,7 +776,7 @@ impl From<NanaTreeDropPosition> for SidebarTreeDropPosition {
 #[derive(Clone, Debug)]
 struct SidebarMenuState {
     target: SidebarMenuTarget,
-    anchor: Point,
+    anchor: Option<Point>,
     pending: Option<SidebarMenuAction>,
 }
 
@@ -778,7 +787,7 @@ enum SidebarSearchTarget {
 }
 
 impl SidebarMenuState {
-    fn new(target: SidebarMenuTarget, anchor: Point) -> Self {
+    fn new(target: SidebarMenuTarget, anchor: Option<Point>) -> Self {
         Self {
             target,
             anchor,
@@ -1575,10 +1584,10 @@ impl DesktopProgram {
                 }
                 Message::Sidebar(SidebarMessage::OpenSidebarMenu {
                     target: SidebarMenuTarget::AddProject,
-                    anchor_y: 96.0,
+                    anchor: None,
                 })
             }
-            crate::runtime_shell::ShellIntent::OpenProjectMenu(id) => {
+            crate::runtime_shell::ShellIntent::OpenProjectMenu { id, anchor } => {
                 match self
                     .projects
                     .iter()
@@ -1587,18 +1596,20 @@ impl DesktopProgram {
                 {
                     Some(project_id) => Message::Sidebar(SidebarMessage::OpenSidebarMenu {
                         target: SidebarMenuTarget::Project(project_id),
-                        anchor_y: 126.0,
+                        anchor,
                     }),
                     None => return None,
                 }
             }
-            crate::runtime_shell::ShellIntent::OpenTaskMenu(id) => match TaskId::new(&id) {
-                Ok(task_id) => Message::Sidebar(SidebarMessage::OpenSidebarMenu {
-                    target: SidebarMenuTarget::Task(task_id),
-                    anchor_y: 126.0,
-                }),
-                Err(_) => return None,
-            },
+            crate::runtime_shell::ShellIntent::OpenTaskMenu { id, anchor } => {
+                match TaskId::new(&id) {
+                    Ok(task_id) => Message::Sidebar(SidebarMessage::OpenSidebarMenu {
+                        target: SidebarMenuTarget::Task(task_id),
+                        anchor,
+                    }),
+                    Err(_) => return None,
+                }
+            }
             crate::runtime_shell::ShellIntent::ReorderSidebar { source, before } => {
                 match TaskId::new(&source) {
                     Ok(task_id) => Message::Task(TaskMessage::ReorderTask {
@@ -1670,6 +1681,28 @@ impl DesktopProgram {
                 };
                 self.update_sidebar_menu(HostedContextMenuEvent::Select(action));
                 return None;
+            }
+            crate::runtime_shell::ShellIntent::OpenRowMenu { id, anchor } => {
+                let anchor = Some(anchor);
+                if let Some(project_id) = self
+                    .projects
+                    .iter()
+                    .find(|project| project.id.as_str() == id)
+                    .map(|project| project.id.clone())
+                {
+                    Message::Sidebar(SidebarMessage::OpenSidebarMenu {
+                        target: SidebarMenuTarget::Project(project_id),
+                        anchor,
+                    })
+                } else {
+                    match TaskId::new(&id) {
+                        Ok(task_id) => Message::Sidebar(SidebarMessage::OpenSidebarMenu {
+                            target: SidebarMenuTarget::Task(task_id),
+                            anchor,
+                        }),
+                        Err(_) => return None,
+                    }
+                }
             }
             crate::runtime_shell::ShellIntent::OpenAutomations => {
                 Message::Automation(AutomationMessage::OpenAutomations)
@@ -4010,7 +4043,12 @@ impl DesktopProgram {
             sidebar_menu_anchor: self
                 .sidebar_menu
                 .as_ref()
-                .map(|menu| (menu.anchor.x, menu.anchor.y)),
+                .and_then(|menu| menu.anchor)
+                .map(|anchor| (anchor.x, anchor.y)),
+            sidebar_menu_owner: self
+                .sidebar_menu
+                .as_ref()
+                .and_then(|menu| menu.target.owner_row_id()),
             add_project_menu_open: matches!(
                 self.sidebar_menu.as_ref().map(|menu| &menu.target),
                 Some(SidebarMenuTarget::AddProject)
@@ -11445,19 +11483,11 @@ impl DesktopProgram {
             SidebarMessage::RevealSidebarProjectTasks(project_id) => {
                 self.sidebar_revealed_projects.insert(project_id);
             }
-            SidebarMessage::OpenSidebarMenu { target, anchor_y } => {
+            SidebarMessage::OpenSidebarMenu { target, anchor } => {
                 self.titlebar_menu_open = false;
-                let anchor_x = self
-                    .workspace
-                    .viewport_geometry()
-                    .region(&RegionId::Resources)
-                    .filter(|sidebar| sidebar.visible)
-                    .map_or(214.0, |sidebar| {
-                        sidebar.logical.x + sidebar.logical.width - 8.0
-                    });
                 self.sidebar_menu = Some(SidebarMenuState::new(
                     target,
-                    Point::new(anchor_x, anchor_y),
+                    anchor.map(|(x, y)| Point::new(x, y)),
                 ));
             }
             SidebarMessage::SidebarMenu(event) => self.update_sidebar_menu(event),
@@ -18623,7 +18653,7 @@ impl DesktopProgram {
         if target_id == target_ids::SIDEBAR_PROJECTS_ADD {
             self.update_message(Message::Sidebar(SidebarMessage::OpenSidebarMenu {
                 target: SidebarMenuTarget::AddProject,
-                anchor_y: 96.0,
+                anchor: None,
             }));
             return true;
         }
@@ -18664,7 +18694,7 @@ impl DesktopProgram {
         }) {
             self.update_message(Message::Sidebar(SidebarMessage::OpenSidebarMenu {
                 target: SidebarMenuTarget::Project(project_id),
-                anchor_y: 126.0,
+                anchor: None,
             }));
             return true;
         }
@@ -18688,7 +18718,7 @@ impl DesktopProgram {
         }) {
             self.update_message(Message::Sidebar(SidebarMessage::OpenSidebarMenu {
                 target: SidebarMenuTarget::Task(task_id),
-                anchor_y: 164.0,
+                anchor: None,
             }));
             return true;
         }

@@ -286,7 +286,7 @@ pub enum SidebarMessage {
     RevealSidebarProjectTasks(ProjectId),
     OpenSidebarMenu {
         target: SidebarMenuTarget,
-        anchor_y: f32,
+        anchor: Option<(f32, f32)>,
     },
     SidebarMenu(HostedContextMenuEvent<SidebarMenuAction>),
     OpenSidebarProjectDraft(ProjectId),
