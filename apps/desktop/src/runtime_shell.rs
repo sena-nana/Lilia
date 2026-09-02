@@ -24,7 +24,7 @@ use nana_ui::{
     AppearanceEvent, AppearanceSettings, ButtonKind, CommandPaletteEvent, CommandPaletteItem,
     ControlSize, Icon, SettingsModel, SettingsState, SettingsTabId, SplitAxis, SplitPaneModel,
     ThemeMode, WindowChrome,
-    WindowChromeAction, WindowChromeEvent, WorkspaceModel, UI_METRICS,
+    WindowChromeAction, WindowChromeEvent, WorkspaceModel, UI_METRICS, PopoverPlacement,
 };
 
 use crate::runtime_compat::{HostedUiCommand, HostedWindowId};
@@ -575,8 +575,9 @@ pub struct PrimaryShellSnapshot {
     pub plan_mode: bool,
     pub goal_mode: bool,
     pub permission_label: String,
+    pub permission_selection: String,
     pub worktree_label: Option<String>,
-    pub worktree_can_pick: bool,
+    pub worktree_selection: String,
     pub suggestions: Vec<ShellSuggestionRow>,
     pub suggestions_can_refresh: bool,
     pub command_palette_open: bool,
@@ -597,6 +598,8 @@ pub struct PrimaryShellSnapshot {
     pub mention_items: Vec<ShellMentionItem>,
     pub timeline_can_load_earlier: bool,
     pub composer_plus_open: bool,
+    pub composer_permission_menu_open: bool,
+    pub composer_worktree_menu_open: bool,
     pub project_page: Option<ShellProjectPage>,
     pub project_page_title: String,
     pub project_page_body: String,
@@ -692,9 +695,10 @@ pub enum ShellIntent {
 
     ToggleComposerPlus,
     ComposerPlus(String),
-    CyclePermission,
-    CycleWorktree,
-    PickWorktree,
+    ToggleComposerPermission,
+    ComposerPermission(String),
+    ToggleComposerWorktree,
+    ComposerWorktree(String),
     ApplySlash(String),
     SelectMention(String),
     ToggleTimelineExpand(String),
@@ -1041,20 +1045,22 @@ pub struct ShellHandles {
     composer_toolbar: Entity<Stack>,
     extras: Entity<Stack>,
     extra_buttons: HashMap<String, Entity<Button>>,
-    plus_items: HashMap<String, Entity<ActionMenuItem>>,
     completion_slot: Entity<Stack>,
     completion_items: HashMap<String, Entity<ActionMenuItem>>,
     plus_slot: Entity<Stack>,
     plus_menu: Entity<ActionMenu>,
+    plus_items: HashMap<String, Entity<ActionMenuItem>>,
     attach: Entity<IconButton>,
     permission_slot: Entity<Stack>,
     #[cfg(test)]
     permission_icon: Entity<IconGlyph>,
-    permission: Entity<Button>,
+    permission_menu: Entity<ActionMenu>,
+    permission_items: HashMap<String, Entity<ActionMenuItem>>,
     worktree_slot: Entity<Stack>,
+    #[cfg(test)]
     worktree_icon: Entity<IconGlyph>,
-    worktree: Entity<Button>,
-    worktree_pick: Entity<IconButton>,
+    worktree_menu: Entity<ActionMenu>,
+    worktree_items: HashMap<String, Entity<ActionMenuItem>>,
     pending_panel: Entity<Stack>,
     pending_actions: Entity<Stack>,
     pending_title: Entity<Text>,
@@ -1457,14 +1463,102 @@ fn composer_plus_menu(open: bool) -> ActionMenu {
     ActionMenu::new().trigger_icon(Icon::Add, "添加").open(open)
 }
 
-fn composer_attach_button() -> IconButton {
-    IconButton::new(Icon::Paperclip, "添加文件")
-        .kind(ButtonKind::Text)
-        .size(ControlSize::Small)
+/// 权限与工作树菜单：文本触发的下拉，向上展开（输入条贴着窗口底部）。
+fn composer_menu(label: &str, open: bool) -> ActionMenu {
+    ActionMenu::new()
+        .trigger(label.to_owned())
+        .placement(PopoverPlacement::Top)
+        .open(open)
 }
 
-fn worktree_pick_button() -> IconButton {
-    IconButton::new(Icon::Folder, "选择工作树")
+/// 权限与工作树菜单的固定选项；id 同时是快照里的当前选择标识与菜单项 intent 载荷。
+pub(crate) const COMPOSER_PERMISSION_OPTIONS: [(&str, &str); 3] =
+    [("ask", "询问"), ("readonly", "只读"), ("full", "完全")];
+
+pub(crate) const COMPOSER_WORKTREE_OPTIONS: [(&str, &str); 3] = [
+    ("current", "当前仓库"),
+    ("create", "新建工作树"),
+    ("existing", "已有工作树…"),
+];
+
+pub(crate) fn permission_selection(
+    permission: crate::application::DesktopExecutionPermission,
+) -> (&'static str, &'static str) {
+    use crate::application::DesktopExecutionPermission;
+    match permission {
+        DesktopExecutionPermission::Ask => COMPOSER_PERMISSION_OPTIONS[0],
+        DesktopExecutionPermission::Readonly => COMPOSER_PERMISSION_OPTIONS[1],
+        DesktopExecutionPermission::Full => COMPOSER_PERMISSION_OPTIONS[2],
+    }
+}
+
+pub(crate) fn permission_from_selection_id(
+    id: &str,
+) -> Option<crate::application::DesktopExecutionPermission> {
+    use crate::application::DesktopExecutionPermission;
+    match COMPOSER_PERMISSION_OPTIONS.iter().position(|(key, _)| *key == id) {
+        Some(0) => Some(DesktopExecutionPermission::Ask),
+        Some(1) => Some(DesktopExecutionPermission::Readonly),
+        Some(2) => Some(DesktopExecutionPermission::Full),
+        _ => None,
+    }
+}
+
+/// 打开时按 `entries`（id、文案、是否当前项）补齐菜单行并绑定 intent，关闭时清空。
+fn sync_action_menu_items(
+    context: &mut AppContext,
+    document_id: DocumentId,
+    menu: Entity<ActionMenu>,
+    open: bool,
+    entries: &[(String, String, bool)],
+    items: &mut HashMap<String, Entity<ActionMenuItem>>,
+    sink: &IntentSink,
+    intent: impl Fn(&str) -> ShellIntent,
+) -> Result<(), FrameworkError> {
+    let mut order = Vec::new();
+    if open {
+        for (id, label, active) in entries {
+            let item = if let Some(item) = items.get(id).copied() {
+                context.update_component(item, |view, _| {
+                    *view = action_menu_item(label, *active);
+                })?;
+                item
+            } else {
+                let item = context
+                    .create_detached_component(document_id, action_menu_item(label, *active))?;
+                bind_activate(context, item, Arc::clone(sink), intent(id))?;
+                items.insert(id.clone(), item);
+                item
+            };
+            order.push(item.stable_id());
+        }
+        let keep: HashSet<&String> = entries.iter().map(|(id, _, _)| id).collect();
+        items.retain(|key, item| {
+            if keep.contains(key) {
+                true
+            } else {
+                let _ = context.remove_view(*item);
+                false
+            }
+        });
+    } else {
+        for (_, item) in items.drain() {
+            let _ = context.remove_view(item);
+        }
+    }
+    reconcile_children(context, menu.stable_id(), &order)
+}
+
+fn action_menu_item(label: &str, active: bool) -> ActionMenuItem {
+    let mut item = ActionMenuItem::new(label.to_owned());
+    if active {
+        item = item.active(true);
+    }
+    item
+}
+
+fn composer_attach_button() -> IconButton {
+    IconButton::new(Icon::Paperclip, "添加文件")
         .kind(ButtonKind::Text)
         .size(ControlSize::Small)
 }
@@ -2148,45 +2242,37 @@ pub fn mount_primary_shell(
         context.create_detached_component(document_id, Stack::row(4.0))?;
     let permission_icon =
         context.create_detached_component(document_id, IconGlyph::new(Icon::ShieldCheck))?;
-    let permission = context.create_detached_component(
+    let permission_menu = context.create_detached_component(
         document_id,
-        pill_button(&snapshot.permission_label, ButtonKind::Text),
+        composer_menu(
+            &snapshot.permission_label,
+            snapshot.composer_permission_menu_open,
+        ),
     )?;
-    bind_activate(
-        context,
-        permission,
-        Arc::clone(&sink),
-        ShellIntent::CyclePermission,
-    )?;
+    context.on(permission_menu, {
+        let sink = Arc::clone(&sink);
+        move |_, _: &PopoverToggled, _| emit(&sink, ShellIntent::ToggleComposerPermission)
+    })?;
     let worktree_slot =
         context.create_detached_component(document_id, Stack::row(4.0))?;
     let worktree_icon =
         context.create_detached_component(document_id, IconGlyph::new(Icon::GitBranch))?;
-    let worktree = context.create_detached_component(
+    let worktree_menu = context.create_detached_component(
         document_id,
-        pill_button(
+        composer_menu(
             snapshot.worktree_label.as_deref().unwrap_or_default(),
-            ButtonKind::Text,
+            snapshot.composer_worktree_menu_open,
         ),
     )?;
-    bind_activate(
-        context,
-        worktree,
-        Arc::clone(&sink),
-        ShellIntent::CycleWorktree,
-    )?;
-    let worktree_pick = context.create_detached_component(document_id, worktree_pick_button())?;
-    bind_activate(
-        context,
-        worktree_pick,
-        Arc::clone(&sink),
-        ShellIntent::PickWorktree,
-    )?;
-    context.append_child(worktree_slot, worktree_icon)?;
-    context.append_child(worktree_slot, worktree)?;
+    context.on(worktree_menu, {
+        let sink = Arc::clone(&sink);
+        move |_, _: &PopoverToggled, _| emit(&sink, ShellIntent::ToggleComposerWorktree)
+    })?;
     context.append_child(plus_slot, plus_menu)?;
     context.append_child(permission_slot, permission_icon)?;
-    context.append_child(permission_slot, permission)?;
+    context.append_child(permission_slot, permission_menu)?;
+    context.append_child(worktree_slot, worktree_icon)?;
+    context.append_child(worktree_slot, worktree_menu)?;
     context.append_child(extras, plus_slot)?;
     context.append_child(extras, attach)?;
     context.append_child(extras, permission_slot)?;
@@ -2792,20 +2878,22 @@ pub fn mount_primary_shell(
         composer_toolbar,
         extras,
         extra_buttons: HashMap::new(),
-        plus_items: HashMap::new(),
         completion_slot,
         completion_items: HashMap::new(),
         plus_slot,
         plus_menu,
+        plus_items: HashMap::new(),
         attach,
         permission_slot,
         #[cfg(test)]
         permission_icon,
-        permission,
+        permission_menu,
+        permission_items: HashMap::new(),
         worktree_slot,
+        #[cfg(test)]
         worktree_icon,
-        worktree,
-        worktree_pick,
+        worktree_menu,
+        worktree_items: HashMap::new(),
         pending_panel,
         pending_actions,
         pending_title,
@@ -3733,49 +3821,71 @@ impl ShellHandles {
         context.update_component(self.plus_menu, |menu, _| {
             *menu = composer_plus_menu(snapshot.composer_plus_open);
         })?;
-        context.update_component(self.permission, |chip, _| {
-            *chip = pill_button(&snapshot.permission_label, ButtonKind::Text);
+        context.update_component(self.permission_menu, |menu, _| {
+            *menu = composer_menu(
+                &snapshot.permission_label,
+                snapshot.composer_permission_menu_open,
+            );
         })?;
-        let plus_order = if snapshot.composer_plus_open {
-            let mut plus_order = Vec::new();
-            let mut plus_keep = HashSet::new();
-            for (id, label) in plus_menu_items(snapshot) {
-                plus_keep.insert(id.clone());
-                let item = if let Some(item) = self.plus_items.get(&id).copied() {
-                    context.update_component(item, |item, _| {
-                        *item = ActionMenuItem::new(label);
-                    })?;
-                    item
-                } else {
-                    let item = context
-                        .create_detached_component(document_id, ActionMenuItem::new(label))?;
-                    bind_activate(
-                        context,
-                        item,
-                        Arc::clone(&self.sink),
-                        ShellIntent::ComposerPlus(id.clone()),
-                    )?;
-                    self.plus_items.insert(id.clone(), item);
-                    item
-                };
-                plus_order.push(item.stable_id());
-            }
-            self.plus_items.retain(|key, item| {
-                if plus_keep.contains(key) {
-                    true
-                } else {
-                    let _ = context.remove_view(*item);
-                    false
-                }
-            });
-            plus_order
-        } else {
-            for item in self.plus_items.drain() {
-                let _ = context.remove_view(item.1);
-            }
-            Vec::new()
-        };
-        reconcile_children(context, self.plus_menu.stable_id(), &plus_order)?;
+        if let Some(label) = snapshot.worktree_label.as_deref() {
+            context.update_component(self.worktree_menu, |menu, _| {
+                *menu = composer_menu(label, snapshot.composer_worktree_menu_open);
+            })?;
+        }
+        let plus_entries = plus_menu_items(snapshot)
+            .into_iter()
+            .map(|(id, label)| (id, label, false))
+            .collect::<Vec<_>>();
+        sync_action_menu_items(
+            context,
+            document_id,
+            self.plus_menu,
+            snapshot.composer_plus_open,
+            &plus_entries,
+            &mut self.plus_items,
+            &self.sink,
+            |id| ShellIntent::ComposerPlus(id.to_owned()),
+        )?;
+        let permission_entries = COMPOSER_PERMISSION_OPTIONS
+            .iter()
+            .map(|(id, label)| {
+                (
+                    (*id).to_owned(),
+                    (*label).to_owned(),
+                    *id == snapshot.permission_selection,
+                )
+            })
+            .collect::<Vec<_>>();
+        sync_action_menu_items(
+            context,
+            document_id,
+            self.permission_menu,
+            snapshot.composer_permission_menu_open,
+            &permission_entries,
+            &mut self.permission_items,
+            &self.sink,
+            |id| ShellIntent::ComposerPermission(id.to_owned()),
+        )?;
+        let worktree_entries = COMPOSER_WORKTREE_OPTIONS
+            .iter()
+            .map(|(id, label)| {
+                (
+                    (*id).to_owned(),
+                    (*label).to_owned(),
+                    *id == snapshot.worktree_selection,
+                )
+            })
+            .collect::<Vec<_>>();
+        sync_action_menu_items(
+            context,
+            document_id,
+            self.worktree_menu,
+            snapshot.composer_worktree_menu_open,
+            &worktree_entries,
+            &mut self.worktree_items,
+            &self.sink,
+            |id| ShellIntent::ComposerWorktree(id.to_owned()),
+        )?;
         self.reconcile_composer_extras(context, document_id, snapshot)?;
         self.reconcile_composer_completion(context, document_id, snapshot)?;
         self.sync_pending_panel(context, document_id, snapshot)?;
@@ -4954,20 +5064,7 @@ impl ShellHandles {
             self.attach.stable_id(),
             self.permission_slot.stable_id(),
         ];
-        if let Some(label) = snapshot.worktree_label.as_deref() {
-            context.update_component(self.worktree, |button, _| {
-                *button = pill_button(label, ButtonKind::Text);
-            })?;
-            let worktree_children = if snapshot.worktree_can_pick {
-                vec![
-                    self.worktree_icon.stable_id(),
-                    self.worktree.stable_id(),
-                    self.worktree_pick.stable_id(),
-                ]
-            } else {
-                vec![self.worktree_icon.stable_id(), self.worktree.stable_id()]
-            };
-            reconcile_children(context, self.worktree_slot.stable_id(), &worktree_children)?;
+        if snapshot.worktree_label.is_some() {
             order.push(self.worktree_slot.stable_id());
         }
         for (id, label, kind, intent) in desired {
@@ -7341,8 +7438,9 @@ pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
         plan_mode: false,
         goal_mode: false,
         permission_label: "询问".to_owned(),
+        permission_selection: "ask".to_owned(),
         worktree_label: None,
-        worktree_can_pick: false,
+        worktree_selection: "current".to_owned(),
         suggestions: Vec::new(),
         suggestions_can_refresh: false,
         command_palette_open: false,
@@ -7417,6 +7515,8 @@ pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
         mention_items: Vec::new(),
         timeline_can_load_earlier: false,
         composer_plus_open: false,
+        composer_permission_menu_open: false,
+        composer_worktree_menu_open: false,
         project_page: None,
         project_page_title: String::new(),
         project_page_body: String::new(),
@@ -8232,6 +8332,70 @@ mod tests {
     }
 
     #[test]
+    fn composer_permission_menu_marks_current_without_moving_the_toolbar() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.permission_selection = "readonly".to_owned();
+        snapshot.composer_permission_menu_open = true;
+        let (document, handles, _primary) = mounted_primary(&snapshot);
+        let world = document.context().world();
+        assert_eq!(handles.permission_items.len(), COMPOSER_PERMISSION_OPTIONS.len());
+        let readonly_item = handles.permission_items["readonly"].stable_id();
+        let ask_item = handles.permission_items["ask"].stable_id();
+        assert_eq!(
+            world.node_style(readonly_item).and_then(|style| style.background),
+            Some(SemanticColorRole::Hover)
+        );
+        assert_eq!(world.node_style(ask_item).and_then(|style| style.background), None);
+        let menu_style = world
+            .node_style(handles.permission_menu.stable_id())
+            .expect("permission menu style");
+        assert_eq!(menu_style.layout.position, nana_ui::runtime::PositionSpec::Fixed);
+        let open_toolbar = world.layout_box(handles.composer_toolbar.stable_id());
+        drop(document);
+        let (closed_document, closed_handles, _primary) =
+            mounted_primary(&snapshot_with_empty_primary_pane());
+        assert!(closed_handles.permission_items.is_empty());
+        assert_eq!(
+            closed_document
+                .context()
+                .world()
+                .layout_box(closed_handles.composer_toolbar.stable_id()),
+            open_toolbar
+        );
+    }
+
+    #[test]
+    fn composer_worktree_menu_marks_current_option() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.worktree_label = Some("新建工作树".to_owned());
+        snapshot.worktree_selection = "create".to_owned();
+        snapshot.composer_worktree_menu_open = true;
+        let (document, handles, _primary) = mounted_primary(&snapshot);
+        let world = document.context().world();
+        assert_eq!(handles.worktree_items.len(), COMPOSER_WORKTREE_OPTIONS.len());
+        let create_item = handles.worktree_items["create"].stable_id();
+        let current_item = handles.worktree_items["current"].stable_id();
+        assert_eq!(
+            world.node_style(create_item).and_then(|style| style.background),
+            Some(SemanticColorRole::Hover)
+        );
+        assert_eq!(world.node_style(current_item).and_then(|style| style.background), None);
+        let extras = world
+            .node(handles.extras.stable_id())
+            .map(|node| node.children.clone())
+            .unwrap_or_default();
+        assert_eq!(
+            extras,
+            vec![
+                handles.plus_slot.stable_id(),
+                handles.attach.stable_id(),
+                handles.permission_slot.stable_id(),
+                handles.worktree_slot.stable_id()
+            ]
+        );
+    }
+
+    #[test]
     fn composer_plus_menu_stays_in_the_toolbar() {
         let (document, handles, _primary) = mounted_primary(&snapshot_with_empty_primary_pane());
         let extras = document
@@ -8266,17 +8430,11 @@ mod tests {
                 .unwrap_or_default(),
             vec![
                 handles.permission_icon.stable_id(),
-                handles.permission.stable_id()
+                handles.permission_menu.stable_id()
             ]
         );
         assert!(handles.plus_items.is_empty());
-        let plus_children = document
-            .context()
-            .world()
-            .node(handles.plus_menu.stable_id())
-            .map(|node| node.children.clone())
-            .unwrap_or_default();
-        assert!(plus_children.is_empty());
+        assert!(handles.permission_items.is_empty());
         let actions = document
             .context()
             .world()

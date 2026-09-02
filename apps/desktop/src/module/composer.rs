@@ -420,15 +420,6 @@ fn attachment_command(command: &DesktopComposerCommand) -> bool {
     )
 }
 
-fn permission_label(permission: crate::application::DesktopExecutionPermission) -> &'static str {
-    use crate::application::DesktopExecutionPermission;
-    match permission {
-        DesktopExecutionPermission::Ask => "询问",
-        DesktopExecutionPermission::Readonly => "只读",
-        DesktopExecutionPermission::Full => "完全",
-    }
-}
-
 pub(crate) fn textarea_height(state: &TextEditorState) -> f32 {
     let additional_lines = state.line_count().saturating_sub(1) as f32;
     (TEXTAREA_MIN_HEIGHT + additional_lines * TEXTAREA_LINE_HEIGHT).min(TEXTAREA_MAX_HEIGHT)
@@ -521,7 +512,10 @@ impl UiModule for ComposerModule {
             .collect();
         into.plan_mode = composer.plan_mode;
         into.goal_mode = composer.goal_mode;
-        into.permission_label = permission_label(composer.permission).to_owned();
+        let (permission_selection, permission_label) =
+            crate::runtime_shell::permission_selection(composer.permission);
+        into.permission_selection = permission_selection.to_owned();
+        into.permission_label = permission_label.to_owned();
         into.slash_items = self
             .slash_commands
             .iter()

@@ -578,6 +578,22 @@ enum DraftWorktreeSelection {
     Existing(Option<PathBuf>),
 }
 
+/// 输入条工具条上互斥的下拉菜单；`Actions` 同时服务主窗口与任务弹窗。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ComposerMenu {
+    Actions(HostedWindowId),
+    Permission,
+    Worktree,
+}
+
+/// 工作树菜单里可直接落地的目标；“已有工作树”落地为打开目录选择器。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WorktreeMenuSelection {
+    Current,
+    Create,
+    Existing,
+}
+
 enum WorkspaceTabStripLocation {
     Main(PaneId),
     TaskPopup(HostedWindowId, PaneId),
@@ -889,8 +905,10 @@ pub enum ComposerMessage {
         window_id: HostedWindowId,
         value: String,
     },
-    CycleDraftWorktree(HostedWindowId),
-    PickDraftWorktree(HostedWindowId),
+    TogglePermissionMenu,
+    SelectPermission(DesktopExecutionPermission),
+    ToggleWorktreeMenu,
+    SelectWorktree(WorktreeMenuSelection),
     TaskPopupSelectSlashCommand {
         window_id: HostedWindowId,
         command: DesktopSlashCommand,
@@ -1432,7 +1450,7 @@ pub struct DesktopProgram {
     sidebar_search_selection: usize,
     sidebar_menu: Option<SidebarMenuState>,
     titlebar_menu_open: bool,
-    composer_action_menu_window: Option<HostedWindowId>,
+    composer_menu_open: Option<ComposerMenu>,
     sidebar_pending_task_archive: Option<TaskId>,
     sidebar_stopping_tasks: BTreeSet<TaskId>,
     sidebar_folder_drop_hovered: bool,
@@ -1829,14 +1847,28 @@ impl DesktopProgram {
                     action,
                 })
             }
-            crate::runtime_shell::ShellIntent::CyclePermission => {
-                Message::Composer(ComposerMessage::CyclePermission)
+            crate::runtime_shell::ShellIntent::ToggleComposerPermission => {
+                Message::Composer(ComposerMessage::TogglePermissionMenu)
             }
-            crate::runtime_shell::ShellIntent::CycleWorktree => {
-                Message::Composer(ComposerMessage::CycleDraftWorktree(HostedWindowId::PRIMARY))
+            crate::runtime_shell::ShellIntent::ComposerPermission(id) => {
+                match crate::runtime_shell::permission_from_selection_id(&id) {
+                    Some(permission) => {
+                        Message::Composer(ComposerMessage::SelectPermission(permission))
+                    }
+                    None => return None,
+                }
             }
-            crate::runtime_shell::ShellIntent::PickWorktree => {
-                Message::Composer(ComposerMessage::PickDraftWorktree(HostedWindowId::PRIMARY))
+            crate::runtime_shell::ShellIntent::ToggleComposerWorktree => {
+                Message::Composer(ComposerMessage::ToggleWorktreeMenu)
+            }
+            crate::runtime_shell::ShellIntent::ComposerWorktree(id) => {
+                let selection = match id.as_str() {
+                    "current" => WorktreeMenuSelection::Current,
+                    "create" => WorktreeMenuSelection::Create,
+                    "existing" => WorktreeMenuSelection::Existing,
+                    _ => return None,
+                };
+                Message::Composer(ComposerMessage::SelectWorktree(selection))
             }
             crate::runtime_shell::ShellIntent::ApplySlash(name) => {
                 match self
@@ -4091,8 +4123,17 @@ impl DesktopProgram {
             plan_mode: false,
             goal_mode: false,
             permission_label: permission_label(DesktopExecutionPermission::Ask).to_owned(),
+            permission_selection: crate::runtime_shell::permission_selection(
+                DesktopExecutionPermission::Ask,
+            )
+            .0
+            .to_owned(),
             worktree_label: draft_worktree.as_ref().map(draft_worktree_label),
-            worktree_can_pick: matches!(draft_worktree, Some(DraftWorktreeSelection::Existing(_))),
+            worktree_selection: draft_worktree
+                .as_ref()
+                .map(draft_worktree_selection_id)
+                .unwrap_or("current")
+                .to_owned(),
             suggestions: self
                 .conversation_suggestions
                 .visible_item_ids()
@@ -4215,7 +4256,18 @@ impl DesktopProgram {
                 .task_session
                 .as_ref()
                 .is_some_and(|session| session.timeline_has_more_before),
-            composer_plus_open: self.composer_action_menu_window == Some(HostedWindowId::PRIMARY),
+            composer_plus_open: matches!(
+                self.composer_menu_open,
+                Some(ComposerMenu::Actions(HostedWindowId::PRIMARY))
+            ),
+            composer_permission_menu_open: matches!(
+                self.composer_menu_open,
+                Some(ComposerMenu::Permission)
+            ),
+            composer_worktree_menu_open: matches!(
+                self.composer_menu_open,
+                Some(ComposerMenu::Worktree)
+            ),
             project_page,
             project_page_title: if project_page.is_some() {
                 self.shell_project_page_title()
@@ -10663,11 +10715,53 @@ impl DesktopProgram {
     fn apply_composer_message(&mut self, message: ComposerMessage) -> Option<HostedWindowAction> {
         match message {
             ComposerMessage::ToggleComposerActionMenu(window_id) => {
-                self.composer_action_menu_window =
-                    (self.composer_action_menu_window != Some(window_id)).then_some(window_id);
+                self.composer_menu_open =
+                    if self.composer_menu_open == Some(ComposerMenu::Actions(window_id)) {
+                        None
+                    } else {
+                        Some(ComposerMenu::Actions(window_id))
+                    };
+            }
+            ComposerMessage::TogglePermissionMenu => {
+                self.composer_menu_open =
+                    if self.composer_menu_open == Some(ComposerMenu::Permission) {
+                        None
+                    } else {
+                        Some(ComposerMenu::Permission)
+                    };
+            }
+            ComposerMessage::SelectPermission(permission) => {
+                self.composer_menu_open = None;
+                self.execute_composer_command(DesktopComposerCommand::SetPermission(permission));
+            }
+            ComposerMessage::ToggleWorktreeMenu => {
+                self.composer_menu_open =
+                    if self.draft_worktree_context(HostedWindowId::PRIMARY).is_none() {
+                        None
+                    } else if self.composer_menu_open == Some(ComposerMenu::Worktree) {
+                        None
+                    } else {
+                        Some(ComposerMenu::Worktree)
+                    };
+            }
+            ComposerMessage::SelectWorktree(selection) => {
+                self.composer_menu_open = None;
+                match selection {
+                    WorktreeMenuSelection::Current => self.set_draft_worktree(
+                        HostedWindowId::PRIMARY,
+                        DraftWorktreeSelection::Current,
+                    ),
+                    WorktreeMenuSelection::Create => self.set_draft_worktree(
+                        HostedWindowId::PRIMARY,
+                        DraftWorktreeSelection::Create,
+                    ),
+                    WorktreeMenuSelection::Existing => {
+                        self.pick_draft_worktree(HostedWindowId::PRIMARY)
+                    }
+                }
             }
             ComposerMessage::ComposerAction { window_id, action } => {
-                self.composer_action_menu_window = None;
+                self.composer_menu_open = None;
                 let message = match action {
                     ComposerAction::AddFile if window_id == HostedWindowId::PRIMARY => {
                         Message::Composer(ComposerMessage::PickAttachmentFiles)
@@ -10731,8 +10825,6 @@ impl DesktopProgram {
                     self.refresh_conversation_suggestions(window_id, false);
                 }
             }
-            ComposerMessage::CycleDraftWorktree(window_id) => self.cycle_draft_worktree(window_id),
-            ComposerMessage::PickDraftWorktree(window_id) => self.pick_draft_worktree(window_id),
             ComposerMessage::TaskPopupSelectSlashCommand { window_id, command } => {
                 self.select_slash_command(window_id, command)
             }
@@ -19041,7 +19133,7 @@ impl DesktopProgram {
         if let Some(window_id) = self.task_popups.values().find_map(|popup| {
             (target_ids::task_popup_composer_actions(popup.id.0) == target_id).then_some(popup.id)
         }) {
-            self.composer_action_menu_window = Some(window_id);
+            self.composer_menu_open = Some(ComposerMenu::Actions(window_id));
             return true;
         }
         if let Some(window_id) = self.task_popups.values().find_map(|popup| {
@@ -20653,7 +20745,7 @@ impl DesktopProgram {
                 self.update_message(Message::Worktree(WorktreeMessage::CancelAction));
             }
             target_ids::COMPOSER_ACTIONS_OPEN if !self.composer_input_is_locked() => {
-                self.composer_action_menu_window = Some(HostedWindowId::PRIMARY);
+                self.composer_menu_open = Some(ComposerMenu::Actions(HostedWindowId::PRIMARY));
             }
             target_ids::COMPOSER_REFERENCE_CONVERSATION if !self.composer_input_is_locked() => {
                 self.open_composer_conversation_reference(HostedWindowId::PRIMARY);
@@ -28903,7 +28995,7 @@ impl RuntimeProgram for DesktopProgram {
             sidebar_search_selection: 0,
             sidebar_menu: None,
             titlebar_menu_open: false,
-            composer_action_menu_window: None,
+            composer_menu_open: None,
             sidebar_pending_task_archive: None,
             sidebar_stopping_tasks: BTreeSet::new(),
             sidebar_folder_drop_hovered: false,
@@ -29515,6 +29607,14 @@ fn draft_worktree_label(selection: &DraftWorktreeSelection) -> String {
                 .and_then(|name| name.to_str())
                 .unwrap_or("已选择")
         ),
+    }
+}
+
+fn draft_worktree_selection_id(selection: &DraftWorktreeSelection) -> &'static str {
+    match selection {
+        DraftWorktreeSelection::Current => "current",
+        DraftWorktreeSelection::Create => "create",
+        DraftWorktreeSelection::Existing(_) => "existing",
     }
 }
 
@@ -30195,11 +30295,7 @@ fn permission_key(permission: DesktopExecutionPermission) -> &'static str {
 
 /// The composer pairs this with a shield glyph, so the word stands alone.
 fn permission_label(permission: DesktopExecutionPermission) -> &'static str {
-    match permission {
-        DesktopExecutionPermission::Ask => "询问",
-        DesktopExecutionPermission::Readonly => "只读",
-        DesktopExecutionPermission::Full => "完全",
-    }
+    crate::runtime_shell::permission_selection(permission).1
 }
 
 /// Maps a failed clone job's message onto the product wording. The job reports
