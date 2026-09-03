@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 use lilia_contracts::TaskId;
 use nana_ui::runtime::{
     AboutMetadata, AboutSection, ActionMenu, ActionMenuItem, Activate, AlignSpec, AppContext,
-    AppearanceSection, Button, CommandPalette, ConfirmDialog, ConfirmIntent, ConfirmSlots,
+    AppearanceSection, Button, Breadcrumb, BreadcrumbItem, BreadcrumbTone, CommandPalette,
+    ConfirmDialog, ConfirmIntent, ConfirmSlots,
     ContextMenu, ContextMenuEvent, ContextMenuItem, DesktopShell, DocumentId, EmptyState, Entity,
     FlexDirection, FormField, FrameworkError, GraphCanvas, HighlightRequest, IconButton, IconGlyph,
     ImageViewer, ImageViewerContent, ImageViewerEvent, InteractiveCard, JustifySpec, KeyCaptureLayer,
@@ -977,10 +978,7 @@ pub struct ShellHandles {
     automations_page: Entity<Stack>,
     automation_actions: Entity<Stack>,
     automation_canvas: Entity<GraphCanvas>,
-    title_center: Entity<Stack>,
-    title_parent: Entity<Text>,
-    title_separator: Entity<Text>,
-    title_context: Entity<Text>,
+    title_breadcrumb: Entity<Breadcrumb>,
     title_leading: Entity<Stack>,
     title_trailing: Entity<Stack>,
     conversation_sidebar: Entity<SidebarFrame>,
@@ -1217,28 +1215,11 @@ fn iab_unavailable_state() -> EmptyState {
         .compact(true)
 }
 
-fn breadcrumb_parent(text: &str) -> Text {
-    breadcrumb_text(text, SemanticColorRole::Muted, None)
-}
-
-fn breadcrumb_separator() -> Text {
-    breadcrumb_text("›", SemanticColorRole::Faint, None)
-}
-
-fn breadcrumb_context(text: &str) -> Text {
-    breadcrumb_text(text, SemanticColorRole::Text, Some(600))
-}
-
-fn breadcrumb_text(value: &str, color: SemanticColorRole, weight: Option<u16>) -> Text {
-    let mut text = Text::new(value.to_owned());
-    let mut style = text.style.clone();
-    style.foreground = Some(color);
-    let layout = Arc::make_mut(&mut style.layout);
-    layout.white_space_nowrap = true;
-    layout.text_overflow_ellipsis = true;
-    layout.font_weight = weight;
-    text.style = style;
-    text
+fn breadcrumb_items(parent: &str, current: &str) -> Vec<BreadcrumbItem> {
+    vec![
+        BreadcrumbItem::new(parent).tone(BreadcrumbTone::Parent),
+        BreadcrumbItem::new(current).tone(BreadcrumbTone::Current),
+    ]
 }
 
 fn mount_workspace_pane_view(
@@ -1969,15 +1950,11 @@ pub fn mount_primary_shell(
         ShellIntent::ToggleSidebar,
     )?;
 
-    let title_center = context.create_detached_component(document_id, Stack::bar(6.0))?;
-    let title_parent = context
-        .create_detached_component(document_id, breadcrumb_parent(&snapshot.title_parent))?;
-    let title_separator = context.create_detached_component(document_id, breadcrumb_separator())?;
-    let title_context = context
-        .create_detached_component(document_id, breadcrumb_context(&snapshot.title_context))?;
-    context.append_child(title_center, title_parent)?;
-    context.append_child(title_center, title_separator)?;
-    context.append_child(title_center, title_context)?;
+    let title_breadcrumb = context.create_detached_component(document_id, Breadcrumb::new())?;
+    context.set_breadcrumb_items(
+        title_breadcrumb,
+        breadcrumb_items(&snapshot.title_parent, &snapshot.title_context),
+    )?;
     // The reference chrome keeps window controls alone on the trailing edge; the
     // command palette and inspector already live in the titlebar more menu, which
     // now hangs off the sidebar footer.
@@ -2758,7 +2735,7 @@ pub fn mount_primary_shell(
     let mut shell_builder = DesktopShell::from_model(snapshot.workspace.clone())
         .title(snapshot.title_context.clone())
         .title_leading(title_leading.stable_id())
-        .title_center(title_center.stable_id())
+        .title_center(title_breadcrumb.stable_id())
         .title_center_width(TITLE_BREADCRUMB_WIDTH)
         // The trailing slot already owns bound window controls; the shell's own
         // strip would only add a second, inert set.
@@ -2810,10 +2787,7 @@ pub fn mount_primary_shell(
         automations_page,
         automation_actions,
         automation_canvas,
-        title_center,
-        title_parent,
-        title_separator,
-        title_context,
+        title_breadcrumb,
         title_leading,
         title_trailing,
         conversation_sidebar,
@@ -3131,15 +3105,10 @@ impl ShellHandles {
             *button =
                 SidebarFooterButton::new("更多", Icon::Nodes).selected(snapshot.titlebar_menu_open);
         })?;
-        context.update_component(self.title_parent, |title, _| {
-            *title = breadcrumb_parent(&snapshot.title_parent);
-        })?;
-        context.update_component(self.title_separator, |title, _| {
-            *title = breadcrumb_separator();
-        })?;
-        context.update_component(self.title_context, |title, _| {
-            *title = breadcrumb_context(&snapshot.title_context);
-        })?;
+        context.set_breadcrumb_items(
+            self.title_breadcrumb,
+            breadcrumb_items(&snapshot.title_parent, &snapshot.title_context),
+        )?;
         context.update_component(self.search_toggle, |button, _| {
             *button = sidebar_search_toggle();
         })?;
@@ -3264,7 +3233,7 @@ impl ShellHandles {
             shell.model = snapshot.workspace.clone();
             shell.title = Some(Arc::from(snapshot.title_context.as_str()));
             shell.title_leading = Some(self.title_leading.stable_id());
-            shell.title_center = Some(self.title_center.stable_id());
+            shell.title_center = Some(self.title_breadcrumb.stable_id());
             shell.title_trailing = Some(self.title_trailing.stable_id());
             shell.navigation = Some(navigation);
             shell.primary = Some(primary);
