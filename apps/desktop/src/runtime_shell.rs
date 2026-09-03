@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use lilia_contracts::TaskId;
 use nana_ui::runtime::{
-    AboutMetadata, AboutSection, ActionMenu, ActionMenuItem, Activate, AlignSpec, AppContext,
+    AboutMetadata, AboutSection, ActionMenu, ActionMenuItem, Activate, AppContext,
     AppearanceSection, Button, Breadcrumb, BreadcrumbItem, BreadcrumbTone, CommandPalette,
     ConfirmDialog, ConfirmIntent, ConfirmSlots,
     ContextMenu, ContextMenuEvent, ContextMenuItem, DesktopShell, DocumentId, EmptyState, Entity,
@@ -2144,9 +2144,15 @@ pub fn mount_primary_shell(
     context.append_child(conversation_sidebar, footer)?;
 
     let conversation = context.create_detached_component(document_id, conversation_root())?;
+    // 区域投影每帧覆盖宿主节点 align_items，钳宽后的居中用交叉轴 auto margin 表达。
     let conversation_column = context.create_detached_component(
         document_id,
-        Stack::fill_column(12.0).max_width(CHAT_CONTENT_MAX_WIDTH),
+        Stack::fill_column(12.0)
+            .max_width(CHAT_CONTENT_MAX_WIDTH)
+            .with_layout(|layout| {
+                layout.margin_left = Some(LengthSpec::Auto);
+                layout.margin_right = Some(LengthSpec::Auto);
+            }),
     )?;
     let conversation_body =
         context.create_detached_component(document_id, Stack::fill_column(12.0))?;
@@ -3003,7 +3009,6 @@ fn conversation_root() -> Stack {
     Stack::fill_column(0.0)
         .padding_xy(24.0, 20.0)
         .radius(UI_METRICS.radius_lg)
-        .align(AlignSpec::Center)
         .surface(SemanticColorRole::Background)
 }
 
@@ -8297,6 +8302,38 @@ mod tests {
         assert_eq!(
             width,
             Some(nana_ui::runtime::LengthSpec::Px(CHAT_CONTENT_MAX_WIDTH))
+        );
+    }
+
+    #[test]
+    fn composer_dock_stays_centered_when_chat_column_is_capped() {
+        let (mut document, handles, _primary) =
+            mounted_primary(&snapshot_with_empty_primary_pane());
+        document
+            .context_mut()
+            .layout_document(
+                DocumentId::new(PRIMARY_DOCUMENT).expect("primary document id"),
+                nana_ui::runtime::LayoutViewport::new(1400.0, 900.0),
+            )
+            .expect("layout primary shell");
+        let world = document.context().world();
+        let root = world
+            .layout_box(handles.conversation.stable_id())
+            .expect("conversation root box");
+        let dock = world
+            .layout_box(handles.composer_dock.stable_id())
+            .expect("composer dock box");
+        assert!(
+            (dock.width - CHAT_CONTENT_MAX_WIDTH).abs() < 0.5,
+            "wide viewport must exercise the chat column cap, dock width={}",
+            dock.width
+        );
+        let root_center = root.x + root.width / 2.0;
+        let dock_center = dock.x + dock.width / 2.0;
+        assert!(
+            (root_center - dock_center).abs() < 0.5,
+            "composer dock must stay centered in the conversation pane: \
+             root_center={root_center}, dock_center={dock_center}"
         );
     }
 
