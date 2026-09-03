@@ -3493,6 +3493,7 @@ impl ShellHandles {
                 let _ = context.remove_view(button);
             }
         }
+        footer.push(self.footer_more.stable_id());
         footer.push(self.provider_badge.stable_id());
         let footer_id = context
             .world()
@@ -6712,16 +6713,14 @@ impl ShellHandles {
                 .collect();
             let (anchor_x, anchor_y) =
                 overlay_anchor(context, self.footer_more.stable_id(), false, None);
+            let view = sidebar_menu_view(context, host, (anchor_x, anchor_y), items);
             let menu = if let Some(menu) = self.titlebar_menu {
-                context.update_component(menu, |view, _| {
-                    *view = ContextMenu::new(anchor_x, anchor_y).items(items).open(true);
+                context.update_component(menu, |slot, _| {
+                    *slot = view;
                 })?;
                 menu
             } else {
-                let menu = context.create_detached_component(
-                    document_id,
-                    ContextMenu::new(anchor_x, anchor_y).items(items).open(true),
-                )?;
+                let menu = context.create_detached_component(document_id, view)?;
                 let sink = Arc::clone(&self.sink);
                 context.on(menu, move |_, event: &ContextMenuEvent, _| match event {
                     ContextMenuEvent::Select(value) => {
@@ -7883,6 +7882,7 @@ mod tests {
             )
             .unwrap();
             handles.sync(&mut document, &snapshot).unwrap();
+            assert!(document.context().world().is_mounted(handles.footer_more.stable_id()));
             let menu = if sidebar {
                 handles.more_menu.unwrap()
             } else {
