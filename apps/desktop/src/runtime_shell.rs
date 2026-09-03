@@ -10,7 +10,7 @@ use nana_ui::runtime::{
     ContextMenu, ContextMenuEvent, ContextMenuItem, DesktopShell, DocumentId, EmptyState, Entity,
     FlexDirection, FormField, FrameworkError, GraphCanvas, HighlightRequest, IconButton, IconGlyph,
     ImageViewer, ImageViewerContent, ImageViewerEvent, InteractiveCard, JustifySpec, KeyCaptureLayer,
-    LengthSpec, List, ListItem, NativeMarkdown, NodeStyle, OverlayHost, PaneChrome,
+    LengthSpec, List, ListItem, NativeMarkdown, NodeStyle, OverlayChanged, OverlayClosing, OverlayHost, PaneChrome,
     PaneChromeAction, PaneChromeActionKind, PopoverToggled, ReorderItem, ReorderList,
     ReorderListEvent, ScrollAxes, ScrollOffset, ScrollView, SemanticColorRole, SettingsBack,
     SplitPane,
@@ -635,6 +635,7 @@ pub struct PrimaryShellSnapshot {
 
 #[derive(Debug, Clone)]
 pub enum ShellIntent {
+    OverlayPresenceChanged,
     ToggleSidebar,
     NewConversation,
     SelectTask(TaskId),
@@ -963,6 +964,7 @@ pub struct ShellHandles {
     sink: IntentSink,
     shell: Entity<DesktopShell>,
     overlay_host: Option<Entity<OverlayHost>>,
+    pending_overlay_dismissals: Arc<Mutex<Vec<StableNodeId>>>,
     palette: Option<Entity<CommandPalette>>,
     more_menu: Option<Entity<ContextMenu>>,
     titlebar_menu: Option<Entity<ContextMenu>>,
@@ -2774,10 +2776,28 @@ pub fn mount_primary_shell(
         .ok()
         .flatten();
 
+    let pending_overlay_dismissals = Arc::new(Mutex::new(Vec::new()));
+    if let Some(host) = overlay_host {
+        let pending = Arc::clone(&pending_overlay_dismissals);
+        let sink = Arc::clone(&sink);
+        let closing_sink = Arc::clone(&sink);
+        context.on(host, move |_, event: &OverlayClosing, _| {
+            pending
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(event.root);
+            emit(&closing_sink, ShellIntent::OverlayPresenceChanged);
+        })?;
+        context.on(host, move |_, _: &OverlayChanged, _| {
+            emit(&sink, ShellIntent::OverlayPresenceChanged);
+        })?;
+    }
+
     let mut handles = ShellHandles {
         sink,
         shell,
         overlay_host,
+        pending_overlay_dismissals,
         palette: None,
         more_menu: None,
         titlebar_menu: None,
@@ -3081,6 +3101,30 @@ fn overlay_anchor(
         })
         .or(fallback)
         .unwrap_or((0.0, 0.0))
+}
+
+fn close_shell_overlay<V: View>(
+    context: &mut AppContext,
+    host: Entity<OverlayHost>,
+    overlay: &mut Option<Entity<V>>,
+) -> Result<(), FrameworkError> {
+    let Some(entity) = *overlay else {
+        return Ok(());
+    };
+    let is_active = |context: &AppContext| {
+        context
+            .world()
+            .overlay_host(host.stable_id())
+            .is_some_and(|state| state.active == Some(entity.stable_id()))
+    };
+    if is_active(context) {
+        context.dismiss_overlay(host)?;
+    }
+    if !is_active(context) {
+        context.remove_view(entity)?;
+        *overlay = None;
+    }
+    Ok(())
 }
 
 impl ShellHandles {
@@ -6429,6 +6473,55 @@ impl ShellHandles {
             )
     }
 
+    pub(crate) fn take_overlay_dismissals(&self, context: &AppContext) -> Vec<ShellIntent> {
+        let pending = std::mem::take(
+            &mut *self
+                .pending_overlay_dismissals
+                .lock()
+                .unwrap_or_else(|error| error.into_inner()),
+        );
+        pending
+            .into_iter()
+            .filter_map(|root| self.dismissed_overlay_intent(context, root))
+            .collect()
+    }
+
+    fn dismissed_overlay_intent(
+        &self,
+        context: &AppContext,
+        root: StableNodeId,
+    ) -> Option<ShellIntent> {
+        let host = self.overlay_host?;
+        let active = context.world().overlay_host(host.stable_id())?.active;
+        let document = context.world().node(host.stable_id())?.document;
+        if active.is_some_and(|active| active != root)
+            || context
+                .active_runtime_overlay(document)
+                .is_some_and(|overlay| overlay.root == root)
+        {
+            return None;
+        }
+        if self.confirm.is_some_and(|view| view.stable_id() == root) {
+            Some(ShellIntent::CancelDestructive)
+        } else if self.palette.is_some_and(|view| view.stable_id() == root) {
+            Some(ShellIntent::CommandPalette(CommandPaletteEvent::Dismiss))
+        } else if self.more_menu.is_some_and(|view| view.stable_id() == root) {
+            Some(ShellIntent::SidebarMenuAction(String::new()))
+        } else if self
+            .titlebar_menu
+            .is_some_and(|view| view.stable_id() == root)
+        {
+            Some(ShellIntent::ToggleTitlebarMenu)
+        } else if self
+            .image_viewer
+            .is_some_and(|view| view.stable_id() == root)
+        {
+            Some(ShellIntent::CloseMarkdownPreview)
+        } else {
+            None
+        }
+    }
+
     fn sync_overlay(
         &mut self,
         context: &mut AppContext,
@@ -6438,10 +6531,31 @@ impl ShellHandles {
         let Some(host) = self.overlay_host else {
             return Ok(());
         };
+        if snapshot.confirm.is_none() {
+            close_shell_overlay(context, host, &mut self.confirm)?;
+            if self.confirm.is_none() {
+                self.confirm_cancel = None;
+                self.confirm_commit = None;
+            }
+        }
+        if !snapshot.command_palette_open {
+            close_shell_overlay(context, host, &mut self.palette)?;
+            self.focus_targets.remove(target_ids::COMMAND_PALETTE_INPUT);
+        }
+        if snapshot.sidebar_menu.is_empty() {
+            close_shell_overlay(context, host, &mut self.more_menu)?;
+        }
+        if !snapshot.titlebar_menu_open {
+            close_shell_overlay(context, host, &mut self.titlebar_menu)?;
+        }
+        if snapshot.markdown_preview.is_none() {
+            close_shell_overlay(context, host, &mut self.image_viewer)?;
+        }
         if let Some(confirm) = &snapshot.confirm {
             let dialog = if let Some(dialog) = self.confirm {
                 context.update_component(dialog, |view, _| {
-                    *view = ConfirmDialog::new(confirm.title.clone(), confirm.message.clone());
+                    view.title = confirm.title.clone().into();
+                    view.message = confirm.message.clone().into();
                     view.danger = confirm.danger;
                     view.busy = confirm.busy;
                 })?;
@@ -6517,14 +6631,6 @@ impl ShellHandles {
             })?;
             context.activate_overlay(host, dialog)?;
             return Ok(());
-        } else if let Some(dialog) = self.confirm.take() {
-            let _ = context.remove_view(dialog);
-            if let Some(cancel) = self.confirm_cancel.take() {
-                let _ = context.remove_view(cancel);
-            }
-            if let Some(commit) = self.confirm_commit.take() {
-                let _ = context.remove_view(commit);
-            }
         }
 
         if snapshot.command_palette_open {
@@ -6554,9 +6660,6 @@ impl ShellHandles {
                 palette.stable_id(),
             );
             return Ok(());
-        } else if let Some(palette) = self.palette.take() {
-            let _ = context.remove_view(palette);
-            self.focus_targets.remove(target_ids::COMMAND_PALETTE_INPUT);
         }
 
         let mut overlays = Vec::new();
@@ -6567,12 +6670,9 @@ impl ShellHandles {
                 .map(|item| ContextMenuItem::new(item.id.clone(), item.label.clone()))
                 .collect();
             let anchor = match self.sidebar_menu_anchor_source(snapshot) {
-                SidebarMenuAnchor::AddProjectButton(fallback) => overlay_anchor(
-                    context,
-                    self.add_project_menu.stable_id(),
-                    true,
-                    fallback,
-                ),
+                SidebarMenuAnchor::AddProjectButton(fallback) => {
+                    overlay_anchor(context, self.add_project_menu.stable_id(), true, fallback)
+                }
                 SidebarMenuAnchor::RowMenuButton(button) => {
                     overlay_anchor(context, button, true, None)
                 }
@@ -6603,8 +6703,6 @@ impl ShellHandles {
             };
             overlays.push(menu.stable_id());
             context.activate_overlay(host, menu)?;
-        } else if let Some(menu) = self.more_menu.take() {
-            let _ = context.remove_view(menu);
         }
 
         if snapshot.titlebar_menu_open {
@@ -6640,8 +6738,6 @@ impl ShellHandles {
             };
             overlays.push(menu.stable_id());
             context.activate_overlay(host, menu)?;
-        } else if let Some(menu) = self.titlebar_menu.take() {
-            let _ = context.remove_view(menu);
         }
 
         if let Some(preview) = &snapshot.markdown_preview {
@@ -6668,10 +6764,16 @@ impl ShellHandles {
             };
             overlays.push(viewer.stable_id());
             context.activate_overlay(host, viewer)?;
-        } else if let Some(viewer) = self.image_viewer.take() {
-            let _ = context.remove_view(viewer);
         }
 
+        if let Some(active) = context
+            .world()
+            .overlay_host(host.stable_id())
+            .and_then(|state| state.active)
+            .filter(|active| !overlays.contains(active))
+        {
+            overlays.push(active);
+        }
         context.update_component(self.shell, |shell, _| {
             shell.overlays = overlays;
         })?;
@@ -7663,6 +7765,158 @@ mod tests {
                 .and_then(|node| node.parent),
             Some(handles.composer_dock.stable_id())
         );
+    }
+
+    #[test]
+    fn confirm_exit_retains_slots_and_reopening_cancels_pending_release() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        let confirm = ShellConfirm {
+            kind: ShellConfirmKind::RemoveProject,
+            title: "Delete".into(),
+            message: "Remove this item?".into(),
+            cancel_label: "Cancel".into(),
+            confirm_label: "Delete".into(),
+            danger: true,
+            busy: false,
+        };
+        snapshot.confirm = Some(confirm.clone());
+        let (mut document, mut handles, _) = mounted_primary(&snapshot);
+        let dialog = handles.confirm.unwrap();
+        let cancel = handles.confirm_cancel.unwrap();
+        let host = handles.overlay_host.unwrap();
+        document
+            .context_mut()
+            .advance_animations(std::time::Duration::from_millis(140));
+        snapshot.confirm = None;
+        handles.sync(&mut document, &snapshot).unwrap();
+        assert!(document.context().world().is_mounted(dialog.stable_id()));
+        assert!(document.context().world().is_mounted(cancel.stable_id()));
+        assert!(document
+            .context()
+            .active_runtime_overlay(document.document())
+            .is_none());
+        document
+            .context_mut()
+            .advance_animations(std::time::Duration::from_millis(200));
+        snapshot.confirm = Some(confirm);
+        handles.sync(&mut document, &snapshot).unwrap();
+        assert_eq!(handles.confirm.unwrap(), dialog);
+        document
+            .context_mut()
+            .advance_animations(std::time::Duration::from_millis(340));
+        handles.sync(&mut document, &snapshot).unwrap();
+        assert_eq!(
+            document
+                .context()
+                .world()
+                .overlay_host(host.stable_id())
+                .unwrap()
+                .active,
+            Some(dialog.stable_id())
+        );
+        snapshot.confirm = None;
+        handles.sync(&mut document, &snapshot).unwrap();
+        document
+            .context_mut()
+            .advance_animations(std::time::Duration::from_millis(480));
+        handles.sync(&mut document, &snapshot).unwrap();
+        assert!(handles.confirm.is_none());
+        assert!(handles.confirm_cancel.is_none());
+        assert!(!document.context().world().contains(dialog.stable_id()));
+        assert!(!document.context().world().contains(cancel.stable_id()));
+    }
+
+    #[test]
+    fn shell_menu_escape_updates_business_presence_and_ignores_a_stale_close_after_reopen() {
+        let mut snapshot = snapshot_with_empty_primary_pane();
+        snapshot.titlebar_menu_open = true;
+        let (mut document, mut handles, _) = mounted_primary(&snapshot);
+        let menu = handles.titlebar_menu.unwrap();
+        let doc = document.document();
+        document
+            .context_mut()
+            .advance_animations(std::time::Duration::from_millis(180));
+        assert!(document
+            .context_mut()
+            .route_overlay_key(doc, nana_ui::runtime::OverlayKey::Escape)
+            .unwrap());
+        assert!(matches!(
+            handles.take_overlay_dismissals(document.context()).as_slice(),
+            [ShellIntent::ToggleTitlebarMenu]
+        ));
+        assert!(handles.take_overlay_dismissals(document.context()).is_empty());
+        snapshot.titlebar_menu_open = false;
+        handles.sync(&mut document, &snapshot).unwrap();
+        document
+            .context_mut()
+            .advance_animations(std::time::Duration::from_millis(200));
+        snapshot.titlebar_menu_open = true;
+        handles.sync(&mut document, &snapshot).unwrap();
+        assert!(handles
+            .dismissed_overlay_intent(document.context(), menu.stable_id())
+            .is_none());
+        document
+            .context_mut()
+            .advance_animations(std::time::Duration::from_millis(380));
+        handles.sync(&mut document, &snapshot).unwrap();
+        assert_eq!(handles.titlebar_menu.unwrap(), menu);
+        assert!(document.context().active_runtime_overlay(doc).is_some());
+    }
+
+    #[test]
+    fn shell_menu_exit_notifies_the_host_before_releasing_its_retained_tree() {
+        for sidebar in [true, false] {
+            let mut snapshot = snapshot_with_empty_primary_pane();
+            if sidebar {
+                snapshot.sidebar_menu = vec![ShellMenuItem {
+                    id: "open".into(),
+                    label: "Open".into(),
+                }];
+            } else {
+                snapshot.titlebar_menu_open = true;
+            }
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let sink = Arc::clone(&events);
+            let (mut document, mut handles) = mount_primary_shell(
+                &snapshot,
+                Arc::new(move |event| sink.lock().unwrap().push(event)),
+            )
+            .unwrap();
+            handles.sync(&mut document, &snapshot).unwrap();
+            let menu = if sidebar {
+                handles.more_menu.unwrap()
+            } else {
+                handles.titlebar_menu.unwrap()
+            };
+            document
+                .context_mut()
+                .advance_animations(std::time::Duration::from_millis(180));
+            events.lock().unwrap().clear();
+            snapshot.sidebar_menu.clear();
+            snapshot.titlebar_menu_open = false;
+            handles.sync(&mut document, &snapshot).unwrap();
+            assert!(events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| matches!(event, ShellIntent::OverlayPresenceChanged)));
+            events.lock().unwrap().clear();
+            document
+                .context_mut()
+                .advance_animations(std::time::Duration::from_millis(359));
+            assert!(document.context().world().is_mounted(menu.stable_id()));
+            assert!(events.lock().unwrap().is_empty());
+            document
+                .context_mut()
+                .advance_animations(std::time::Duration::from_millis(360));
+            assert!(events
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|event| matches!(event, ShellIntent::OverlayPresenceChanged)));
+            handles.sync(&mut document, &snapshot).unwrap();
+            assert!(!document.context().world().contains(menu.stable_id()));
+        }
     }
 
     #[test]

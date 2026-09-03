@@ -1553,6 +1553,7 @@ impl DesktopProgram {
         intent: crate::runtime_shell::ShellIntent,
     ) -> Option<HostedWindowAction> {
         let message = match intent {
+            crate::runtime_shell::ShellIntent::OverlayPresenceChanged => return None,
             crate::runtime_shell::ShellIntent::ToggleSidebar => {
                 Message::WorkspaceLayout(WorkspaceLayoutMessage::Workspace(
                     WorkspaceAction::ToggleRegion(RegionId::Resources),
@@ -4625,6 +4626,23 @@ impl DesktopProgram {
     }
 
     fn sync_primary_shell(&mut self) {
+        let dismissals = self
+            .runtime_shell
+            .as_ref()
+            .zip(self.documents.get(&WindowId::PRIMARY))
+            .map(|(handles, document)| handles.take_overlay_dismissals(document.context()))
+            .unwrap_or_default();
+        for intent in dismissals {
+            if matches!(
+                intent,
+                crate::runtime_shell::ShellIntent::ToggleTitlebarMenu
+            ) && !self.titlebar_menu_open
+            {
+                continue;
+            }
+            self.apply_shell_intent(intent);
+        }
+
         if self.pending_workspace_projection {
             // 本周期应用侧已写 controller,投影以 controller 为准,跳过拉取。
             self.pending_workspace_projection = false;
@@ -28267,17 +28285,25 @@ impl RuntimeProgram for LiliaShell {
     type Message = Message;
     type Error = String;
 
-    fn document(&self, id: WindowId) -> Option<&RuntimeDocument> {
+    fn with_document<R>(
+        &self,
+        id: WindowId,
+        f: impl FnOnce(&RuntimeDocument) -> R,
+    ) -> Result<Option<R>, nana_ui::DocumentAccessError> {
         match &self.state {
-            LiliaShellState::Ready(program) => program.document(id),
-            LiliaShellState::Loading | LiliaShellState::Failed => self.documents.get(&id),
+            LiliaShellState::Ready(program) => program.with_document(id, f),
+            LiliaShellState::Loading | LiliaShellState::Failed => Ok(self.documents.get(&id).map(f)),
         }
     }
 
-    fn document_mut(&mut self, id: WindowId) -> Option<&mut RuntimeDocument> {
+    fn with_document_mut<R>(
+        &mut self,
+        id: WindowId,
+        f: impl FnOnce(&mut RuntimeDocument) -> R,
+    ) -> Result<Option<R>, nana_ui::DocumentAccessError> {
         match &mut self.state {
-            LiliaShellState::Ready(program) => program.document_mut(id),
-            LiliaShellState::Loading | LiliaShellState::Failed => self.documents.get_mut(&id),
+            LiliaShellState::Ready(program) => program.with_document_mut(id, f),
+            LiliaShellState::Loading | LiliaShellState::Failed => Ok(self.documents.get_mut(&id).map(f)),
         }
     }
 
@@ -28435,12 +28461,20 @@ impl RuntimeProgram for DesktopProgram {
     type Message = Message;
     type Error = String;
 
-    fn document(&self, id: WindowId) -> Option<&RuntimeDocument> {
-        self.documents.get(&id)
+    fn with_document<R>(
+        &self,
+        id: WindowId,
+        f: impl FnOnce(&RuntimeDocument) -> R,
+    ) -> Result<Option<R>, nana_ui::DocumentAccessError> {
+        Ok(self.documents.get(&id).map(f))
     }
 
-    fn document_mut(&mut self, id: WindowId) -> Option<&mut RuntimeDocument> {
-        self.documents.get_mut(&id)
+    fn with_document_mut<R>(
+        &mut self,
+        id: WindowId,
+        f: impl FnOnce(&mut RuntimeDocument) -> R,
+    ) -> Result<Option<R>, nana_ui::DocumentAccessError> {
+        Ok(self.documents.get_mut(&id).map(f))
     }
 
     fn input_event(
