@@ -35,7 +35,9 @@ impl DesktopComposerTurnRequest for DesktopComposerState {
     fn turn_request(&self) -> DesktopTurnRequest {
         let mut request = DesktopTurnRequest::new(self.task_id.clone(), self.content.trim())
             .with_attachments(self.effective_attachments().cloned().collect())
-            .with_conversation_references(self.conversation_references.clone());
+            .with_conversation_references(
+                self.effective_conversation_references().cloned().collect(),
+            );
         request.model = self.model.clone();
         request.workflow = self.workflow.clone();
         request.reasoning_effort = self.reasoning_effort.clone();
@@ -177,7 +179,10 @@ impl DesktopApplication {
         let composer = self.composer_state(task_id)?;
         if session_branch.is_none()
             && composer.effective_attachments().next().is_none()
-            && composer.conversation_references.is_empty()
+            && composer
+                .effective_conversation_references()
+                .next()
+                .is_none()
         {
             if let Some(execution) = self.resolve_task_slash_command(task_id, &composer.content)? {
                 self.promote_composer_task_if_draft(&composer)?;
@@ -659,6 +664,14 @@ mod tests {
 
         assert_eq!(selected.revision, 1);
         assert_eq!(selected.conversation_references, vec![reference.clone()]);
+        assert!(selected.content.contains(&reference.reference_text()));
+        assert_eq!(
+            selected
+                .effective_conversation_references()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![reference.clone()]
+        );
         assert!(matches!(
             store.execute(
                 &task_id,

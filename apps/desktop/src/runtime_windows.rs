@@ -73,6 +73,7 @@ pub struct TaskPopupSnapshot {
     pub error: Option<String>,
     pub timeline: Vec<ShellTimelineRow>,
     pub composer: String,
+    pub composer_atom_spans: Vec<lilia_feature_composer::ContentAtomSpan>,
     pub composer_task_id: Option<String>,
     pub composer_revision: u64,
     pub composer_disabled: bool,
@@ -177,8 +178,8 @@ pub fn mount_conversation_status(
     context.append_child(actions, new_chat)?;
     context.append_child(actions, close)?;
 
-    let page = context
-        .create_detached_component(document_id, Stack::fill_column(10.0).padding(16.0))?;
+    let page =
+        context.create_detached_component(document_id, Stack::fill_column(10.0).padding(16.0))?;
     context.append_child(page, title)?;
     context.append_child(page, error)?;
     context.append_child(page, list)?;
@@ -350,7 +351,11 @@ pub fn mount_task_popup(
         context.create_detached_component(document_id, ScrollView::new(ScrollAxes::Vertical))?;
     let composer = context.create_detached_component(
         document_id,
-        TextArea::new(snapshot.composer.clone()).height(96.0),
+        TextArea::new(snapshot.composer.clone())
+            .atom_spans(crate::runtime_shell::composer_atom_chips(
+                &snapshot.composer_atom_spans,
+            ))
+            .height(96.0),
     )?;
     let composer_sink = Arc::clone(&sink);
     let window_id = snapshot.window_id;
@@ -502,8 +507,8 @@ pub fn mount_task_popup(
     let pending_actions = context.create_detached_component(document_id, pending_actions_row())?;
     context.append_child(pending_panel, pending_title)?;
     context.append_child(pending_panel, pending_prompt)?;
-    let page = context
-        .create_detached_component(document_id, Stack::fill_column(10.0).padding(16.0))?;
+    let page =
+        context.create_detached_component(document_id, Stack::fill_column(10.0).padding(16.0))?;
     context.append_child(page, heading)?;
     context.append_child(page, error)?;
     context.append_child(page, timeline_scroll)?;
@@ -579,6 +584,8 @@ impl TaskPopupHandles {
             if write_composer && editor.state.value != snapshot.composer {
                 editor.state.replace_value(snapshot.composer.clone());
             }
+            editor.atom_spans =
+                crate::runtime_shell::composer_atom_chips(&snapshot.composer_atom_spans);
             editor.disabled = snapshot.composer_disabled;
         })?;
         self.composer_generation = composer_generation;

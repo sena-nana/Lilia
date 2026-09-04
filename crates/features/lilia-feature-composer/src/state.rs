@@ -162,13 +162,19 @@ impl ComposerState {
                 attachment,
             } => {
                 ensure_expected_revision(self, expected_revision)?;
-                self.content = content;
-                if !self
-                    .attachments
-                    .iter()
-                    .any(|candidate| candidate.path.eq_ignore_ascii_case(&attachment.path))
+                self.content = if content.contains(&attachment.reference_text()) {
+                    content
+                } else {
+                    content + &attachment.reference_text()
+                };
+                if let Some(existing) = self
+                    .inline_attachments
+                    .iter_mut()
+                    .find(|current| current.path.eq_ignore_ascii_case(&attachment.path))
                 {
-                    self.attachments.push(attachment);
+                    *existing = attachment;
+                } else {
+                    self.inline_attachments.push(attachment);
                 }
             }
             ComposerCommand::ApplyConversationReference {
@@ -177,7 +183,11 @@ impl ComposerState {
                 reference,
             } => {
                 ensure_expected_revision(self, expected_revision)?;
-                self.content = content;
+                self.content = if content.contains(&reference.reference_text()) {
+                    content
+                } else {
+                    content + &reference.reference_text()
+                };
                 if !self
                     .conversation_references
                     .iter()

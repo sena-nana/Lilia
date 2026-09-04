@@ -4101,6 +4101,7 @@ impl DesktopProgram {
                 .map(|viewport| viewport.extent)
                 .unwrap_or(TIMELINE_DEFAULT_VIEWPORT_EXTENT),
             composer: String::new(),
+            composer_atom_spans: Vec::new(),
             composer_task_id: None,
             composer_revision: 0,
             composer_height: crate::module::composer::textarea_height(
@@ -4718,10 +4719,11 @@ impl DesktopProgram {
                     .collect()
             })
             .unwrap_or_default();
-        let (composer, composer_task_id, composer_revision, composer_disabled) =
+        let (composer, composer_atom_spans, composer_task_id, composer_revision, composer_disabled) =
             match self.window_composer(window_id) {
                 Some(state) => (
                     state.content.clone(),
+                    state.content_atom_spans(),
                     Some(state.task_id.as_str().to_owned()),
                     state.revision,
                     false,
@@ -4730,6 +4732,7 @@ impl DesktopProgram {
                     self.window_composer_module(window_id)
                         .map(|module| module.composer_editor().text())
                         .unwrap_or_default(),
+                    Vec::new(),
                     None,
                     0,
                     true,
@@ -4743,6 +4746,7 @@ impl DesktopProgram {
             error: popup.error.clone(),
             timeline,
             composer,
+            composer_atom_spans,
             composer_task_id,
             composer_revision,
             composer_disabled,

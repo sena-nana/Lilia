@@ -17,7 +17,8 @@ use nana_ui::runtime::{
     SettingsCard, SettingsPage, SettingsRow, SettingsSidebar, SettingsTabSelected, SidebarFooter,
     SidebarFooterButton, SidebarFrame, SidebarRow, SidebarRowIcon, SidebarRowState, SidebarSection,
     SidebarSectionState, StableNodeId, Stack, Switch, TabOption, Tabs, TabsEvent, Text, TextArea,
-    ScrollChanged, SecondaryPress, TextChanged, TimeSeriesChart, ToggleChanged, TreeDropPosition,
+    TextAtomSpan, ScrollChanged, SecondaryPress, TextChanged, TimeSeriesChart, ToggleChanged,
+    TreeDropPosition,
     TreeView, TreeViewEvent, View, VirtualListItems, VirtualListLayout, sidebar_row_tool_button,
     sidebar_section_tool_button, sidebar_top_bar_tool_button,
 };
@@ -558,6 +559,7 @@ pub struct PrimaryShellSnapshot {
     pub timeline_scroll_offset: f32,
     pub timeline_viewport_extent: f32,
     pub composer: String,
+    pub composer_atom_spans: Vec<lilia_feature_composer::ContentAtomSpan>,
     pub composer_task_id: Option<String>,
     pub composer_revision: u64,
     pub composer_height: f32,
@@ -1432,6 +1434,7 @@ fn row_draft_button() -> IconButton {
 fn composer_view(snapshot: &PrimaryShellSnapshot) -> TextArea {
     flatten_composer_textarea(
         TextArea::new(snapshot.composer.clone())
+            .atom_spans(composer_atom_chips(&snapshot.composer_atom_spans))
             .placeholder(snapshot.composer_placeholder.clone())
             .disabled(snapshot.composer_disabled)
             .height(
@@ -1440,6 +1443,27 @@ fn composer_view(snapshot: &PrimaryShellSnapshot) -> TextArea {
                     .clamp(COMPOSER_MIN_HEIGHT, COMPOSER_MAX_HEIGHT),
             ),
     )
+}
+
+pub(crate) fn composer_atom_chips(
+    spans: &[lilia_feature_composer::ContentAtomSpan],
+) -> Arc<[TextAtomSpan]> {
+    spans
+        .iter()
+        .map(|span| {
+            TextAtomSpan::new(span.start, span.end)
+                .label(span.label.as_str())
+                .token(span.token.as_str())
+                .icon(match span.kind {
+                    lilia_feature_composer::ContentAtomKind::Directory => Icon::Folder,
+                    lilia_feature_composer::ContentAtomKind::Conversation => {
+                        Icon::MessageSquarePlus
+                    }
+                    lilia_feature_composer::ContentAtomKind::File
+                    | lilia_feature_composer::ContentAtomKind::Image => Icon::File,
+                })
+        })
+        .collect()
 }
 
 fn composer_plus_menu(open: bool) -> ActionMenu {
@@ -3194,6 +3218,7 @@ impl ShellHandles {
             if write_composer && composer.state.value != snapshot.composer {
                 composer.state.replace_value(snapshot.composer.clone());
             }
+            composer.atom_spans = composer_atom_chips(&snapshot.composer_atom_spans);
             composer.placeholder = Arc::from(snapshot.composer_placeholder.as_str());
             composer.disabled = snapshot.composer_disabled;
             Arc::make_mut(&mut composer.style.layout).height = Some(LengthSpec::Px(
@@ -7495,6 +7520,7 @@ pub(crate) fn empty_snapshot() -> PrimaryShellSnapshot {
         timeline_scroll_offset: 0.0,
         timeline_viewport_extent: TIMELINE_DEFAULT_VIEWPORT_EXTENT,
         composer: String::new(),
+        composer_atom_spans: Vec::new(),
         composer_task_id: None,
         composer_revision: 0,
         composer_height: COMPOSER_MIN_HEIGHT,
