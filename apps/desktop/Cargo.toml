@@ -59,8 +59,8 @@ lilia-platform = { workspace = true }
 lilia-storage = { workspace = true }
 minisign-verify = "0.2.5"
 mutsuki-agent-contracts = { workspace = true }
-nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "103e689c20bad7708c965565c7517f379ca45616", features = ["full"] }
-nana-ui-platform = { git = "https://github.com/sena-nana/NanaUI.git", rev = "103e689c20bad7708c965565c7517f379ca45616", package = "nana-ui-platform" }
+nana-ui = { git = "https://github.com/sena-nana/NanaUI.git", rev = "3b329d1fa6dbf1852b5a27c20122e03a37edcc62", features = ["full"] }
+nana-ui-platform = { git = "https://github.com/sena-nana/NanaUI.git", rev = "3b329d1fa6dbf1852b5a27c20122e03a37edcc62", package = "nana-ui-platform" }
 reqwest = { workspace = true, features = ["form", "query"] }
 rusqlite = { workspace = true, features = ["backup"] }
 semver = "1.0.28"
