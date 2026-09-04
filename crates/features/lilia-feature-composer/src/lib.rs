@@ -22,11 +22,15 @@ pub use prompt::{
     optimize_prompt_slot, PromptOptimizeInput, PromptOptimizePort, PromptOptimizeResult,
     PromptRoute, OPTIMIZE_PROMPT_PROTOCOL,
 };
-pub use state::{ensure_expected_revision, ComposerCommand, ComposerState};
+pub use state::{
+    ensure_expected_revision, ComposerCommand, ComposerState, ContentAtomKind, ContentAtomSpan,
+};
 pub use store::ComposerStore;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComposerError {
+    #[error("composer content changed before paste")]
+    ContentConflict,
     #[error("composer revision overflowed")]
     RevisionOverflow,
     #[error("composer revision conflict: expected {expected}, actual {actual}")]
@@ -184,8 +188,9 @@ mod prompt_job_tests {
 
     #[test]
     fn a_failing_port_fails_the_job_with_the_hosts_message() {
-        let error = run_optimize_prompt_job(serde_json::json!({ "prompt": "ship it" }), &FailingPort)
-            .expect_err("a failing auxiliary model fails the job");
+        let error =
+            run_optimize_prompt_job(serde_json::json!({ "prompt": "ship it" }), &FailingPort)
+                .expect_err("a failing auxiliary model fails the job");
 
         assert_eq!(error, "the auxiliary model is not configured");
     }

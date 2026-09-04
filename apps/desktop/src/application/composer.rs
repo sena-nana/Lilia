@@ -34,7 +34,7 @@ pub trait DesktopComposerTurnRequest {
 impl DesktopComposerTurnRequest for DesktopComposerState {
     fn turn_request(&self) -> DesktopTurnRequest {
         let mut request = DesktopTurnRequest::new(self.task_id.clone(), self.content.trim())
-            .with_attachments(self.attachments.clone())
+            .with_attachments(self.effective_attachments().cloned().collect())
             .with_conversation_references(self.conversation_references.clone());
         request.model = self.model.clone();
         request.workflow = self.workflow.clone();
@@ -176,7 +176,7 @@ impl DesktopApplication {
             .map_err(|_| DesktopApplicationError::StateUnavailable("turn submission"))?;
         let composer = self.composer_state(task_id)?;
         if session_branch.is_none()
-            && composer.attachments.is_empty()
+            && composer.effective_attachments().next().is_none()
             && composer.conversation_references.is_empty()
         {
             if let Some(execution) = self.resolve_task_slash_command(task_id, &composer.content)? {
@@ -215,8 +215,7 @@ impl DesktopApplication {
         let guide_text =
             crate::application::agent::turn_content_with_references(&composer.turn_request());
         let attachments = composer
-            .attachments
-            .iter()
+            .effective_attachments()
             .map(|attachment| {
                 serde_json::to_value(attachment).map_err(|error| {
                     DesktopComposerError::Serialization {
@@ -410,6 +409,47 @@ mod tests {
     }
 
     #[test]
+    fn inline_reference_token_is_one_payload_unit_and_clears_without_leftover() {
+        let (app, task, _) = application();
+        let inline: lilia_contracts::ChatAttachment = serde_json::from_value(serde_json::json!({
+            "id": "inline",
+            "name": "note.txt",
+            "path": "/tmp/note.txt",
+            "kind": "file",
+            "exists": true
+        }))
+        .unwrap();
+        let content = format!("see {} end", inline.reference_text());
+        app.execute_composer_command(
+            &task,
+            DesktopComposerCommand::ApplyPaste {
+                expected_revision: 0,
+                expected_content: String::new(),
+                content: content.clone(),
+                attachments: vec![inline.clone()],
+            },
+        )
+        .unwrap();
+        let spans = app.composer_state(&task).unwrap().content_atom_spans();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].label, "note.txt");
+        assert_ne!(spans[0].label, inline.reference_text());
+        assert_eq!(
+            app.composer_state(&task)
+                .unwrap()
+                .turn_request()
+                .attachments,
+            vec![inline.clone()]
+        );
+        let removed = app
+            .execute_composer_command(&task, DesktopComposerCommand::SetContent("see  end".into()))
+            .unwrap();
+        assert!(!removed.content.contains(&inline.reference_text()));
+        assert!(removed.turn_request().attachments.is_empty());
+        assert!(removed.content_atom_spans().is_empty());
+    }
+
+    #[test]
     fn composer_commands_are_task_scoped_revisioned_and_evented() {
         let (application, first, second) = application();
         let events = application.subscribe_events();
@@ -474,6 +514,7 @@ mod tests {
             revision: 8,
             content: "  implement native  ".to_owned(),
             attachments: Vec::new(),
+            inline_attachments: Vec::new(),
             conversation_references: Vec::new(),
             workflow: Some(LiliaAgentWorkflow::LiliaCompact),
             model: Some(" gpt-native ".to_owned()),

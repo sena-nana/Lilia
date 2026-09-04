@@ -227,6 +227,7 @@ mod tests {
             revision,
             content: content.to_owned(),
             attachments: Vec::new(),
+            inline_attachments: Vec::new(),
             conversation_references: Vec::new(),
             workflow: None,
             model: Some("native-model".to_owned()),

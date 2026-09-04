@@ -31,6 +31,7 @@ impl ComposerStore {
                   revision         INTEGER NOT NULL,
                   content          TEXT NOT NULL,
                   attachments_json TEXT NOT NULL,
+                  inline_attachments_json TEXT NOT NULL DEFAULT '[]',
                   conversation_references_json TEXT NOT NULL DEFAULT '[]',
                   workflow_json    TEXT,
                   model            TEXT,
@@ -58,6 +59,12 @@ impl ComposerStore {
             "workflow_json",
             "ALTER TABLE desktop_composer_drafts ADD COLUMN workflow_json TEXT",
         )?;
+        ensure_column(
+            &locked,
+            "desktop_composer_drafts",
+            "inline_attachments_json",
+            "ALTER TABLE desktop_composer_drafts ADD COLUMN inline_attachments_json TEXT NOT NULL DEFAULT '[]'",
+        )?;
         drop(locked);
         Ok(Self { connection })
     }
@@ -75,7 +82,7 @@ impl ComposerStore {
             .query_row(
                 r#"SELECT task_id, revision, content, attachments_json, model,
                           reasoning_effort, permission, plan_mode, goal_mode,
-                          conversation_references_json, workflow_json
+                          conversation_references_json, workflow_json, inline_attachments_json
                    FROM desktop_composer_drafts WHERE task_id = ?1"#,
                 params![task_id.as_str()],
                 row_to_composer,
@@ -123,12 +130,14 @@ impl ComposerStore {
         if state.revision != dispatched_revision
             || (state.content.is_empty()
                 && state.attachments.is_empty()
+                && state.inline_attachments.is_empty()
                 && state.conversation_references.is_empty())
         {
             return Ok(None);
         }
         state.content.clear();
         state.attachments.clear();
+        state.inline_attachments.clear();
         state.conversation_references.clear();
         state.workflow = None;
         state.revision = state
@@ -159,10 +168,16 @@ impl ComposerStore {
     }
 
     pub fn save_to(connection: &Connection, state: &ComposerState) -> Result<(), ComposerError> {
-        let attachments =
-            serde_json::to_string(&state.attachments).map_err(|error| {
+        let attachments = serde_json::to_string(&state.attachments).map_err(|error| {
+            ComposerError::Serialization {
+                field: "attachments",
+                message: error.to_string(),
+            }
+        })?;
+        let inline_attachments =
+            serde_json::to_string(&state.inline_attachments).map_err(|error| {
                 ComposerError::Serialization {
-                    field: "attachments",
+                    field: "inlineAttachments",
                     message: error.to_string(),
                 }
             })?;
@@ -185,8 +200,8 @@ impl ComposerStore {
                 r#"INSERT INTO desktop_composer_drafts
                    (task_id, revision, content, attachments_json, model, reasoning_effort,
                     permission, plan_mode, goal_mode, updated_at, conversation_references_json,
-                    workflow_json)
-                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                    workflow_json, inline_attachments_json)
+                   VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                    ON CONFLICT(task_id) DO UPDATE SET
                      revision = excluded.revision,
                      content = excluded.content,
@@ -198,7 +213,8 @@ impl ComposerStore {
                      goal_mode = excluded.goal_mode,
                      updated_at = excluded.updated_at,
                      conversation_references_json = excluded.conversation_references_json,
-                     workflow_json = excluded.workflow_json"#,
+                     workflow_json = excluded.workflow_json,
+                     inline_attachments_json = excluded.inline_attachments_json"#,
                 params![
                     state.task_id.as_str(),
                     i64::try_from(state.revision).map_err(|_| ComposerError::RevisionOverflow)?,
@@ -212,6 +228,7 @@ impl ComposerStore {
                     now_millis(),
                     conversation_references,
                     workflow,
+                    inline_attachments,
                 ],
             )
             .map(|_| ())
@@ -245,6 +262,8 @@ fn row_to_composer(row: &rusqlite::Row<'_>) -> rusqlite::Result<ComposerState> {
         revision,
         content: row.get(2)?,
         attachments,
+        inline_attachments: serde_json::from_str(&row.get::<_, String>(11)?)
+            .map_err(|error| invalid_data(error.to_string()))?,
         conversation_references,
         workflow,
         model: row.get(4)?,
@@ -307,4 +326,136 @@ fn now_millis() -> i64 {
         .unwrap_or_default()
         .as_millis();
     i64::try_from(millis).unwrap_or(i64::MAX)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rich_paste_inline_sources_survive_reload_and_legacy_rows_migrate_empty() {
+        let db = lilia_storage::Db::in_memory().unwrap();
+        let store = ComposerStore::new(db.clone()).unwrap();
+        let task = TaskId::new("legacy-paste").unwrap();
+        store
+            .execute(&task, ComposerCommand::SetContent("legacy".into()))
+            .unwrap();
+        drop(store);
+        db.lock()
+            .execute_batch(
+                "ALTER TABLE desktop_composer_drafts DROP COLUMN inline_attachments_json",
+            )
+            .unwrap();
+        let store = ComposerStore::new(db.clone()).unwrap();
+        let old = store.snapshot(&task).unwrap();
+        assert_eq!(old.content, "legacy");
+        assert!(old.inline_attachments.is_empty());
+        let attachment: lilia_contracts::ChatAttachment = serde_json::from_value(serde_json::json!({"id":"file", "name":"a.txt", "path":"/tmp/a.txt", "kind":"file", "exists":true})).unwrap();
+        store
+            .execute(
+                &task,
+                ComposerCommand::ApplyPaste {
+                    expected_revision: old.revision,
+                    expected_content: old.content,
+                    content: attachment.reference_text(),
+                    attachments: vec![attachment.clone()],
+                },
+            )
+            .unwrap();
+        drop(store);
+        let store = ComposerStore::new(db.clone()).unwrap();
+        let loaded = store.snapshot(&task).unwrap();
+        assert_eq!(loaded.inline_attachments, vec![attachment]);
+        assert_eq!(loaded.effective_attachments().count(), 1);
+        db.lock().execute_batch("CREATE TRIGGER reject_paste BEFORE UPDATE ON desktop_composer_drafts BEGIN SELECT RAISE(ABORT, 'injected storage failure'); END").unwrap();
+        assert!(store
+            .execute(
+                &task,
+                ComposerCommand::ApplyPaste {
+                    expected_revision: loaded.revision,
+                    expected_content: loaded.content.clone(),
+                    content: "must not commit".into(),
+                    attachments: vec![]
+                }
+            )
+            .is_err());
+        assert_eq!(store.snapshot(&task).unwrap(), loaded);
+        db.lock()
+            .execute_batch("DROP TRIGGER reject_paste")
+            .unwrap();
+        store
+            .clear_dispatched_payload(&task, loaded.revision)
+            .unwrap();
+        assert!(store.snapshot(&task).unwrap().inline_attachments.is_empty());
+    }
+
+    #[test]
+    fn rich_paste_commits_content_and_attachments_once_and_rejects_stale_sources() {
+        let store = ComposerStore::in_memory().unwrap();
+        let task = TaskId::new("paste").unwrap();
+        let before = store.snapshot(&task).unwrap();
+        let attachment: lilia_contracts::ChatAttachment = serde_json::from_value(serde_json::json!({"id":"file", "name":"a.txt", "path":"/tmp/a.txt", "kind":"file", "size":1, "exists":true})).unwrap();
+        let content = format!("before {} after", attachment.reference_text());
+        let command = ComposerCommand::ApplyPaste {
+            expected_revision: before.revision,
+            expected_content: before.content,
+            content: content.clone(),
+            attachments: vec![attachment.clone()],
+        };
+        store.execute(&task, command.clone()).unwrap();
+        let committed = store.snapshot(&task).unwrap();
+        assert_eq!(committed.revision, 1);
+        assert_eq!(committed.content, content);
+        assert_eq!(
+            committed
+                .effective_attachments()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec![attachment]
+        );
+        assert!(matches!(
+            store.execute(&task, command),
+            Err(ComposerError::RevisionConflict { .. })
+        ));
+        assert_eq!(store.snapshot(&task).unwrap(), committed);
+        assert!(matches!(
+            store.execute(
+                &task,
+                ComposerCommand::ApplyPaste {
+                    expected_revision: committed.revision,
+                    expected_content: "wrong".into(),
+                    content: "must not persist".into(),
+                    attachments: vec![]
+                }
+            ),
+            Err(ComposerError::ContentConflict)
+        ));
+        assert_eq!(store.snapshot(&task).unwrap(), committed);
+        store
+            .execute(
+                &task,
+                ComposerCommand::ApplyPaste {
+                    expected_revision: committed.revision,
+                    expected_content: committed.content,
+                    content: "short paste".into(),
+                    attachments: vec![],
+                },
+            )
+            .unwrap();
+        let short = store.snapshot(&task).unwrap();
+        assert_eq!(short.revision, 2);
+        assert_eq!(short.content, "short paste");
+        assert_eq!(short.attachments, committed.attachments);
+        let mut draft = ComposerState::transient(TaskId::new("not-created-yet").unwrap());
+        assert!(draft
+            .apply_transient_command(ComposerCommand::ApplyPaste {
+                expected_revision: 0,
+                expected_content: "".into(),
+                content: "new draft".into(),
+                attachments: vec![]
+            })
+            .unwrap());
+        assert_eq!(draft.content, "new draft");
+        assert_eq!(draft.revision, 1);
+    }
 }
