@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use lilia_contracts::TaskId;
 use nana_ui::runtime::{
-    AppContext, Button, DesktopShell, DocumentId, Entity, FrameworkError, IconButton, List,
+    AppContext, Button, Card, DesktopShell, DocumentId, Entity, FrameworkError, IconButton, List,
     NativeMarkdown, ScrollAxes, ScrollView, Stack, Text, TextArea, TextChanged,
 };
 use nana_ui::{ButtonKind, ControlSize, ThemeMode, WindowChrome};
@@ -102,7 +102,7 @@ pub struct TaskPopupHandles {
     timeline_items: HashMap<String, Entity<NativeMarkdown>>,
     timeline_sources: HashMap<String, u64>,
     page: Entity<Stack>,
-    pending_panel: Entity<Stack>,
+    pending_panel: Entity<Card>,
     pending_title: Entity<Text>,
     pending_prompt: Entity<Text>,
     pending_draft: Entity<TextArea>,

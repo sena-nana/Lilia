@@ -4,36 +4,35 @@ use std::sync::{Arc, Mutex};
 
 use lilia_contracts::TaskId;
 use nana_ui::runtime::{
+    sidebar_row_tool_button, sidebar_section_tool_button, sidebar_top_bar_tool_button,
     AboutMetadata, AboutSection, ActionMenu, ActionMenuItem, Activate, AppContext,
-    AppearanceSection, Button, Breadcrumb, BreadcrumbItem, BreadcrumbTone, CommandPalette,
-    ConfirmDialog, ConfirmIntent, ConfirmSlots,
-    ContextMenu, ContextMenuEvent, ContextMenuItem, DesktopShell, DocumentId, EmptyState, Entity,
-    FlexDirection, FormField, FrameworkError, GraphCanvas, HighlightRequest, IconButton, IconGlyph,
-    ImageViewer, ImageViewerContent, ImageViewerEvent, InteractiveCard, JustifySpec, KeyCaptureLayer,
-    LengthSpec, List, ListItem, NativeMarkdown, NodeStyle, OverlayChanged, OverlayClosing, OverlayHost, PaneChrome,
-    PaneChromeAction, PaneChromeActionKind, PopoverToggled, ReorderItem, ReorderList,
-    ReorderListEvent, ScrollAxes, ScrollOffset, ScrollView, SemanticColorRole, SettingsBack,
-    SplitPane,
-    SettingsCard, SettingsPage, SettingsRow, SettingsSidebar, SettingsTabSelected, SidebarFooter,
-    SidebarFooterButton, SidebarFrame, SidebarRow, SidebarRowIcon, SidebarRowState, SidebarSection,
-    SidebarSectionState, StableNodeId, Stack, Switch, TabOption, Tabs, TabsEvent, Text, TextArea,
-    TextAtomSpan, ScrollChanged, SecondaryPress, TextChanged, TimeSeriesChart, ToggleChanged,
-    TreeDropPosition,
-    TreeView, TreeViewEvent, View, VirtualListItems, VirtualListLayout, sidebar_row_tool_button,
-    sidebar_section_tool_button, sidebar_top_bar_tool_button,
+    AppearanceSection, Breadcrumb, BreadcrumbItem, BreadcrumbTone, Button, Card, Chip,
+    CommandPalette, ConfirmDialog, ConfirmIntent, ConfirmSlots, ContextMenu, ContextMenuEvent,
+    ContextMenuItem, DesktopShell, DocumentId, EmptyState, Entity, FlexDirection, FormField,
+    FrameworkError, GraphCanvas, HighlightRequest, IconButton, IconGlyph, ImageViewer,
+    ImageViewerContent, ImageViewerEvent, InteractiveCard, JustifySpec, KeyCaptureLayer,
+    LengthSpec, List, ListItem, NativeMarkdown, NodeStyle, OverlayChanged, OverlayClosing,
+    OverlayHost, PaneChrome, PaneChromeAction, PaneChromeActionKind, PopoverToggled, ReorderItem,
+    ReorderList, ReorderListEvent, ScrollAxes, ScrollChanged, ScrollOffset, ScrollView,
+    SecondaryPress, SemanticColorRole, SettingsBack, SettingsCard, SettingsPage, SettingsRow,
+    SettingsSidebar, SettingsTabSelected, SidebarFooter, SidebarFooterButton, SidebarFrame,
+    SidebarRow, SidebarRowIcon, SidebarRowState, SidebarSection, SidebarSectionState, SplitPane,
+    StableNodeId, Stack, Switch, TabOption, Tabs, TabsEvent, Text, TextArea, TextAtomSpan,
+    TextChanged, TimeSeriesChart, ToggleChanged, TreeDropPosition, TreeView, TreeViewEvent, View,
+    VirtualListItems, VirtualListLayout,
 };
 use nana_ui::{
     AppearanceEvent, AppearanceSettings, ButtonKind, CommandPaletteEvent, CommandPaletteItem,
-    ControlSize, Icon, SettingsModel, SettingsState, SettingsTabId, SplitAxis, SplitPaneModel,
-    ThemeMode, WindowChrome,
-    WindowChromeAction, WindowChromeEvent, WorkspaceModel, UI_METRICS, PopoverPlacement,
+    ControlSize, Icon, PopoverPlacement, SettingsModel, SettingsState, SettingsTabId, SplitAxis,
+    SplitPaneModel, ThemeMode, WindowChrome, WindowChromeAction, WindowChromeEvent, WorkspaceModel,
+    UI_METRICS,
 };
 
 use crate::runtime_compat::{HostedUiCommand, HostedWindowId};
 use crate::runtime_layout::{
     composer_card, composer_interrupt_button, composer_send_button, flatten_composer_textarea,
     headline_slot, inspector_header_bar, pending_actions_row, pending_interaction_card,
-    pill_button, reconcile_children, sidebar_icon_button, trigger_slot, window_control,
+    pill_button, reconcile_children, sidebar_icon_button, token_chip, trigger_slot, window_control,
 };
 use crate::target_ids;
 
@@ -657,7 +656,10 @@ pub enum ShellIntent {
         anchor: Option<(f32, f32)>,
     },
     /// 行体右键（列表冒泡解析）弹同款菜单，锚点为光标点。
-    OpenRowMenu { id: String, anchor: (f32, f32) },
+    OpenRowMenu {
+        id: String,
+        anchor: (f32, f32),
+    },
     ReorderSidebar {
         source: String,
         before: Option<String>,
@@ -1037,12 +1039,12 @@ pub struct ShellHandles {
     timeline_virtual: VirtualListItems<String, Stack>,
     timeline_markdown: HashMap<String, Entity<NativeMarkdown>>,
     timeline_markdown_source: HashMap<String, u64>,
-    timeline_actions: HashMap<String, Entity<Button>>,
+    timeline_actions: HashMap<String, Entity<Chip>>,
     synced: SyncedInputs,
     composer_generation: ComposerGeneration,
     shell_assembled: bool,
     load_earlier: Option<Entity<Button>>,
-    composer_dock: Entity<Stack>,
+    composer_dock: Entity<Card>,
     composer: Entity<TextArea>,
     composer_toolbar: Entity<Stack>,
     extras: Entity<Stack>,
@@ -1063,7 +1065,7 @@ pub struct ShellHandles {
     worktree_icon: Entity<IconGlyph>,
     worktree_menu: Entity<ActionMenu>,
     worktree_items: HashMap<String, Entity<ActionMenuItem>>,
-    pending_panel: Entity<Stack>,
+    pending_panel: Entity<Card>,
     pending_actions: Entity<Stack>,
     pending_title: Entity<Text>,
     pending_prompt: Entity<Text>,
@@ -1244,10 +1246,7 @@ fn mount_workspace_pane_view(
     let pane_id_owned = pane_id.to_owned();
     let tab_sink = Arc::clone(sink);
     context.on(tabs, move |_, event: &TabsEvent, _| {
-        emit(
-            &tab_sink,
-            workspace_tabs_intent_for(&pane_id_owned, event),
-        );
+        emit(&tab_sink, workspace_tabs_intent_for(&pane_id_owned, event));
     })?;
     let split_h = context
         .create_detached_component(document_id, extra_button("左右分栏", ButtonKind::Text))?;
@@ -1306,8 +1305,8 @@ fn mount_workspace_pane_view(
         context.create_detached_component(document_id, Stack::fill_column(12.0).padding(16.0))?;
     let heading = context.create_detached_component(document_id, Text::new(String::new()))?;
     let status = context.create_detached_component(document_id, Text::new(String::new()))?;
-    let editor =
-        context.create_detached_component(document_id, fill_workspace_editor(String::new(), None))?;
+    let editor = context
+        .create_detached_component(document_id, fill_workspace_editor(String::new(), None))?;
     let editor_sink = Arc::clone(sink);
     context.on(editor, move |_, event: &TextChanged, _| {
         emit(
@@ -1317,14 +1316,11 @@ fn mount_workspace_pane_view(
     })?;
     let log = context.create_detached_component(document_id, fill_workspace_log(String::new()))?;
     let tree = context.create_detached_component(document_id, TreeView::new(Vec::new()))?;
-    let input =
-        context.create_detached_component(document_id, TextArea::new(String::new()).height(72.0))?;
+    let input = context
+        .create_detached_component(document_id, TextArea::new(String::new()).height(72.0))?;
     let input_sink = Arc::clone(sink);
     context.on(input, move |_, event: &TextChanged, _| {
-        emit(
-            &input_sink,
-            ShellIntent::TerminalInput(event.value.clone()),
-        );
+        emit(&input_sink, ShellIntent::TerminalInput(event.value.clone()));
     })?;
     let actions = context.create_detached_component(document_id, Stack::row(8.0))?;
     context.append_child(content, heading)?;
@@ -1503,7 +1499,10 @@ pub(crate) fn permission_from_selection_id(
     id: &str,
 ) -> Option<crate::application::DesktopExecutionPermission> {
     use crate::application::DesktopExecutionPermission;
-    match COMPOSER_PERMISSION_OPTIONS.iter().position(|(key, _)| *key == id) {
+    match COMPOSER_PERMISSION_OPTIONS
+        .iter()
+        .position(|(key, _)| *key == id)
+    {
         Some(0) => Some(DesktopExecutionPermission::Ask),
         Some(1) => Some(DesktopExecutionPermission::Readonly),
         Some(2) => Some(DesktopExecutionPermission::Full),
@@ -1962,8 +1961,7 @@ pub fn mount_primary_shell(
     let context = document.context_mut();
     let _ = context.set_theme(snapshot.theme);
 
-    let title_leading =
-        context.create_detached_component(document_id, Stack::row(0.0))?;
+    let title_leading = context.create_detached_component(document_id, Stack::row(0.0))?;
     let sidebar_toggle = context.create_detached_component(
         document_id,
         sidebar_toggle_button(snapshot.sidebar_collapsed),
@@ -2072,8 +2070,10 @@ pub fn mount_primary_shell(
         context.append_child(sidebar_top, search_toggle)?;
     }
 
-    let add_project_menu = context
-        .create_detached_component(document_id, sidebar_section_tool_button(Icon::Add, "添加项目"))?;
+    let add_project_menu = context.create_detached_component(
+        document_id,
+        sidebar_section_tool_button(Icon::Add, "添加项目"),
+    )?;
     bind_activate(
         context,
         add_project_menu,
@@ -2219,8 +2219,7 @@ pub fn mount_primary_shell(
     context.append_child(conversation_body, heading_slot)?;
     context.append_child(conversation_body, error)?;
     context.append_child(conversation_body, timeline_scroll)?;
-    let composer_dock =
-        context.create_detached_component(document_id, composer_card())?;
+    let composer_dock = context.create_detached_component(document_id, composer_card())?;
     let composer = context.create_detached_component(document_id, composer_view(snapshot))?;
     let composer_sink = Arc::clone(&sink);
     context.on(composer, move |_, event: &TextChanged, _| {
@@ -2230,10 +2229,8 @@ pub fn mount_primary_shell(
         );
     })?;
     let extras = context.create_detached_component(document_id, Stack::fill_row(6.0))?;
-    let plus_slot = context.create_detached_component(
-        document_id,
-        trigger_slot(PLUS_SLOT_SIZE, PLUS_SLOT_SIZE),
-    )?;
+    let plus_slot = context
+        .create_detached_component(document_id, trigger_slot(PLUS_SLOT_SIZE, PLUS_SLOT_SIZE))?;
     let plus_menu = context
         .create_detached_component(document_id, composer_plus_menu(snapshot.composer_plus_open))?;
     context.on(plus_menu, {
@@ -2247,8 +2244,7 @@ pub fn mount_primary_shell(
         Arc::clone(&sink),
         ShellIntent::ComposerPlus("add-file".to_owned()),
     )?;
-    let permission_slot =
-        context.create_detached_component(document_id, Stack::row(4.0))?;
+    let permission_slot = context.create_detached_component(document_id, Stack::row(4.0))?;
     let permission_icon =
         context.create_detached_component(document_id, IconGlyph::new(Icon::ShieldCheck))?;
     let permission_menu = context.create_detached_component(
@@ -2262,8 +2258,7 @@ pub fn mount_primary_shell(
         let sink = Arc::clone(&sink);
         move |_, _: &PopoverToggled, _| emit(&sink, ShellIntent::ToggleComposerPermission)
     })?;
-    let worktree_slot =
-        context.create_detached_component(document_id, Stack::row(4.0))?;
+    let worktree_slot = context.create_detached_component(document_id, Stack::row(4.0))?;
     let worktree_icon =
         context.create_detached_component(document_id, IconGlyph::new(Icon::GitBranch))?;
     let worktree_menu = context.create_detached_component(
@@ -2423,8 +2418,8 @@ pub fn mount_primary_shell(
             AboutMetadata::new("LiliaCode", env!("CARGO_PKG_VERSION")).description("本机工作区"),
         ),
     )?;
-    let product_settings = context
-        .create_detached_component(document_id, Stack::fill_column(10.0).padding(4.0))?;
+    let product_settings =
+        context.create_detached_component(document_id, Stack::fill_column(10.0).padding(4.0))?;
     let settings_card =
         context.create_detached_component(document_id, SettingsCard::new(String::new()))?;
     let product_heading =
@@ -2473,8 +2468,7 @@ pub fn mount_primary_shell(
         .content(appearance.stable_id()),
     )?;
 
-    let workspace_page =
-        context.create_detached_component(document_id, Stack::fill_column(0.0))?;
+    let workspace_page = context.create_detached_component(document_id, Stack::fill_column(0.0))?;
     let pane_header = context.create_detached_component(document_id, Stack::bar(6.0))?;
     let (pane_selected, pane_options) = pane_tab_options(snapshot);
     let pane_tabs = context.create_detached_component(
@@ -2544,8 +2538,8 @@ pub fn mount_primary_shell(
     context.append_child(workspace_page, pane_chrome)?;
     let pane_bar = context.create_detached_component(document_id, Stack::row(8.0))?;
     context.append_child(workspace_page, pane_bar)?;
-    let workspace_content = context
-        .create_detached_component(document_id, Stack::fill_column(12.0).padding(16.0))?;
+    let workspace_content =
+        context.create_detached_component(document_id, Stack::fill_column(12.0).padding(16.0))?;
     let workspace_heading =
         context.create_detached_component(document_id, Text::new(String::new()))?;
     let workspace_status =
@@ -2589,8 +2583,8 @@ pub fn mount_primary_shell(
     context.append_child(workspace_content, workspace_status)?;
     context.append_child(pane_body, workspace_content)?;
 
-    let inspector = context
-        .create_detached_component(document_id, Stack::fill_column(8.0).padding(12.0))?;
+    let inspector =
+        context.create_detached_component(document_id, Stack::fill_column(8.0).padding(12.0))?;
     let inspector_header =
         context.create_detached_component(document_id, inspector_header_bar())?;
     let inspector_heading = context
@@ -2615,8 +2609,7 @@ pub fn mount_primary_shell(
     context.append_child(inspector, iab_empty)?;
     let diagnostics_panel =
         context.create_detached_component(document_id, Stack::column(4.0).padding(8.0))?;
-    let coding_panel =
-        context.create_detached_component(document_id, Stack::fill_column(8.0))?;
+    let coding_panel = context.create_detached_component(document_id, Stack::fill_column(8.0))?;
     let coding_query = context.create_detached_component(
         document_id,
         TextArea::new(String::new())
@@ -2632,12 +2625,10 @@ pub fn mount_primary_shell(
     context.append_child(coding_panel, coding_query)?;
     context.append_child(inspector, coding_panel)?;
 
-    let automations_page = context
-        .create_detached_component(document_id, Stack::fill_column(10.0).padding(16.0))?;
-    let automation_list =
-        context.create_detached_component(document_id, Stack::row(8.0))?;
-    let automation_actions =
-        context.create_detached_component(document_id, Stack::row(8.0))?;
+    let automations_page =
+        context.create_detached_component(document_id, Stack::fill_column(10.0).padding(16.0))?;
+    let automation_list = context.create_detached_component(document_id, Stack::row(8.0))?;
+    let automation_actions = context.create_detached_component(document_id, Stack::row(8.0))?;
     let automation_canvas = context.create_detached_component(
         document_id,
         GraphCanvas::new("automations", snapshot.automation_graph.clone())
@@ -2708,8 +2699,8 @@ pub fn mount_primary_shell(
     context.append_child(automations_sidebar, automations_section)?;
     context.append_child(automations_sidebar, automations_footer)?;
 
-    let project_page = context
-        .create_detached_component(document_id, Stack::fill_column(12.0).padding(16.0))?;
+    let project_page =
+        context.create_detached_component(document_id, Stack::fill_column(12.0).padding(16.0))?;
     let project_page_title =
         context.create_detached_component(document_id, Text::new(String::new()))?;
     let project_page_body =
@@ -3551,7 +3542,8 @@ impl ShellHandles {
                             Arc::clone(&self.sink),
                             ShellIntent::StopSidebarTask(task_id),
                         )?;
-                        self.row_tool_buttons.insert(id, RowToolButton::Stop(button));
+                        self.row_tool_buttons
+                            .insert(id, RowToolButton::Stop(button));
                         button
                     };
                 tools.push(RowToolButton::Stop(button));
@@ -3559,47 +3551,45 @@ impl ShellHandles {
         }
         if item.can_draft {
             let id = format!("{}-draft", item.id);
-            let button =
-                if let Some(RowToolButton::Tool(button)) = self.row_tool_buttons.get(&id) {
-                    *button
-                } else {
-                    let button =
-                        context.create_detached_component(document_id, row_draft_button())?;
-                    bind_activate(
-                        context,
-                        button,
-                        Arc::clone(&self.sink),
-                        ShellIntent::OpenProjectDraft(item.id.clone()),
-                    )?;
-                    self.row_tool_buttons.insert(id, RowToolButton::Tool(button));
-                    button
-                };
+            let button = if let Some(RowToolButton::Tool(button)) = self.row_tool_buttons.get(&id) {
+                *button
+            } else {
+                let button = context.create_detached_component(document_id, row_draft_button())?;
+                bind_activate(
+                    context,
+                    button,
+                    Arc::clone(&self.sink),
+                    ShellIntent::OpenProjectDraft(item.id.clone()),
+                )?;
+                self.row_tool_buttons
+                    .insert(id, RowToolButton::Tool(button));
+                button
+            };
             tools.push(RowToolButton::Tool(button));
         }
         if item.can_menu {
             let id = format!("{}-menu", item.id);
-            let button =
-                if let Some(RowToolButton::Tool(button)) = self.row_tool_buttons.get(&id) {
-                    *button
-                } else {
-                    let button =
-                        context.create_detached_component(document_id, row_menu_button())?;
-                    let intent = match item.kind {
-                        ShellSidebarKind::Task
-                        | ShellSidebarKind::SearchTask
-                        | ShellSidebarKind::Running => ShellIntent::OpenTaskMenu {
-                            id: item.id.clone(),
-                            anchor: None,
-                        },
-                        _ => ShellIntent::OpenProjectMenu {
-                            id: item.id.clone(),
-                            anchor: None,
-                        },
-                    };
-                    bind_activate(context, button, Arc::clone(&self.sink), intent)?;
-                    self.row_tool_buttons.insert(id, RowToolButton::Tool(button));
-                    button
+            let button = if let Some(RowToolButton::Tool(button)) = self.row_tool_buttons.get(&id) {
+                *button
+            } else {
+                let button = context.create_detached_component(document_id, row_menu_button())?;
+                let intent = match item.kind {
+                    ShellSidebarKind::Task
+                    | ShellSidebarKind::SearchTask
+                    | ShellSidebarKind::Running => ShellIntent::OpenTaskMenu {
+                        id: item.id.clone(),
+                        anchor: None,
+                    },
+                    _ => ShellIntent::OpenProjectMenu {
+                        id: item.id.clone(),
+                        anchor: None,
+                    },
                 };
+                bind_activate(context, button, Arc::clone(&self.sink), intent)?;
+                self.row_tool_buttons
+                    .insert(id, RowToolButton::Tool(button));
+                button
+            };
             tools.push(RowToolButton::Tool(button));
         }
         if tools.is_empty() {
@@ -3616,9 +3606,15 @@ impl ShellHandles {
             self.row_tools.insert(item.id.clone(), host);
             host
         };
-        let order = tools.iter().map(|tool| tool.stable_id()).collect::<Vec<_>>();
+        let order = tools
+            .iter()
+            .map(|tool| tool.stable_id())
+            .collect::<Vec<_>>();
         for tool in tools {
-            if context.world().node(tool.stable_id()).and_then(|node| node.parent)
+            if context
+                .world()
+                .node(tool.stable_id())
+                .and_then(|node| node.parent)
                 != Some(host.stable_id())
             {
                 tool.attach(context, host)?;
@@ -5056,15 +5052,15 @@ impl ShellHandles {
         id: &str,
         label: &str,
         intent: ShellIntent,
-    ) -> Result<Entity<Button>, FrameworkError> {
+    ) -> Result<Entity<Chip>, FrameworkError> {
         if let Some(button) = self.timeline_actions.get(id).copied() {
             context.update_component(button, |button, _| {
-                *button = extra_button(label, ButtonKind::Subtle);
+                *button = token_chip(label, false);
             })?;
             Ok(button)
         } else {
-            let button = context
-                .create_detached_component(document_id, extra_button(label, ButtonKind::Subtle))?;
+            let button =
+                context.create_detached_component(document_id, token_chip(label, false))?;
             bind_activate(context, button, Arc::clone(&self.sink), intent)?;
             self.timeline_actions.insert(id.to_owned(), button);
             Ok(button)
@@ -6113,20 +6109,10 @@ impl ShellHandles {
                 first,
                 second,
             } => {
-                let first_id = self.mount_pane_layout(
-                    context,
-                    document_id,
-                    snapshot,
-                    first,
-                    primary_id,
-                )?;
-                let second_id = self.mount_pane_layout(
-                    context,
-                    document_id,
-                    snapshot,
-                    second,
-                    primary_id,
-                )?;
+                let first_id =
+                    self.mount_pane_layout(context, document_id, snapshot, first, primary_id)?;
+                let second_id =
+                    self.mount_pane_layout(context, document_id, snapshot, second, primary_id)?;
                 let key = format!("{}:{}", first.first_leaf(), second.first_leaf());
                 let snapshot_ratio = *ratio;
                 let extent = 800.0;
@@ -6139,8 +6125,7 @@ impl ShellHandles {
                 let handle = if let Some(handle) = self.workspace_split_handles.get(&key).copied() {
                     handle
                 } else {
-                    let handle = context
-                        .create_detached_component(document_id, Stack::bar(0.0))?;
+                    let handle = context.create_detached_component(document_id, Stack::bar(0.0))?;
                     self.workspace_split_handles.insert(key.clone(), handle);
                     handle
                 };
@@ -6489,10 +6474,12 @@ impl ShellHandles {
         snapshot
             .sidebar_menu_owner
             .as_deref()
-            .and_then(|owner| match self.row_tool_buttons.get(format!("{owner}-menu").as_str()) {
-                Some(RowToolButton::Tool(button)) => Some(button.stable_id()),
-                _ => None,
-            })
+            .and_then(
+                |owner| match self.row_tool_buttons.get(format!("{owner}-menu").as_str()) {
+                    Some(RowToolButton::Tool(button)) => Some(button.stable_id()),
+                    _ => None,
+                },
+            )
             .map_or(
                 SidebarMenuAnchor::AddProjectButton(None),
                 SidebarMenuAnchor::RowMenuButton,
@@ -7151,12 +7138,10 @@ fn sidebar_row_menu_intent(
             })
         }
         ShellSidebarKind::Task | ShellSidebarKind::SearchTask | ShellSidebarKind::Running => {
-            TaskId::new(id)
-                .ok()
-                .map(|_| ShellIntent::OpenTaskMenu {
-                    id: id.to_owned(),
-                    anchor: Some(anchor),
-                })
+            TaskId::new(id).ok().map(|_| ShellIntent::OpenTaskMenu {
+                id: id.to_owned(),
+                anchor: Some(anchor),
+            })
         }
         _ => None,
     }
@@ -7688,8 +7673,11 @@ mod tests {
     #[test]
     fn project_and_search_rows_both_activate_the_project() {
         let project = test_sidebar_row("project-lilia", "LiliaCode", ShellSidebarKind::Project);
-        let search =
-            test_sidebar_row("project-lilia", "LiliaCode", ShellSidebarKind::SearchProject);
+        let search = test_sidebar_row(
+            "project-lilia",
+            "LiliaCode",
+            ShellSidebarKind::SearchProject,
+        );
         for row in [project, search] {
             assert!(matches!(
                 sidebar_row_intent(&row),
@@ -7750,9 +7738,7 @@ mod tests {
             .unwrap_or_default()
             .into_iter()
             .flat_map(|child| match world.node(child).map(|node| node.kind) {
-                Some(nana_ui::runtime::NodeKind::Element { tag })
-                    if tag == "split-pane-slot" =>
-                {
+                Some(nana_ui::runtime::NodeKind::Element { tag }) if tag == "split-pane-slot" => {
                     world
                         .node(child)
                         .map(|node| node.children.clone())
@@ -7866,10 +7852,14 @@ mod tests {
             .route_overlay_key(doc, nana_ui::runtime::OverlayKey::Escape)
             .unwrap());
         assert!(matches!(
-            handles.take_overlay_dismissals(document.context()).as_slice(),
+            handles
+                .take_overlay_dismissals(document.context())
+                .as_slice(),
             [ShellIntent::ToggleTitlebarMenu]
         ));
-        assert!(handles.take_overlay_dismissals(document.context()).is_empty());
+        assert!(handles
+            .take_overlay_dismissals(document.context())
+            .is_empty());
         snapshot.titlebar_menu_open = false;
         handles.sync(&mut document, &snapshot).unwrap();
         document
@@ -7908,7 +7898,10 @@ mod tests {
             )
             .unwrap();
             handles.sync(&mut document, &snapshot).unwrap();
-            assert!(document.context().world().is_mounted(handles.footer_more.stable_id()));
+            assert!(document
+                .context()
+                .world()
+                .is_mounted(handles.footer_more.stable_id()));
             let menu = if sidebar {
                 handles.more_menu.unwrap()
             } else {
@@ -8624,18 +8617,31 @@ mod tests {
         snapshot.composer_permission_menu_open = true;
         let (document, handles, _primary) = mounted_primary(&snapshot);
         let world = document.context().world();
-        assert_eq!(handles.permission_items.len(), COMPOSER_PERMISSION_OPTIONS.len());
+        assert_eq!(
+            handles.permission_items.len(),
+            COMPOSER_PERMISSION_OPTIONS.len()
+        );
         let readonly_item = handles.permission_items["readonly"].stable_id();
         let ask_item = handles.permission_items["ask"].stable_id();
         assert_eq!(
-            world.node_style(readonly_item).and_then(|style| style.background),
+            world
+                .node_style(readonly_item)
+                .and_then(|style| style.background),
             Some(SemanticColorRole::Hover)
         );
-        assert_eq!(world.node_style(ask_item).and_then(|style| style.background), None);
+        assert_eq!(
+            world
+                .node_style(ask_item)
+                .and_then(|style| style.background),
+            None
+        );
         let menu_style = world
             .node_style(handles.permission_menu.stable_id())
             .expect("permission menu style");
-        assert_eq!(menu_style.layout.position, nana_ui::runtime::PositionSpec::Fixed);
+        assert_eq!(
+            menu_style.layout.position,
+            nana_ui::runtime::PositionSpec::Fixed
+        );
         let open_toolbar = world.layout_box(handles.composer_toolbar.stable_id());
         drop(document);
         let (closed_document, closed_handles, _primary) =
@@ -8658,14 +8664,24 @@ mod tests {
         snapshot.composer_worktree_menu_open = true;
         let (document, handles, _primary) = mounted_primary(&snapshot);
         let world = document.context().world();
-        assert_eq!(handles.worktree_items.len(), COMPOSER_WORKTREE_OPTIONS.len());
+        assert_eq!(
+            handles.worktree_items.len(),
+            COMPOSER_WORKTREE_OPTIONS.len()
+        );
         let create_item = handles.worktree_items["create"].stable_id();
         let current_item = handles.worktree_items["current"].stable_id();
         assert_eq!(
-            world.node_style(create_item).and_then(|style| style.background),
+            world
+                .node_style(create_item)
+                .and_then(|style| style.background),
             Some(SemanticColorRole::Hover)
         );
-        assert_eq!(world.node_style(current_item).and_then(|style| style.background), None);
+        assert_eq!(
+            world
+                .node_style(current_item)
+                .and_then(|style| style.background),
+            None
+        );
         let extras = world
             .node(handles.extras.stable_id())
             .map(|node| node.children.clone())
@@ -8805,8 +8821,7 @@ mod tests {
     #[test]
     fn project_row_menu_anchors_to_its_more_button() {
         let mut snapshot = snapshot_with_empty_primary_pane();
-        let mut project =
-            test_sidebar_row("project-lilia", "LiliaCode", ShellSidebarKind::Project);
+        let mut project = test_sidebar_row("project-lilia", "LiliaCode", ShellSidebarKind::Project);
         project.can_menu = true;
         snapshot.sidebar_rows = vec![project];
         snapshot.sidebar_menu = vec![ShellMenuItem {

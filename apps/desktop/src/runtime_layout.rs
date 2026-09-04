@@ -2,21 +2,25 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use nana_ui::runtime::{
-    AlignSpec, AppContext, Button, FrameworkError, IconButton, JustifySpec, LengthSpec,
-    MutationQueue, SemanticColorRole, StableNodeId, Stack, TextArea,
+    AlignSpec, AppContext, Button, Card, Chip, FlexDirection, FrameworkError, IconButton,
+    JustifySpec, LengthSpec, MutationQueue, SemanticColorRole, StableNodeId, Stack, TextArea,
 };
-use nana_ui::{ButtonKind, ControlSize, Icon, UI_METRICS};
+use nana_ui::{ButtonKind, CardKind, ControlSize, Icon, UI_METRICS};
 
 const COMPOSER_SEND_SIZE: f32 = 30.0;
 const PILL_RADIUS: f32 = 999.0;
 pub(crate) const COMPOSER_CARD_RADIUS: f32 = 16.0;
 
-pub(crate) fn composer_card() -> Stack {
-    Stack::column(7.0)
-        .padding(UI_METRICS.control_padding_x)
-        .surface(SemanticColorRole::Surface)
-        .outline(SemanticColorRole::Border, 1.0)
-        .radius(COMPOSER_CARD_RADIUS)
+pub(crate) fn composer_card() -> Card {
+    let mut card = Card::new()
+        .kind(CardKind::Outlined)
+        .padding(UI_METRICS.control_padding_x);
+    card.style.background = Some(SemanticColorRole::Surface);
+    let layout = Arc::make_mut(&mut card.style.layout);
+    layout.direction = Some(FlexDirection::Column);
+    layout.gap = Some(LengthSpec::Px(7.0));
+    layout.border_radius = Some(COMPOSER_CARD_RADIUS);
+    card
 }
 
 /// Holds the empty-state headline centered in the leftover pane height, and
@@ -43,12 +47,16 @@ pub(crate) fn trigger_slot(width: f32, height: f32) -> Stack {
         .shrink(0.0)
 }
 
-pub(crate) fn pending_interaction_card() -> Stack {
-    Stack::column(8.0)
-        .padding(UI_METRICS.control_padding_x)
-        .surface(SemanticColorRole::Surface)
-        .outline(SemanticColorRole::Border, 1.0)
-        .radius(COMPOSER_CARD_RADIUS)
+pub(crate) fn pending_interaction_card() -> Card {
+    let mut card = Card::new()
+        .kind(CardKind::Outlined)
+        .padding(UI_METRICS.control_padding_x);
+    card.style.background = Some(SemanticColorRole::Surface);
+    let layout = Arc::make_mut(&mut card.style.layout);
+    layout.direction = Some(FlexDirection::Column);
+    layout.gap = Some(LengthSpec::Px(8.0));
+    layout.border_radius = Some(COMPOSER_CARD_RADIUS);
+    card
 }
 
 pub(crate) fn pending_actions_row() -> Stack {
@@ -146,6 +154,35 @@ pub(crate) fn pill_button(label: &str, kind: ButtonKind) -> Button {
     layout.padding_right = Some(LengthSpec::Px(UI_METRICS.compact_control_padding_x));
     layout.border_radius = Some(PILL_RADIUS);
     button
+}
+
+pub(crate) fn token_chip(label: impl Into<String>, selected: bool) -> Chip {
+    Chip::new(label.into()).selected(selected)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn token_chip_projects_selected_state() {
+        let idle = token_chip("Plan", false);
+        assert!(!idle.selected);
+        assert_eq!(idle.label.as_ref(), "Plan");
+        let on = token_chip("Goal", true);
+        assert!(on.selected);
+        assert_eq!(on.label.as_ref(), "Goal");
+    }
+
+    #[test]
+    fn composer_and_pending_cards_are_outlined() {
+        let card = composer_card();
+        assert_eq!(card.kind, CardKind::Outlined);
+        assert_eq!(card.style.background, Some(SemanticColorRole::Surface));
+        let pending = pending_interaction_card();
+        assert_eq!(pending.kind, CardKind::Outlined);
+        assert_eq!(pending.style.background, Some(SemanticColorRole::Surface));
+    }
 }
 
 pub(crate) fn flatten_composer_textarea(area: TextArea) -> TextArea {
