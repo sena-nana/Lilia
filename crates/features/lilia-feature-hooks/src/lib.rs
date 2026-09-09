@@ -3,6 +3,16 @@
 //! Owns the user, project and plugin hook documents, the revisioned edits the
 //! settings surface performs on them, and the once-per-turn execution fence that
 //! keeps a recovered turn from replaying a hook's side effects.
+//!
+//! # Command execution residual risk
+//!
+//! Hook handlers historically store a free-form shell string. This crate prefers
+//! `Command::new` with discrete argv when the command is a JSON string array or a
+//! simple whitespace-split argv without shell metacharacters; otherwise it falls
+//! back to `sh -c` / `cmd /C`. Environment is cleared then restored from a fixed
+//! allowlist (`PATH`, temp dirs, etc.). Workspace `cwd` is canonicalized. Residual
+//! risk: shell fallback still permits arbitrary shell features once a hook is
+//! configured — treat hook documents as trusted configuration.
 
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -489,7 +499,7 @@ pub fn execute_hook_command(
 ) -> Result<(), String> {
     let command_text = platform_command(handler)
         .ok_or_else(|| "current platform has no configured command".to_owned())?;
-    let mut command = shell_command(command_text);
+    let mut command = build_hook_command(command_text);
     command
         .env_clear()
         .stdin(Stdio::piped())
@@ -499,8 +509,8 @@ pub fn execute_hook_command(
     if let Some(plugin_root) = plugin_root {
         command.env("LILIA_PLUGIN_ROOT", plugin_root);
     }
-    if let Some(workspace_path) = workspace_path {
-        command.current_dir(workspace_path);
+    if let Some(cwd) = resolve_hook_workspace_cwd(workspace_path)? {
+        command.current_dir(cwd);
     }
     let mut child = command
         .spawn()
@@ -611,6 +621,87 @@ fn copy_hook_environment(command: &mut Command) {
             command.env(key, value);
         }
     }
+}
+
+/// Canonicalize the workspace path used as hook `cwd`.
+///
+/// Fails closed when a workspace path is provided but cannot be canonicalized as
+/// a directory. This keeps relative/`..` inputs from escaping the intended root
+/// via a non-canonical `current_dir`.
+fn resolve_hook_workspace_cwd(workspace_path: Option<&str>) -> Result<Option<PathBuf>, String> {
+    let Some(raw) = workspace_path.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let root = Path::new(raw)
+        .canonicalize()
+        .map_err(|error| format!("canonicalize hook workspace cwd: {error}"))?;
+    if !root.is_dir() {
+        return Err("hook workspace path must be a directory".to_owned());
+    }
+    Ok(Some(root))
+}
+
+/// Prefer discrete argv over a shell when the command is structured or simple.
+///
+/// Accepted non-shell forms:
+/// - JSON string array: `["python3", "tools/hook.py"]`
+/// - Simple whitespace-split argv with no shell metacharacters
+///
+/// Otherwise falls back to [`shell_command`] (`sh -c` / `cmd /C`).
+fn build_hook_command(command_text: &str) -> Command {
+    if let Some(argv) = parse_json_argv(command_text) {
+        return command_from_argv(argv);
+    }
+    if let Some(argv) = parse_simple_argv(command_text) {
+        return command_from_argv(argv);
+    }
+    shell_command(command_text)
+}
+
+fn command_from_argv(mut argv: Vec<String>) -> Command {
+    let program = argv.remove(0);
+    let mut command = Command::new(program);
+    command.args(argv);
+    command
+}
+
+fn parse_json_argv(command_text: &str) -> Option<Vec<String>> {
+    let trimmed = command_text.trim();
+    if !trimmed.starts_with('[') {
+        return None;
+    }
+    let value = serde_json::from_str::<serde_json::Value>(trimmed).ok()?;
+    let items = value.as_array()?;
+    if items.is_empty() {
+        return None;
+    }
+    let mut argv = Vec::with_capacity(items.len());
+    for item in items {
+        argv.push(item.as_str()?.to_owned());
+    }
+    if argv.iter().any(|part| part.is_empty()) {
+        return None;
+    }
+    Some(argv)
+}
+
+fn parse_simple_argv(command_text: &str) -> Option<Vec<String>> {
+    const META: &[char] = &[
+        '|', '&', ';', '<', '>', '(', ')', '`', '$', '\n', '\r', '*', '?', '[', ']', '{', '}', '~',
+        '!', '#', '\\', '"', '\'',
+    ];
+    if command_text.chars().any(|c| META.contains(&c)) {
+        return None;
+    }
+    let argv: Vec<String> = command_text
+        .split_whitespace()
+        .filter(|part| !part.is_empty())
+        .map(str::to_owned)
+        .collect();
+    if argv.is_empty() {
+        return None;
+    }
+    Some(argv)
 }
 
 #[cfg(windows)]
@@ -746,6 +837,56 @@ pub fn hook_execution_error(
         source_id: source_id.into(),
         handler_id: handler_id.into(),
         message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod hook_command_hardening_tests {
+    use super::{
+        build_hook_command, parse_json_argv, parse_simple_argv, resolve_hook_workspace_cwd,
+    };
+    use std::ffi::OsStr;
+
+    #[test]
+    fn workspace_cwd_is_canonicalized_directory() {
+        let root = std::env::temp_dir().join("lilia-hook-cwd-jail");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let resolved = resolve_hook_workspace_cwd(Some(root.to_str().unwrap()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(resolved, root.canonicalize().unwrap());
+        let missing = resolve_hook_workspace_cwd(Some(
+            root.join("missing-subdir").to_str().unwrap(),
+        ));
+        assert!(missing.unwrap_err().contains("canonicalize hook workspace cwd"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn json_argv_prefers_command_new_without_shell() {
+        let argv = parse_json_argv(r#"["python3", "tools/hook.py", "--flag"]"#).unwrap();
+        assert_eq!(argv, vec!["python3", "tools/hook.py", "--flag"]);
+        let command = build_hook_command(r#"["/bin/echo", "hello"]"#);
+        assert_eq!(command.get_program(), OsStr::new("/bin/echo"));
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args, vec![OsStr::new("hello")]);
+    }
+
+    #[test]
+    fn simple_argv_used_when_no_metacharacters() {
+        let argv = parse_simple_argv("python3 tools/hook.py").unwrap();
+        assert_eq!(argv, vec!["python3", "tools/hook.py"]);
+        assert!(parse_simple_argv("echo hi && curl evil").is_none());
+        let command = build_hook_command("echo hi && curl evil");
+        // Shell fallback on Unix uses `sh`.
+        #[cfg(not(windows))]
+        assert_eq!(command.get_program(), OsStr::new("sh"));
+        #[cfg(windows)]
+        {
+            let program = command.get_program().to_string_lossy().to_ascii_lowercase();
+            assert!(program.contains("cmd"));
+        }
     }
 }
 

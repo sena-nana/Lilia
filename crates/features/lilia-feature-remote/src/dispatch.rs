@@ -423,8 +423,10 @@ fn remote_chat_send(
                     .and_then(Value::as_str)
             })
             .map(str::to_owned),
+        // Keep `free` on Ask so high-risk process/network tools are not auto-approved
+        // via the remote composer path (mirrors native_runtime permission_mode).
         permission: match composer.get("permission").and_then(Value::as_str) {
-            Some("full" | "free") => RemoteChatPermission::Full,
+            Some("full") => RemoteChatPermission::Full,
             Some("readonly") => RemoteChatPermission::Readonly,
             _ => RemoteChatPermission::Ask,
         },
