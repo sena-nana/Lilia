@@ -8,6 +8,8 @@
 //! - `GET /diagnostics` | `GET /observe/diagnostics`
 //!
 //! Bind address: `LILIA_SERVICE_BIND` (default `127.0.0.1:8787`).
+//! Non-loopback binds are fail-closed: require `LILIA_SERVICE_OBSERVE_TOKEN`
+//! and enforce Bearer auth on observe/wire routes.
 //! This is not a full ServiceHost/Link multiplexor.
 
 use std::env;
@@ -17,7 +19,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use lilia_service::{
-    read_http_request, serve_readonly_http, ServiceAuthority, ServiceHealthStatus,
+    read_http_request, serve_readonly_http_with_auth, ServiceAuthority, ServiceHealthStatus,
+    SERVICE_OBSERVE_TOKEN_ENV,
 };
 
 fn main() {
@@ -29,6 +32,11 @@ fn main() {
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let bind = env::var("LILIA_SERVICE_BIND").unwrap_or_else(|_| "127.0.0.1:8787".into());
+    let observe_token = env::var(SERVICE_OBSERVE_TOKEN_ENV)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+
     let authority = if let Ok(home) = env::var("LILIA_SERVICE_HOME") {
         ServiceAuthority::bootstrap_with_home(home)?
     } else {
@@ -48,7 +56,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let listener = TcpListener::bind(&bind)?;
     let local = listener.local_addr()?;
+    if !local.ip().is_loopback() && observe_token.is_none() {
+        return Err(format!(
+            "refusing non-loopback bind `{local}` without {SERVICE_OBSERVE_TOKEN_ENV} (fail-closed)"
+        )
+        .into());
+    }
     println!("lilia-service listening on http://{local}");
+    if !local.ip().is_loopback() {
+        println!("observe auth=required ({SERVICE_OBSERVE_TOKEN_ENV})");
+    } else if observe_token.is_some() {
+        println!("observe auth=enabled (loopback + token)");
+    } else {
+        println!("observe auth=disabled (loopback default)");
+    }
     println!("health={}", serde_json::to_string(&authority.health())?);
 
     let running = Arc::new(AtomicBool::new(true));
@@ -57,6 +78,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         ctrlc_shim(running);
     }
 
+    let observe_token = observe_token;
     while running.load(Ordering::SeqCst) {
         listener.set_nonblocking(true)?;
         match listener.accept() {
@@ -73,7 +95,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         continue;
                     }
                 };
-                let response = serve_readonly_http(&authority, &req);
+                let response = serve_readonly_http_with_auth(
+                    &authority,
+                    &req,
+                    observe_token.as_deref(),
+                );
                 let _ = stream.write_all(response.as_bytes());
             }
             Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
@@ -97,4 +123,19 @@ fn ctrlc_shim(running: Arc<AtomicBool>) {
         let _ = std::io::stdin().read_to_end(&mut sink);
         running.store(false, Ordering::SeqCst);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, SocketAddr};
+
+    #[test]
+    fn loopback_addrs_are_detected() {
+        let loopback: SocketAddr = "127.0.0.1:8787".parse().unwrap();
+        assert!(loopback.ip().is_loopback());
+        let all: SocketAddr = "0.0.0.0:8787".parse().unwrap();
+        assert!(!all.ip().is_loopback());
+        assert!(matches!(all.ip(), IpAddr::V4(v4) if v4.is_unspecified()));
+    }
 }

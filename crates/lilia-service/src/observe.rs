@@ -167,6 +167,65 @@ pub fn read_http_request(reader: &mut impl Read) -> io::Result<String> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))
 }
 
+/// Environment variable for the observe/wire bearer token.
+pub const SERVICE_OBSERVE_TOKEN_ENV: &str = "LILIA_SERVICE_OBSERVE_TOKEN";
+
+fn header_value<'a>(request: &'a str, name: &str) -> Option<&'a str> {
+    request.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case(name).then(|| value.trim())
+    })
+}
+
+fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in left.iter().zip(right.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
+fn bearer_token<'a>(request: &'a str) -> Option<&'a str> {
+    let value = header_value(request, "Authorization")?;
+    let token = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))?;
+    let token = token.trim();
+    (!token.is_empty()).then_some(token)
+}
+
+fn observe_path_requires_auth(path: &str) -> bool {
+    matches!(
+        path,
+        "/status"
+            | "/observe/status"
+            | "/timeline"
+            | "/observe/timeline"
+            | "/diagnostics"
+            | "/observe/diagnostics"
+            | "/agent/wire"
+    )
+}
+
+fn ensure_observe_auth(request: &str, path: &str, observe_token: Option<&str>) -> Option<String> {
+    let Some(expected) = observe_token.filter(|token| !token.is_empty()) else {
+        return None;
+    };
+    if !observe_path_requires_auth(path) {
+        return None;
+    }
+    match bearer_token(request) {
+        Some(provided) if constant_time_eq(provided.as_bytes(), expected.as_bytes()) => None,
+        _ => Some(json_err(
+            "401 Unauthorized",
+            "Authorization Bearer token required for observe endpoints",
+        )),
+    }
+}
+
 /// Serve the Service HTTP surface used by remote clients.
 ///
 /// Routes:
@@ -175,8 +234,23 @@ pub fn read_http_request(reader: &mut impl Read) -> io::Result<String> {
 /// - `GET /timeline?taskId=` | `GET /observe/timeline?taskId=`
 /// - `GET /diagnostics` | `GET /observe/diagnostics`
 /// - `POST /agent/wire` (canonical Mutsuki Agent Wire envelope)
+///
+/// When `observe_token` is `Some`, observe + wire routes require
+/// `Authorization: Bearer <token>` (fail-closed). `/health` stays unauthenticated
+/// for local liveness probes.
 pub fn serve_readonly_http(authority: &ServiceAuthority, request: &str) -> String {
+    serve_readonly_http_with_auth(authority, request, None)
+}
+
+pub fn serve_readonly_http_with_auth(
+    authority: &ServiceAuthority,
+    request: &str,
+    observe_token: Option<&str>,
+) -> String {
     let (method, path, query, body) = parse_request_target(request);
+    if let Some(response) = ensure_observe_auth(request, path, observe_token) {
+        return response;
+    }
     match (method, path) {
         ("GET", "/health") => health_http_response(&authority.health()),
         ("GET", "/status" | "/observe/status") => json_ok(authority.observe_status()),
@@ -438,4 +512,31 @@ mod tests {
         assert!(!agent_events.is_empty());
         assert!(cursor.last_seen() > 0);
     }
+
+    #[test]
+    fn observe_endpoints_require_bearer_when_token_configured() {
+        let authority = authority("test:observe-auth");
+        let denied = serve_readonly_http_with_auth(
+            &authority,
+            "GET /observe/status HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            Some("secret-token"),
+        );
+        assert!(denied.contains("401 Unauthorized"), "{denied}");
+
+        let allowed = serve_readonly_http_with_auth(
+            &authority,
+            "GET /observe/status HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret-token\r\nConnection: close\r\n\r\n",
+            Some("secret-token"),
+        );
+        assert!(allowed.contains("200 OK"), "{allowed}");
+        assert!(allowed.contains("\"readOnly\":true"));
+
+        let health = serve_readonly_http_with_auth(
+            &authority,
+            "GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            Some("secret-token"),
+        );
+        assert!(health.contains("200 OK"), "{health}");
+    }
 }
+

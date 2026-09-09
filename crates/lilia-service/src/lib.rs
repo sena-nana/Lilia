@@ -48,8 +48,9 @@ use serde::Serialize;
 
 pub use health::{ComponentHealth, ServiceHealthReport, ServiceHealthStatus};
 pub use observe::{
-    read_http_request, serve_readonly_http, RemoteDiagnosticsObserve, RemoteObserveStatus,
-    RemoteTimelineObserve,
+    read_http_request, serve_readonly_http, serve_readonly_http_with_auth,
+    RemoteDiagnosticsObserve, RemoteObserveStatus, RemoteTimelineObserve,
+    SERVICE_OBSERVE_TOKEN_ENV,
 };
 pub use writer_lease::{
     writer_lease_health, StorageWriterGuard, StorageWriterLease, WriterLeaseError,
@@ -127,6 +128,18 @@ pub struct ServiceAuthorityStatus {
     pub cross_process_epoch_fencing: bool,
 }
 
+
+/// Explicit opt-in for in-memory secret material (headless CI / no OS keyring).
+/// Default for home-backed Service is the OS keyring (`KeyringSecretStore`).
+pub use lilia_agent::SERVICE_IN_MEMORY_SECRETS_ENV;
+
+fn default_service_credential_bridge(
+    home: &PathBuf,
+) -> Result<ProductCredentialBridge, ServiceAuthorityError> {
+    lilia_agent::service_credential_bridge_for_home(home)
+        .map_err(|err| ServiceAuthorityError::Product(err.to_string()))
+}
+
 impl ServiceAuthority {
     /// Bootstrap an in-memory Service-mode authority (no Desktop UI).
     pub fn bootstrap_in_memory() -> Result<Self, ServiceAuthorityError> {
@@ -183,7 +196,9 @@ impl ServiceAuthority {
     /// assembly as Desktop `native_agent`. Acquires `$home/db/writer.lock` for
     /// single-machine dual-writer exclusion (not distributed epoch fencing).
     pub fn bootstrap_with_home(home: impl Into<PathBuf>) -> Result<Self, ServiceAuthorityError> {
-        Self::bootstrap_with_home_and_credentials(home, ProductCredentialBridge::new())
+        let home = home.into();
+        let credentials = default_service_credential_bridge(&home)?;
+        Self::bootstrap_with_home_and_credentials(home, credentials)
     }
 
     pub fn bootstrap_with_home_and_credentials(
@@ -712,6 +727,28 @@ pub fn health_http_response(report: &ServiceHealthReport) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    struct InMemoryServiceSecretsGuard {
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl InMemoryServiceSecretsGuard {
+        fn enable() -> Self {
+            let previous = std::env::var_os(SERVICE_IN_MEMORY_SECRETS_ENV);
+            std::env::set_var(SERVICE_IN_MEMORY_SECRETS_ENV, "1");
+            Self { previous }
+        }
+    }
+
+    impl Drop for InMemoryServiceSecretsGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(SERVICE_IN_MEMORY_SECRETS_ENV, value),
+                None => std::env::remove_var(SERVICE_IN_MEMORY_SECRETS_ENV),
+            }
+        }
+    }
+
     use super::*;
     use lilia_agent::{ProductCredentialLoginInput, QuotaApiAvailability};
     use lilia_contracts::{
@@ -998,6 +1035,7 @@ mod tests {
 
     #[test]
     fn service_and_desktop_share_projection_db_path_under_same_home() {
+        let _secrets_guard = InMemoryServiceSecretsGuard::enable();
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1040,6 +1078,7 @@ mod tests {
 
     #[test]
     fn home_bootstrap_loads_migrated_skills_into_agentkit_registry() {
+        let _secrets_guard = InMemoryServiceSecretsGuard::enable();
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -1089,6 +1128,7 @@ mod tests {
 
     #[test]
     fn crash_restart_restores_sqlite_projection_and_session_binding() {
+        let _secrets_guard = InMemoryServiceSecretsGuard::enable();
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
