@@ -2518,12 +2518,19 @@ fn agent_run_metadata(
 }
 
 fn permission_mode(context: Option<&Value>) -> AgentPermissionMode {
+    // `free` historically mapped to Full (auto-approve). Contract
+    // permission-modes.json now requires approval for high-risk tool classes and
+    // maps free → Ask at the AgentKit boundary.
+    // `full` remains Full for routine workspace auto-approval; Mutsuki
+    // `resolve_approvals` refuses to synthesize approval for high-risk
+    // process/shell/http/browser/network tools (see toolApprovalOverrides).
     match context
         .and_then(|value| value.get("permission"))
         .and_then(Value::as_str)
     {
-        Some("full" | "free") => AgentPermissionMode::Full,
+        Some("full") => AgentPermissionMode::Full,
         Some("readonly") => AgentPermissionMode::ReadOnly,
+        // ask, free, unknown → Ask
         _ => AgentPermissionMode::Ask,
     }
 }
@@ -3604,6 +3611,29 @@ mod tests {
             AgentEvent::FinalResponse { summary, .. }
                 if summary == "parent incorporated the child finding"
         )));
+    }
+
+    #[test]
+    fn full_permission_mode_maps_to_agentkit_full_while_free_maps_to_ask() {
+        assert_eq!(
+            permission_mode(Some(&json!({"permission": "full"}))),
+            mutsuki_agent_contracts::AgentPermissionMode::Full
+        );
+        assert_eq!(
+            permission_mode(Some(&json!({"permission": "free"}))),
+            mutsuki_agent_contracts::AgentPermissionMode::Ask
+        );
+        assert_eq!(
+            permission_mode(Some(&json!({"permission": "ask"}))),
+            mutsuki_agent_contracts::AgentPermissionMode::Ask
+        );
+        // Contract consumer: Full must still treat shell as explicit-approval.
+        assert!(lilia_contracts::tool_requires_explicit_approval_under_full(
+            "computer.shell.exec"
+        ));
+        assert!(!lilia_contracts::tool_requires_explicit_approval_under_full(
+            "computer.fs.write"
+        ));
     }
 
     #[test]
