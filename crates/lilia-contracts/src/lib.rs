@@ -19,6 +19,7 @@ mod frontend_contract;
 mod handoff;
 mod ids;
 mod milestone;
+mod permission_modes;
 mod project;
 mod projection;
 mod revision;
@@ -58,6 +59,11 @@ pub use execution::ExecutionPermission;
 pub use secret::Secret;
 pub use error::{ConflictKind, ProductError, ProductResult};
 pub use frontend_contract::{product_event_name, PRODUCT_CORE_FRONTEND_CONTRACT_JSON};
+pub use permission_modes::{
+    classify_high_risk_tool, high_risk_tool_classes, permission_modes_contract_value,
+    remote_permission_mode, tool_approval_override_requires_approval,
+    tool_requires_explicit_approval_under_full, PERMISSION_MODES_JSON,
+};
 pub use handoff::{
     LiliaCodeTaskHandoff, LiliaCodeTaskHandoffKind, ProductTaskHandoffImport,
     ProductTaskHandoffRecord, PullRequestHandoffContext, TaskHandoffRepository, TaskHandoffSource,

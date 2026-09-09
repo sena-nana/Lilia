@@ -17,11 +17,11 @@
     },
     "full": {
       "label": "完全访问",
-      "description": "使用完全访问权限，不逐条请求操作确认。"
+      "description": "WARNING: grants broad auto-approval for routine workspace tools. High-risk host process / network / HTTP / browser / shell tool classes still require explicit confirmation (toolApprovalOverrides). Prefer ask unless you trust the session. Remote composers cannot elevate to full."
     },
     "free": {
       "label": "自由实现",
-      "description": "完全访问，并在 8 秒后按建议项处理交互。"
+      "description": "WARNING: historically advertised as auto-approve everything after ~8s for interactive prompts. Runtime maps free → ask so high-risk process/network/HTTP/shell tools require approval. Prefer ask for untrusted workspaces."
     }
   },
   "displayOrder": [
@@ -30,11 +30,26 @@
     "full",
     "free"
   ],
+  "highRiskToolClasses": [
+    "process",
+    "network",
+    "http",
+    "browser",
+    "shell"
+  ],
   "runtimeMappings": {
     "native-agentkit": {
       "full": {
         "mode": "full_access",
-        "requireApproval": false
+        "requireApproval": false,
+        "toolApprovalOverrides": {
+          "process": true,
+          "network": true,
+          "http": true,
+          "browser": true,
+          "shell": true
+        },
+        "warning": "full_access does not waive high-risk host process/network/HTTP/shell confirmation (enforced in Mutsuki resolve_approvals)."
       },
       "ask": {
         "mode": "default",
@@ -45,9 +60,23 @@
         "requireApproval": true
       },
       "free": {
-        "mode": "full_access",
-        "requireApproval": false
+        "mode": "default",
+        "requireApproval": true,
+        "toolApprovalOverrides": {
+          "process": true,
+          "network": true,
+          "http": true,
+          "browser": true,
+          "shell": true
+        },
+        "warning": "free maps to Ask at the AgentKit boundary; not auto-approve for process/network/HTTP/shell."
       }
     }
+  },
+  "remotePolicy": {
+    "allowFull": false,
+    "fullMapsTo": "ask",
+    "freeMapsTo": "ask",
+    "reason": "Remote composers must not silently elevate beyond desktop-confirmed Ask; full is desktop-local only."
   }
 }

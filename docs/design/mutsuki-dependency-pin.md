@@ -10,12 +10,12 @@ LiliaCode 通过根 `Cargo.toml` 的 `[workspace.dependencies]` 统一 pin Host 
 根 `Cargo.toml` 当前为 **GIT pin**：
 
 - `git = "https://github.com/sena-nana/Mutsuki.git"`
-- `rev = "bb728d20e89ef65dffda882c70e5c9f70ee48b11"`（短写 `bb728d2`）
+- `rev = "ab0862f9106c6e5d4f61f895bd6aa08adc2e2c8a"`（短写 `bb728d2`）
 
 ```toml
 mutsuki-agent-adapter-anthropic = {
   git = "https://github.com/sena-nana/Mutsuki.git",
-  rev = "bb728d20e89ef65dffda882c70e5c9f70ee48b11",
+  rev = "ab0862f9106c6e5d4f61f895bd6aa08adc2e2c8a",
   package = "mutsuki-agent-adapter-anthropic",
 }
 # …其余 mutsuki-* 同一 git + rev…
@@ -65,3 +65,12 @@ mutsuki-agent-bundle = { path = "../MutsukiCore/kits/agent/crates/mutsuki-agent-
 - [ ] `rev` 与文档、`Cargo.toml` 注释一致
 - [ ] `cargo metadata --locked` / 相关 `cargo test` 通过
 - [ ] 未把本地 secret、临时 endpoint 写进提交
+
+## Security pin note (Full-mode high-risk approval)
+
+GIT pin `ab0862f` includes Mutsuki `fix/full-mode-high-risk-approval` (#174):
+`AgentPermissionMode::Full` no longer auto-synthesizes approval for high-risk
+process/shell/http/browser/network tools. Lilia remote composers force-downgrade
+`permission=full|free` to Ask. See `crates/lilia-contracts/contracts/permission-modes.json`
+and `permission_modes.rs`.
+

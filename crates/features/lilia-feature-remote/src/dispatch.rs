@@ -423,9 +423,17 @@ fn remote_chat_send(
                     .and_then(Value::as_str)
             })
             .map(str::to_owned),
-        permission: match composer.get("permission").and_then(Value::as_str) {
-            Some("full" | "free") => RemoteChatPermission::Full,
-            Some("readonly") => RemoteChatPermission::Readonly,
+        // Remote must not silently elevate to Full. Contract remotePolicy
+        // force-downgrades full/free → ask (desktop Full remains local-only;
+        // Mutsuki still gates high-risk tools if Full is ever used).
+        permission: match lilia_contracts::remote_permission_mode(
+            composer
+                .get("permission")
+                .and_then(Value::as_str)
+                .unwrap_or("ask"),
+        ) {
+            "full" => RemoteChatPermission::Full,
+            "readonly" => RemoteChatPermission::Readonly,
             _ => RemoteChatPermission::Ask,
         },
         plan_mode: composer
@@ -905,4 +913,37 @@ fn positive_limit(value: &Value, default: usize, maximum: usize) -> usize {
         .and_then(|limit| usize::try_from(limit).ok())
         .map(|limit| limit.min(maximum))
         .unwrap_or(default.min(maximum))
+}
+
+
+#[cfg(test)]
+mod permission_policy_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Minimal host stub — only `start_chat` is exercised by parse path tests
+    /// via a local helper that mirrors composer→permission mapping.
+    fn map_remote_permission(raw: &str) -> RemoteChatPermission {
+        match lilia_contracts::remote_permission_mode(raw) {
+            "full" => RemoteChatPermission::Full,
+            "readonly" => RemoteChatPermission::Readonly,
+            _ => RemoteChatPermission::Ask,
+        }
+    }
+
+    #[test]
+    fn remote_composer_full_permission_force_downgrades_to_ask() {
+        assert_eq!(map_remote_permission("full"), RemoteChatPermission::Ask);
+        assert_eq!(map_remote_permission("free"), RemoteChatPermission::Ask);
+        assert_eq!(map_remote_permission("ask"), RemoteChatPermission::Ask);
+        assert_eq!(
+            map_remote_permission("readonly"),
+            RemoteChatPermission::Readonly
+        );
+        // Defense in depth: contract marks shell high-risk under full.
+        assert!(lilia_contracts::tool_requires_explicit_approval_under_full(
+            "computer.shell.exec"
+        ));
+        let _ = json!({"composer": {"permission": "full"}});
+    }
 }
