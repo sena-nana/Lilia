@@ -1,3 +1,16 @@
+//! Native single-instance coordinator (CLI forward over loopback IPC).
+//!
+//! ## Security (L1)
+//!
+//! `~/.lilia/run/instance.json` stores a loopback address and an IPC bearer
+//! token. This module binds IPC to `127.0.0.1` only and restricts `run/` to
+//! Unix `0700` / descriptor+lock files to Unix `0600`. On Windows, files live
+//! under the user profile and inherit owner-scoped ACLs.
+//!
+//! **Residual risk:** any process running as the *same* OS user can still read
+//! the token and forge authenticated forwards. Same-user isolation is not a
+//! security boundary for this design — see `docs/security/threat-model.md`.
+
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream, ToSocketAddrs};
@@ -81,6 +94,7 @@ pub fn acquire(
             runtime_dir.display()
         )
     })?;
+    restrict_owner_only(&runtime_dir, true);
     let lock_path = runtime_dir.join("instance.lock");
     let descriptor_path = runtime_dir.join("instance.json");
     let lock_file = OpenOptions::new()
@@ -90,6 +104,7 @@ pub fn acquire(
         .write(true)
         .open(&lock_path)
         .map_err(|error| format!("failed to open {}: {error}", lock_path.display()))?;
+    restrict_owner_only(&lock_path, false);
     match lock_file.try_lock_exclusive() {
         Ok(()) => start_primary(
             lock_file,
@@ -388,7 +403,33 @@ fn write_descriptor(path: &Path, descriptor: &InstanceDescriptor) -> Result<(), 
         .map_err(|error| format!("failed to create {}: {error}", path.display()))?;
     file.write_all(&bytes)
         .and_then(|_| file.write_all(b"\n"))
-        .map_err(|error| format!("failed to write {}: {error}", path.display()))
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    // Best-effort owner-only mode so other OS users cannot read the IPC token.
+    // Same-user readers remain a documented residual risk.
+    restrict_owner_only(path, false);
+    Ok(())
+}
+
+/// Unix: `0700` for directories / `0600` for files. Windows: no-op beyond the
+/// user-profile ACL already inherited under the Lilia home (owner-scoped).
+fn restrict_owner_only(path: &Path, directory: bool) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if directory { 0o700 } else { 0o600 };
+        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
+    }
+    #[cfg(windows)]
+    {
+        let _ = (path, directory);
+        // Practical owner-only isolation comes from creating files under the
+        // per-user Lilia home. Tightening an explicit DACL here would not stop
+        // same-user token theft, which remains the residual threat.
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (path, directory);
+    }
 }
 
 fn write_json_line(stream: &mut TcpStream, value: &impl Serialize) -> Result<(), String> {
@@ -617,5 +658,35 @@ mod tests {
         if home.exists() {
             fs::remove_dir_all(home).unwrap();
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn instance_descriptor_is_owner_readable_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+        let home = std::env::temp_dir().join(format!(
+            "lilia-native-single-instance-perms-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&home).unwrap();
+        let descriptor_path = home.join("instance.json");
+        write_descriptor(
+            &descriptor_path,
+            &InstanceDescriptor {
+                protocol: PROTOCOL.to_owned(),
+                version: PROTOCOL_VERSION,
+                instance_identity: "liliacode.native.perms-test".to_owned(),
+                address: "127.0.0.1:9".to_owned(),
+                token: "perms-token".to_owned(),
+                process_id: 1,
+            },
+        )
+        .unwrap();
+        let mode = fs::metadata(&descriptor_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "instance.json must be 0600, got {mode:o}");
+        fs::remove_dir_all(home).unwrap();
     }
 }

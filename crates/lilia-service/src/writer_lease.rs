@@ -6,12 +6,18 @@
 //!   twice (epoch + owner).
 //! - **Single-machine file lock** (optional): when a lock path is provided,
 //!   another process on the same host cannot acquire the same writer lock while
-//!   this guard is alive. Lock is released on process exit (including crash).
+//!   this guard is alive. Lock is released on process exit (including crash) —
+//!   that is the stale-holder recovery path (OS releases the flock / exclusive
+//!   open; no heartbeat / TTL is required for crash recovery).
+//! - **Lock file permissions**: Unix `0600` on the lock file; parent dirs are
+//!   created as needed. The payload records owner / mode / pid for operators
+//!   inspecting a held lock. Windows uses exclusive `share_mode(0)` open.
 //! - **Not provided yet**: distributed fencing, epoch rejection of late commands
 //!   from a previous writer after takeover, or cluster-wide lease renewal.
 //!
 //! Embedded Desktop ↔ Service must coordinate through this lock before both open
-//! the product DB for writes. Full cross-process epoch fencing remains a follow-up.
+//! the product DB for writes. Full cross-process epoch fencing remains a follow-up
+//! (see `docs/security/threat-model.md`).
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -92,15 +98,16 @@ struct FileWriterLock {
 }
 
 impl FileWriterLock {
-    fn try_acquire(path: impl AsRef<Path>) -> Result<Self, WriterLeaseError> {
+    fn try_acquire(path: impl AsRef<Path>, payload: &str) -> Result<Self, WriterLeaseError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|err| WriterLeaseError::FileLockIo {
                 path: path.display().to_string(),
                 message: err.to_string(),
             })?;
+            restrict_owner_only(parent, true);
         }
-        let file = open_lock_file(&path).map_err(|err| {
+        let file = open_lock_file(&path, payload).map_err(|err| {
             if err.kind() == io::ErrorKind::WouldBlock
                 || err.raw_os_error() == Some(16) // EBUSY
                 || err.raw_os_error() == Some(32) // ERROR_SHARING_VIOLATION
@@ -117,20 +124,41 @@ impl FileWriterLock {
                 }
             }
         })?;
+        restrict_owner_only(&path, false);
         Ok(Self { path, _file: file })
     }
 }
 
+/// Unix `0700` / `0600`. Windows: exclusive open is the cross-process gate;
+/// profile ACLs cover other users. Same-user readers are out of scope.
+fn restrict_owner_only(path: &Path, directory: bool) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = if directory { 0o700 } else { 0o600 };
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, directory);
+    }
+}
+
 #[cfg(unix)]
-fn open_lock_file(path: &Path) -> io::Result<File> {
+fn open_lock_file(path: &Path, payload: &str) -> io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
     use std::os::unix::io::AsRawFd;
 
+    // Mode 0600 at create time (umask may still clear bits; restrict_owner_only
+    // re-asserts after write).
     let file = OpenOptions::new()
         .create(true)
         .read(true)
         .write(true)
+        .mode(0o600)
         .open(path)?;
-    // flock(2): exclusive, non-blocking. Released automatically on process exit.
+    // flock(2): exclusive, non-blocking. Released automatically on process exit
+    // → crashed holders look "stale" to the next acquirer without a TTL.
     extern "C" {
         fn flock(fd: i32, operation: i32) -> i32;
     }
@@ -142,16 +170,17 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
     }
     let mut file = file;
     file.set_len(0)?;
-    writeln!(file, "lilia-writer-lock")?;
+    writeln!(file, "{payload}")?;
     file.flush()?;
     Ok(file)
 }
 
 #[cfg(windows)]
-fn open_lock_file(path: &Path) -> io::Result<File> {
+fn open_lock_file(path: &Path, payload: &str) -> io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
 
     // share_mode(0) → exclusive open; another process gets a sharing violation.
+    // Crash / drop releases the handle → next open succeeds (stale recovery).
     let mut file = OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -160,14 +189,14 @@ fn open_lock_file(path: &Path) -> io::Result<File> {
         .share_mode(0)
         .open(path)?;
     file.set_len(0)?;
-    writeln!(file, "lilia-writer-lock")?;
+    writeln!(file, "{payload}")?;
     file.flush()?;
     Ok(file)
 }
 
 #[cfg(not(any(unix, windows)))]
-fn open_lock_file(path: &Path) -> io::Result<File> {
-    let _ = path;
+fn open_lock_file(path: &Path, payload: &str) -> io::Result<File> {
+    let _ = (path, payload);
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "writer file lock unsupported on this platform",
@@ -218,7 +247,13 @@ impl StorageWriterGuard {
         let storage_key = storage_key.into();
         let owner_id = owner_id.into();
         let file_lock = match lock_path {
-            Some(path) => Some(FileWriterLock::try_acquire(path)?),
+            Some(path) => {
+                let payload = format!(
+                    "lilia-writer-lock\nowner={owner_id}\nmode={mode:?}\npid={}\nstorage_key={storage_key}",
+                    std::process::id()
+                );
+                Some(FileWriterLock::try_acquire(path, &payload)?)
+            }
             None => None,
         };
         let mut guard = registry().lock().expect("writer lease registry poisoned");
@@ -359,6 +394,16 @@ mod tests {
         let health = writer_lease_health(&key);
         assert!(health.file_lock_held);
         assert!(!health.cross_process_epoch_fencing);
+        let payload = std::fs::read_to_string(&lock_path).unwrap();
+        assert!(payload.contains("lilia-writer-lock"));
+        assert!(payload.contains("owner=svc-file-a"));
+        assert!(payload.contains(&format!("pid={}", std::process::id())));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&lock_path).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "writer lock must be 0600, got {mode:o}");
+        }
         assert_eq!(
             health.file_lock_path.as_deref(),
             Some(lock_path.to_string_lossy().as_ref())

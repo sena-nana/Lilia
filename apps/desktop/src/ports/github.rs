@@ -17,7 +17,16 @@ pub use lilia_feature_github::{
     DesktopGitHubRepoPage, DesktopGitHubRepoSummary,
 };
 
+/// Bundled GitHub OAuth App Client ID.
+///
+/// This value is **public** by design (native / public OAuth clients embed it).
+/// It is not a client secret; do not treat it as one in reviews or docs.
 const GITHUB_CLIENT_ID: &str = "Ov23liJWTEjz4jgqx19u";
+/// Device-flow scopes for account binding + repository list/clone.
+///
+/// `repo` + `read:user` match current GitHub login features. Narrowing further
+/// (e.g. dropping `repo`) would break private-repo access without a redesign —
+/// prefer documenting the Client ID publicity over breaking OAuth (L2).
 const GITHUB_SCOPE: &str = "repo read:user";
 const GITHUB_ACCEPT: &str = "application/vnd.github+json";
 const GITHUB_USER_AGENT: &str = "LiliaCode/0.1";
