@@ -48,8 +48,9 @@ use serde::Serialize;
 
 pub use health::{ComponentHealth, ServiceHealthReport, ServiceHealthStatus};
 pub use observe::{
-    read_http_request, serve_readonly_http, RemoteDiagnosticsObserve, RemoteObserveStatus,
-    RemoteTimelineObserve,
+    read_http_request, serve_readonly_http, serve_readonly_http_with_auth,
+    RemoteDiagnosticsObserve, RemoteObserveStatus, RemoteTimelineObserve,
+    SERVICE_OBSERVE_TOKEN_ENV,
 };
 pub use writer_lease::{
     writer_lease_health, StorageWriterGuard, StorageWriterLease, WriterLeaseError,

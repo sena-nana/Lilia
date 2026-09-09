@@ -114,4 +114,52 @@ class PairingUriParserTest {
         assertTrue(result.isFailure)
         assertEquals("配对桥接地址不能包含查询参数或片段", result.exceptionOrNull()?.message)
     }
+
+    @Test
+    fun rejectsPublicHttpBridgeHostsByDefault() {
+        val result = PairingUriParser.parse(
+            "lilia-remote://pair?v=1&ticket=ticket-1&challenge=challenge-1" +
+                "&endpoint=pc-1&bridge=http%3A%2F%2F203.0.113.10%3A41478",
+        )
+
+        assertTrue(result.isFailure)
+        assertEquals(PairingUriParser.PUBLIC_BRIDGE_CONFIRM_MESSAGE, result.exceptionOrNull()?.message)
+    }
+
+    @Test
+    fun acceptsPublicBridgeHostsWhenExplicitlyConfirmed() {
+        val ticket = PairingUriParser.parse(
+            "lilia-remote://pair?v=1&ticket=ticket-1&challenge=challenge-1" +
+                "&endpoint=pc-1&bridge=http%3A%2F%2F203.0.113.10%3A41478",
+            allowPublicBridge = true,
+        ).getOrThrow()
+
+        assertEquals("http://203.0.113.10:41478", ticket.bridgeUrl)
+    }
+
+    @Test
+    fun acceptsLoopbackAndEmulatorBridgeHosts() {
+        val loopback = PairingUriParser.parse(
+            "lilia-remote://pair?v=1&ticket=ticket-1&challenge=challenge-1" +
+                "&endpoint=pc-1&bridge=http%3A%2F%2F127.0.0.1%3A41478",
+        ).getOrThrow()
+        assertEquals("http://127.0.0.1:41478", loopback.bridgeUrl)
+
+        val emulator = PairingUriParser.parse(
+            "lilia-remote://pair?v=1&ticket=ticket-1&challenge=challenge-1" +
+                "&endpoint=pc-1&bridge=http%3A%2F%2F10.0.2.2%3A41478",
+        ).getOrThrow()
+        assertEquals("http://10.0.2.2:41478", emulator.bridgeUrl)
+    }
+
+    @Test
+    fun sanitizePersistedPairingUriRemovesChallenge() {
+        val sanitized = PairingUriParser.sanitizePersistedPairingUri(
+            "lilia-remote://pair?v=1&ticket=ticket-1&challenge=challenge-1" +
+                "&endpoint=pc-1&bridge=http%3A%2F%2F192.168.1.5%3A41478",
+        )
+        assertTrue(!sanitized.contains("challenge"))
+        assertTrue(sanitized.contains("ticket=ticket-1"))
+        assertTrue(sanitized.contains("endpoint=pc-1"))
+    }
 }

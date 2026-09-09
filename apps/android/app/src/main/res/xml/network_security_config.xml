@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Cleartext is required for beta LAN HTTP bridges (literal private IPs) and
+  emulator adb-reverse (localhost / 10.0.2.2). Android NSC cannot express CIDR
+  ranges, so base cleartext stays permitted for private LAN IPs; public HTTP
+  bridge hosts are rejected by PairingUriParser unless the user confirms.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>
