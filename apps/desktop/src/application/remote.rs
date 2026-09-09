@@ -16,12 +16,15 @@ use crate::application::{
 };
 
 pub use lilia_feature_remote::{
-    advertised_bridge_url, cancel_pairing, database_error, endpoint_id, host_enabled, now_millis,
-    pair_device, refresh_trusted_peer_seen, remote_status, set_setting, DesktopRemoteControlError,
-    DesktopRemoteControlService, RemoteCapabilitySet, RemoteChatPermission, RemoteChatSpec,
-    RemoteControlStatus, RemoteEndpointAddress, RemoteHost, RemotePairDeviceInput,
-    RemotePairingTicket, RemotePeerSummary, RemoteRequestEnvelope, RemoteWakeHost,
-    DEFAULT_HTTP_BRIDGE_PORT, HOST_ENABLED_KEY, KEEP_AWAKE_ENABLED_KEY, PC_NAME_KEY, REMOTE_ALPN,
+    advertised_bridge_url, authenticate_session_token, bridge_bind_host, cancel_pairing,
+    database_error, endpoint_id, host_enabled, mint_session_token, now_millis, pair_device,
+    public_remote_status, refresh_trusted_peer_seen, remote_status,
+    revoke_sessions_for_device_row, sanitize_remote_process_environment, set_setting,
+    DesktopRemoteControlError, DesktopRemoteControlService, RemoteCapabilitySet,
+    RemoteChatPermission, RemoteChatSpec, RemoteControlStatus, RemoteEndpointAddress, RemoteHost,
+    RemotePairDeviceInput, RemotePairingTicket, RemotePeerSummary, RemotePublicStatus,
+    RemoteRequestEnvelope, RemoteSessionCredential, RemoteWakeHost, DEFAULT_HTTP_BRIDGE_PORT,
+    HOST_ENABLED_KEY, KEEP_AWAKE_ENABLED_KEY, PC_NAME_KEY, REMOTE_ALPN,
     REMOTE_MIN_PROTOCOL_VERSION, REMOTE_PROTOCOL_VERSION,
 };
 
@@ -167,6 +170,7 @@ impl DesktopApplication {
         device_id: &str,
     ) -> Result<RemoteControlStatus, DesktopRemoteControlError> {
         self.inner.remote.with_connection(|connection| {
+            revoke_sessions_for_device_row(connection, device_id)?;
             connection
                 .execute(
                     r#"UPDATE remote_control_trusted_devices
@@ -188,8 +192,10 @@ impl DesktopApplication {
         if let Some(existing) = self.inner.remote.bridge_url()? {
             return Ok(existing);
         }
-        let listener = TcpListener::bind(("0.0.0.0", DEFAULT_HTTP_BRIDGE_PORT))
-            .or_else(|_| TcpListener::bind("0.0.0.0:0"))
+        // Default: loopback only. LAN bind requires LILIA_REMOTE_BRIDGE_BIND_NON_LOOPBACK=1.
+        let bind_host = bridge_bind_host();
+        let listener = TcpListener::bind((bind_host, DEFAULT_HTTP_BRIDGE_PORT))
+            .or_else(|_| TcpListener::bind((bind_host, 0)))
             .map_err(|error| DesktopRemoteControlError::unavailable(error.to_string()))?;
         listener
             .set_nonblocking(true)
@@ -224,6 +230,30 @@ impl RemoteHost for DesktopApplication {
         input: RemotePairDeviceInput,
     ) -> Result<RemotePeerSummary, DesktopRemoteControlError> {
         self.pair_remote_device(input)
+    }
+
+    fn public_status(&self) -> Result<RemotePublicStatus, DesktopRemoteControlError> {
+        self.inner
+            .remote
+            .with_connection(|connection| public_remote_status(connection))
+    }
+
+    fn issue_session_token(
+        &self,
+        endpoint_id: &str,
+    ) -> Result<RemoteSessionCredential, DesktopRemoteControlError> {
+        self.inner
+            .remote
+            .with_connection(|connection| mint_session_token(connection, endpoint_id))
+    }
+
+    fn authenticate_session_token(
+        &self,
+        token: &str,
+    ) -> Result<String, DesktopRemoteControlError> {
+        self.inner
+            .remote
+            .with_connection(|connection| authenticate_session_token(connection, token))
     }
 
     fn authorize(
@@ -581,7 +611,7 @@ fn remote_shell_command(
     {
         specification.arguments = vec!["-lc".to_owned(), command.clone()];
     }
-    specification.environment = environment;
+    specification.environment = sanitize_remote_process_environment(environment);
     specification.label = Some(command);
     specification
 }

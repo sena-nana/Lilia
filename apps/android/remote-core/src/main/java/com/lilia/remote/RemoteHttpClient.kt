@@ -42,7 +42,9 @@ class RemoteHttpClient(
                 )
             val response = postJson("${bridgeUrl(ticket)}/pair", body)
             RemoteEnvelopeAdapter.throwIfError(response, "配对失败")
-            repository.savePairing(ticket)
+            val sessionToken = response.optString("sessionToken")
+            require(sessionToken.isNotBlank()) { "配对响应缺少 sessionToken" }
+            repository.savePairing(ticket, sessionToken)
         }
     }
 
@@ -200,8 +202,11 @@ class RemoteHttpClient(
     }
 
     private fun dispatch(pc: SavedPc, request: JSONObject): JSONObject {
+        require(pc.sessionToken.isNotBlank()) {
+            "缺少 sessionToken，请重新扫码配对"
+        }
         val envelope = RemoteEnvelopeAdapter.requestEnvelope(pc, repository.deviceEndpointId(), request)
-        val response = postJson("${bridgeUrl(pc)}/dispatch", envelope)
+        val response = postJson("${bridgeUrl(pc)}/dispatch", envelope, pc.sessionToken)
         val payload = RemoteEnvelopeAdapter.payloadOrThrow(response)
         if (shouldMarkActivePcSeen(request, payload)) {
             repository.markActivePcSeen(pc)
@@ -317,13 +322,16 @@ class RemoteHttpClient(
         return payload.optBoolean("accepted")
     }
 
-    private fun postJson(url: String, body: JSONObject): JSONObject {
+    private fun postJson(url: String, body: JSONObject, sessionToken: String? = null): JSONObject {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 5_000
             readTimeout = 30_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            if (!sessionToken.isNullOrBlank()) {
+                setRequestProperty("Authorization", "Bearer $sessionToken")
+            }
         }
         OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { writer ->
             writer.write(body.toString())

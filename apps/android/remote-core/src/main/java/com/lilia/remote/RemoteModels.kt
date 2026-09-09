@@ -22,6 +22,8 @@ data class SavedPc(
     val pairingUri: String,
     val bridgeUrl: String,
     val lastActiveAt: Long,
+    /** Short-lived HTTP session token minted by PC `/pair`; required for `/dispatch`. */
+    val sessionToken: String = "",
 )
 
 data class RemoteTaskSummary(

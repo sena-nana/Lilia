@@ -31,6 +31,13 @@ pub struct RemoteCapabilitySet {
     pub supports_agent_wire: bool,
     pub supports_session_fork: bool,
     pub supports_process_session: bool,
+    /// HTTP bridge requires a short-lived session token after pairing.
+    #[serde(default = "default_true")]
+    pub supports_session_token: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +78,33 @@ pub struct RemoteControlStatus {
     pub active_ticket: Option<RemotePairingTicket>,
     pub trusted_devices: Vec<RemotePeerSummary>,
     pub capabilities: RemoteCapabilitySet,
+}
+
+/// Unauthenticated HTTP `/status` payload — never includes pairing secrets or device ids.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePublicStatus {
+    pub host_enabled: bool,
+    pub state: String,
+    pub pc_name: String,
+    pub keep_awake_enabled: bool,
+    pub capabilities: RemoteCapabilitySet,
+    /// `loopback` (default) or `non-loopback` when the dangerous LAN bind opt-in is set.
+    pub bridge_bind: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteSessionCredential {
+    pub session_token: String,
+    pub expires_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePairResult {
+    pub peer: RemotePeerSummary,
+    pub session: RemoteSessionCredential,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]

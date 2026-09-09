@@ -12,10 +12,12 @@ use serde_json::{json, Value};
 use uuid::Uuid;
 
 use crate::service::{
-    now_millis, remote_capabilities, DesktopRemoteControlError,
+    now_millis, remote_capabilities, sanitize_remote_process_environment,
+    DesktopRemoteControlError,
 };
 use crate::types::{
-    RemoteRequestEnvelope, REMOTE_MIN_PROTOCOL_VERSION, REMOTE_PROTOCOL_VERSION,
+    RemotePublicStatus, RemoteRequestEnvelope, RemoteSessionCredential,
+    REMOTE_MIN_PROTOCOL_VERSION, REMOTE_PROTOCOL_VERSION,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -70,6 +72,15 @@ pub trait RemoteHost: Send + Sync {
         &self,
         input: crate::types::RemotePairDeviceInput,
     ) -> Result<crate::types::RemotePeerSummary, DesktopRemoteControlError>;
+    fn public_status(&self) -> Result<RemotePublicStatus, DesktopRemoteControlError>;
+    fn issue_session_token(
+        &self,
+        endpoint_id: &str,
+    ) -> Result<RemoteSessionCredential, DesktopRemoteControlError>;
+    fn authenticate_session_token(
+        &self,
+        token: &str,
+    ) -> Result<String, DesktopRemoteControlError>;
     fn authorize(
         &self,
         device_id: &str,
@@ -665,7 +676,7 @@ fn remote_process_environment(
     let object = value.as_object().ok_or_else(|| {
         DesktopRemoteControlError::invalid("process session env must be an object")
     })?;
-    object
+    let environment = object
         .iter()
         .map(|(key, value)| {
             let value = value.as_str().ok_or_else(|| {
@@ -675,7 +686,8 @@ fn remote_process_environment(
             })?;
             Ok((key.clone(), value.to_owned()))
         })
-        .collect()
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    Ok(sanitize_remote_process_environment(environment))
 }
 
 fn remote_terminal_dimension(

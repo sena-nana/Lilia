@@ -103,7 +103,12 @@ LiliaRemote 与 LiliaVoice 共用同一个配对协议：PC 端只生成 `lilia-
 - Android 回到前台时使用持久化 endpoint secret 重新 bind，并自动连接最近 active PC。
 - PC 端根据 trusted device record 接受重连，不要求重新扫码。
 - 若 trust record 被 PC 撤销，Android 必须清除该 PC 的 active 状态并提示重新配对。
-- v1 不引入单独 session token 续期。后续如需要更强安全边界，可在长期 trust record 之上增加短期 session token。
+- HTTP bridge 在 `/pair` 成功后签发短期 session token（默认 7 天滑动过期，存 hash）；`POST /dispatch` 必须带 `Authorization: Bearer <token>`，并与 envelope `deviceId` 一致。
+- 未认证的 `GET /status` 只返回公开健康信息（hostEnabled/state/pcName/capabilities/bridgeBind），**绝不**返回 pairing ticket、challenge 或 trusted endpoint id。
+- 默认只绑定 `127.0.0.1`。若需局域网可达，必须显式设置危险开关 `LILIA_REMOTE_BRIDGE_BIND_NON_LOOPBACK=1`（文档化 opt-in）。Android 真机连 loopback 请用 `adb reverse`；模拟器可用 `10.0.2.2` + reverse/广告地址约定。
+- CORS 不再使用 `Access-Control-Allow-Origin: *`；仅在 Origin 为 localhost/127.0.0.1 时回显。
+- 远程 process session 的环境变量会拒绝 `LD_*` / `DYLD_*` / `PATH` / `PYTHONPATH` / `NODE_OPTIONS` 等经典劫持项。
+- Follow-up（本 PR 不做）：iroh / mTLS、完整设备密钥证明续期、HostProcessBackend 等 High 项。
 
 ## Remote Protocol
 
@@ -233,3 +238,9 @@ Android beta 位于 `apps/android`，通过 Compose 实现独立移动端界面�
 - Android 切换 active PC 后不会向旧 PC 发送后续操作。
 - 断线重连后 Android 以 PC 快照覆盖本地缓存。
 - 高频 timeline batch 不造成 UI 卡顿或连接背压。
+
+## HTTP bridge hardening (2026-09)
+
+Default bind is loopback (`127.0.0.1:41478`). Binding `0.0.0.0` requires the explicit dangerous environment variable `LILIA_REMOTE_BRIDGE_BIND_NON_LOOPBACK=1`.
+
+Session tokens are minted at pair time and required on `/dispatch`. Revoking a trusted device deletes its sessions. Migrating fully to iroh or mutual TLS is intentionally deferred.
