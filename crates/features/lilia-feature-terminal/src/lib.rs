@@ -11,7 +11,7 @@ use std::sync::Arc;
 use lilia_kernel::{Event, EventBus, Feature, FeatureContext, FeatureId, KernelError, ServiceKey, ServiceRef};
 
 pub use session::{
-    canonical_directory,
+    canonical_directory, is_denied_terminal_env_key, sanitize_terminal_environment,
     DesktopTerminalColor, DesktopTerminalCommand, DesktopTerminalError, DesktopTerminalLaunch,
     DesktopTerminalProcessState, DesktopTerminalRestoration, DesktopTerminalRow,
     DesktopTerminalScope, DesktopTerminalService, DesktopTerminalSessionId,

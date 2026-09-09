@@ -597,7 +597,7 @@ pub fn pair_device(
             "pairing ticket has expired",
         ));
     }
-    if ticket.0 != input.challenge {
+    if !constant_time_eq(ticket.0.as_bytes(), input.challenge.as_bytes()) {
         return Err(DesktopRemoteControlError::invalid(
             "pairing challenge does not match",
         ));
@@ -699,6 +699,19 @@ pub fn advertised_bridge_url(port: u16) -> String {
     format!("http://{}:{port}", local_lan_ip())
 }
 
+
+/// Constant-time equality for equal-length byte slices (pairing challenge / secrets).
+pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in left.iter().zip(right.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
 fn pairing_uri_with_bridge_url(pairing_uri: &str, bridge_url: &str) -> String {
     let encoded = url_encode(bridge_url);
     match pairing_uri.split_once('?') {
@@ -764,4 +777,17 @@ pub fn now_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pairing_challenge_compare_is_constant_time() {
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+        assert!(!constant_time_eq(b"abc", b"ab"));
+        assert!(!constant_time_eq(b"ticket-challenge", b"ticket-challengx"));
+    }
 }

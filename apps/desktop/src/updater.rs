@@ -26,6 +26,16 @@ const USER_AGENT: &str = concat!("LiliaCode/", env!("CARGO_PKG_VERSION"));
 const MAX_MANIFEST_BYTES: u64 = 1024 * 1024;
 const MAX_PACKAGE_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_INSTALLER_BYTES: u64 = 1024 * 1024 * 1024;
+/// Built-in HTTPS hosts permitted for updater manifests, packages, and redirects.
+/// Minisign remains the primary integrity control; host pinning reduces open-redirect abuse.
+const DEFAULT_ALLOWED_UPDATE_HOSTS: &[&str] = &[
+    "github.com",
+    "www.github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "github-releases.githubusercontent.com",
+    "cdn.github.com",
+];
 
 #[derive(Clone)]
 struct NativeUpdaterConfig {
@@ -263,10 +273,12 @@ fn client() -> Result<Client, DesktopHostError> {
         .user_agent(USER_AGENT)
         .timeout(Duration::from_secs(90))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.url().scheme() == "https" {
-                attempt.follow()
-            } else {
-                attempt.stop()
+            match ensure_allowed_update_url(attempt.url()) {
+                Ok(()) => attempt.follow(),
+                Err(_) => attempt.error(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "updater redirect host is not allowlisted",
+                )),
             }
         }))
         .build()
@@ -280,13 +292,7 @@ fn client() -> Result<Client, DesktopHostError> {
 }
 
 fn successful_response(response: Response, operation: &str) -> Result<Response, DesktopHostError> {
-    if response.url().scheme() != "https" {
-        return Err(update_error(
-            "native_updater_insecure_redirect",
-            "更新服务返回了不安全的重定向。",
-            false,
-        ));
-    }
+    ensure_allowed_update_url(response.url())?;
     if !response.status().is_success() {
         return Err(update_error(
             "native_updater_http_failed",
@@ -674,7 +680,67 @@ fn validated_https_url(value: &str, code: &'static str) -> Result<Url, DesktopHo
             false,
         ));
     }
+    ensure_allowed_update_url(&url).map_err(|error| {
+        // Preserve caller-facing code when the URL fails host policy.
+        update_error(code, error.message, false)
+    })?;
     Ok(url)
+}
+
+fn allowed_update_hosts() -> Vec<String> {
+    let mut hosts: Vec<String> = DEFAULT_ALLOWED_UPDATE_HOSTS
+        .iter()
+        .map(|host| (*host).to_ascii_lowercase())
+        .collect();
+    // Configured endpoint host (LILIA_UPDATER_ENDPOINT) is always permitted.
+    if let Some(endpoint) = option_env!("LILIA_UPDATER_ENDPOINT") {
+        if let Ok(url) = Url::parse(endpoint.trim()) {
+            if let Some(host) = url.host_str() {
+                let host = host.to_ascii_lowercase();
+                if !hosts.iter().any(|existing| existing == &host) {
+                    hosts.push(host);
+                }
+            }
+        }
+    }
+    // Optional comma-separated extra CDN hosts for forks / mirrors.
+    // Residual: operators who need non-GitHub CDNs must set this explicitly;
+    // open redirects to arbitrary HTTPS hosts remain rejected by default.
+    if let Ok(extra) = std::env::var("LILIA_UPDATER_ALLOWED_HOSTS") {
+        for host in extra.split(',') {
+            let host = host.trim().to_ascii_lowercase();
+            if !host.is_empty() && !hosts.iter().any(|existing| existing == &host) {
+                hosts.push(host);
+            }
+        }
+    }
+    hosts
+}
+
+fn ensure_allowed_update_url(url: &Url) -> Result<(), DesktopHostError> {
+    if url.scheme() != "https" {
+        return Err(update_error(
+            "native_updater_insecure_redirect",
+            "更新服务返回了不安全的重定向。",
+            false,
+        ));
+    }
+    let Some(host) = url.host_str() else {
+        return Err(update_error(
+            "native_updater_host_denied",
+            "更新地址缺少主机名。",
+            false,
+        ));
+    };
+    let host = host.to_ascii_lowercase();
+    if allowed_update_hosts().iter().any(|allowed| allowed == &host) {
+        return Ok(());
+    }
+    Err(update_error(
+        "native_updater_host_denied",
+        format!("更新主机未在允许列表中：{host}"),
+        false,
+    ))
 }
 
 fn update_error(
@@ -698,11 +764,11 @@ mod tests {
             "notes": "LiliaCode release",
             "platforms": {
                 "windows-x86_64": {
-                    "url": "https://example.com/generic.zip",
+                    "url": "https://github.com/sena-nana/LiliaCode/releases/download/v0.2.0/generic.zip",
                     "signature": "generic"
                 },
                 "windows-x86_64-nsis": {
-                    "url": "https://example.com/nsis.zip",
+                    "url": "https://objects.githubusercontent.com/github-production-release-asset/nsis.zip",
                     "signature": "nsis"
                 }
             }
@@ -717,7 +783,7 @@ mod tests {
         assert_eq!(release.version, Version::new(0, 2, 0));
         assert_eq!(
             release.download_url.as_str(),
-            "https://example.com/nsis.zip"
+            "https://objects.githubusercontent.com/github-production-release-asset/nsis.zip"
         );
         assert_eq!(release.signature, "nsis");
         assert_eq!(release.notes.as_deref(), Some("LiliaCode release"));
@@ -736,6 +802,40 @@ mod tests {
                 .unwrap_err()
                 .code,
             "invalid"
+        );
+    }
+
+    #[test]
+    fn update_urls_reject_non_allowlisted_hosts() {
+        assert_eq!(
+            validated_https_url("https://evil.example/update.zip", "invalid")
+                .unwrap_err()
+                .code,
+            "invalid"
+        );
+        assert!(
+            validated_https_url(
+                "https://github.com/sena-nana/LiliaCode/releases/download/v1/app.zip",
+                "invalid",
+            )
+            .is_ok()
+        );
+        assert!(
+            validated_https_url(
+                "https://objects.githubusercontent.com/github-production-release-asset/x",
+                "invalid",
+            )
+            .is_ok()
+        );
+        assert!(ensure_allowed_update_url(
+            &Url::parse("https://release-assets.githubusercontent.com/a.bin").unwrap()
+        )
+        .is_ok());
+        assert_eq!(
+            ensure_allowed_update_url(&Url::parse("https://cdn.evil.test/a.bin").unwrap())
+                .unwrap_err()
+                .code,
+            "native_updater_host_denied"
         );
     }
 

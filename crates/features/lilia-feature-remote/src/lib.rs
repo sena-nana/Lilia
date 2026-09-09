@@ -28,11 +28,12 @@ pub use dispatch::{
 };
 pub use http::serve_http_bridge;
 pub use service::{
-    active_ticket, advertised_bridge_url, authorize_request, cancel_pairing, database_error,
-    endpoint, endpoint_id, host_enabled, keep_awake_enabled, now_millis, pair_device, pc_name,
-    refresh_trusted_peer_seen, remote_capabilities, remote_status, set_setting, start_pairing,
-    url_encode, DesktopRemoteControlError, DesktopRemoteControlService, RemoteWakeHost,
-    DEFAULT_HTTP_BRIDGE_PORT, HOST_ENABLED_KEY, KEEP_AWAKE_ENABLED_KEY, PC_NAME_KEY,
+    active_ticket, advertised_bridge_url, authorize_request, cancel_pairing, constant_time_eq,
+    database_error, endpoint, endpoint_id, host_enabled, keep_awake_enabled, now_millis,
+    pair_device, pc_name, refresh_trusted_peer_seen, remote_capabilities, remote_status,
+    set_setting, start_pairing, url_encode, DesktopRemoteControlError,
+    DesktopRemoteControlService, RemoteWakeHost, DEFAULT_HTTP_BRIDGE_PORT, HOST_ENABLED_KEY,
+    KEEP_AWAKE_ENABLED_KEY, PC_NAME_KEY,
 };
 pub use types::{
     RemoteCapabilitySet, RemoteControlStatus, RemoteEndpointAddress, RemotePairDeviceInput,
