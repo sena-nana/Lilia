@@ -263,11 +263,15 @@ impl DesktopTerminalService {
     /// Starts a PTY in `cwd` and registers it.
     pub fn launch(
         &self,
-        launch: DesktopTerminalLaunch,
+        mut launch: DesktopTerminalLaunch,
         cwd: PathBuf,
         events: Arc<dyn TerminalEvents>,
     ) -> Result<DesktopTerminalSnapshot, DesktopTerminalError> {
         validate_size(launch.rows, launch.columns)?;
+        if let Some(command) = launch.command.as_mut() {
+            command.environment =
+                sanitize_terminal_environment(std::mem::take(&mut command.environment));
+        }
         validate_command(launch.command.as_ref())?;
         let session = DesktopTerminalSession::spawn(launch, cwd, events)?;
         let session_id = session.id.clone();
@@ -663,6 +667,57 @@ fn validate_size(rows: u16, columns: u16) -> Result<(), DesktopTerminalError> {
     Ok(())
 }
 
+
+/// Drop classic preload / interpreter hijack variables from local PTY env overlays.
+/// Keep this denylist aligned with `lilia-feature-remote::is_denied_remote_env_key`.
+pub fn sanitize_terminal_environment(
+    environment: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    environment
+        .into_iter()
+        .filter(|(key, _)| !is_denied_terminal_env_key(key))
+        .collect()
+}
+
+pub fn is_denied_terminal_env_key(key: &str) -> bool {
+    let upper = key.to_ascii_uppercase();
+    if upper.starts_with("LD_") || upper.starts_with("DYLD_") {
+        return true;
+    }
+    matches!(
+        upper.as_str(),
+        "PATH"
+            | "PYTHONPATH"
+            | "PYTHONHOME"
+            | "PERL5LIB"
+            | "PERL5OPT"
+            | "RUBYLIB"
+            | "RUBYOPT"
+            | "NODE_OPTIONS"
+            | "NODE_PATH"
+            | "BASH_ENV"
+            | "ENV"
+            | "IFS"
+            | "SHELLOPTS"
+            | "PS4"
+            | "PROMPT_COMMAND"
+            | "SSLKEYLOGFILE"
+            | "GIT_SSH_COMMAND"
+            | "GIT_EXEC_PATH"
+            | "GIT_CONFIG_GLOBAL"
+            | "GIT_CONFIG_SYSTEM"
+            | "OPENSSL_CONF"
+            | "CURL_HOME"
+            | "NPM_CONFIG_PREFIX"
+            | "JAVA_TOOL_OPTIONS"
+            | "_JAVA_OPTIONS"
+            | "CLASSPATH"
+            | "TERM_PROGRAM"
+            | "TERMINFO"
+            | "TERMCAP"
+    )
+}
+
 fn validate_command(command: Option<&DesktopTerminalCommand>) -> Result<(), DesktopTerminalError> {
     let Some(command) = command else {
         return Ok(());
@@ -703,7 +758,7 @@ fn command_builder(launch: &DesktopTerminalLaunch, cwd: &Path) -> (CommandBuilde
     let (mut command, label) = if let Some(specification) = &launch.command {
         let mut command = CommandBuilder::new(&specification.program);
         command.args(&specification.arguments);
-        for (key, value) in &specification.environment {
+        for (key, value) in sanitize_terminal_environment(specification.environment.clone()) {
             command.env(key, value);
         }
         (
@@ -804,3 +859,33 @@ fn operation_error(operation: &'static str, error: std::io::Error) -> DesktopTer
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_terminal_environment_strips_dangerous_keys() {
+        assert!(is_denied_terminal_env_key("LD_PRELOAD"));
+        assert!(is_denied_terminal_env_key("ld_library_path"));
+        assert!(is_denied_terminal_env_key("DYLD_INSERT_LIBRARIES"));
+        assert!(is_denied_terminal_env_key("PYTHONPATH"));
+        assert!(is_denied_terminal_env_key("PATH"));
+        assert!(is_denied_terminal_env_key("NODE_OPTIONS"));
+        assert!(is_denied_terminal_env_key("BASH_ENV"));
+        assert!(!is_denied_terminal_env_key("MY_APP_FLAG"));
+        assert!(!is_denied_terminal_env_key("TERM"));
+        let cleaned = sanitize_terminal_environment(BTreeMap::from([
+            ("LD_PRELOAD".to_owned(), "evil.so".to_owned()),
+            ("MY_APP_FLAG".to_owned(), "1".to_owned()),
+            ("NODE_OPTIONS".to_owned(), "--require evil".to_owned()),
+            ("COLORTERM".to_owned(), "truecolor".to_owned()),
+        ]));
+        assert_eq!(
+            cleaned,
+            BTreeMap::from([
+                ("MY_APP_FLAG".to_owned(), "1".to_owned()),
+                ("COLORTERM".to_owned(), "truecolor".to_owned()),
+            ])
+        );
+    }
+}
