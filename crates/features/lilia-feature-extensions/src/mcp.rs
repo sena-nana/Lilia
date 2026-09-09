@@ -442,12 +442,41 @@ fn normalized_text(
     Ok(Some(value.to_owned()))
 }
 
+/// Dangerous opt-in: when set to `1`/`true`, allow cleartext `http://` MCP URLs.
+/// Default is HTTPS-only.
+pub const DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV: &str = "LILIA_MCP_ALLOW_INSECURE_HTTP";
+
+fn mcp_allows_insecure_http() -> bool {
+    match std::env::var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV) {
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true") => true,
+        _ => false,
+    }
+}
+
 fn validate_mcp_url(value: &str) -> Result<(), ExtensionsError> {
     let url = url::Url::parse(value).map_err(|_| invalid_input("url", "MCP URL is invalid"))?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+    match url.scheme() {
+        "https" => {}
+        "http" if mcp_allows_insecure_http() => {}
+        "http" => {
+            return Err(invalid_input(
+                "url",
+                format!(
+                    "MCP URL must use https (cleartext http requires explicit {DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV}=1)"
+                ),
+            ));
+        }
+        _ => {
+            return Err(invalid_input(
+                "url",
+                "MCP URL must use https (or http with explicit insecure opt-in) and include a host",
+            ));
+        }
+    }
+    if url.host_str().is_none() {
         return Err(invalid_input(
             "url",
-            "MCP URL must use http or https and include a host",
+            "MCP URL must use https (or http with explicit insecure opt-in) and include a host",
         ));
     }
     if !url.username().is_empty() || url.password().is_some() {
@@ -460,6 +489,60 @@ fn validate_mcp_url(value: &str) -> Result<(), ExtensionsError> {
         return Err(invalid_input("url", "MCP URL must not contain a fragment"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::*;
+    use crate::types::{McpServerUpsert, McpTransport};
+
+    fn http_upsert(url: &str) -> McpServerUpsert {
+        McpServerUpsert {
+            expected_registry_revision: 1,
+            server_id: "docs".to_owned(),
+            transport: McpTransport::StreamableHttp,
+            command: None,
+            args: Vec::new(),
+            url: Some(url.to_owned()),
+            env_secret_names: Vec::new(),
+            header_secret_names: Vec::new(),
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn https_mcp_urls_are_accepted_by_default() {
+        NormalizedMcpServer::new(http_upsert("https://example.test/mcp"))
+            .expect("https MCP URLs remain valid");
+    }
+
+    #[test]
+    fn http_mcp_urls_are_rejected_without_dangerous_opt_in() {
+        let previous = std::env::var_os(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV);
+        std::env::remove_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV);
+        let error = NormalizedMcpServer::new(http_upsert("http://example.test/mcp"))
+            .expect_err("cleartext http requires opt-in");
+        assert!(matches!(
+            error,
+            ExtensionsError::InvalidInput { field: "url", .. }
+        ));
+        match previous {
+            Some(value) => std::env::set_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV, value),
+            None => std::env::remove_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV),
+        }
+    }
+
+    #[test]
+    fn http_mcp_urls_are_allowed_with_dangerous_opt_in() {
+        let previous = std::env::var_os(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV);
+        std::env::set_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV, "1");
+        NormalizedMcpServer::new(http_upsert("http://127.0.0.1:8765/mcp"))
+            .expect("opt-in cleartext http should work for local MCP");
+        match previous {
+            Some(value) => std::env::set_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV, value),
+            None => std::env::remove_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV),
+        }
+    }
 }
 
 pub fn mcp_state_key(state: &McpServerState) -> &'static str {

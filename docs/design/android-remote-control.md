@@ -233,3 +233,11 @@ Android beta 位于 `apps/android`，通过 Compose 实现独立移动端界面�
 - Android 切换 active PC 后不会向旧 PC 发送后续操作。
 - 断线重连后 Android 以 PC 快照覆盖本地缓存。
 - 高频 timeline batch 不造成 UI 卡顿或连接背压。
+
+## Security residual (medium hardening)
+
+Service observe HTTP and the Android remote cleartext bridge are **not** migrated to iroh / mTLS in the medium hardening pass.
+
+- Non-loopback `LILIA_SERVICE_BIND` refuses to start without `LILIA_SERVICE_OBSERVE_TOKEN`, and observe/wire routes require `Authorization: Bearer`.
+- Transport remains cleartext HTTP when LAN bind is intentionally enabled; token theft on the LAN is still possible without TLS.
+- Full iroh or mTLS transport for Remote / Service is an explicit follow-up (out of scope for Critical #83, High #84, and this Medium PR).

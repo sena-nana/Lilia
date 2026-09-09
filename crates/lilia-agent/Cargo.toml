@@ -11,6 +11,7 @@ lilia-kernel = { workspace = true }
 lilia-core = { workspace = true }
 lilia-client = { workspace = true }
 lilia-storage = { workspace = true }
+lilia-platform = { workspace = true }
 mutsuki-agent-adapter-api = { workspace = true }
 mutsuki-agent-adapter-anthropic = { workspace = true }
 mutsuki-agent-adapter-openai = { workspace = true }

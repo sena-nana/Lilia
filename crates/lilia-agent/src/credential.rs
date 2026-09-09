@@ -11,12 +11,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use mutsuki_agent_contracts::{
-    official_credential_providers, CredentialCapability, CredentialDescriptor,
-    CredentialImportRequest, CredentialKind, CredentialLoginRequest, CredentialMaterialOrigin,
-    CredentialProviderDescriptor, CredentialRef, CredentialRefreshPolicy, CredentialRevocationInfo,
-    CredentialRevokeRequest, CredentialStatus, CredentialStatusRequest,
-    ANTHROPIC_CREDENTIAL_PROVIDER_ID, CREDENTIAL_UNSUPPORTED_FOR_CUSTOM_RUNTIME,
-    OPENAI_CREDENTIAL_PROVIDER_ID,
+    official_credential_providers, AgentError, AgentResult, CredentialCapability,
+    CredentialDescriptor, CredentialImportRequest, CredentialKind, CredentialLoginRequest,
+    CredentialMaterialOrigin, CredentialProviderDescriptor, CredentialRef,
+    CredentialRefreshPolicy, CredentialRevocationInfo, CredentialRevokeRequest, CredentialStatus,
+    CredentialStatusRequest, ANTHROPIC_CREDENTIAL_PROVIDER_ID,
+    CREDENTIAL_UNSUPPORTED_FOR_CUSTOM_RUNTIME, OPENAI_CREDENTIAL_PROVIDER_ID,
 };
 use mutsuki_agent_runtime::{CredentialBrokerService, InMemorySecretStore, SecretStore};
 use rusqlite::{params, Connection};
@@ -24,6 +24,99 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::NativeRuntimeError;
+
+/// Keyring service name used by Service-mode secret material (distinct from Desktop instance identity).
+pub const SERVICE_KEYRING_SERVICE: &str = "com.lilia.service";
+
+/// Explicit opt-in for in-memory secret material (headless CI / no OS keyring).
+/// Default for home-backed Service is the OS keyring.
+pub const SERVICE_IN_MEMORY_SECRETS_ENV: &str = "LILIA_SERVICE_IN_MEMORY_SECRETS";
+
+/// OS keyring-backed [`SecretStore`] matching Desktop's `DesktopHostSecretStore` key layout
+/// (`agentkit.{secret_id}`) without requiring a Desktop host.
+#[derive(Clone, Debug)]
+pub struct KeyringSecretStore {
+    service: String,
+}
+
+impl KeyringSecretStore {
+    pub fn new(service: impl Into<String>) -> Self {
+        Self {
+            service: service.into(),
+        }
+    }
+
+    fn entry(&self, secret_id: &str) -> AgentResult<lilia_platform::CredentialEntry> {
+        let key = format!("agentkit.{secret_id}");
+        lilia_platform::CredentialEntry::open(&self.service, &key).map_err(|error| {
+            AgentError::new(
+                "credential.secret_store",
+                format!("{}: {}", error.code, error.message),
+            )
+        })
+    }
+}
+
+impl SecretStore for KeyringSecretStore {
+    fn put(&self, secret_id: &str, material: &str) -> AgentResult<()> {
+        self.entry(secret_id)?
+            .write(material.as_bytes())
+            .map_err(|error| {
+                AgentError::new(
+                    "credential.secret_store",
+                    format!("{}: {}", error.code, error.message),
+                )
+            })
+    }
+
+    fn get(&self, secret_id: &str) -> AgentResult<Option<String>> {
+        match self.entry(secret_id)?.read() {
+            Ok(Some(secret)) => String::from_utf8(secret)
+                .map(Some)
+                .map_err(|_| AgentError::new("credential.secret_store", "stored credential is not valid UTF-8 text")),
+            Ok(None) => Ok(None),
+            Err(error) => Err(AgentError::new(
+                "credential.secret_store",
+                format!("{}: {}", error.code, error.message),
+            )),
+        }
+    }
+
+    fn delete(&self, secret_id: &str) -> AgentResult<()> {
+        self.entry(secret_id)?.delete().map_err(|error| {
+            AgentError::new(
+                "credential.secret_store",
+                format!("{}: {}", error.code, error.message),
+            )
+        })
+    }
+}
+
+fn service_in_memory_secrets_requested() -> bool {
+    match std::env::var(SERVICE_IN_MEMORY_SECRETS_ENV) {
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true") => true,
+        _ => false,
+    }
+}
+
+/// Build the Service home credential bridge: SQLite registry + keyring secrets by default.
+/// Set [`SERVICE_IN_MEMORY_SECRETS_ENV`]=1 for headless CI without an OS keyring.
+pub fn service_credential_bridge_for_home(
+    home: impl AsRef<Path>,
+) -> Result<ProductCredentialBridge, NativeRuntimeError> {
+    let paths = lilia_storage::LiliaDataPaths::from_home(home.as_ref().to_path_buf());
+    paths
+        .ensure_layout()
+        .map_err(|err| NativeRuntimeError::Agent(format!("ensure lilia data layout: {err}")))?;
+    let registry = Arc::new(SqliteProductCredentialRegistry::open(paths.agent_runtime_db())?);
+    let secrets: Arc<dyn SecretStore> = if service_in_memory_secrets_requested() {
+        Arc::new(InMemorySecretStore::default())
+    } else {
+        Arc::new(KeyringSecretStore::new(SERVICE_KEYRING_SERVICE))
+    };
+    ProductCredentialBridge::with_persistence(secrets, registry)
+}
+
 
 /// Product-facing credential login request (secret accepted only on this boundary).
 #[derive(Clone, Deserialize)]
@@ -1314,4 +1407,34 @@ mod tests {
         }
         std::fs::remove_file(path).unwrap();
     }
+
+    #[test]
+    fn service_home_bridge_uses_memory_store_when_explicitly_requested() {
+        let previous = std::env::var_os(SERVICE_IN_MEMORY_SECRETS_ENV);
+        std::env::set_var(SERVICE_IN_MEMORY_SECRETS_ENV, "1");
+        let home = std::env::temp_dir().join(format!(
+            "lilia-service-secrets-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let bridge = service_credential_bridge_for_home(&home).expect("memory bridge");
+        // Smoke: login + diagnostics should work against memory+sqlite registry.
+        bridge
+            .login(ProductCredentialLoginInput {
+                provider_id: OPENAI_CREDENTIAL_PROVIDER_ID.into(),
+                kind: CredentialKind::ApiKey,
+                secret_material: "sk-test-service-memory-0123456789abcdef".into(),
+                account_label: None,
+                source: Some("test".into()),
+            })
+            .expect("login");
+        let _ = std::fs::remove_dir_all(&home);
+        match previous {
+            Some(value) => std::env::set_var(SERVICE_IN_MEMORY_SECRETS_ENV, value),
+            None => std::env::remove_var(SERVICE_IN_MEMORY_SECRETS_ENV),
+        }
+    }
 }
+
