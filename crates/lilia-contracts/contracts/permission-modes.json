@@ -17,11 +17,11 @@
     },
     "full": {
       "label": "完全访问",
-      "description": "使用完全访问权限，不逐条请求操作确认。"
+      "description": "WARNING: grants broad auto-approval for most agent tools. High-risk host process / network / HTTP / shell tool classes still require explicit confirmation where the runtime honors toolApprovalOverrides. Prefer ask unless you trust the session."
     },
     "free": {
       "label": "自由实现",
-      "description": "完全访问，并在 8 秒后按建议项处理交互。"
+      "description": "WARNING: historically advertised as auto-approve everything after ~8s for interactive prompts. It is NOT a network/process free-for-all — high-risk process/network/HTTP/shell tools require approval (requireApproval + toolApprovalOverrides). Prefer ask for untrusted workspaces."
     }
   },
   "displayOrder": [
@@ -30,11 +30,26 @@
     "full",
     "free"
   ],
+  "highRiskToolClasses": [
+    "process",
+    "network",
+    "http",
+    "browser",
+    "shell"
+  ],
   "runtimeMappings": {
     "native-agentkit": {
       "full": {
         "mode": "full_access",
-        "requireApproval": false
+        "requireApproval": false,
+        "toolApprovalOverrides": {
+          "process": true,
+          "network": true,
+          "http": true,
+          "browser": true,
+          "shell": true
+        },
+        "warning": "full_access does not waive high-risk host process/network/HTTP/shell confirmation."
       },
       "ask": {
         "mode": "default",
@@ -45,8 +60,16 @@
         "requireApproval": true
       },
       "free": {
-        "mode": "full_access",
-        "requireApproval": false
+        "mode": "default",
+        "requireApproval": true,
+        "toolApprovalOverrides": {
+          "process": true,
+          "network": true,
+          "http": true,
+          "browser": true,
+          "shell": true
+        },
+        "warning": "free must not be treated as auto-approve for process/network/HTTP/shell tools."
       }
     }
   }

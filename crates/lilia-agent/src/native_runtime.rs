@@ -2518,12 +2518,19 @@ fn agent_run_metadata(
 }
 
 fn permission_mode(context: Option<&Value>) -> AgentPermissionMode {
+    // `free` historically mapped to Full (auto-approve). Contract
+    // permission-modes.json now requires approval for high-risk tool classes and
+    // no longer advertises free as auto-approve-everything; map free → Ask so
+    // process/network/HTTP/shell cannot skip confirmation at the AgentKit layer.
+    // `full` remains Full for broad access, with host backends still enforcing
+    // allow_network / SSRF fail-closed controls.
     match context
         .and_then(|value| value.get("permission"))
         .and_then(Value::as_str)
     {
-        Some("full" | "free") => AgentPermissionMode::Full,
+        Some("full") => AgentPermissionMode::Full,
         Some("readonly") => AgentPermissionMode::ReadOnly,
+        // ask, free, unknown → Ask
         _ => AgentPermissionMode::Ask,
     }
 }
