@@ -8,7 +8,7 @@ import org.json.JSONObject
 
 interface RemoteDeviceStore {
     fun deviceEndpointId(): String
-    fun savePairing(ticket: RemotePairingTicket): SavedPc
+    fun savePairing(ticket: RemotePairingTicket, sessionToken: String): SavedPc
     fun markActivePcSeen(pc: SavedPc, now: Long = System.currentTimeMillis()): SavedPc
 }
 
@@ -52,7 +52,8 @@ class RemoteRepository internal constructor(
         return readActivePcFromPrefs()?.let(::listOf).orEmpty()
     }
 
-    override fun savePairing(ticket: RemotePairingTicket): SavedPc {
+    override fun savePairing(ticket: RemotePairingTicket, sessionToken: String): SavedPc {
+        require(sessionToken.isNotBlank()) { "sessionToken is required after pairing" }
         val pc = SavedPc(
             endpointId = ticket.endpointId,
             displayName = ticket.pcName,
@@ -60,6 +61,7 @@ class RemoteRepository internal constructor(
             pairingUri = ticket.rawUri,
             bridgeUrl = ticket.bridgeUrl,
             lastActiveAt = System.currentTimeMillis(),
+            sessionToken = sessionToken,
         )
         val updatedSavedPcs = upsertSavedPc(savedPcs(), pc)
         prefs.edit {
@@ -126,6 +128,7 @@ class RemoteRepository internal constructor(
             }
         val protocolVersion = prefs.getInt("active.protocolVersion", 1)
         val lastActiveAt = prefs.getLong("active.lastActiveAt", 0L)
+        val sessionToken = prefs.getString("active.sessionToken", null).orEmpty()
         return SavedPc(
             endpointId = endpointId,
             displayName = displayName,
@@ -133,6 +136,7 @@ class RemoteRepository internal constructor(
             pairingUri = pairingUri,
             bridgeUrl = bridgeUrl,
             lastActiveAt = lastActiveAt,
+            sessionToken = sessionToken,
         )
     }
 
@@ -153,6 +157,7 @@ class RemoteRepository internal constructor(
                             pairingUri = item.optString("pairingUri", ""),
                             bridgeUrl = bridgeUrl,
                             lastActiveAt = item.optLong("lastActiveAt", 0L),
+                            sessionToken = item.optString("sessionToken", ""),
                         ),
                     )
                 }
@@ -175,6 +180,11 @@ private fun RemotePreferencesEditor.putActivePc(pc: SavedPc) {
     putString("active.bridgeUrl", pc.bridgeUrl)
     putInt("active.protocolVersion", pc.protocolVersion)
     putLong("active.lastActiveAt", pc.lastActiveAt)
+    if (pc.sessionToken.isBlank()) {
+        remove("active.sessionToken")
+    } else {
+        putString("active.sessionToken", pc.sessionToken)
+    }
 }
 
 private fun RemotePreferencesEditor.clearActivePcFields() {
@@ -184,6 +194,7 @@ private fun RemotePreferencesEditor.clearActivePcFields() {
     remove("active.bridgeUrl")
     remove("active.protocolVersion")
     remove("active.lastActiveAt")
+    remove("active.sessionToken")
 }
 
 private fun RemotePreferencesEditor.putSavedPcList(savedPcs: List<SavedPc>) {
@@ -196,7 +207,8 @@ private fun RemotePreferencesEditor.putSavedPcList(savedPcs: List<SavedPc>) {
                 .put("protocolVersion", pc.protocolVersion)
                 .put("pairingUri", pc.pairingUri)
                 .put("bridgeUrl", pc.bridgeUrl)
-                .put("lastActiveAt", pc.lastActiveAt),
+                .put("lastActiveAt", pc.lastActiveAt)
+                .put("sessionToken", pc.sessionToken),
         )
     }
     putString("saved.pcs", array.toString())

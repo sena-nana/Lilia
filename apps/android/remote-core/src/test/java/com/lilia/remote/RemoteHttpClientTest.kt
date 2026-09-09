@@ -58,7 +58,9 @@ class RemoteHttpClientTest {
             assertEquals("POST", exchange.requestMethod)
             assertEquals("/pair", exchange.requestURI.path)
             requestBody.set(JSONObject(exchange.requestBody.reader(Charsets.UTF_8).readText()))
-            exchange.respond("""{ "ok": true, "peer": { "id": "peer-1" } }""")
+            exchange.respond(
+                """{ "ok": true, "peer": { "id": "peer-1", "endpointId": "android-device-1" }, "sessionToken": "test-session-token", "sessionExpiresAt": 1710604800000 }"""
+            )
         }
         val ticket = RemotePairingTicket(
             protocolVersion = 1,
@@ -80,6 +82,7 @@ class RemoteHttpClientTest {
         assertEquals("challenge-1", body.getString("challenge"))
         assertEquals("android-device-1", body.getJSONObject("androidEndpoint").getString("endpointId"))
         assertEquals("pc-endpoint", pc.endpointId)
+        assertEquals("test-session-token", pc.sessionToken)
     }
 
     @Test
@@ -125,6 +128,7 @@ class RemoteHttpClientTest {
         val server = startBridge { exchange ->
             assertEquals("POST", exchange.requestMethod)
             assertEquals("/dispatch", exchange.requestURI.path)
+            assertEquals("Bearer test-session-token", exchange.requestHeaders.getFirst("Authorization"))
             requestBody.set(JSONObject(exchange.requestBody.reader(Charsets.UTF_8).readText()))
             exchange.respond(
                 """
@@ -1016,6 +1020,7 @@ class RemoteHttpClientTest {
         pairingUri = "lilia-remote://pair?v=1",
         bridgeUrl = bridgeUrl(server),
         lastActiveAt = 1710000000000,
+        sessionToken = "test-session-token",
     )
 
     private fun bridgeUrl(server: HttpServer): String =
@@ -1033,13 +1038,14 @@ class RemoteHttpClientTest {
 
         override fun deviceEndpointId(): String = "android-device-1"
 
-        override fun savePairing(ticket: RemotePairingTicket): SavedPc = SavedPc(
+        override fun savePairing(ticket: RemotePairingTicket, sessionToken: String): SavedPc = SavedPc(
             endpointId = ticket.endpointId,
             displayName = ticket.pcName,
             protocolVersion = ticket.protocolVersion,
             pairingUri = ticket.rawUri,
             bridgeUrl = ticket.bridgeUrl,
             lastActiveAt = 1710000000000,
+            sessionToken = sessionToken,
         )
 
         override fun markActivePcSeen(pc: SavedPc, now: Long): SavedPc {

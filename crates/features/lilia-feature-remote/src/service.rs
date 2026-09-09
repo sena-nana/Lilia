@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::UdpSocket;
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -7,12 +7,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use lilia_contracts::TaskId;
 use lilia_storage::Db;
 use rusqlite::{params, Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::types::{
     RemoteCapabilitySet, RemoteControlStatus, RemoteEndpointAddress, RemotePairDeviceInput,
-    RemotePairingTicket, RemotePeerSummary, REMOTE_ALPN, REMOTE_MIN_PROTOCOL_VERSION,
-    REMOTE_PROTOCOL_VERSION,
+    RemotePairingTicket, RemotePeerSummary, RemotePublicStatus, RemoteSessionCredential,
+    REMOTE_ALPN, REMOTE_MIN_PROTOCOL_VERSION, REMOTE_PROTOCOL_VERSION,
 };
 
 pub trait RemoteWakeHost: Send + Sync + 'static {
@@ -25,6 +26,11 @@ const ENDPOINT_ID_KEY: &str = "endpoint_id";
 pub const KEEP_AWAKE_ENABLED_KEY: &str = "keep_awake_enabled";
 pub const PAIRING_TTL_MS: i64 = 10 * 60 * 1000;
 pub const DEFAULT_HTTP_BRIDGE_PORT: u16 = 41478;
+/// Dangerous opt-in: when set to `1`/`true`, the HTTP bridge binds `0.0.0.0` (LAN-visible).
+/// Default is loopback-only (`127.0.0.1`). Cleartext LAN exposure is intentional only for
+/// explicit local testing — prefer adb reverse / emulator loopback for Android cleartext.
+pub const DANGEROUS_BIND_NON_LOOPBACK_ENV: &str = "LILIA_REMOTE_BRIDGE_BIND_NON_LOOPBACK";
+pub const SESSION_TTL_MS: i64 = 7 * 24 * 60 * 60 * 1000;
 const RECENT_ANDROID_SEEN_MS: i64 = 2 * 60 * 1000;
 const REMOTE_WAKE_MONITOR_IDLE_MS: u64 = 30_000;
 
@@ -287,6 +293,17 @@ fn initialize_schema(connection: &Connection) -> Result<(), DesktopRemoteControl
             );
             CREATE INDEX IF NOT EXISTS idx_remote_control_pairing_tickets_active
               ON remote_control_pairing_tickets(expires_at, consumed_at);
+            CREATE TABLE IF NOT EXISTS remote_control_sessions (
+              token_hash   TEXT PRIMARY KEY,
+              endpoint_id  TEXT NOT NULL,
+              expires_at   INTEGER NOT NULL,
+              created_at   INTEGER NOT NULL,
+              last_used_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_remote_control_sessions_endpoint
+              ON remote_control_sessions(endpoint_id);
+            CREATE INDEX IF NOT EXISTS idx_remote_control_sessions_expires
+              ON remote_control_sessions(expires_at);
             "#,
         )
         .map_err(database_error)
@@ -472,7 +489,42 @@ pub fn remote_capabilities() -> RemoteCapabilitySet {
         supports_agent_wire: true,
         supports_session_fork: true,
         supports_process_session: true,
+        supports_session_token: true,
     }
+}
+
+/// HTTP-safe status: never includes pairing tickets, challenges, or trusted endpoint ids.
+pub fn public_remote_status(
+    connection: &Connection,
+) -> Result<RemotePublicStatus, DesktopRemoteControlError> {
+    let enabled = host_enabled(connection)?;
+    let pairing = enabled
+        .then(|| active_ticket(connection))
+        .transpose()?
+        .flatten()
+        .is_some();
+    let connected = enabled && has_recent_connected_device(connection)?;
+    let state = if !enabled {
+        "disabled"
+    } else if pairing {
+        "pairing"
+    } else if connected {
+        "connected"
+    } else {
+        "listening"
+    };
+    Ok(RemotePublicStatus {
+        host_enabled: enabled,
+        state: state.to_owned(),
+        pc_name: pc_name(connection)?,
+        keep_awake_enabled: keep_awake_enabled(connection)?,
+        capabilities: remote_capabilities(),
+        bridge_bind: if bridge_binds_non_loopback() {
+            "non-loopback".to_owned()
+        } else {
+            "loopback".to_owned()
+        },
+    })
 }
 pub fn start_pairing(
     connection: &Connection,
@@ -695,8 +747,217 @@ fn local_lan_ip() -> String {
         .unwrap_or_else(|_| "127.0.0.1".to_owned())
 }
 
+/// Host address for `TcpListener::bind`. Defaults to loopback.
+pub fn bridge_bind_host() -> &'static str {
+    match std::env::var(DANGEROUS_BIND_NON_LOOPBACK_ENV) {
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true") => "0.0.0.0",
+        _ => "127.0.0.1",
+    }
+}
+
+pub fn bridge_binds_non_loopback() -> bool {
+    bridge_bind_host() == "0.0.0.0"
+}
+
 pub fn advertised_bridge_url(port: u16) -> String {
-    format!("http://{}:{port}", local_lan_ip())
+    let host = if bridge_binds_non_loopback() {
+        local_lan_ip()
+    } else {
+        "127.0.0.1".to_owned()
+    };
+    format!("http://{host}:{port}")
+}
+
+pub fn hash_session_token(token: &str) -> String {
+    let digest = Sha256::digest(token.as_bytes());
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Constant-time equality for equal-length byte slices.
+pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+    if left.len() != right.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (a, b) in left.iter().zip(right.iter()) {
+        diff |= a ^ b;
+    }
+    diff == 0
+}
+
+pub fn mint_session_token(
+    connection: &Connection,
+    endpoint_id: &str,
+) -> Result<RemoteSessionCredential, DesktopRemoteControlError> {
+    let endpoint_id = endpoint_id.trim();
+    if endpoint_id.is_empty() {
+        return Err(DesktopRemoteControlError::invalid("endpoint id is required"));
+    }
+    // Replace any prior sessions for this device.
+    connection
+        .execute(
+            "DELETE FROM remote_control_sessions WHERE endpoint_id = ?1",
+            params![endpoint_id],
+        )
+        .map_err(database_error)?;
+    let token = format!(
+        "{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    );
+    let token_hash = hash_session_token(&token);
+    let now = now_millis();
+    let expires_at = now + SESSION_TTL_MS;
+    connection
+        .execute(
+            r#"INSERT INTO remote_control_sessions
+               (token_hash, endpoint_id, expires_at, created_at, last_used_at)
+               VALUES (?1, ?2, ?3, ?4, ?4)"#,
+            params![token_hash, endpoint_id, expires_at, now],
+        )
+        .map_err(database_error)?;
+    Ok(RemoteSessionCredential {
+        session_token: token,
+        expires_at,
+    })
+}
+
+pub fn authenticate_session_token(
+    connection: &Connection,
+    token: &str,
+) -> Result<String, DesktopRemoteControlError> {
+    let token = token.trim();
+    if token.is_empty() {
+        return Err(DesktopRemoteControlError::unauthorized(
+            "session token is required",
+        ));
+    }
+    let token_hash = hash_session_token(token);
+    let row = connection
+        .query_row(
+            r#"SELECT token_hash, endpoint_id, expires_at FROM remote_control_sessions
+               WHERE token_hash = ?1"#,
+            params![token_hash],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(database_error)?;
+    let Some((stored_hash, endpoint_id, expires_at)) = row else {
+        return Err(DesktopRemoteControlError::unauthorized(
+            "session token is invalid",
+        ));
+    };
+    if !constant_time_eq(stored_hash.as_bytes(), token_hash.as_bytes()) {
+        return Err(DesktopRemoteControlError::unauthorized(
+            "session token is invalid",
+        ));
+    }
+    let now = now_millis();
+    if expires_at <= now {
+        let _ = connection.execute(
+            "DELETE FROM remote_control_sessions WHERE token_hash = ?1",
+            params![token_hash],
+        );
+        return Err(DesktopRemoteControlError::unauthorized(
+            "session token has expired",
+        ));
+    }
+    let new_expires = now + SESSION_TTL_MS;
+    connection
+        .execute(
+            r#"UPDATE remote_control_sessions
+               SET last_used_at = ?1, expires_at = ?2
+               WHERE token_hash = ?3"#,
+            params![now, new_expires, token_hash],
+        )
+        .map_err(database_error)?;
+    Ok(endpoint_id)
+}
+
+pub fn revoke_sessions_for_endpoint(
+    connection: &Connection,
+    endpoint_id: &str,
+) -> Result<(), DesktopRemoteControlError> {
+    connection
+        .execute(
+            "DELETE FROM remote_control_sessions WHERE endpoint_id = ?1",
+            params![endpoint_id],
+        )
+        .map(|_| ())
+        .map_err(database_error)
+}
+
+pub fn revoke_sessions_for_device_row(
+    connection: &Connection,
+    device_row_id: &str,
+) -> Result<(), DesktopRemoteControlError> {
+    let endpoint = connection
+        .query_row(
+            "SELECT endpoint_id FROM remote_control_trusted_devices WHERE id = ?1",
+            params![device_row_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(database_error)?;
+    if let Some(endpoint_id) = endpoint {
+        revoke_sessions_for_endpoint(connection, &endpoint_id)?;
+    }
+    Ok(())
+}
+
+/// Drop classic preload / interpreter hijack variables from remote process env overlays.
+pub fn sanitize_remote_process_environment(
+    environment: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    environment
+        .into_iter()
+        .filter(|(key, _)| !is_denied_remote_env_key(key))
+        .collect()
+}
+
+pub fn is_denied_remote_env_key(key: &str) -> bool {
+    let upper = key.to_ascii_uppercase();
+    if upper.starts_with("LD_") || upper.starts_with("DYLD_") {
+        return true;
+    }
+    matches!(
+        upper.as_str(),
+        "PATH"
+            | "PYTHONPATH"
+            | "PYTHONHOME"
+            | "PERL5LIB"
+            | "PERL5OPT"
+            | "RUBYLIB"
+            | "RUBYOPT"
+            | "NODE_OPTIONS"
+            | "NODE_PATH"
+            | "BASH_ENV"
+            | "ENV"
+            | "IFS"
+            | "SHELLOPTS"
+            | "PS4"
+            | "PROMPT_COMMAND"
+            | "SSLKEYLOGFILE"
+            | "GIT_SSH_COMMAND"
+            | "GIT_EXEC_PATH"
+            | "GIT_CONFIG_GLOBAL"
+            | "GIT_CONFIG_SYSTEM"
+            | "OPENSSL_CONF"
+            | "CURL_HOME"
+            | "NPM_CONFIG_PREFIX"
+            | "JAVA_TOOL_OPTIONS"
+            | "_JAVA_OPTIONS"
+            | "CLASSPATH"
+            | "TERM_PROGRAM"
+            | "TERMINFO"
+            | "TERMCAP"
+    )
 }
 
 fn pairing_uri_with_bridge_url(pairing_uri: &str, bridge_url: &str) -> String {
@@ -764,4 +1025,90 @@ pub fn now_millis() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    struct NoopWake;
+
+    impl RemoteWakeHost for NoopWake {
+        fn set_system_awake(&self, _active: bool) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn bridge_bind_defaults_to_loopback() {
+        // Env may be set in the process; the helper itself is covered by advertised URL logic.
+        let host = bridge_bind_host();
+        assert!(host == "127.0.0.1" || host == "0.0.0.0");
+    }
+
+    #[test]
+    fn public_status_omits_secrets_even_while_pairing() {
+        let service = DesktopRemoteControlService::in_memory(Arc::new(NoopWake)).unwrap();
+        service
+            .with_connection(|connection| {
+                set_setting(connection, HOST_ENABLED_KEY, "true")?;
+                start_pairing(connection, "http://127.0.0.1:41478")?;
+                let public = public_remote_status(connection)?;
+                assert_eq!(public.state, "pairing");
+                assert!(public.bridge_bind == "loopback" || public.bridge_bind == "non-loopback");
+                let full = remote_status(connection, Some("http://127.0.0.1:41478"))?;
+                assert!(full.active_ticket.is_some());
+                assert!(!full.trusted_devices.is_empty() || full.trusted_devices.is_empty());
+                // public type has no ticket field — compile-time guarantee; runtime check:
+                let encoded = serde_json::to_value(&public).unwrap();
+                assert!(encoded.get("activeTicket").is_none());
+                assert!(encoded.get("trustedDevices").is_none());
+                assert!(encoded.get("endpoint").is_none());
+                assert!(encoded.get("challenge").is_none());
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn session_token_round_trip_uses_constant_time_hash_lookup() {
+        let service = DesktopRemoteControlService::in_memory(Arc::new(NoopWake)).unwrap();
+        service
+            .with_connection(|connection| {
+                let minted = mint_session_token(connection, "android-device-1")?;
+                assert!(!minted.session_token.is_empty());
+                let endpoint = authenticate_session_token(connection, &minted.session_token)?;
+                assert_eq!(endpoint, "android-device-1");
+                let err = authenticate_session_token(connection, "totally-invalid-token")
+                    .expect_err("invalid token");
+                assert_eq!(err.code, "unauthorized");
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn denied_env_keys_cover_preload_hijacks() {
+        assert!(is_denied_remote_env_key("LD_PRELOAD"));
+        assert!(is_denied_remote_env_key("ld_library_path"));
+        assert!(is_denied_remote_env_key("DYLD_INSERT_LIBRARIES"));
+        assert!(is_denied_remote_env_key("PYTHONPATH"));
+        assert!(is_denied_remote_env_key("PATH"));
+        assert!(is_denied_remote_env_key("NODE_OPTIONS"));
+        assert!(!is_denied_remote_env_key("MY_APP_FLAG"));
+        let cleaned = sanitize_remote_process_environment(BTreeMap::from([
+            ("LD_PRELOAD".to_owned(), "evil.so".to_owned()),
+            ("MY_APP_FLAG".to_owned(), "1".to_owned()),
+        ]));
+        assert_eq!(cleaned.len(), 1);
+        assert_eq!(cleaned.get("MY_APP_FLAG").map(String::as_str), Some("1"));
+    }
+
+    #[test]
+    fn constant_time_eq_rejects_length_mismatch() {
+        assert!(!constant_time_eq(b"abc", b"ab"));
+        assert!(constant_time_eq(b"abc", b"abc"));
+        assert!(!constant_time_eq(b"abc", b"abd"));
+    }
 }

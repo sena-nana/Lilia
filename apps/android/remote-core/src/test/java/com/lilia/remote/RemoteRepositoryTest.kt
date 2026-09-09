@@ -20,7 +20,7 @@ class RemoteRepositoryTest {
     @Test
     fun savePairingPersistsActivePcWithBridgeUrl() {
         val preferences = InMemoryRemotePreferences()
-        val saved = RemoteRepository(preferences).savePairing(ticket())
+        val saved = RemoteRepository(preferences).savePairing(ticket(), "test-session-token")
 
         val restored = RemoteRepository(preferences).activePc()
         val savedPcs = RemoteRepository(preferences).savedPcs()
@@ -28,6 +28,8 @@ class RemoteRepositoryTest {
         assertNotNull(restored)
         assertEquals("pc-endpoint", saved.endpointId)
         assertEquals("pc-endpoint", restored?.endpointId)
+        assertEquals("test-session-token", saved.sessionToken)
+        assertEquals("test-session-token", restored?.sessionToken)
         assertEquals("Desk", restored?.displayName)
         assertEquals(1, restored?.protocolVersion)
         assertEquals("lilia-remote://pair?v=1", restored?.pairingUri)
@@ -41,7 +43,7 @@ class RemoteRepositoryTest {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
 
-        repository.savePairing(ticket(endpointId = "pc-desk", pcName = "Desk"))
+        repository.savePairing(ticket(endpointId = "pc-desk", pcName = "Desk"), "test-session-token")
         repository.savePairing(
             ticket(
                 endpointId = "pc-studio",
@@ -49,7 +51,7 @@ class RemoteRepositoryTest {
                 bridgeUrl = "http://192.168.1.44:41478",
                 rawUri = "lilia-remote://pair?v=1&pc=studio",
             ),
-        )
+        , "test-session-token")
 
         val restored = RemoteRepository(preferences)
 
@@ -62,7 +64,7 @@ class RemoteRepositoryTest {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
 
-        repository.savePairing(ticket(endpointId = "pc-shared", pcName = "Desk"))
+        repository.savePairing(ticket(endpointId = "pc-shared", pcName = "Desk"), "test-session-token")
         repository.savePairing(
             ticket(
                 endpointId = "pc-shared",
@@ -70,7 +72,7 @@ class RemoteRepositoryTest {
                 bridgeUrl = "http://192.168.1.44:41478",
                 rawUri = "lilia-remote://pair?v=1&pc=studio",
             ),
-        )
+        , "test-session-token")
 
         val restored = RemoteRepository(preferences)
 
@@ -85,14 +87,14 @@ class RemoteRepositoryTest {
     fun switchActivePcPersistsSelectedSavedPcByConnectionAndUpdatesSeenAt() {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
-        val desk = repository.savePairing(ticket(endpointId = "pc-shared", pcName = "Desk"))
+        val desk = repository.savePairing(ticket(endpointId = "pc-shared", pcName = "Desk"), "test-session-token")
         repository.savePairing(
             ticket(
                 endpointId = "pc-shared",
                 pcName = "Studio",
                 bridgeUrl = "http://192.168.1.44:41478",
             ),
-        )
+        , "test-session-token")
 
         val selected = repository.switchActivePc(desk, now = 1710000004321)
         val restored = RemoteRepository(preferences)
@@ -111,7 +113,7 @@ class RemoteRepositoryTest {
     fun activeTaskIdPersistsForColdResume() {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
-        repository.savePairing(ticket())
+        repository.savePairing(ticket(), "test-session-token")
 
         repository.setActiveTaskId("task-42")
 
@@ -122,10 +124,10 @@ class RemoteRepositoryTest {
     fun savePairingAndClearActivePcDropPersistedActiveTaskId() {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
-        repository.savePairing(ticket())
+        repository.savePairing(ticket(), "test-session-token")
         repository.setActiveTaskId("task-42")
 
-        repository.savePairing(ticket(endpointId = "pc-studio"))
+        repository.savePairing(ticket(endpointId = "pc-studio"), "test-session-token")
         assertNull(RemoteRepository(preferences).activeTaskId())
 
         repository.setActiveTaskId("task-99")
@@ -138,14 +140,14 @@ class RemoteRepositoryTest {
     fun forgetPcRemovesOnlySelectedSavedPcAndClearsActiveWhenItMatches() {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
-        repository.savePairing(ticket(endpointId = "pc-desk", pcName = "Desk"))
+        repository.savePairing(ticket(endpointId = "pc-desk", pcName = "Desk"), "test-session-token")
         val studio = repository.savePairing(
             ticket(
                 endpointId = "pc-studio",
                 pcName = "Studio",
                 bridgeUrl = "http://192.168.1.44:41478",
             ),
-        )
+        , "test-session-token")
 
         repository.forgetPc(studio)
         val restored = RemoteRepository(preferences)
@@ -159,7 +161,7 @@ class RemoteRepositoryTest {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
         val endpointId = repository.deviceEndpointId()
-        repository.savePairing(ticket())
+        repository.savePairing(ticket(), "test-session-token")
 
         repository.clearActivePc()
 
@@ -185,7 +187,7 @@ class RemoteRepositoryTest {
     fun markActivePcSeenUpdatesCurrentPcLastActiveAt() {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
-        val saved = repository.savePairing(ticket())
+        val saved = repository.savePairing(ticket(), "test-session-token")
 
         val updated = repository.markActivePcSeen(saved, now = 1710000001234)
 
@@ -197,7 +199,7 @@ class RemoteRepositoryTest {
     fun markActivePcSeenIgnoresStalePcEndpoint() {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
-        repository.savePairing(ticket())
+        repository.savePairing(ticket(), "test-session-token")
         val stalePc = RemoteRepository(preferences).activePc()!!.copy(endpointId = "pc-other")
 
         val result = repository.markActivePcSeen(stalePc, now = 1710000001234)
@@ -211,7 +213,7 @@ class RemoteRepositoryTest {
     fun markActivePcSeenIgnoresStaleBridgeUrl() {
         val preferences = InMemoryRemotePreferences()
         val repository = RemoteRepository(preferences)
-        repository.savePairing(ticket())
+        repository.savePairing(ticket(), "test-session-token")
         val stalePc = RemoteRepository(preferences).activePc()!!
             .copy(bridgeUrl = "http://192.168.1.99:41478")
 
