@@ -105,6 +105,7 @@ impl DesktopApplication {
         relative_path: impl AsRef<Path>,
     ) -> Result<(DocumentSnapshot, bool), DesktopApplicationError> {
         let context = self.project_context(project_id)?;
+        // resolve_relative fences symlinks under the canonical project root first.
         let resolved = context.resolve_relative(relative_path.as_ref())?;
         self.open_document_at_path(resolved)
     }
@@ -114,6 +115,7 @@ impl DesktopApplication {
         context: &ProjectContext,
         relative_path: impl AsRef<Path>,
     ) -> Result<(DocumentSnapshot, bool), DesktopApplicationError> {
+        // resolve_relative fences symlinks under the canonical project root first.
         let resolved = context.resolve_relative(relative_path.as_ref())?;
         self.open_document_at_path(resolved)
     }
