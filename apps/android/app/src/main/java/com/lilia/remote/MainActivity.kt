@@ -26,6 +26,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DropdownMenu
@@ -35,6 +36,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -759,6 +761,7 @@ private fun PairingScreen(
     var pairingUri by remember { mutableStateOf(initialPairingUri.orEmpty()) }
     var error by remember { mutableStateOf("") }
     var scannerVisible by remember { mutableStateOf(false) }
+    var pendingPublicBridgeUri by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -769,6 +772,24 @@ private fun PairingScreen(
         } else {
             error = "需要相机权限才能扫描配对二维码。"
         }
+    }
+
+    fun tryParseAndPair(raw: String, allowPublicBridge: Boolean = false) {
+        PairingUriParser.parse(raw, allowPublicBridge = allowPublicBridge)
+            .onSuccess {
+                pendingPublicBridgeUri = null
+                onPair(it)
+            }
+            .onFailure { err ->
+                if (!allowPublicBridge &&
+                    err.message == PairingUriParser.PUBLIC_BRIDGE_CONFIRM_MESSAGE
+                ) {
+                    pendingPublicBridgeUri = raw
+                    error = err.message ?: ""
+                } else {
+                    error = err.message ?: "配对链接无效"
+                }
+            }
     }
 
     LaunchedEffect(initialPairingUri) {
@@ -844,9 +865,7 @@ private fun PairingScreen(
                 }
                 Button(
                     onClick = {
-                        PairingUriParser.parse(pairingUri)
-                            .onSuccess { onPair(it) }
-                            .onFailure { error = it.message ?: "配对链接无效" }
+                        tryParseAndPair(pairingUri)
                     },
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !busy,
@@ -866,12 +885,36 @@ private fun PairingScreen(
                 onPairingUri = { uri ->
                     scannerVisible = false
                     pairingUri = uri
-                    PairingUriParser.parse(uri)
-                        .onSuccess { onPair(it) }
-                        .onFailure { error = it.message ?: "配对二维码无效" }
+                    tryParseAndPair(uri)
                 },
                 onClose = { scannerVisible = false },
                 onError = { error = it },
+            )
+        }
+
+        pendingPublicBridgeUri?.let { pendingUri ->
+            AlertDialog(
+                onDismissRequest = { pendingPublicBridgeUri = null },
+                title = { Text("确认公网桥接") },
+                text = {
+                    Text(
+                        "该配对桥接地址不是本机或私网地址。确认后才允许继续（可能暴露远控流量）。",
+                    )
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            tryParseAndPair(pendingUri, allowPublicBridge = true)
+                        },
+                    ) {
+                        Text("确认并配对")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingPublicBridgeUri = null }) {
+                        Text("取消")
+                    }
+                },
             )
         }
     }

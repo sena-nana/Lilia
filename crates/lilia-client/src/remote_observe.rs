@@ -32,6 +32,13 @@ impl RemoteObserveHttpClient {
         })
     }
 
+    /// Attach `Authorization: Bearer` for observe endpoints when the Service
+    /// was started with `LILIA_SERVICE_OBSERVE_TOKEN`.
+    pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
+        self.endpoint.bearer_token = Some(token.into());
+        self
+    }
+
     pub fn get_status(&self) -> Result<JsonValue, RemoteObserveError> {
         self.get_json("/observe/status")
     }
@@ -53,6 +60,7 @@ impl RemoteObserveHttpClient {
 pub(crate) struct ServiceHttpEndpoint {
     pub(crate) host: String,
     pub(crate) port: u16,
+    pub(crate) bearer_token: Option<String>,
 }
 
 impl ServiceHttpEndpoint {
@@ -73,7 +81,11 @@ impl ServiceHttpEndpoint {
         if host.is_empty() {
             return Err(RemoteObserveError::InvalidBaseUrl(raw.to_string()));
         }
-        Ok(Self { host, port })
+        Ok(Self {
+            host,
+            port,
+            bearer_token: None,
+        })
     }
 
     pub(crate) fn request_json(
@@ -86,10 +98,16 @@ impl ServiceHttpEndpoint {
         stream.set_read_timeout(Some(Duration::from_secs(5)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
         let body = body.unwrap_or_default();
+        let auth_header = self
+            .bearer_token
+            .as_deref()
+            .map(|token| format!("Authorization: Bearer {token}\r\n"))
+            .unwrap_or_default();
         let request = format!(
-            "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\nAccept: application/json\r\nContent-Type: application/json\r\nContent-Length: {content_length}\r\n\r\n",
+            "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\nAccept: application/json\r\nContent-Type: application/json\r\n{auth_header}Content-Length: {content_length}\r\n\r\n",
             host = self.host,
             port = self.port,
+            auth_header = auth_header,
             content_length = body.len(),
         );
         stream.write_all(request.as_bytes())?;

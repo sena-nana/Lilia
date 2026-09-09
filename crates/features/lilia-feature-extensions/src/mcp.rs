@@ -1,3 +1,5 @@
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
 use lilia_storage::{AgentkitMcpRegistry, AgentkitMcpRegistryEntry};
 use mutsuki_agent_contracts::{McpCatalog, McpServerState};
 
@@ -442,14 +444,52 @@ fn normalized_text(
     Ok(Some(value.to_owned()))
 }
 
-fn validate_mcp_url(value: &str) -> Result<(), ExtensionsError> {
+/// Dangerous opt-in: when set to `1`/`true`, allow cleartext `http://` MCP URLs
+/// and loopback hosts for local MCP. Default is HTTPS-only to public hosts.
+pub const DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV: &str = "LILIA_MCP_ALLOW_INSECURE_HTTP";
+
+fn mcp_allows_insecure_http() -> bool {
+    match std::env::var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV) {
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true") => true,
+        _ => false,
+    }
+}
+
+/// Validate an MCP HTTP(S) URL: HTTPS by default, no inline credentials /
+/// fragments, and HostHttp-style blocks for private / link-local / metadata
+/// hosts and literal IPs. Cleartext `http://` and loopback require
+/// [`DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV`].
+///
+/// Residual: config-time checks use the host string / literal IP only (no DNS
+/// resolve), so a public hostname that later resolves to a private address is
+/// not caught here.
+pub fn validate_mcp_url(value: &str) -> Result<(), ExtensionsError> {
     let url = url::Url::parse(value).map_err(|_| invalid_input("url", "MCP URL is invalid"))?;
-    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+    let allow_insecure = mcp_allows_insecure_http();
+    match url.scheme() {
+        "https" => {}
+        "http" if allow_insecure => {}
+        "http" => {
+            return Err(invalid_input(
+                "url",
+                format!(
+                    "MCP URL must use https (cleartext http requires explicit {DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV}=1)"
+                ),
+            ));
+        }
+        _ => {
+            return Err(invalid_input(
+                "url",
+                "MCP URL must use https (or http with explicit insecure opt-in) and include a host",
+            ));
+        }
+    }
+    let Some(host) = url.host_str() else {
         return Err(invalid_input(
             "url",
-            "MCP URL must use http or https and include a host",
+            "MCP URL must use https (or http with explicit insecure opt-in) and include a host",
         ));
-    }
+    };
     if !url.username().is_empty() || url.password().is_some() {
         return Err(invalid_input(
             "url",
@@ -459,7 +499,192 @@ fn validate_mcp_url(value: &str) -> Result<(), ExtensionsError> {
     if url.fragment().is_some() {
         return Err(invalid_input("url", "MCP URL must not contain a fragment"));
     }
+    if mcp_host_is_blocked(host, allow_insecure) {
+        return Err(invalid_input(
+            "url",
+            format!("MCP URL refuses private/link-local/metadata host `{host}`"),
+        ));
+    }
     Ok(())
+}
+
+fn mcp_host_is_blocked(host: &str, allow_loopback: bool) -> bool {
+    let lower = host
+        .trim()
+        .trim_matches(|c| c == '[' || c == ']')
+        .to_ascii_lowercase();
+    if lower == "metadata.google.internal"
+        || lower == "metadata"
+        || lower.ends_with(".internal")
+    {
+        return true;
+    }
+    let is_localhost = lower == "localhost" || lower.ends_with(".localhost");
+    if is_localhost {
+        return !allow_loopback;
+    }
+    if lower.contains('/') || lower.contains('\\') {
+        return true;
+    }
+    if let Ok(ip) = lower.parse::<IpAddr>() {
+        return mcp_ip_is_blocked(ip, allow_loopback);
+    }
+    if looks_like_ipv4_literal(&lower) {
+        if let Ok(ip) = lower.parse::<Ipv4Addr>() {
+            return mcp_ip_is_blocked(IpAddr::V4(ip), allow_loopback);
+        }
+    }
+    false
+}
+
+fn looks_like_ipv4_literal(host: &str) -> bool {
+    !host.is_empty() && host.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+}
+
+fn mcp_ip_is_blocked(ip: IpAddr, allow_loopback: bool) -> bool {
+    match ip {
+        IpAddr::V4(v4) => mcp_ipv4_is_blocked(v4, allow_loopback),
+        IpAddr::V6(v6) => mcp_ipv6_is_blocked(v6, allow_loopback),
+    }
+}
+
+fn mcp_ipv4_is_blocked(ip: Ipv4Addr, allow_loopback: bool) -> bool {
+    if allow_loopback && ip.is_loopback() {
+        return false;
+    }
+    ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || ip.is_broadcast()
+        || ip.is_unspecified()
+        || ip.octets()[0] == 0
+        // CGNAT 100.64.0.0/10
+        || (ip.octets()[0] == 100 && (ip.octets()[1] & 0b1100_0000) == 0b0100_0000)
+        // IETF protocol assignments 192.0.0.0/24
+        || (ip.octets()[0] == 192 && ip.octets()[1] == 0 && ip.octets()[2] == 0)
+        || (ip.octets()[0] == 169 && ip.octets()[1] == 254)
+}
+
+fn mcp_ipv6_is_blocked(ip: Ipv6Addr, allow_loopback: bool) -> bool {
+    if allow_loopback && ip.is_loopback() {
+        return false;
+    }
+    if ip.is_loopback() || ip.is_unspecified() {
+        return true;
+    }
+    let segments = ip.segments();
+    // Unique local fc00::/7
+    if (segments[0] & 0xfe00) == 0xfc00 {
+        return true;
+    }
+    // Link-local fe80::/10
+    if (segments[0] & 0xffc0) == 0xfe80 {
+        return true;
+    }
+    // IPv4-mapped
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return mcp_ipv4_is_blocked(v4, allow_loopback);
+    }
+    false
+}
+
+#[cfg(test)]
+mod url_tests {
+    use super::*;
+    use crate::types::{McpServerUpsert, McpTransport};
+
+    fn http_upsert(url: &str) -> McpServerUpsert {
+        McpServerUpsert {
+            expected_registry_revision: 1,
+            server_id: "docs".to_owned(),
+            transport: McpTransport::StreamableHttp,
+            command: None,
+            args: Vec::new(),
+            url: Some(url.to_owned()),
+            env_secret_names: Vec::new(),
+            header_secret_names: Vec::new(),
+            enabled: true,
+        }
+    }
+
+    fn with_insecure_env(enabled: bool, body: impl FnOnce()) {
+        let previous = std::env::var_os(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV);
+        if enabled {
+            std::env::set_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV, "1");
+        } else {
+            std::env::remove_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV);
+        }
+        body();
+        match previous {
+            Some(value) => std::env::set_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV, value),
+            None => std::env::remove_var(DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV),
+        }
+    }
+
+    #[test]
+    fn https_mcp_urls_are_accepted_by_default() {
+        NormalizedMcpServer::new(http_upsert("https://example.test/mcp"))
+            .expect("https MCP URLs remain valid");
+    }
+
+    #[test]
+    fn http_mcp_urls_are_rejected_without_dangerous_opt_in() {
+        with_insecure_env(false, || {
+            let error = NormalizedMcpServer::new(http_upsert("http://example.test/mcp"))
+                .expect_err("cleartext http requires opt-in");
+            assert!(matches!(
+                error,
+                ExtensionsError::InvalidInput { field: "url", .. }
+            ));
+        });
+    }
+
+    #[test]
+    fn http_loopback_mcp_urls_are_allowed_with_dangerous_opt_in() {
+        with_insecure_env(true, || {
+            NormalizedMcpServer::new(http_upsert("http://127.0.0.1:8765/mcp"))
+                .expect("opt-in cleartext http should work for local MCP");
+            NormalizedMcpServer::new(http_upsert("http://localhost:8765/mcp"))
+                .expect("opt-in localhost should work for local MCP");
+        });
+    }
+
+    #[test]
+    fn private_and_metadata_mcp_hosts_are_blocked() {
+        with_insecure_env(false, || {
+            for target in [
+                "https://127.0.0.1/mcp",
+                "https://10.0.0.1/mcp",
+                "https://192.168.1.1/mcp",
+                "https://172.16.0.5/mcp",
+                "https://169.254.169.254/latest/meta-data",
+                "https://metadata.google.internal/mcp",
+                "https://localhost/mcp",
+            ] {
+                let error = validate_mcp_url(target)
+                    .expect_err(&format!("expected SSRF block for {target}"));
+                assert!(
+                    matches!(error, ExtensionsError::InvalidInput { field: "url", .. }),
+                    "target={target} error={error:?}"
+                );
+            }
+        });
+    }
+
+    #[test]
+    fn insecure_opt_in_still_blocks_non_loopback_private_and_metadata() {
+        with_insecure_env(true, || {
+            for target in [
+                "http://10.0.0.1/mcp",
+                "http://192.168.1.1/mcp",
+                "http://169.254.169.254/latest/meta-data",
+                "http://metadata.google.internal/mcp",
+            ] {
+                validate_mcp_url(target)
+                    .expect_err(&format!("opt-in must not open non-loopback SSRF for {target}"));
+            }
+        });
+    }
 }
 
 pub fn mcp_state_key(state: &McpServerState) -> &'static str {

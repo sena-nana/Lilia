@@ -30,7 +30,7 @@ class RemoteRepositoryTest {
         assertEquals("pc-endpoint", restored?.endpointId)
         assertEquals("Desk", restored?.displayName)
         assertEquals(1, restored?.protocolVersion)
-        assertEquals("lilia-remote://pair?v=1", restored?.pairingUri)
+        assertEquals("lilia-remote://pair?v=1", restored?.pairingUri) // already challenge-free fixture
         assertEquals("http://192.168.1.12:41478", restored?.bridgeUrl)
         assertTrue((restored?.lastActiveAt ?: 0L) > 0L)
         assertEquals(listOf("pc-endpoint"), savedPcs.map { it.endpointId })
@@ -220,6 +220,21 @@ class RemoteRepositoryTest {
         assertEquals(stalePc, result)
         assertEquals("http://192.168.1.12:41478", RemoteRepository(preferences).activePc()?.bridgeUrl)
         assertTrue((RemoteRepository(preferences).activePc()?.lastActiveAt ?: 0L) != 1710000001234L)
+    }
+
+    @Test
+    fun savePairingStripsChallengeFromPersistedPairingUri() {
+        val preferences = InMemoryRemotePreferences()
+        val saved = RemoteRepository(preferences).savePairing(
+            ticket(
+                rawUri = "lilia-remote://pair?v=1&ticket=ticket-1&challenge=challenge-1&endpoint=pc-endpoint",
+            ),
+        )
+        assertTrue(!saved.pairingUri.contains("challenge"))
+        assertEquals(
+            "lilia-remote://pair?v=1&ticket=ticket-1&endpoint=pc-endpoint",
+            RemoteRepository(preferences).activePc()?.pairingUri,
+        )
     }
 
     private fun ticket(

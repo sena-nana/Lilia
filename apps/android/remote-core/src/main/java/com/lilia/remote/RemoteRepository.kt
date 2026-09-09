@@ -2,6 +2,8 @@ package com.lilia.remote
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
@@ -16,7 +18,7 @@ class RemoteRepository internal constructor(
     private val prefs: RemotePreferences,
 ) : RemoteDeviceStore {
     constructor(context: Context) : this(
-        AndroidRemotePreferences(context.getSharedPreferences("lilia_remote", Context.MODE_PRIVATE)),
+        AndroidRemotePreferences(securePreferences(context)),
     )
 
     override fun deviceEndpointId(): String {
@@ -57,7 +59,8 @@ class RemoteRepository internal constructor(
             endpointId = ticket.endpointId,
             displayName = ticket.pcName,
             protocolVersion = ticket.protocolVersion,
-            pairingUri = ticket.rawUri,
+            // Do not persist one-time pairing challenge material.
+            pairingUri = PairingUriParser.sanitizePersistedPairingUri(ticket.rawUri),
             bridgeUrl = ticket.bridgeUrl,
             lastActiveAt = System.currentTimeMillis(),
         )
@@ -158,6 +161,61 @@ class RemoteRepository internal constructor(
                 }
             }
         }.getOrDefault(emptyList())
+    }
+
+    companion object {
+        private const val LEGACY_PREFS_NAME = "lilia_remote"
+        private const val SECURE_PREFS_NAME = "lilia_remote_secure"
+
+        /**
+         * Prefer EncryptedSharedPreferences (Android Keystore-backed MasterKey)
+         * for pairing / endpoint material. Falls back to plain prefs only if
+         * crypto init fails (rare OEM / test quirks).
+         */
+        internal fun securePreferences(context: Context): SharedPreferences {
+            val encrypted = runCatching {
+                val masterKey = MasterKey.Builder(context)
+                    .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                    .build()
+                EncryptedSharedPreferences.create(
+                    context,
+                    SECURE_PREFS_NAME,
+                    masterKey,
+                    EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                    EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+                )
+            }.getOrElse {
+                return context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+            }
+            migrateLegacyPreferencesIfNeeded(context, encrypted)
+            return encrypted
+        }
+
+        private fun migrateLegacyPreferencesIfNeeded(
+            context: Context,
+            encrypted: SharedPreferences,
+        ) {
+            if (encrypted.all.isNotEmpty()) return
+            val legacy = context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+            if (legacy.all.isEmpty()) return
+            encrypted.edit().apply {
+                legacy.all.forEach { (key, value) ->
+                    when (value) {
+                        is String -> putString(key, value)
+                        is Int -> putInt(key, value)
+                        is Long -> putLong(key, value)
+                        is Boolean -> putBoolean(key, value)
+                        is Float -> putFloat(key, value)
+                    }
+                }
+                // Strip challenges from any migrated pairing URIs.
+                legacy.getString("active.pairingUri", null)?.let { uri ->
+                    putString("active.pairingUri", PairingUriParser.sanitizePersistedPairingUri(uri))
+                }
+                apply()
+            }
+            legacy.edit().clear().apply()
+        }
     }
 }
 

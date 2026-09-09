@@ -7,7 +7,6 @@ use lilia_storage::{
     AgentkitHooksDocument, AgentkitMcpRegistryEntry, AgentkitPluginPackageRef,
     AgentkitPluginsRegistry, LiliaPluginManifest,
 };
-use reqwest::Url;
 use sha2::{Digest, Sha256};
 
 use crate::application::{DesktopApplication, DesktopApplicationError};
@@ -436,17 +435,13 @@ fn validate_plugin_contributions(
                     let url = server.url.as_deref().ok_or_else(|| {
                         plugin_input_error("mcp", "Plugin HTTP MCP server requires a URL")
                     })?;
-                    let parsed = Url::parse(url)
-                        .map_err(|_| plugin_input_error("mcp", "Plugin MCP URL is invalid"))?;
-                    if !matches!(parsed.scheme(), "http" | "https")
-                        || !parsed.username().is_empty()
-                        || parsed.password().is_some()
-                    {
-                        return Err(plugin_input_error(
-                            "mcp",
-                            "Plugin MCP URL must be HTTP(S) without inline credentials",
-                        ));
-                    }
+                    // Same https-default + private/metadata SSRF policy as MCP upsert (#85 / M3).
+                    lilia_feature_extensions::validate_mcp_url(url).map_err(|error| match error {
+                        lilia_feature_extensions::ExtensionsError::InvalidInput {
+                            message, ..
+                        } => plugin_input_error("mcp", message),
+                        other => plugin_input_error("mcp", other.to_string()),
+                    })?;
                     server.command = None;
                 }
                 _ => {

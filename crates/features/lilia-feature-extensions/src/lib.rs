@@ -55,7 +55,8 @@ pub use mcp::{
     bump_registry_revision, ensure_mcp_credential_is_configured, ensure_registry_revision,
     mcp_activation_error, mcp_credential_key, mcp_prompts, mcp_resource_contents, mcp_resources,
     mcp_state_key, mcp_tools, normalized_mcp_credential_name, normalized_server_id,
-    removed_mcp_credentials, required_mcp_value, validate_mcp_secret, NormalizedMcpServer,
+    removed_mcp_credentials, required_mcp_value, validate_mcp_secret, validate_mcp_url,
+    NormalizedMcpServer, DANGEROUS_MCP_ALLOW_INSECURE_HTTP_ENV,
 };
 pub use service::{
     activate_mcp_entry, activate_registered_mcp_servers, coding_runtime_services,

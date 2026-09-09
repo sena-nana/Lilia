@@ -22,6 +22,12 @@ impl AgentWireHttpBackend {
         })
     }
 
+    /// Attach `Authorization: Bearer` required for `POST /agent/wire`.
+    pub fn with_bearer_token(mut self, token: impl Into<String>) -> Self {
+        self.endpoint.bearer_token = Some(token.into());
+        self
+    }
+
     pub fn into_client(self) -> AgentClient<Self> {
         AgentClient::new(self)
     }
