@@ -75,6 +75,13 @@ fn should_show_startup(arguments: &[OsString]) -> bool {
     )
 }
 
+/// Resolve the Native host shared library next to this launcher executable.
+///
+/// Load-path hardening (L3 / `libloading`): we never honor `PATH`,
+/// `LD_LIBRARY_PATH`, or other env overrides here — only the install-adjacent
+/// `HOST_LIBRARY` name. Treat that directory as the trust boundary (signed
+/// updater / install layout must keep a hostile library from being planted
+/// beside the launcher).
 fn host_library_path() -> Result<PathBuf, String> {
     std::env::current_exe()
         .ok()
@@ -83,6 +90,7 @@ fn host_library_path() -> Result<PathBuf, String> {
 }
 
 unsafe fn run_host(path: &Path, startup_window: isize) -> Result<i32, String> {
+    // Absolute adjacent path only — see `host_library_path` hardening note.
     let library = unsafe { Library::new(path) }
         .map_err(|error| format!("cannot load Native host {}: {error}", path.display()))?;
     let entrypoint: Symbol<'_, HostEntrypoint> = unsafe { library.get(b"liliacode_run\0") }
